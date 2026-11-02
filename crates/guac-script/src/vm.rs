@@ -4010,8 +4010,10 @@ impl Vm {
             return Err(Fault::Member(m));
         };
         let cell = match place {
-            Place::Host => None,
-            Place::ValueCell => {
+            Place::Host if spec.kind != Kind::SetRef => None,
+            // A set reference the host copies is the VM's cell (openspec
+            // AT.9).
+            Place::Host | Place::ValueCell => {
                 let default = spec.default;
                 let slot = *self.value_cells.entry((key, m)).or_insert_with(|| {
                     self.value_cell_values.push(default);
@@ -4073,11 +4075,25 @@ impl Vm {
                 }
             }
             Spot::Member {
+                receiver,
                 member,
                 cell: Some(slot),
-                ..
+                other,
+                via,
             } => {
                 self.uses.entry(member).or_default().0 += 1;
+                // A set reference the host copies: a set the host changed
+                // since read as a fresh one (openspec AT.9).
+                if self
+                    .config
+                    .members
+                    .get(member)
+                    .is_some_and(|(s, _)| s.kind == Kind::SetRef)
+                    && let Some(elements) = host.set_ref(&self.access(receiver, member, other, via))
+                {
+                    let set = self.set_of(&elements)?;
+                    self.value_cell_values[slot as usize] = Value::Set(set);
+                }
                 self.value_cell_values[slot as usize]
             }
             Spot::Member {
@@ -4246,7 +4262,7 @@ impl Vm {
                 };
                 let spec = *spec;
                 self.uses.entry(member).or_default().1 += 1;
-                let v = if spec.kind == Kind::Reference {
+                let v = if matches!(spec.kind, Kind::Reference | Kind::SetRef) {
                     v
                 } else {
                     self.deref(v)
@@ -4255,6 +4271,25 @@ impl Vm {
                     return Ok(());
                 };
                 match cell {
+                    // A set reference the host copies (openspec AT.9): the
+                    // set kept, its elements handed over as they read, a
+                    // number a set holds in a cell of its own as the number.
+                    Some(slot) if spec.kind == Kind::SetRef => {
+                        self.value_cell_values[slot as usize] = v;
+                        let elements: Vec<Value> = match self.materialize(v) {
+                            Value::Set(s) => self.sets[s as usize]
+                                .elems
+                                .iter()
+                                .map(|&e| self.peek(e))
+                                .collect(),
+                            _ => Vec::new(),
+                        };
+                        let at = self.access(receiver, member, other, via);
+                        match host.set_elements(&at, &elements) {
+                            Ok(()) | Err(HostFault::Nothing) => Ok(()),
+                            Err(HostFault::Unmodelled) => Err(Fault::Member(member)),
+                        }
+                    }
                     Some(slot) => {
                         self.value_cell_values[slot as usize] = v;
                         Ok(())
@@ -4318,12 +4353,19 @@ impl Vm {
                 via,
             } => match cell {
                 Some(slot) => {
-                    let default = self
+                    let (default, kind) = self
                         .config
                         .members
                         .get(member)
-                        .map_or(Value::Null, |(s, _)| s.default);
+                        .map_or((Value::Null, Kind::Any), |(s, _)| (s.default, s.kind));
                     self.value_cell_values[slot as usize] = default;
+                    // The host's copy goes back with it (openspec AT.9).
+                    if kind == Kind::SetRef {
+                        return match host.reset(&self.access(receiver, member, other, via)) {
+                            Ok(()) | Err(HostFault::Nothing) => Ok(()),
+                            Err(HostFault::Unmodelled) => Err(Fault::Member(member)),
+                        };
+                    }
                     Ok(())
                 }
                 None => match host.reset(&self.access(receiver, member, other, via)) {
@@ -4897,6 +4939,38 @@ impl Vm {
         }
         let set = self.sets[src as usize].clone();
         self.sets.push(set);
+        Ok((self.sets.len() - 1) as u32)
+    }
+
+    /// A fresh set of `elements`, each number in a value cell of its own
+    /// (as a set of numbers a script grows holds them), anything else as
+    /// itself; a set of `ValueInfo`, so a script growing it (`Text - String
+    /// Concatenate` grows `value set`) gets number cells it can write
+    /// through, not nulls.
+    fn set_of(&mut self, elements: &[Value]) -> Result<u32, Fault> {
+        let mut elems = Vec::with_capacity(elements.len());
+        for &e in elements {
+            elems.push(if e.is_number() {
+                let cell = self.new_cell(
+                    Decl {
+                        container: Container::Value,
+                        contents: Contents::None,
+                    },
+                    None,
+                    0,
+                )?;
+                self.cells[cell as usize].value = e;
+                Value::Cell(cell)
+            } else {
+                e
+            });
+        }
+        let elem = self.program.find_sym("valueinfo").map(Contents::Class);
+        self.sets.push(SetObj {
+            elems,
+            elem,
+            next: 0,
+        });
         Ok((self.sets.len() - 1) as u32)
     }
 

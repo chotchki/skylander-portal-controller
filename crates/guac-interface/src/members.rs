@@ -35,6 +35,9 @@ impl Member {
             "ScreenMeasurement" => Kind::Screen,
             "SpriteValueMeasurement" => Kind::Any,
             "SetVariant" => Kind::Set,
+            // The VM keeps it and the model a copy
+            // (`Model::set_global_elements`).
+            "ScriptSetReference" => Kind::SetRef,
             _ => Kind::Reference,
         }
     }

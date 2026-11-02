@@ -280,11 +280,18 @@
 //! `reset` ops names an interface member, AT.25's census).
 //!
 //! **States** (AT.5, read at the placement's state change, 0x69508, and its
-//! deactivate hook, 0x6A620): a template in a file is a placement too,
-//! asleep until a script wakes it, and a clone is awake from its spawn
-//! (**Hypothesis** for which templates wake: the June savestate's 153 live
-//! sprites hold the root containers and not the templates only cloned; AT.9
-//! checks it against its run). A clone hangs on nothing and holds nothing
+//! deactivate hook, 0x6A620): a template in a file is a placement too, and
+//! a clone is awake from its spawn. A template whose file holds its
+//! `_activityState` active (1) or unmanaged (4) is awake from the load, as a
+//! level's running placements are; one held a template (5) sleeps until a
+//! script clones it (AT.9: `global.bld`'s four root containers are held
+//! unmanaged, and `Init_Setup.ai`'s `UI - Init UI Containers` hangs them on
+//! the viewport's container and on each other and sizes them, which it can
+//! do only on sprites awake. On the dump the rule wakes 16 of the run's
+//! templates, those four, `PortalUI_Container`, the four corner shades,
+//! `darkness_Fade_out` and the cutscene metrics' six, and the June
+//! savestate's 153 live sprites hold every one of them and none of the
+//! templates only cloned). A clone hangs on nothing and holds nothing
 //! until a script hangs it (**Hypothesis**: the clone's internals, 0x69D7C,
 //! are unread here as in aj-vm's notes; AT.9's HUD build, which writes every
 //! clone's `attach node`, checks it).
@@ -427,8 +434,16 @@
 //!
 //! `left margin`, `right margin`, `upper margin`, `lower margin` (int, pixels;
 //! get 0x1DE74, 0x1DE88, 0x1DE9C, 0x1DEB0): four integers kept on the
-//! viewport's title-safe info, read-only. **Hypothesis**: the title-safe
-//! margins in frame pixels, AT.10's to read live.
+//! viewport's title-safe info, read-only, which `viewportinfo.title safe
+//! zone` reaches on the gameplay viewport. **Hypothesis** (AT.10's to read
+//! live): the margins in frame pixels, 64, 64, 36 and 36, 5 % of the
+//! 1280x720 frame a side: `UI - Init UI Containers` takes their sums over
+//! the screen's scale off `_UI_Container`'s 853.333 by 480 units, and these
+//! leave it 768 by 432 at frame (64, 36), as the June savestate and AC.13
+//! have it (AT.3). Only the sums are fitted: the container stands centred,
+//! so every split of 128 across and 72 down lays the HUD out the same
+//! (AT.9's review: 0 and 128, 128 and 0, 34 and 94 across alike), and the
+//! even split is the usual title-safe area, not a reading.
 //!
 //! # Text
 //!
@@ -676,23 +691,79 @@
 //! (read for AT.28): its take-on (0x10C8A8) appends the frame's joins in
 //! order, and 0x10CB68 takes the frame's leaves off it, so it holds every
 //! drawn sprite in the order each joined; no sort is in either.
-//! **Hypothesis** (AT.33 checks AC.13's 72 draws on AT.9's HUD; the sort
-//! over that list isn't found): drawn by computed priority, lower in front
+//! The list is drawn in its order (0x33774, a call of the sprite draw
+//! 0x32528 an element), and sorted first when a sprite joined since the last
+//! sort (0x31E14, read for AT.33: the per-sprite update raises a flag on
+//! every join, 0x8A1F7C, and the sort clears it), an introsort (0x350BB8:
+//! quicksort on a median, heapsort past its depth, insertion sort at 32
+//! elements or fewer, so unstable over 32) by a comparison that puts the
+//! higher visual type first (the kind's word's low three bits, which the
+//! layout writes from the properties' visual type) and, between two of one
+//! type, the lower of a word the kind holds at +8 first (0x4D17C, read in
+//! the disassembly; the word not yet traced). That order puts every text
+//! before every art quad, and AC.13's frame interleaves its 13 text runs
+//! with its art, so that sort can't be what drew it, though both render
+//! classes whose tables hold the draw hold the sort beside it (AT.33: the
+//! contradiction stands). **Hypothesis**: drawn by computed priority, lower
+//! in front
 //! (a message box's text is written at priority -2 over its box; AC.13's
 //! number shadows at 10 draw before their numbers at 5, and its
 //! bottom-left corner shade, the June savestate's lowest at -190, draws
 //! last of the 72 while the other three, at 0, draw 14th to 16th), the
 //! list's order (when each started being drawn) breaking ties.
+//!
+//! # The keeper
+//!
+//! AT.9: the scripts reach the model through a host. A run whose host holds
+//! the model registers `guac-script`'s `INTERFACE` (the 64, each typed as
+//! the live table types it), so every one of those members goes to the
+//! host, which hands it to the [`Keeper`] ([`keeper`] has the code): a
+//! member read, written, reset or, for a set, read and written whole. The
+//! keeper answers a sprite's members on the sprite its receiver names (a
+//! clone it made, or a template's object in its file), a paired measurement
+//! on the receiver and the value stack's other point, a global converter's
+//! on whatever reaches it; and beside the 64, a sprite's `scale` as an
+//! object of its own whose `scalemeasurement` parts it reads and writes, a
+//! sprite as its own orientation (its current matrix's turns, tilt, facing
+//! and roll in the matrix's order), and an initial matrix's turns, read
+//! only. **Hypothesis**: an orientation measurement's facing is the turn
+//! about depth (an actor's is about its up axis, guacamole's rule), and a
+//! relative turn adds to the turn and reads 0, as an actor hung from
+//! nothing's does; no interface script writes one (AT.9's census).
+//!
+//! A clone of one of the keeper's templates or sprites is an instance (the
+//! host asks the keeper first at a spawn), its activator the placement
+//! whose script spawned it, its initial matrix its source's current one,
+//! placed where the spawn's `at` stands when that is one of the keeper's (a
+//! sprite's current place, an initial matrix's) and turned to the spawn's
+//! facing, and current as waking makes it; a remove on one takes it off as
+//! States says. Nothing a script does stops on the keeper (decision 10): a
+//! sprite member asked of what holds no sprite, and a member it doesn't
+//! answer asked of one of its objects, each reads as a path through
+//! nothing, counted ([`Keeper::strays`], [`Keeper::unknown`]) so a run's
+//! test names any it meets; a member the model leaves unmodelled stops as
+//! the registry's strict mode stops on one.
+//!
+//! The model a run holds is loaded at its install ([`load`]): every
+//! template, font and string of the archives it links, from the extract's
+//! interface part and the level's sprites part, each template under its
+//! object in its archive's `level.bld`, its `_ID` read there, its string
+//! the `StringInfo` at its place among the file's in address order or the
+//! one an import's export id names in `global.bld` or `bootstrap.bld`, its
+//! font its archive's or, imported, the one the named font data info holds.
 #![forbid(unsafe_code)]
 
 pub mod draw;
+pub mod keeper;
 pub mod layout;
+pub mod load;
 pub mod matrix;
 pub mod members;
 pub mod model;
 pub mod sprite;
 pub mod text;
 
+pub use keeper::Keeper;
 pub use members::{MEMBERS, Member, find};
 pub use model::{Answer, Bases, LETTER, Model, NoWorld, Refusal, Str, World};
 pub use sprite::{Sprite, SpriteId, State};

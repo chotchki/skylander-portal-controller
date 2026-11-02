@@ -18,6 +18,12 @@ pub enum Keeper {
     Host,
     /// A value cell: cosmetic, nothing draws or plays it yet.
     Cell,
+    /// The interface's (openspec AT.9): a sprite's, a string's or one of the
+    /// interface's global converters', answered by the interface model
+    /// (`guac-interface`) the host holds and forwards to. Registered only
+    /// on a run whose host holds one ([`INTERFACE`]); a run without keeps
+    /// the cells the earlier tables register for them.
+    Interface,
 }
 
 /// A member as the original registers it, and who keeps it here.
@@ -52,6 +58,13 @@ impl Registered {
             // An engine set the host keeps is read whole; a value cell
             // standing for one reads none.
             "SetVariant" if self.keeper == Keeper::Host => Kind::Set,
+            // The interface's sets, and its two set references, which the
+            // VM keeps and the host copies (openspec AT.9).
+            "SetVariant" if self.keeper == Keeper::Interface => Kind::Set,
+            "ScriptSetReference" if self.keeper == Keeper::Interface => Kind::SetRef,
+            // A sprite's `numeric value` takes any number: its handler
+            // reads it as an integer or a float by the sprite's text.
+            "SpriteValueMeasurement" if self.keeper == Keeper::Interface => Kind::Any,
             _ => Kind::Reference,
         }
     }
@@ -89,7 +102,7 @@ const fn m(
 /// Up to 2^31 - 1, as the registry writes an open top.
 const OPEN: f32 = 2_147_483_647.0;
 
-use Keeper::{Cell, Host, Vm};
+use Keeper::{Cell, Host, Interface, Vm};
 
 /// Every engine member AH.16's init chain reaches past the VM's own path
 /// builtins (`my`, `null`, `undefined`, `its`, `valuedereferencer`, the
@@ -2933,6 +2946,612 @@ pub const MUSIC: &[Registered] = &[
     ),
 ];
 
+/// The interface's members (openspec AT.9, design decision 10): every member
+/// of the eight interface namespaces aj-vm's live table registers, 64, each
+/// as it registers it (its class, units and range; the labels as the live
+/// table cuts them, the alignments' nine as the earlier tables give them),
+/// kept by the interface model the host holds (`guac-interface`, whose
+/// `MEMBERS` reads each one's handlers). It takes over the 31 the earlier
+/// tables register (28 cells, and the host's `id` and screen size, which a
+/// host still answers on its own objects), registers the 20 more the disc's
+/// scripts reach that no table did (the stock-take's 22 absent less
+/// `origin` and the text colour converter, AS.32's cells) and the 13 no
+/// script on the disc reaches. Register it only on a run whose host holds
+/// the model: without one, a sprite's members stay the earlier tables'
+/// cells and the 20 stay absent, as before AT.9.
+pub const INTERFACE: &[Registered] = &[
+    m(
+        "spriteinfo",
+        "type",
+        "EnumMeasurement",
+        "art|text|model|container|particles",
+        0.0,
+        4.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "visible",
+        "EnumMeasurement",
+        "off|on|loading",
+        0.0,
+        2.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "color",
+        "ColorMeasurement",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "scale",
+        "ScaleMeasurement",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "location",
+        "ScreenMeasurement",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "screen location",
+        "ScreenMeasurement",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "screen width",
+        "FloatMeasurement",
+        "pixels",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "screen height",
+        "FloatMeasurement",
+        "pixels",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "text",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "priority",
+        "FloatMeasurement",
+        "",
+        -10_000.0,
+        10_000.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "width",
+        "FloatMeasurement",
+        "pixels",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "height",
+        "FloatMeasurement",
+        "pixels",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "depth",
+        "FloatMeasurement",
+        "pixels",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "natural size",
+        "ScreenMeasurement",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "origin",
+        "SpriteMatrixMeasurement",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "blend mode",
+        "EnumMeasurement",
+        "opaque|crossfade|additive|cuts out|gets",
+        0.0,
+        7.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "alignment",
+        "EnumMeasurement",
+        ALIGNMENTS,
+        0.0,
+        8.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "align to parent",
+        "EnumMeasurement",
+        ALIGNMENTS,
+        0.0,
+        8.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "texture flip",
+        "EnumMeasurement",
+        "none|horizontal|vertical|both",
+        0.0,
+        3.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "clipping",
+        "EnumMeasurement",
+        "off|enabled",
+        0.0,
+        1.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "take a picture",
+        "EnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "numeric value",
+        "SpriteValueMeasurement",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "justify",
+        "EnumMeasurement",
+        "left|center|right",
+        0.0,
+        2.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "point size",
+        "IntMeasurement",
+        "pixels",
+        0.0,
+        OPEN,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "playing animations",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "model attach nodes",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "generators",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "z depth",
+        "FloatMeasurement",
+        "",
+        -10_000.0,
+        10_000.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "replace color",
+        "ColorMeasurement",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "replace color percentage",
+        "IntMeasurement",
+        "percent",
+        0.0,
+        100.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "bloom intensity",
+        "IntMeasurement",
+        "percent",
+        0.0,
+        100.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "active",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "removed",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spriteinfo",
+        "text color converter",
+        "TextColorConverter",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spritematrixmeasurement",
+        "orientation",
+        "OrientationMeasurement",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spritematrixmeasurement",
+        "attach node",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spritematrixmeasurement",
+        "attached objects",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spritematrixmeasurement",
+        "id",
+        "IntMeasurement",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spritematrixmeasurement",
+        "origin",
+        "MatrixMeasurement",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spritematrixmeasurement",
+        "clones",
+        "SetVariant",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spritematrixmeasurement",
+        "parent",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spritematrixmeasurement",
+        "activator",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spritepositionmeasurement",
+        "screen distance",
+        "PairedFloatMeasurement",
+        "pixels",
+        0.0,
+        OPEN,
+        Interface,
+    ),
+    m(
+        "spritepositionmeasurement",
+        "heading",
+        "PairedFloatMeasurement",
+        "degrees",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spritepositionmeasurement",
+        "x offset",
+        "PairedFloatMeasurement",
+        "pixels",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spritepositionmeasurement",
+        "y offset",
+        "PairedFloatMeasurement",
+        "pixels",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "spritepositionmeasurement",
+        "priority offset",
+        "PairedFloatMeasurement",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "stringconverter",
+        "value set",
+        "ScriptSetReference",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "stringconverter",
+        "text",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "stringconverter",
+        "'@' representation",
+        "EnumMeasurement",
+        "number|time",
+        0.0,
+        1.0,
+        Interface,
+    ),
+    m(
+        "stringconverter",
+        "integer digits",
+        "IntMeasurement",
+        "",
+        0.0,
+        OPEN,
+        Interface,
+    ),
+    m(
+        "stringconverter",
+        "decimal digits",
+        "IntMeasurement",
+        "",
+        0.0,
+        OPEN,
+        Interface,
+    ),
+    m(
+        "stringconverter",
+        "use comma",
+        "EnumMeasurement",
+        "false|true",
+        0.0,
+        1.0,
+        Interface,
+    ),
+    m(
+        "stringinfo",
+        "string converter",
+        "StringConverter",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "textcolorconverter",
+        "color set",
+        "ScriptSetReference",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "textcolorconverter",
+        "text sprite",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "nameextractor",
+        "object to name",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "nameextractor",
+        "name checksum",
+        "IntMeasurement",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "nameextractor",
+        "instantiation size",
+        "IntMeasurement",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "nameextractor",
+        "type count",
+        "IntMeasurement",
+        "",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "viewporttitlesafeinfo",
+        "left margin",
+        "IntMeasurement",
+        "pixels",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "viewporttitlesafeinfo",
+        "right margin",
+        "IntMeasurement",
+        "pixels",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "viewporttitlesafeinfo",
+        "upper margin",
+        "IntMeasurement",
+        "pixels",
+        0.0,
+        0.0,
+        Interface,
+    ),
+    m(
+        "viewporttitlesafeinfo",
+        "lower margin",
+        "IntMeasurement",
+        "pixels",
+        0.0,
+        0.0,
+        Interface,
+    ),
+];
+
+/// The gameplay viewport's title-safe info (openspec AT.9), which `UI -
+/// Init UI Containers` (`Init_Setup.ai`) sizes `_UI_Container` by: the
+/// interface's beside [`INTERFACE`] on a run whose host holds the model,
+/// over the init chain's cell, the same class, units and range.
+pub const VIEWPORT_INTERFACE: &[Registered] = &[m(
+    "viewportinfo",
+    "title safe zone",
+    "ReferenceVariant",
+    "",
+    0.0,
+    0.0,
+    Interface,
+)];
+
 /// `system.game language`'s and `console language`'s labels: English is 6.
 pub const LANGUAGES: &str = "Arabic|Bulgarian|Chinese|Czech|Danish|Dutch|English|Finnish|French|German|Greek|Hebrew|Hindi|Hungarian|Italian|Japanese|Korean|Norwegian|Polish|Portuguese|Russian|Spanish|Swedish";
 
@@ -2963,7 +3582,9 @@ pub fn register(members: &mut Members, table: &[Registered]) {
             Keeper::Vm => {
                 members.known(r.namespace, r.name);
             }
-            Keeper::Host => {
+            // The interface's go to the host, which forwards them to the
+            // model it holds (openspec AT.9).
+            Keeper::Host | Keeper::Interface => {
                 members.host(r.namespace, r.name, r.spec());
             }
             Keeper::Cell => {
@@ -3134,6 +3755,117 @@ mod tests {
             if let Some(b) = Builtin::of(id) {
                 assert_eq!(r.keeper, Keeper::Vm, "{}", b.name());
             }
+        }
+    }
+
+    /// AT.9's rows: the eight interface namespaces' 64, each once, the
+    /// interface's; the 31 the earlier tables registered taken over with
+    /// the same class, units and range, the other 33 new; each converting
+    /// by its class (a set read whole, a set reference the VM's with the
+    /// host's copy,
+    /// `numeric value` any number, the depths held to ±10,000), and every
+    /// one going to the host once registered.
+    #[test]
+    fn the_interfaces_members_are_its_own_by_their_class() {
+        const NAMESPACES: [&str; 8] = [
+            "spriteinfo",
+            "spritematrixmeasurement",
+            "spritepositionmeasurement",
+            "stringconverter",
+            "stringinfo",
+            "textcolorconverter",
+            "nameextractor",
+            "viewporttitlesafeinfo",
+        ];
+        assert_eq!(INTERFACE.len(), 64);
+        let mut seen = HashSet::new();
+        for r in INTERFACE {
+            assert_eq!(r.keeper, Keeper::Interface, "{}", r.path());
+            assert!(NAMESPACES.contains(&r.namespace), "{}", r.path());
+            assert_eq!(r.name, r.name.to_ascii_lowercase(), "{}", r.path());
+            assert!(!r.name.starts_with('-'), "{}", r.path());
+            assert!(seen.insert(r.path()), "{} twice", r.path());
+        }
+        let earlier = [
+            INIT_CHAIN, HERO, CREATURES, COMBAT, LOOP, FIGURE, CAMERA, WALKERS, ROUTE, LEVEL_UP,
+            LEVELS, SOUNDS, MUSIC,
+        ];
+        let mut taken = 0;
+        for r in INTERFACE {
+            let mut found = false;
+            for t in earlier {
+                if let Some(i) = find(t, r.namespace, r.name) {
+                    found = true;
+                    assert_eq!(
+                        (i.class, i.units, i.min, i.max),
+                        (r.class, r.units, r.min, r.max),
+                        "{}",
+                        r.path()
+                    );
+                }
+            }
+            taken += usize::from(found);
+        }
+        assert_eq!(taken, 31, "the earlier tables' interface members");
+        // A member an earlier table adds later has to come here too, or a
+        // run holding the model would answer it from a cell.
+        for t in earlier {
+            for r in t.iter().filter(|r| NAMESPACES.contains(&r.namespace)) {
+                assert!(
+                    find(INTERFACE, r.namespace, r.name).is_some(),
+                    "{}",
+                    r.path()
+                );
+            }
+        }
+        let kind = |ns: &str, name: &str| find(INTERFACE, ns, name).unwrap().kind();
+        for (ns, name) in [
+            ("spriteinfo", "active"),
+            ("spriteinfo", "removed"),
+            ("spritematrixmeasurement", "attached objects"),
+            ("spritematrixmeasurement", "clones"),
+        ] {
+            assert_eq!(kind(ns, name), Kind::Set, "{ns}.{name}");
+        }
+        for name in ["stringconverter.value set", "textcolorconverter.color set"] {
+            let (ns, n) = name.split_once('.').unwrap();
+            assert_eq!(kind(ns, n), Kind::SetRef, "{name}");
+        }
+        assert_eq!(kind("spriteinfo", "numeric value"), Kind::Any);
+        assert_eq!(kind("spriteinfo", "width"), Kind::Float);
+        assert_eq!(kind("spriteinfo", "alignment"), Kind::Int);
+        assert_eq!(kind("spriteinfo", "location"), Kind::Screen);
+        assert_eq!(kind("spriteinfo", "color"), Kind::Color);
+        assert_eq!(
+            kind("spritematrixmeasurement", "attach node"),
+            Kind::Reference
+        );
+        let z = find(INTERFACE, "spriteinfo", "z depth").unwrap();
+        assert_eq!(
+            convert(&z.spec(), Value::Float(-12_000.0)),
+            Some(Value::Float(-10_000.0))
+        );
+        let numeric = find(INTERFACE, "spriteinfo", "numeric value").unwrap();
+        assert_eq!(
+            convert(&numeric.spec(), Value::Float(2.5)),
+            Some(Value::Float(2.5)),
+            "a number reaches the host"
+        );
+        let zone = VIEWPORT_INTERFACE[0];
+        let cell = find(INIT_CHAIN, zone.namespace, zone.name).unwrap();
+        assert_eq!(
+            (cell.class, cell.units, cell.min, cell.max, cell.keeper),
+            (zone.class, zone.units, zone.min, zone.max, Keeper::Cell)
+        );
+        assert_eq!(zone.keeper, Keeper::Interface);
+        let mut members = Members::new();
+        register(&mut members, INIT_CHAIN);
+        register(&mut members, INTERFACE);
+        register(&mut members, VIEWPORT_INTERFACE);
+        for r in INTERFACE.iter().chain(VIEWPORT_INTERFACE) {
+            let (spec, place) = members.get(MemberId::named(r.namespace, r.name)).unwrap();
+            assert_eq!(place, Place::Host, "{}", r.path());
+            assert_eq!(spec.kind, r.kind(), "{}", r.path());
         }
     }
 

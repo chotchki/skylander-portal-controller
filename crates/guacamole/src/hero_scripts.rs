@@ -149,6 +149,9 @@ pub(crate) struct ScriptSource {
     /// The sounds the run's units play (openspec AR.9); none read, none
     /// play.
     sounds: Option<guacamole::sounds::SoundPart>,
+    /// The original's interface each install starts its run from (openspec
+    /// AT.9); none when the extract held no part at the level's load.
+    interface: Option<guacamole::interface_host::InterfacePart>,
 }
 
 impl ScriptSource {
@@ -258,6 +261,7 @@ impl ScriptSource {
             layout: None,
             palettes: Vec::new(),
             sounds: None,
+            interface: None,
         }
     }
 }
@@ -273,6 +277,8 @@ pub(crate) struct Part {
     pub(crate) layout: Option<Layout>,
     pub(crate) palettes: Vec<(String, Vec<f32>)>,
     pub(crate) sounds: Option<guacamole::sounds::SoundPart>,
+    /// The original's interface each run starts from (openspec AT.9).
+    pub(crate) interface: Option<guacamole::interface_host::InterfacePart>,
 }
 
 /// Installs the run over a linked part (the level's load), keeping the part
@@ -288,6 +294,7 @@ pub(crate) fn install(world: &mut World, part: Part) {
         layout: part.layout,
         palettes: part.palettes,
         sounds: part.sounds,
+        interface: part.interface,
     };
     install_from(world, &source);
     world.insert_resource(source);
@@ -328,6 +335,10 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     let config = guacamole::scripts::fight_config(Mode::Play);
     #[allow(unused_mut)]
     let mut config = scripts::with_walkers(config, &source.walkers);
+    // The interface's members on the model, when the run holds one (AT.9).
+    if source.interface.is_some() {
+        config = guacamole::interface_host::with_interface(config);
+    }
     #[cfg(feature = "unmodel")]
     if let Some(Unmodel(request)) = world.get_resource::<Unmodel>() {
         match take_out(&mut config, request) {
@@ -350,6 +361,10 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     // The sounds its starts play (openspec AR.9).
     if let Some(s) = &source.sounds {
         script_world.set_sounds(s.book.clone(), s.stems.clone());
+    }
+    // A fresh copy of the interface's model (openspec AT.9).
+    if let Some(i) = &source.interface {
+        script_world.set_interface(i.keeper.clone());
     }
     script_world.walk_first_fight(level);
     script_world.walk_goats(level);
@@ -2603,6 +2618,7 @@ mod tests {
                 layout: None,
                 palettes: vec![(SMASH_FAR_MODEL.to_owned(), vec![0.0, 0.5])],
                 sounds: None,
+                interface: None,
             },
         );
         let w = world.resource::<ScriptWorld>();
@@ -2611,6 +2627,116 @@ mod tests {
         let rt = world.resource::<ScriptRuntime>();
         let h = w.handles()[&setup];
         assert!(!rt.vm.inert().contains(&h), "the setup runs");
+    }
+
+    /// The TV's install with the interface's part (openspec AT.9, the
+    /// review's): the run's members registered as the model's (`value set`
+    /// a set reference on the host, a sprite's `width` the host's), the
+    /// world holding a copy of the part's model, and leaving the level
+    /// installing a fresh copy again, what the last run made in it gone;
+    /// without the part the members stay the earlier tables' cells and the
+    /// world holds none.
+    #[test]
+    fn the_tvs_install_holds_the_interfaces_model_only_with_its_part() {
+        use guac_interface::Model;
+        use guac_interface::keeper::BASES;
+        use guac_ir::interface::{Content, Matrix, Template};
+        use guac_script::{Kind, MemberId, Obj, Place};
+        let tmp = tempfile::tempdir().unwrap();
+        write_smash(tmp.path(), BARREL_AT);
+        let template = Template {
+            name: "Generic_Container".into(),
+            object: 7,
+            properties: (1 << 16) | 3,
+            flags: 0,
+            position: [0, 0],
+            z_depth: 0.0,
+            priority: 0.0,
+            width: 237.0,
+            height: 96.0,
+            scale: [100.0; 3],
+            color: [0x80, 0x80, 0x80, 0xFF],
+            replace_color: [0x80, 0x80, 0x80, 0],
+            num_value: 0,
+            depth: 0.0,
+            init_matrix: Matrix::default(),
+            matrix: Matrix::default(),
+            content: Content::Container,
+            string: None,
+        };
+        let box_obj = Obj { unit: 1, index: 7 };
+        let mut model = Model::new(BASES);
+        model.add_template(Some(box_obj), &template, Value::Null);
+        let part = guacamole::interface_host::InterfacePart {
+            keeper: guac_interface::Keeper::new(model),
+            read: Vec::new(),
+            missing: Vec::new(),
+            refused: Vec::new(),
+            took: std::time::Duration::ZERO,
+        };
+        let sprites = part.templates();
+        let installed = |interface: Option<guacamole::interface_host::InterfacePart>| {
+            let linked = level_scripts::load(tmp.path(), LEVEL).unwrap();
+            let mut world = World::new();
+            install(
+                &mut world,
+                Part {
+                    program: Arc::new(linked.program),
+                    files: linked.placements,
+                    order: linked.order,
+                    fighters: linked.fighters,
+                    walkers: Vec::new(),
+                    left_out: Vec::new(),
+                    layout: None,
+                    palettes: Vec::new(),
+                    sounds: None,
+                    interface,
+                },
+            );
+            world
+        };
+        let member = |world: &World, ns: &str, name: &str| {
+            let rt = world.resource::<ScriptRuntime>();
+            rt.vm
+                .config()
+                .members
+                .get(MemberId::named(ns, name))
+                .map(|(spec, place)| (spec.kind, place))
+        };
+        let mut world = installed(Some(part));
+        assert_eq!(
+            member(&world, "stringconverter", "value set"),
+            Some((Kind::SetRef, Place::Host))
+        );
+        assert_eq!(
+            member(&world, "spriteinfo", "width"),
+            Some((Kind::Float, Place::Host))
+        );
+        let held = world.resource::<ScriptWorld>().interface().unwrap();
+        assert_eq!(held.model().len(), sprites);
+        // A run's clone in its model, then the level left.
+        let mut grown = held.clone();
+        assert!(
+            grown
+                .spawn(Value::Object(box_obj), None, None, Value::Null)
+                .is_some()
+        );
+        world.resource_mut::<ScriptWorld>().set_interface(grown);
+        reinstall(&mut world);
+        let again = world.resource::<ScriptWorld>().interface().unwrap();
+        assert_eq!(again.model().len(), sprites, "a fresh copy");
+        assert!(again.instances().is_empty());
+        // Without the part: the cells, no model.
+        let world = installed(None);
+        assert!(world.resource::<ScriptWorld>().interface().is_none());
+        assert_ne!(
+            member(&world, "stringconverter", "value set").map(|(k, _)| k),
+            Some(Kind::SetRef)
+        );
+        assert_ne!(
+            member(&world, "spriteinfo", "width"),
+            Some((Kind::Float, Place::Host))
+        );
     }
 
     /// Where the synthetic barrel stands: 3 m ahead of the headless hero

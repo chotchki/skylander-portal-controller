@@ -18,10 +18,16 @@ path = "src/lib.rs"
 doctest = false
 
 [dependencies]
+# A run's model loads off each archive's `level.bld` (its StringInfos' and
+# templates' objects, global.bld's exports): AT.9's loader.
+guac-formats = { path = "../guac-formats" }
 guac-ir = { path = "../guac-ir" }
 guac-script = { path = "../guac-script" }
 
 [dev-dependencies]
+# The script and archive writers the keeper's and the loader's tests build
+# their programs and templates with.
+guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
 # Any sequence of member writes (AT.5's property test), any string at any
 # width (AT.6's).
 proptest = "1"

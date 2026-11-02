@@ -42,6 +42,15 @@ pub enum Kind {
     /// A set the engine keeps (an actor's waypoints): read whole through
     /// [`Host::elements`], never written.
     Set,
+    /// A set reference the VM keeps as a value cell keeps a reference (the
+    /// script's own set, read back as written) and the host keeps a copy of
+    /// (openspec AT.9: the string converter's `value set`, the text colour
+    /// converter's `color set`): each write hands the host the set's
+    /// elements ([`Host::set_elements`]), and each read first asks the host
+    /// whether it changed the set since ([`Host::set_ref`]); one it changed
+    /// reads as a fresh set of value cells holding its elements, which the
+    /// cell keeps from then.
+    SetRef,
     /// Takes whatever it's given (the VM's own cells).
     Any,
 }
@@ -64,7 +73,7 @@ impl MemberSpec {
             Kind::Float => Value::Float(0.0),
             Kind::Color => Value::Color(0),
             Kind::Screen => Value::Screen(0),
-            Kind::Reference | Kind::Set | Kind::Any => Value::Null,
+            Kind::Reference | Kind::Set | Kind::SetRef | Kind::Any => Value::Null,
         };
         Self {
             kind,
@@ -360,6 +369,23 @@ pub trait Host {
     fn elements(&mut self, at: &Access) -> Result<Vec<Value>, HostFault> {
         let _ = at;
         Err(HostFault::Unmodelled)
+    }
+
+    /// A [`Kind::SetRef`] member written: the set a script hands it, its
+    /// elements in order as they read, a null an empty set. The default
+    /// keeps no copy.
+    fn set_elements(&mut self, at: &Access, elements: &[Value]) -> Result<(), HostFault> {
+        let _ = (at, elements);
+        Err(HostFault::Nothing)
+    }
+
+    /// A [`Kind::SetRef`] member about to be read: the elements the host
+    /// changed its set to since the VM's last write or read of it, if it
+    /// did (the string converter's `text` written makes its `value set`
+    /// the text's characters). The default changes none.
+    fn set_ref(&mut self, at: &Access) -> Option<Vec<Value>> {
+        let _ = at;
+        None
     }
 
     /// A fresh engine object of `class` (lowercased, `actorwaypoint`): what

@@ -528,6 +528,9 @@ pub struct ScriptWorld {
     /// The level's music placements [`hold_music`] holds until the level's
     /// sounds are read (openspec AR.23), by handle.
     pub(crate) music_held: Vec<Handle>,
+    /// The original's interface the scripts write (openspec AT.9), when
+    /// the run's install loaded it ([`crate::interface_host`]).
+    pub(crate) interface: Option<guac_interface::Keeper>,
     /// This run, unique on the TV: a player holding a play of an earlier
     /// run's stops it.
     run: u64,
@@ -694,6 +697,7 @@ impl ScriptWorld {
             copy_written: HashMap::new(),
             sound_system: HashMap::new(),
             music_held: Vec::new(),
+            interface: None,
             run: fresh_serial(),
         }
     }
@@ -1343,6 +1347,9 @@ impl ScriptWorld {
     }
 
     pub(crate) fn get(&mut self, at: &Access, engine: &mut dyn Engine) -> Result<Value, HostFault> {
+        if self.to_interface(at) {
+            return self.interface_get(at);
+        }
         let Some(&m) = self.members.get(&at.member) else {
             return Err(HostFault::Unmodelled);
         };
@@ -1384,6 +1391,9 @@ impl ScriptWorld {
         at: &Access,
         engine: &mut dyn Engine,
     ) -> Result<Vec<Value>, HostFault> {
+        if self.to_interface(at) {
+            return self.interface_elements(at);
+        }
         match self.members.get(&at.member).copied() {
             Some(m) => self.elements_of(at, m, engine),
             None => Err(HostFault::Unmodelled),
@@ -1396,6 +1406,9 @@ impl ScriptWorld {
         v: Value,
         engine: &mut dyn Engine,
     ) -> Result<(), HostFault> {
+        if self.to_interface(at) {
+            return self.interface_set(at, v);
+        }
         let Some(&m) = self.members.get(&at.member) else {
             return Err(HostFault::Unmodelled);
         };
@@ -1457,6 +1470,9 @@ impl ScriptWorld {
     }
 
     fn reset(&mut self, at: &Access) -> Result<(), HostFault> {
+        if self.to_interface(at) {
+            return self.interface_reset(at);
+        }
         let Some(&m) = self.members.get(&at.member) else {
             return Err(HostFault::Unmodelled);
         };
@@ -1487,6 +1503,7 @@ impl ScriptWorld {
             // writes went nowhere and the lava sat still at his feet).
             Class::Control => Ok(match (first, target) {
                 (_, Some(h)) if self.actors.get(&h).is_some_and(|k| k.removed) => Answer::Skip,
+                (Some(v), _) if self.sprite_removed(v) => Answer::Skip,
                 (Some(v), Some(_)) => Answer::Run {
                     receiver: Some(v),
                     result: Some(v),
@@ -1513,8 +1530,13 @@ impl ScriptWorld {
                 };
                 let at = named("_RHS");
                 let facing = named("_facingRHS").and_then(|v| v.as_f32());
+                // A sprite's clone is the interface's (openspec AT.9).
+                if let Some(a) = self.spawn_sprite(template, at, facing, call.placement) {
+                    return Ok(a);
+                }
                 Ok(self.spawn(template, at, facing, call.placement, spawn, engine))
             }
+            Class::Remove if self.remove_sprite(first) => Ok(Answer::Done),
             Class::Remove => {
                 if let Some(k) = target.and_then(|h| self.actors.get_mut(&h)) {
                     k.removed = true;
@@ -1679,6 +1701,12 @@ impl Host for WorldHost<'_, '_> {
     }
     fn adopt(&mut self, program: &Program) -> Vec<(Handle, String, ScriptId)> {
         self.world.adopt(program)
+    }
+    fn set_elements(&mut self, at: &Access, elements: &[Value]) -> Result<(), HostFault> {
+        self.world.set_elements(at, elements)
+    }
+    fn set_ref(&mut self, at: &Access) -> Option<Vec<Value>> {
+        self.world.set_ref(at)
     }
 }
 

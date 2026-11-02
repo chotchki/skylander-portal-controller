@@ -253,7 +253,9 @@ impl Level<'_> {
                     Keeper::Vm => {
                         c.members.known(r.namespace, r.name);
                     }
-                    Keeper::Host | Keeper::Cell => {
+                    // A null host holds no interface model: its members
+                    // are cells too, as a run without one keeps them.
+                    Keeper::Host | Keeper::Cell | Keeper::Interface => {
                         let cell = Registered {
                             keeper: Keeper::Cell,
                             ..*r

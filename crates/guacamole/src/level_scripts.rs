@@ -111,6 +111,13 @@ pub struct Linked {
     /// openspec AR.9): [`load`] leaves it unread, the level's load reads it
     /// beside.
     pub sounds: Option<crate::sounds::SoundPart>,
+    /// What the interface's model needs of each unit's file, read here where
+    /// the files are parsed (openspec AT.9), and `global.bld`'s exports.
+    pub interface_keys: Vec<guac_interface::load::Keys>,
+    pub interface_imports: Option<guac_interface::load::Imports>,
+    /// The model the run starts from ([`crate::interface_host::load`]):
+    /// [`load`] leaves it unread, the level's load reads it beside.
+    pub interface: Option<crate::interface_host::InterfacePart>,
     /// Every entry, the level's own included, and their bytes in all.
     pub files: usize,
     pub bytes: u64,
@@ -230,6 +237,23 @@ pub fn load(dir: &Path, level: &str) -> Result<Linked, String> {
     // Each walker's scripts for the whitelist, and the asks of the gameplay
     // viewport they add (AG.27, AH.107).
     let walkers = crate::scripts::walker_scripts(&program, &placements, &walker_units);
+    // What the interface's model needs of the files (openspec AT.9).
+    let interface_keys = parsed
+        .iter()
+        .enumerate()
+        .map(|(u, igz)| guac_interface::load::Keys::read(u as u16, igz))
+        .collect();
+    let role_unit = |r: Role| entries.iter().position(|(_, role, _)| *role == r);
+    let interface_imports = match (role_unit(Role::Bootstrap), role_unit(Role::Global)) {
+        (Some(b), Some(g)) => guac_formats::exports::Exports::new(&parsed[b], &parsed[g])
+            .ok()
+            .map(|exports| guac_interface::load::Imports {
+                exports,
+                bootstrap: b as u16,
+                global: g as u16,
+            }),
+        _ => None,
+    };
     Ok(Linked {
         program,
         placements,
@@ -240,6 +264,9 @@ pub fn load(dir: &Path, level: &str) -> Result<Linked, String> {
         layout: Err("not read".into()),
         palettes: Err("not read".into()),
         sounds: None,
+        interface_keys,
+        interface_imports,
+        interface: None,
         files: entries.len(),
         bytes: entries.iter().map(|(_, _, b)| b.len() as u64).sum(),
         read,

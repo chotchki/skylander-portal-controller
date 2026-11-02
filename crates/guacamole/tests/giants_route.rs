@@ -404,14 +404,16 @@ fn step(run: &mut Run, mode: Mode) -> Vec<Halt> {
     }
 }
 
-/// The run joined at the spawn on the TV's listing with the props in, his
-/// spawn played out: the init chain's two steps, the join with a fresh
+/// The run joined at the spawn on the TV's listing with the props in and
+/// the interface's model held, as the TV's run holds it (openspec AT.9),
+/// his spawn played out: the init chain's two steps, the join with a fresh
 /// figure, 120 steps; the stops in play on the way.
 fn joined(mode: Mode) -> (Run, Vec<(u32, Halt)>, HashMap<MemberId, String>) {
     let (mut run, found) = run_on_with(
         mode,
         Setup {
             props: true,
+            interface: true,
             ..Setup::default()
         },
     );
@@ -1300,6 +1302,18 @@ fn from_the_start_to_anchor_b_and_the_open_gate_on_the_scripts_alone() {
         reached.len() <= 325,
         "past AG.28's ceiling: {}",
         reached.len()
+    );
+    // AT.9: the interface's members on the model through the route and
+    // the fight, strict, with nothing asked of what holds no sprite and no
+    // member the keeper doesn't answer (a bite's number coming and going is
+    // `giants_chompy`'s, where Chompies bite).
+    let k = d.run.world.interface().expect("the run holds the model");
+    assert!(k.strays().is_empty(), "strays: {:?}", k.strays());
+    assert!(k.unknown().is_empty(), "unknown: {:?}", k.unknown());
+    println!(
+        "interface: {} instances awake, {} sprites taken off",
+        k.instances().len(),
+        k.model().removed().len()
     );
     // A dev aid: `AH28_MEMBERS_OUT=<file outside the tree>` writes every
     // member reached by name.

@@ -141,6 +141,11 @@ pub(super) struct Engine {
     /// Each op's receiver, in order.
     receivers: Vec<Value>,
     items: Vec<Value>,
+    /// Each write of a set reference it copies, its elements.
+    written: Vec<Vec<Value>>,
+    /// What each read of a set reference it copies finds changed, in turn.
+    refs: std::collections::VecDeque<Option<Vec<Value>>>,
+    resets: usize,
 }
 
 impl Host for Engine {
@@ -156,6 +161,7 @@ impl Host for Engine {
         Ok(())
     }
     fn reset(&mut self, at: &Access) -> Result<(), HostFault> {
+        self.resets += 1;
         self.cells
             .remove(&(format!("{:?}", at.receiver), at.member));
         Ok(())
@@ -189,6 +195,13 @@ impl Host for Engine {
     }
     fn elements(&mut self, _: &Access) -> Result<Vec<Value>, HostFault> {
         Ok(self.items.clone())
+    }
+    fn set_elements(&mut self, _: &Access, elements: &[Value]) -> Result<(), HostFault> {
+        self.written.push(elements.to_vec());
+        Ok(())
+    }
+    fn set_ref(&mut self, _: &Access) -> Option<Vec<Value>> {
+        self.refs.pop_front().flatten()
     }
 }
 
@@ -984,6 +997,203 @@ fn an_engine_set_member_is_read_whole_from_the_host() {
         vm.local(id, "n"),
         Some(Value::Int(2)),
         "read anew each time"
+    );
+}
+
+/// A set reference the host copies (openspec AT.9: the string converter's
+/// `value set`): the VM keeps the script's own set, reading it back as
+/// written while the host changed nothing; each write hands the host the
+/// set's elements as they read (numbers in cells of their own as the
+/// numbers, a null as none), a number dropped; a set the host changed reads
+/// as a fresh set of number cells, kept from then; a reset asks the host
+/// too.
+#[test]
+fn a_set_reference_the_host_copies_is_the_vms_with_the_hosts_copy() {
+    let p = program(|w| {
+        let s = w.variable("s", "ScriptSet", Some("ValueInfo"));
+        let (same, n, m, first) = (var(w, "same"), var(w, "n"), var(w, "m"), var(w, "first"));
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let two = w.int(2);
+                w.set(&[El::Local(s), El::Member("setvariant", "count")], two);
+                for (i, v) in [72, 105].into_iter().enumerate() {
+                    let set_ref = w.reference(&[El::Local(s)], None);
+                    let (lit, idx) = (w.int(v), w.int(i as i32));
+                    let elem = w.variable(&format!("e{i}"), "ScriptReference", None);
+                    let o = w.op(Class::SetReference, "set *reference||to");
+                    let lhs = w.stack(StackClass::Reference, &[El::Local(elem)]);
+                    w.refer(o, 0x1C, lhs);
+                    w.refer(o, 0x20, set_ref);
+                    w.refer(o, 0x24, idx);
+                    w.push(o);
+                    w.set(
+                        &[
+                            El::Local(elem),
+                            El::Member("abstractscriptgroup", "valuedereferencer"),
+                        ],
+                        lit,
+                    );
+                }
+                let text = [El::Member("test", "text")];
+                setref(w, &text, &[El::Local(s)]);
+                // Read back as the script's own set.
+                let p = check_ref(w, &text, 1, &[El::Local(s)]);
+                let one = w.int(1);
+                w.set(&[El::Local(same)], one);
+                w.end_block(p);
+                let c = w.rhs(
+                    INT,
+                    &[
+                        El::Member("test", "text"),
+                        El::Member("setvariant", "count"),
+                    ],
+                );
+                w.set(&[El::Local(n)], c);
+                // The host changed it: a fresh set of its numbers.
+                let c = w.rhs(
+                    INT,
+                    &[
+                        El::Member("test", "text"),
+                        El::Member("setvariant", "count"),
+                    ],
+                );
+                w.set(&[El::Local(m)], c);
+                let f = w.rhs(
+                    INT,
+                    &[
+                        El::Member("test", "text"),
+                        El::Member("setvariant", "first"),
+                    ],
+                );
+                w.set(&[El::Local(first)], f);
+                setref(w, &text, &[El::Member("abstractscriptgroup", "null")]);
+                let seven = w.int(7);
+                w.set(&text, seven);
+                reset(w, &text);
+            },
+        );
+    });
+    let mut c = Config::new(Mode::Strict);
+    c.members
+        .host("test", "text", MemberSpec::new(Kind::SetRef, 0.0, 0.0));
+    let mut vm = Vm::new(p, c);
+    let id = vm.add(HANDLE, "Writer", 0);
+    let mut host = Engine {
+        refs: vec![
+            None,
+            None,
+            Some(vec![Value::Int(65), Value::Int(66), Value::Int(67)]),
+        ]
+        .into(),
+        ..Engine::default()
+    };
+    vm.tick(id, &mut host).unwrap();
+    assert_eq!(
+        host.written,
+        vec![vec![Value::Int(72), Value::Int(105)], vec![]],
+        "the set's numbers, then none for the null, the number dropped"
+    );
+    assert_eq!(vm.local(id, "same"), Some(Value::Int(1)));
+    assert_eq!(vm.local(id, "n"), Some(Value::Int(2)));
+    assert_eq!(vm.local(id, "m"), Some(Value::Int(3)), "the host's set");
+    assert_eq!(
+        vm.local(id, "first"),
+        Some(Value::Int(65)),
+        "kept from then"
+    );
+    assert_eq!(host.resets, 1);
+}
+
+/// A set the host changed grows as a script's set of numbers grows (the
+/// review of AT.9: `Text - String Concatenate` grows `value set` after a
+/// `text` write hands its characters back): each element added a number
+/// cell a script can write through a reference, read back as written; each
+/// of the host's own elements one too (`Text.ai` reads its characters
+/// through a value dereferencer); the set handed to the host whole at its
+/// next write.
+#[test]
+fn a_set_the_host_changed_grows_number_cells() {
+    let p = program(|w| {
+        // A set of numbers declared and used as the disc's scripts do, so
+        // the program names `ValueInfo`.
+        let numbers = w.variable("numbers", "ScriptSet", Some("ValueInfo"));
+        let (last, n, first) = (var(w, "last"), var(w, "n"), var(w, "first"));
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let zero = w.int(0);
+                w.set(
+                    &[El::Local(numbers), El::Member("setvariant", "count")],
+                    zero,
+                );
+                let text = [El::Member("test", "text")];
+                let three = w.int(3);
+                w.set(&[text[0], El::Member("setvariant", "count")], three);
+                let set_ref = w.reference(&text, None);
+                let (lit, idx) = (w.int(67), w.int(2));
+                let elem = w.variable("e", "ScriptReference", None);
+                let o = w.op(Class::SetReference, "set *reference||to");
+                let lhs = w.stack(StackClass::Reference, &[El::Local(elem)]);
+                w.refer(o, 0x1C, lhs);
+                w.refer(o, 0x20, set_ref);
+                w.refer(o, 0x24, idx);
+                w.push(o);
+                w.set(
+                    &[
+                        El::Local(elem),
+                        El::Member("abstractscriptgroup", "valuedereferencer"),
+                    ],
+                    lit,
+                );
+                let v = w.rhs(
+                    INT,
+                    &[
+                        El::Local(elem),
+                        El::Member("abstractscriptgroup", "valuedereferencer"),
+                    ],
+                );
+                w.set(&[El::Local(last)], v);
+                let c = w.rhs(INT, &[text[0], El::Member("setvariant", "count")]);
+                w.set(&[El::Local(n)], c);
+                // One of the host's own elements, written and read through a
+                // reference as `Text.ai` reads its characters.
+                let set_ref = w.reference(&text, None);
+                let (lit, idx) = (w.int(90), w.int(0));
+                let head = w.variable("h", "ScriptReference", None);
+                let o = w.op(Class::SetReference, "set *reference||to");
+                let lhs = w.stack(StackClass::Reference, &[El::Local(head)]);
+                w.refer(o, 0x1C, lhs);
+                w.refer(o, 0x20, set_ref);
+                w.refer(o, 0x24, idx);
+                w.push(o);
+                let deref = El::Member("abstractscriptgroup", "valuedereferencer");
+                let was = w.rhs(INT, &[El::Local(head), deref]);
+                w.set(&[El::Local(first)], was);
+                w.set(&[El::Local(head), deref], lit);
+                setref(w, &text, &text);
+            },
+        );
+    });
+    let mut c = Config::new(Mode::Strict);
+    c.members
+        .host("test", "text", MemberSpec::new(Kind::SetRef, 0.0, 0.0));
+    let mut vm = Vm::new(p, c);
+    let id = vm.add(HANDLE, "Writer", 0);
+    let mut host = Engine {
+        refs: vec![Some(vec![Value::Int(65), Value::Int(66)])].into(),
+        ..Engine::default()
+    };
+    vm.tick(id, &mut host).unwrap();
+    assert_eq!(vm.local(id, "last"), Some(Value::Int(67)));
+    assert_eq!(vm.local(id, "n"), Some(Value::Int(3)));
+    assert_eq!(vm.local(id, "first"), Some(Value::Int(65)));
+    assert_eq!(
+        host.written,
+        vec![vec![Value::Int(90), Value::Int(66), Value::Int(67)]],
+        "the grown set handed over whole, its first written through"
     );
 }
 
