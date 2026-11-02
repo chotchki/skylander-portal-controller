@@ -2029,9 +2029,19 @@ fn write_level(dir: &mut guac_extract::IdentityDir, entry: LevelEntry) -> Result
     let rel = ir.level_path(&level, guac_extract::levels::NODES);
     dir.write_output(&rel, &ir.encode(&nodes, dir, &rel)?)?;
     dir.record_level_part(&level, guac_extract::levels::NODES, vec![rel])?;
+    // AS.17's particles: the level places no emitter of its own.
+    let particles = guac_ir::particle::LevelEmitters {
+        identity: nodes.identity,
+        level: level.clone(),
+        emitters: Vec::new(),
+        refused: Vec::new(),
+    };
+    let rel = guac_extract::levels::part_path(ir, &level, guac_extract::levels::PARTICLES);
+    dir.write_output(&rel, &ir.encode(&particles, dir, &rel)?)?;
+    dir.record_level_part(&level, guac_extract::levels::PARTICLES, vec![rel])?;
     // AT.8's sprites: no templates, fonts or text of the level's own.
     let sprites = guac_ir::interface::Interface {
-        identity: nodes.identity,
+        identity: particles.identity,
         archive: format!("{}/{level}.bld", guac_extract::levels::LEVEL_FOLDER),
         templates: Vec::new(),
         fonts: Vec::new(),
