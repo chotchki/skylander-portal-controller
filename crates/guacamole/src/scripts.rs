@@ -2412,7 +2412,14 @@ pub struct Encounter {
 /// front of it, whose script steers it at the hero by `move to` at 25 ft/s
 /// turning 50°/s for 2.5 s, laying dirt mounds behind it, and strikes the
 /// first within 4 ft; its box meets neither actors nor the level, so it's
-/// steered with no body, never walked).
+/// steered with no body, never walked); then its next fight (AS.84),
+/// Setup_004's controller (woken at Setup_003's trigger, it walks its three
+/// Elf Nears to their posts; past the locked door ([`DOOR_SCRIPTS`]) its
+/// first trigger sets them on their rounds, its second scares its Mabu,
+/// who runs his waypoints to the house by the yard and goes in, and sets
+/// the elves on the hero, its third wakes its Tree Rex and Chompy spawner)
+/// and the five it wakes, its Mabu walked as a creature (his capsule meets
+/// the level).
 pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
     level: "level_214_tutotial_2",
     placements: &[
@@ -2436,6 +2443,14 @@ pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
         "Enemy_Chompy2_E(3)",
         "Enemy_Chompy2_E(4)",
         "Enemy_TreeRex(2)",
+        // Setup_004, past the locked door (openspec AS.84).
+        "Setup_004_Controller",
+        "Setup_004_NPC_Mabu",
+        "Enemy_Elf_Near_A",
+        "Enemy_Elf_Near_B",
+        "Enemy_Elf_Near_C",
+        "Enemy_TreeRex(1)",
+        "Enemy_Chompy_Spawner(2)",
     ],
     clones: &["_Template_Undead_Chompy"],
     steered: &["TreeRex_special_homing_actor"],
@@ -2662,6 +2677,25 @@ pub const BOMB_SCRIPTS: [&str; 6] = [
     "StoneWall_Game2_Version.ai",
     "Pan_Show_Bomb.ai",
     "BombTImer.ai",
+];
+
+/// The locked doors and their keys (openspec AS.84), every tick, by script:
+/// a key spawner (`Key_Pickup_Spawner.ai`) lays its key (`Key_pickup.ai`),
+/// which a hero walking into takes; at a door (`Door_Skylanders_2.ai`, its
+/// id the keys it wants) a hero with a key starts the door's prompt, a tap
+/// of his fourth action (△, the gesture manager [`BOMB_SCRIPTS`] lists)
+/// turns it in the lock (`Door_Key.ai`, `Door_Lock_Intact_Wood.ai`, the
+/// lock's pieces `Door_Lock.ai`), and once every lock turns the door opens.
+/// Level 214's second island holds three: the first, at the way out of the
+/// gangplank's yard, opens to the key in the lobe below it. Chapter 1
+/// places none.
+pub const DOOR_SCRIPTS: [&str; 6] = [
+    "Key_Pickup_Spawner.ai",
+    "Key_pickup.ai",
+    "Door_Skylanders_2.ai",
+    "Door_Key.ai",
+    "Door_Lock_Intact_Wood.ai",
+    "Door_Lock.ai",
 ];
 
 /// Level 214's bomb hints (openspec AS.57), by placement name: each plays
@@ -2943,6 +2977,8 @@ pub fn smash_config(mode: Mode) -> Config {
         // Level 214's bombs (openspec AS.57).
         scripts.extend(BOMB_SCRIPTS.iter().map(|s| (*s).to_owned()));
         placements.extend(BOMB_HINTS.iter().map(|s| (*s).to_owned()));
+        // The locked doors and their keys (openspec AS.84).
+        scripts.extend(DOOR_SCRIPTS.iter().map(|s| (*s).to_owned()));
         // Level 214's ship (openspec AS.60).
         placements.extend(SHIP.iter().map(|s| (*s).to_owned()));
         scripts.extend(EFFECT_SCRIPTS.iter().map(|s| (*s).to_owned()));
@@ -5126,6 +5162,39 @@ mod tests {
                 .whitelist
                 .lists("Enemy_TreeRex(1)", "C:/x/S2_Enemy_TreeRex.ai")
         );
+    }
+
+    /// openspec AS.84: level 214's fourth fight by name, its Mabu among the
+    /// walked (his capsule meets the level), on 214's listing alone; the
+    /// locked doors and their keys by script, every tick.
+    #[test]
+    fn level_214s_fourth_fight_and_its_locked_doors_are_listed() {
+        let files = Files::default();
+        let l214 = level_config(Mode::Play, &files, 4, "level_214_tutotial_2");
+        let other = level_config(Mode::Play, &files, 4, "level_212");
+        let e = encounter("level_214_tutotial_2").unwrap();
+        for name in [
+            "Setup_004_Controller",
+            "Setup_004_NPC_Mabu",
+            "Enemy_Elf_Near_A",
+            "Enemy_Elf_Near_B",
+            "Enemy_Elf_Near_C",
+            "Enemy_TreeRex(1)",
+            "Enemy_Chompy_Spawner(2)",
+        ] {
+            assert!(l214.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+            assert!(!other.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+            assert!(e.placements.contains(&name), "{name} walked");
+        }
+        for script in DOOR_SCRIPTS {
+            let path =
+                format!("C:/tfb/Content/Levels/Includes/GameElement_Door_and_Key/Scripts/{script}");
+            assert_eq!(
+                l214.whitelist.listing("a placement", &path),
+                guac_script::Listed::Every,
+                "{script}"
+            );
+        }
     }
 
     /// openspec AS.59: level 214's way from its first island to its second
