@@ -356,9 +356,21 @@
 //!   review; `for each` walks the object its path reads with no check that
 //!   it's a set). The same set for the same object is ours: nothing on the
 //!   disc changes a set made so (AT.44's review: 411 places over every
-//!   level, none written into), so whose it is can't show. A number
-//!   variable handed by reference (the bit-field macros' `values in`, its
-//!   edit type `AbstractNumberMeasurement`) still drops, AT.47.
+//!   level, none written into), so whose it is can't show.
+//! - A number variable handed to a set reference by reference (a run-time
+//!   one, a file's, a structure's field, a number a member holds) reads as
+//!   a set of that variable: a reference read off it at an index is the
+//!   variable, so a read through that reference reads its number and a
+//!   write through it lands in the variable (openspec AT.47). Read off the
+//!   disc: the bit-field macros (`Save - Bit Field - Get Bit Field` and
+//!   `Set Bit Field`, `UI - Get/Set Sprite Bits`) take `values in` by set
+//!   reference and read or write `values in[set index]` through a
+//!   reference, and their callers hand one number variable, the right
+//!   side's edit type `AbstractNumberMeasurement`, the shape AT.44 read for
+//!   objects. Dropped, every Get read 0 and every Set wrote nothing. The
+//!   same set again while it holds that variable alone, as an object's; a
+//!   member's number is a fresh set each time, as its reference read is a
+//!   fresh place. A literal number still drops.
 //! - `global.bld`'s numbers, screen positions, colours, sets, structures and
 //!   references are cells made from the file on first use and shared by
 //!   every placement.

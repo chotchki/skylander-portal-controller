@@ -203,6 +203,8 @@ struct SetObj {
 enum Lone {
     Object(Obj),
     Entity(u64),
+    /// A run-time number variable ([`Vm::set_of_number`]).
+    Cell(u32),
 }
 
 #[derive(Debug, Clone)]
@@ -4873,6 +4875,13 @@ impl Vm {
             }
             CellKind::Reference => self.cells[c as usize].value = v,
             CellKind::SetReference => {
+                // A number variable by reference reads as a set of it, the
+                // variable its element (crate docs, Variables, structures
+                // and sets; openspec AT.47).
+                if let Some(one) = self.set_of_number(v) {
+                    self.cells[c as usize].value = Value::Set(one);
+                    return;
+                }
                 let m = self.materialize(v);
                 if matches!(m, Value::Set(_)) {
                     self.cells[c as usize].value = m;
@@ -4922,6 +4931,49 @@ impl Vm {
         });
         let s = (self.sets.len() - 1) as u32;
         self.lone.insert(key, s);
+        Some(s)
+    }
+
+    /// The set of one a number variable by reference written into a set
+    /// reference reads as (crate docs, Variables, structures and sets;
+    /// openspec AT.47): its element the place itself (a run-time value
+    /// cell, a file's number, a number a member or a packed value holds),
+    /// so a reference read off it at an index reads the number and a write
+    /// through that reference lands in the variable. The same set again
+    /// while it holds that place alone, as [`Vm::set_of_one`]'s; a member's
+    /// or a packed value's place is a fresh set each write, as its
+    /// reference read is a fresh place. Anything else makes none.
+    fn set_of_number(&mut self, v: Value) -> Option<u32> {
+        let key = match v {
+            Value::Cell(c) if self.cells.get(c as usize)?.kind == CellKind::Value => {
+                Some(Lone::Cell(c))
+            }
+            Value::Object(o)
+                if self.program.global_of(o).is_some_and(|g| {
+                    matches!(self.program.globals[g as usize].1, Global::Number(_))
+                }) =>
+            {
+                Some(Lone::Object(o))
+            }
+            Value::Bound(_) => None,
+            _ => return None,
+        };
+        if let Some(key) = key
+            && let Some(&s) = self.lone.get(&key)
+            && self.sets[s as usize].elems.as_slice() == [v]
+        {
+            return Some(s);
+        }
+        let elem = self.program.find_sym("valueinfo").map(Contents::Class);
+        self.sets.push(SetObj {
+            elems: vec![v],
+            elem,
+            next: 0,
+        });
+        let s = (self.sets.len() - 1) as u32;
+        if let Some(key) = key {
+            self.lone.insert(key, s);
+        }
         Some(s)
     }
 
