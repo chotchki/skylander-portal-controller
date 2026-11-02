@@ -31,8 +31,9 @@ use crate::scripts::{WorldHost, running};
 /// The cutscenes the TV skips once they've run a frame, by the name of the
 /// macro defining them: chapter 1's outro, whose first scene's sixth step
 /// (Norticus' animation) waits on a thread time our host never brings past
-/// its delay of 0.
-pub const SKIPPED_CUTSCENES: [&str; 1] = ["213 Outro IGC"];
+/// its delay of 0, and level 214's intro (openspec AS.47), whose first scene
+/// runs on and never ends on our host (70 s of it, headless).
+pub const SKIPPED_CUTSCENES: [&str; 2] = ["213 Outro IGC", "214 Intro IGC"];
 
 /// The macro the original's skip runs, and the game systems' script whose
 /// tick runs the cutscene system's update.

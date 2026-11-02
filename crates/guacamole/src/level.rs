@@ -221,6 +221,30 @@ pub(crate) const MATERIALS_PER_FRAME: usize = 64;
 /// sampler).
 type ImageKey = (String, bool, Sampler);
 
+/// Whether a level's sounds are on their way (openspec AR.30): the Giants
+/// pick's extraction yet to end its sounds stage, which a first run hands
+/// chapter 1 over ahead of (AT.26). A level asked for by name is fetched
+/// once that extraction has ended, its own sounds with it (AR.30), so none
+/// of its are ever on their way; with no extraction (no pick yet, a test),
+/// none are.
+pub(crate) fn sounds_coming(extraction: Option<&Extraction>) -> bool {
+    use crate::extraction::ExtractStatus as S;
+    extraction.is_some_and(|e| {
+        matches!(
+            e.status,
+            S::Starting
+                | S::Checking { .. }
+                | S::Roster { .. }
+                | S::Models { .. }
+                | S::Level { .. }
+                | S::Scripts { .. }
+                | S::Particles { .. }
+                | S::Sprites { .. }
+                | S::Sounds { .. }
+        )
+    })
+}
+
 /// What the reading task hands the frame.
 struct Built {
     level: String,
@@ -500,7 +524,11 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
     // idle.
     let palettes: Option<guac_ir::palette::LevelPalettes> = match read_ir(
         source.ir,
-        &part(guac_extract::levels::PALETTES),
+        &source.dir.join(guac_extract::levels::part_path(
+            source.ir,
+            &source.level,
+            guac_extract::levels::PALETTES,
+        )),
     ) {
         Ok(p) => Some(p),
         Err(why) => {
@@ -1761,14 +1789,17 @@ fn receive_sounds(feed: Option<Res<SoundsFeed>>, mut level: ResMut<Level>) {
 /// lacked it); one after finds its recording; the level's music, held
 /// while the book lacked the level's sounds, starts (AR.23,
 /// [`crate::hero_scripts::hold_music`]). A read for a run since replaced is
-/// dropped.
+/// dropped. Music held for sounds that then aren't coming (the sounds stage
+/// ended without them) is let go to run silent (openspec AR.30).
 fn sounds_again(
     mut level: ResMut<Level>,
     source: Option<ResMut<ScriptSource>>,
     world: Option<ResMut<ScriptWorld>>,
     runtime: Option<ResMut<guacamole::scripts::ScriptRuntime>>,
+    extraction: Option<Res<Extraction>>,
 ) {
     let level = &mut *level;
+    let coming = sounds_coming(extraction.as_deref());
     if let Some(task) = level.sounds_again.as_mut() {
         let Some((program, part)) = check_ready(task) else {
             return;
@@ -1786,18 +1817,37 @@ fn sounds_again(
         level.report.sounds_again_ms = level.ms();
         level.report.sounds_again_archives = Some(part.stems.len());
         source.set_sounds(part);
-        // Chapter 1's music alone waits for its sounds (AR.27; AS.15's
-        // review: [`crate::hero_scripts::hold_music`]).
-        if let (true, Some(unit), Some(mut runtime)) =
-            (source.chapter_1(), source.level_unit(), runtime)
-        {
-            let music =
-                guacamole::scripts::hold_music(&mut runtime.vm, &mut world, source.files(), unit);
+        // The level's music held for them starts (AR.23), or runs silent if
+        // they came without the level's (AR.30).
+        if let (Some(unit), Some(mut runtime)) = (source.level_unit(), runtime) {
+            let music = guacamole::scripts::hold_music_while(
+                &mut runtime.vm,
+                &mut world,
+                source.files(),
+                unit,
+                coming,
+            );
             crate::hero_scripts::log_music(music);
         }
         return;
     }
     if !level.sounds_landed || level.scripts.is_some() {
+        // Held for sounds that aren't coming now (AR.30): let go, silent.
+        if !coming
+            && level.scripts.is_none()
+            && let (Some(source), Some(mut world), Some(mut runtime)) = (source, world, runtime)
+            && world.music_held() > 0
+            && let Some(unit) = source.level_unit()
+        {
+            let music = guacamole::scripts::hold_music_while(
+                &mut runtime.vm,
+                &mut world,
+                source.files(),
+                unit,
+                false,
+            );
+            crate::hero_scripts::log_music(music);
+        }
         return;
     }
     let (Some(source), Some(from)) = (source, level.source.as_ref()) else {
@@ -5402,9 +5452,11 @@ mod tests {
             .insert_resource(world)
             .insert_resource(runtime)
             .insert_resource(feed)
+            .insert_resource(sounds_stage_running())
             .add_systems(Update, (receive_sounds, sounds_again).chain());
         let plays = |app: &mut App| landing.plays(app);
         assert_eq!(plays(&mut app), 0, "no book holds it yet");
+        app.update();
         assert!(landing.music_held(&app), "the music waits (AR.23)");
 
         // The part lands.
@@ -5459,7 +5511,10 @@ mod tests {
         ));
         app.world_mut().resource_mut::<Level>().scripts =
             Some(AsyncComputeTaskPool::get().spawn(std::future::pending()));
+        // The news is sent before the extraction moves past the stage.
         tx.send(SoundsReady { dir: dir.clone() }).unwrap();
+        app.world_mut().resource_mut::<Extraction>().status =
+            crate::extraction::ExtractStatus::Interface { done: 0, total: 85 };
         for _ in 0..20 {
             app.update();
         }
@@ -5488,6 +5543,136 @@ mod tests {
         let w = app.world().resource::<ScriptWorld>();
         assert_eq!(w.plays().last().unwrap().file, file);
         assert!(!landing.music_held(&app), "the music starts with them");
+        assert_eq!(
+            app.world().resource::<ScriptWorld>().music_silent(),
+            0,
+            "with its sounds, not silent"
+        );
+    }
+
+    /// An extraction short of its sounds stage's end: the level's sounds on
+    /// their way (openspec AR.30).
+    fn sounds_stage_running() -> Extraction {
+        Extraction {
+            status: crate::extraction::ExtractStatus::Sounds { done: 3, total: 69 },
+            ..Default::default()
+        }
+    }
+
+    /// AR.30's review: the sounds are on their way through every stage up to
+    /// and through the sounds stage, whichever one chapter 1's hand-off
+    /// lands in (a first run hands it over before its sprites, AT.26), and
+    /// never past it, nor with no pick or a failed one.
+    #[test]
+    fn the_sounds_are_coming_until_the_sounds_stage_ends() {
+        use crate::extraction::{ExtractStatus as S, Failure};
+        let coming = |status: S| {
+            sounds_coming(Some(&Extraction {
+                status,
+                ..Default::default()
+            }))
+        };
+        let n = || (0, 1);
+        for status in [
+            S::Starting,
+            S::Checking {
+                bytes_done: 0,
+                bytes_total: 1,
+            },
+            S::Roster {
+                done: n().0,
+                total: n().1,
+            },
+            S::Models {
+                done: n().0,
+                total: n().1,
+            },
+            S::Level {
+                done: n().0,
+                total: n().1,
+            },
+            S::Scripts {
+                done: n().0,
+                total: n().1,
+            },
+            S::Particles {
+                done: n().0,
+                total: n().1,
+            },
+            S::Sprites {
+                done: n().0,
+                total: n().1,
+            },
+            S::Sounds {
+                done: n().0,
+                total: n().1,
+            },
+        ] {
+            assert!(coming(status.clone()), "{status:?}");
+        }
+        for status in [
+            S::Idle,
+            S::Interface {
+                done: n().0,
+                total: n().1,
+            },
+            S::Indexing,
+            S::Converting {
+                done: 0,
+                total: 1,
+                movie: "intro".into(),
+            },
+            S::Ready {
+                intros: 0,
+                ran: true,
+            },
+            S::Failed(Failure::Other {
+                code: "GUAC-E-EXTRACT-IO".into(),
+                message: "gone".into(),
+            }),
+        ] {
+            assert!(!coming(status.clone()), "{status:?}");
+        }
+        assert!(!sounds_coming(None), "no pick");
+    }
+
+    /// openspec AR.30: the level's music, held while its sounds were on
+    /// their way, is let go to run silent once the extraction moves past its
+    /// sounds stage without news of them (the stage failed), never held for
+    /// good; nothing plays, and nothing is held again.
+    #[test]
+    fn music_held_for_sounds_that_dont_come_runs_silent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        let landing = landing();
+        let empty = guacamole::sounds::load(&dir, IrFormat::Ron, &landing.program.units);
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        let (_tx, feed) = sounds_channel();
+        let mut world = landing.world(&empty);
+        let runtime = landing.runtime(&mut world);
+        app.insert_resource(Level::from_extract_for_tests(dir.clone()))
+            .insert_resource(landing.source())
+            .insert_resource(world)
+            .insert_resource(runtime)
+            .insert_resource(feed)
+            .insert_resource(sounds_stage_running())
+            .add_systems(Update, (receive_sounds, sounds_again).chain());
+        for _ in 0..5 {
+            app.update();
+        }
+        assert!(landing.music_held(&app), "held while they're coming");
+        app.world_mut().resource_mut::<Extraction>().status =
+            crate::extraction::ExtractStatus::Interface { done: 0, total: 85 };
+        app.update();
+        assert!(!landing.music_held(&app), "let go once they aren't");
+        assert_eq!(app.world().resource::<ScriptWorld>().music_held(), 0);
+        assert_eq!(app.world().resource::<ScriptWorld>().music_silent(), 1);
+        for _ in 0..5 {
+            app.update();
+        }
+        assert!(!landing.music_held(&app));
+        assert_eq!(landing.plays(&mut app), 0, "silent");
     }
 
     /// AR.21's other orders: news that comes before any level is asked for

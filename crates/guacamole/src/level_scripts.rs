@@ -48,7 +48,7 @@ pub fn level_palettes(
     level: &str,
     ir: IrFormat,
 ) -> Result<Vec<(String, Vec<f32>)>, String> {
-    let rel = ir.level_path(level, levels::PALETTES);
+    let rel = levels::part_path(ir, level, levels::PALETTES);
     let bytes = std::fs::read(dir.join(&rel)).map_err(|e| format!("{rel}: {e}"))?;
     let p: guac_ir::palette::LevelPalettes = match ir {
         IrFormat::Ron => std::str::from_utf8(&bytes)
@@ -478,10 +478,11 @@ mod tests {
             level_palettes(tmp.path(), LEVEL, ir).unwrap(),
             [("C:/x/Coin.mdl".to_owned(), vec![0.0, 0.5, 0.0])]
         );
-        // Another level's, where level 212's should be.
-        let other = tmp
-            .path()
-            .join(ir.level_path("level_212", levels::PALETTES));
+        // Another level's, where level 212's should be: past the first
+        // run's levels, under the name its rule carries (openspec AS.54).
+        let past = levels::part_path(ir, "level_212", levels::PALETTES);
+        assert_eq!(past, "levels/level_212/palettes.v2.ron");
+        let other = tmp.path().join(&past);
         std::fs::create_dir_all(other.parent().unwrap()).unwrap();
         std::fs::copy(&path, &other).unwrap();
         let e = level_palettes(tmp.path(), "level_212", ir).unwrap_err();

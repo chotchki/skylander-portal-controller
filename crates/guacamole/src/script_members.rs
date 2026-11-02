@@ -107,6 +107,8 @@ pub(crate) enum Member {
     ActorController,
     AttachNodes,
     AttachNode,
+    /// An attach node's root: the actor it's on (openspec AS.47).
+    AttachRoot,
     AttachedObjects,
     Ground,
     ContactType,
@@ -395,6 +397,7 @@ impl Member {
         add("actorinfo", "controller", Member::ActorController);
         add("actorinfo", "attach nodes", Member::AttachNodes);
         add("abstractplacement", "attach node", Member::AttachNode);
+        add("abstractattachnode", "root", Member::AttachRoot);
         add(
             "abstractplacement",
             "attached objects",
@@ -1240,6 +1243,13 @@ impl ScriptWorld {
                 let h = actor.ok_or(HostFault::Nothing)?;
                 self.actors.get(&h).ok_or(HostFault::Nothing)?.attach
             }
+            // A node's root is the actor it's on (openspec AS.47: a scene's
+            // actor attached to the camera rig's node reads the rig by it);
+            // an actor named as a node is its own; nothing, nothing.
+            Member::AttachRoot => match object {
+                Some(Object::Node(owner, _)) => Value::Entity(owner),
+                _ => actor.map_or(Value::Null, Value::Entity),
+            },
             Member::Ground => self.facet(recv, Facet::Ground)?,
             Member::Origin => {
                 let h = actor.ok_or(HostFault::Nothing)?;

@@ -543,6 +543,16 @@ pub struct ScriptWorld {
     /// The level's music placements [`hold_music`] holds until the level's
     /// sounds are read (openspec AR.23), by handle.
     pub(crate) music_held: Vec<Handle>,
+    /// How many of those were let go to run silent, their sounds not coming
+    /// (openspec AR.30, [`Music::Silent`]): what `/api/_test/tv` says of it.
+    pub(crate) music_silent: usize,
+    /// The templates whose clones the engine walks as creatures (openspec
+    /// AS.54, [`ScriptWorld::walk_encounter`]): what a level's spawners
+    /// clone.
+    pub(crate) walk_clones: std::collections::HashSet<Obj>,
+    /// The level's intro held until a hero's minion is in (openspec AS.47,
+    /// [`hold_intro`]), by handle.
+    pub(crate) intro_held: Option<Handle>,
     /// The original's interface the scripts write (openspec AT.9), when
     /// the run's install loaded it ([`crate::interface_host`]).
     pub(crate) interface: Option<guac_interface::Keeper>,
@@ -782,6 +792,9 @@ impl ScriptWorld {
             copy_written: HashMap::new(),
             sound_system: HashMap::new(),
             music_held: Vec::new(),
+            music_silent: 0,
+            walk_clones: Default::default(),
+            intro_held: None,
             interface: None,
             run: fresh_serial(),
         }
@@ -808,6 +821,12 @@ impl ScriptWorld {
     /// waiting for the level's sounds (openspec AR.23).
     pub fn music_held(&self) -> usize {
         self.music_held.len()
+    }
+
+    /// How many held music placements were let go to run silent, the
+    /// level's sounds not coming (openspec AR.30).
+    pub fn music_silent(&self) -> usize {
+        self.music_silent
     }
 
     /// The book the scripts' sounds come from, if one was set.
@@ -1077,6 +1096,40 @@ impl ScriptWorld {
             self.walk(h);
         }
         walkers.len()
+    }
+
+    /// Makes a level's first encounter creatures the engine moves (openspec
+    /// AS.54, [`Encounter`]): each of its placements in the file linked as
+    /// `unit` with movement numbers walked now, as chapter 1's first fight's
+    /// are, and each clone a script makes later of one of its templates
+    /// walked as it's made. The placements walked and the templates found.
+    pub fn walk_encounter(&mut self, unit: u16, encounter: &Encounter) -> (usize, usize) {
+        let walkers: Vec<Handle> = encounter
+            .placements
+            .iter()
+            .filter_map(|n| self.placed_in(unit, n))
+            .filter(|h| {
+                self.actors
+                    .get(h)
+                    .and_then(|a| a.obj)
+                    .and_then(|o| self.templates.get(&o))
+                    .is_some_and(|p| p.physics.is_some())
+            })
+            .collect();
+        for &h in &walkers {
+            self.walk(h);
+        }
+        let templates: Vec<Obj> = self
+            .templates
+            .iter()
+            .filter(|(o, p)| {
+                o.unit == unit && p.physics.is_some() && encounter.clones.contains(&p.name.as_str())
+            })
+            .map(|(o, _)| *o)
+            .collect();
+        let found = templates.len();
+        self.walk_clones.extend(templates);
+        (walkers.len(), found)
     }
 
     /// Makes each placement of the file linked as `unit` that runs one of
@@ -1888,6 +1941,18 @@ impl ScriptWorld {
             a.angles.facing = f;
         }
         a.origin = a.position;
+        // A clone of a template the level's encounter walks walks too
+        // (openspec AS.54): a spawner's Chompy steered as a placed one is.
+        if hero.is_none()
+            && a.walker.is_none()
+            && source.is_some_and(|t| self.walk_clones.contains(&t))
+        {
+            a.walker = Some(Box::new(crate::script_engine::Walker {
+                body: None,
+                aim: guac_motion::steer::Aim::Still,
+                along: 0,
+            }));
+        }
         self.actors.insert(h, a);
         if let Some(hero) = engine.hero(h) {
             if let Some(p) = place {
@@ -2099,6 +2164,95 @@ pub const FIRST_FIGHT: [&str; 11] = [
     "Chompie_Dummies(6)",
 ];
 
+/// A level's first encounter past chapter 1 (openspec AS.54): its own
+/// placements the TV's listing names, by name, as chapter 1's
+/// [`FIRST_FIGHT`] does (another of the level's placements running the same
+/// script stays inert), and the templates its scripts clone, whose clones
+/// are listed (a clone runs under its template's name) and walked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Encounter {
+    pub level: &'static str,
+    pub placements: &'static [&'static str],
+    pub clones: &'static [&'static str],
+}
+
+/// The first encounters the TV runs past chapter 1's. Level 214's: the
+/// Chompy pods on the first island past the dock, Setup_001's controller
+/// (it plays the pods' scene as the hero passes its first trigger, then
+/// wakes them) and its two spawners, each cloning its pod at its start and
+/// Chompies from the undead Chompy template (its `chompy type`) once woken.
+pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
+    level: "level_214_tutotial_2",
+    placements: &[
+        "Setup_001_Controller",
+        "Enemy_Chompy_Spawner(1)",
+        "Enemy_Chompy_Spawner(5)",
+    ],
+    clones: &["_Template_Undead_Chompy"],
+}];
+
+/// The intros the TV runs past chapter 1's, by level and placement
+/// (openspec AS.47): none yet. Level 214's (`214_Intro_IGC`, awake from the
+/// load) runs headless to its hand-over, held for the hero
+/// ([`hold_intro`]) and skipped a frame in
+/// ([`crate::level_end::SKIPPED_CUTSCENES`]), but takes the ship the
+/// players stand on with it: its STARTUP takes `The_Ship_1` off and the
+/// skip takes off both clones its cutscene made of `214_Intro_Ship`, so the
+/// deck would show nothing under them (AS.60).
+pub const INTROS: [(&str, &str); 0] = [];
+
+/// The intro placement of the level whose archive is `level`, if the TV
+/// runs one.
+pub fn intro(level: &str) -> Option<&'static str> {
+    INTROS.iter().find(|(l, _)| *l == level).map(|(_, p)| *p)
+}
+
+/// The intro placement `placement` of the file linked as `level` (a level's
+/// [`intro`]) held before its first tick until a hero's
+/// minion is in (his join's activation lets it go, openspec AS.47; on the
+/// TV once his entry beam lands): the original's
+/// players are in the level when its intro starts, so its cutscene takes
+/// them and hands them over where it ends; the TV's run starts on the
+/// portal view, before any hero is in (a hypothesis: stand-in ledger
+/// `spawn`). Whether it held one.
+pub fn hold_intro(
+    vm: &mut Vm,
+    world: &mut ScriptWorld,
+    files: &Files,
+    level: u16,
+    placement: &str,
+) -> bool {
+    let Some(&h) = files
+        .placed
+        .iter()
+        .find(|p| p.obj.unit == level && p.name == placement)
+        .and_then(|p| world.handles().get(&p.obj))
+    else {
+        return false;
+    };
+    if vm.placement_of(h).is_none() || !vm.set_suspended(h, true) {
+        return false;
+    }
+    world.intro_held = Some(h);
+    true
+}
+
+/// The intro [`hold_intro`] held let go, to run its STARTUP at its next
+/// tick: what a hero's join does once his minion's in. Whether one was
+/// held.
+pub fn release_intro(vm: &mut Vm, world: &mut ScriptWorld) -> bool {
+    match world.intro_held.take() {
+        Some(h) => vm.set_suspended(h, false),
+        None => false,
+    }
+}
+
+/// The first encounter of the level whose archive is `level`, if the TV
+/// runs one past chapter 1's.
+pub fn encounter(level: &str) -> Option<&'static Encounter> {
+    ENCOUNTERS.iter().find(|e| e.level == level)
+}
+
 /// The loot on the way to the first fight (openspec AH.20, design decision
 /// 2's whitelist: the coins in reach and the loot macros): the level's loot
 /// system's first tick and the spinning coins on chapter 1's walkway and on
@@ -2231,14 +2385,23 @@ pub const ROUTE_SCRIPTS: [&str; 6] = [
 /// (the death stars).
 pub const EFFECT_SCRIPTS: [&str; 2] = ["LevelUp.ai", "MinionDeathActor.ai"];
 
-/// Chapter 1's music (openspec AR.11, AR.4's reading): the level's music
-/// controller, which plays its intro track at its start, its tracks
-/// through the level's transitions and the combat bed for the robot, and its
-/// watchers, the combat watcher (the inside combat bed and its two
-/// percussion stingers), the interior watcher (inside and explore swapped),
-/// the three elemental gates' and the audio environment's and the robot's
-/// ducking, each placed or spawned by the controller; every tick.
-pub const MUSIC_SCRIPTS: [&str; 8] = [
+/// The levels' music, every tick, by script. Chapter 1's (openspec AR.11,
+/// AR.4's reading): the level's music controller, which plays its intro
+/// track at its start, its tracks through the level's transitions and the
+/// combat bed for the robot, and its watchers, the combat watcher (the
+/// inside combat bed and its two percussion stingers), the interior watcher
+/// (inside and explore swapped), the three elemental gates' and the audio
+/// environment's and the robot's ducking, each placed or spawned by the
+/// controller. Level 214's (openspec AS.54): its dynamic sound controller,
+/// which starts its explore bed at the level's start, its combat, interior,
+/// elemental and cabin watchers and explore switchers, the wall blow-ups'
+/// transitions, the scenes' music player, the two jukeboxes (the hub's
+/// script), the music's mute mix and the beat timer. Neither level places
+/// the other's, but by script they join every level placing them: the beat
+/// timer, the mute mix and the jukebox controller run on 36 other levels
+/// too (the story levels' beat timer, the hub stages' jukeboxes and radios,
+/// the arena challenges'; the as-214-alive review's whole-disc listing).
+pub const MUSIC_SCRIPTS: [&str; 20] = [
     "Music_Level_Controller.ai",
     "snd_combat_watcher_213.ai",
     "snd_interior_watcher_213.ai",
@@ -2247,6 +2410,18 @@ pub const MUSIC_SCRIPTS: [&str; 8] = [
     "snd_elemental_undead_watcher_213.ai",
     "snd_level_audio_environment.ai",
     "snd_robo_ducking.ai",
+    "snd_dynamic_sound_controller_214.ai",
+    "snd_combat_watcher_214.ai",
+    "snd_interior_watcher_214.ai",
+    "snd_elemental_earth_watcher_214.ai",
+    "snd_elemental_fire_watcher_214.ai",
+    "snd_explore_switcher_214.ai",
+    "snd_persephone_cabin_watcher.ai",
+    "snd_wall_blowup_transitions_214.ai",
+    "IGC_Music_Player.ai",
+    "snd_jukebox_controller.ai",
+    "snd_mixtype_music_mute.ai",
+    "time_till_next_beat.ai",
 ];
 
 /// Chapter 1's end (openspec AS.15), every tick: `Temp_Level_Ender`, asleep
@@ -2346,7 +2521,10 @@ pub enum Music {
     Waits(usize),
     /// The level's sounds read: this many held ones let go, to start now.
     Starts(usize),
-    /// The level's sounds read and nothing held: the music runs as it is.
+    /// The book without the level's sounds and none on their way: this many
+    /// held ones let go, to run silent from now (openspec AR.30).
+    Silent(usize),
+    /// Nothing held, and nothing to hold: the music runs as it is.
     Runs,
 }
 
@@ -2370,15 +2548,34 @@ pub enum Music {
 /// original's sounds are on its disc from the start (stand-in ledger:
 /// `sound-play`).
 pub fn hold_music(vm: &mut Vm, world: &mut ScriptWorld, files: &Files, level: u16) -> Music {
-    if world.holds_sounds_of(level) {
+    hold_music_while(vm, world, files, level, true)
+}
+
+/// [`hold_music`] keyed on whether the level's sounds are on their way
+/// (openspec AR.30, AR.27's hold): while the book lacks them the music waits
+/// only while `coming` (a first run's sounds stage still to land), never for
+/// good. With none coming it isn't held, and what was is let go to run
+/// silent, as a level whose sounds the extract lacks ran before AR.23.
+pub fn hold_music_while(
+    vm: &mut Vm,
+    world: &mut ScriptWorld,
+    files: &Files,
+    level: u16,
+    coming: bool,
+) -> Music {
+    let booked = world.holds_sounds_of(level);
+    if booked || !coming {
         let held = std::mem::take(&mut world.music_held);
         for &h in &held {
             vm.set_suspended(h, false);
         }
-        return if held.is_empty() {
-            Music::Runs
-        } else {
-            Music::Starts(held.len())
+        return match (held.len(), booked) {
+            (0, _) => Music::Runs,
+            (n, true) => Music::Starts(n),
+            (n, false) => {
+                world.music_silent += n;
+                Music::Silent(n)
+            }
         };
     }
     for p in files.placed.iter().filter(|p| p.obj.unit == level) {
@@ -2411,8 +2608,8 @@ pub fn is_music_script(path: &str) -> bool {
 /// creatures' and the loop's: the destructibles system makes a breakable a
 /// combat target), AG.60's start scripts on the props and AG.28's camera
 /// volumes and activator, the level-up's and the death actor's
-/// ([`EFFECT_SCRIPTS`], AH.39) and chapter 1's music ([`MUSIC_SCRIPTS`],
-/// AR.16), the first fight's placements left inert until AH.25's entry
+/// ([`EFFECT_SCRIPTS`], AH.39) and the levels' music ([`MUSIC_SCRIPTS`],
+/// AR.16, AS.54), the first fight's placements left inert until AH.25's entry
 /// brings them; AS.11's every-level table ([`members::LEVELS`], openspec
 /// AS.37) registered with the rest.
 pub fn smash_config(mode: Mode) -> Config {
@@ -2445,8 +2642,8 @@ pub fn smash_config(mode: Mode) -> Config {
         scripts.extend(GOAT_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(ROUTE_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(EFFECT_SCRIPTS.iter().map(|s| (*s).to_owned()));
-        // Chapter 1's music (openspec AR.16): their rolls draw on the
-        // session's generator, as the original's do.
+        // The levels' music (openspec AR.16, AS.54): their rolls draw on
+        // the session's generator, as the original's do.
         scripts.extend(MUSIC_SCRIPTS.iter().map(|s| (*s).to_owned()));
         // Chapter 1's end (openspec AS.15).
         scripts.extend(LEVEL_END_SCRIPTS.iter().map(|s| (*s).to_owned()));
@@ -2678,7 +2875,7 @@ pub fn with_walkers(mut config: Config, walkers: &[WalkerScripts]) -> Config {
     config
 }
 
-/// `config` without chapter 1's music scripts ([`MUSIC_SCRIPTS`], openspec
+/// `config` without the levels' music scripts ([`MUSIC_SCRIPTS`], openspec
 /// AR.16): what a probe sets the music's draws apart by. The TV's run lists
 /// them since AR.16 read the original's music controller rolling the same
 /// placed environment sounds' repeat timers.
@@ -2699,17 +2896,28 @@ pub fn fight_config(mode: Mode) -> Config {
     c
 }
 
-/// The TV's listing for a level whose own file links as `level`: chapter
-/// 1's ([`fight_config`], the first fight's placements by name) on chapter
-/// 1, AH.27's ([`smash_config`]) on any other, whose placements named as
-/// chapter 1's fight's are its own (level 214 holds an `Enemy_Chompy(4)` and
-/// a `Setup_001_Controller`); either with [`with_level`] (openspec AS.51).
-pub fn level_config(mode: Mode, files: &Files, level: u16, chapter_1: bool) -> Config {
-    let config = if chapter_1 {
+/// The TV's listing for the level whose archive is `name`, its own file
+/// linked as `level`: chapter 1's ([`fight_config`], the first fight's
+/// placements by name) on chapter 1, AH.27's ([`smash_config`]) on any
+/// other, whose placements named as chapter 1's fight's are its own (level
+/// 214 holds an `Enemy_Chompy(4)` and a `Setup_001_Controller`), with its
+/// first encounter's placements and clones by name where the TV runs one
+/// ([`encounter`], openspec AS.54) and its intro ([`intro`], AS.47);
+/// either with [`with_level`] (AS.51).
+pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config {
+    let mut config = if guac_extract::levels::FIRST_RUN.contains(&name) {
         fight_config(mode)
     } else {
         smash_config(mode)
     };
+    if let (Some(e), Whitelist::Only { placements, .. }) = (encounter(name), &mut config.whitelist)
+    {
+        placements.extend(e.placements.iter().chain(e.clones).map(|s| (*s).to_owned()));
+    }
+    // Its intro (openspec AS.47).
+    if let (Some(i), Whitelist::Only { placements, .. }) = (intro(name), &mut config.whitelist) {
+        placements.push(i.to_owned());
+    }
     with_level(config, files, level)
 }
 
@@ -2950,13 +3158,15 @@ fn activate(
 
 /// After the activation: the portal in adventure mode, the minion's script
 /// and every scripted clone the activation made on the VM, the minion's the
-/// activator. Returns his placement.
+/// activator, and the level's intro let go with his minion in the level to
+/// take (openspec AS.47, [`release_intro`]). Returns his placement.
 fn joined(
     vm: &mut Vm,
     host: &mut WorldHost<'_, '_>,
     pm: PlacementId,
     hero: Handle,
 ) -> Result<PlacementId, Halt> {
+    release_intro(vm, host.world);
     adventure_mode(vm, host, pm)?;
     let scripted = std::mem::take(&mut host.world.scripted);
     let mut minion_placement = None;
@@ -4317,6 +4527,33 @@ mod tests {
         assert_eq!(w.level_end(), None);
     }
 
+    /// openspec AS.47: an attach node's root is the actor it's on; an actor
+    /// named as one is its own; nothing reads nothing. Read-only: a write
+    /// goes nowhere.
+    #[test]
+    fn an_attach_nodes_root_is_the_actor_its_on() {
+        let (mut w, grunt, _) = world();
+        let root = |w: &mut ScriptWorld, v: Option<Value>| {
+            w.get(&at("abstractattachnode", "root", v), &mut NoEngine)
+        };
+        let node = w.objs.value(Object::Node(grunt, 2));
+        assert_eq!(root(&mut w, Some(node)), Ok(Value::Entity(grunt)));
+        assert_eq!(
+            root(&mut w, Some(Value::Entity(grunt))),
+            Ok(Value::Entity(grunt))
+        );
+        assert_eq!(root(&mut w, Some(Value::Null)), Ok(Value::Null));
+        assert!(
+            w.set(
+                &at("abstractattachnode", "root", Some(node)),
+                Value::Null,
+                &mut NoEngine
+            )
+            .is_ok()
+        );
+        assert_eq!(root(&mut w, Some(node)), Ok(Value::Entity(grunt)));
+    }
+
     /// AS.15: a request's text as an archive's name: lower-cased, a level
     /// folder and the extension taken off; nothing for blank text.
     #[test]
@@ -4396,11 +4633,92 @@ mod tests {
         assert_eq!(scripts.len(), base_scripts.len() + 2, "{scripts:?}");
         assert_eq!(first_tick.len(), base_first.len() + 1);
         // Chapter 1's fight is chapter 1's.
-        let fight = level_config(Mode::Play, &files, level, true);
-        let other = level_config(Mode::Play, &files, level, false);
+        let fight = level_config(Mode::Play, &files, level, guac_extract::levels::LEVELS[0]);
+        let other = level_config(Mode::Play, &files, level, "level_212");
         assert!(fight.whitelist.lists(FIRST_FIGHT[0], "C:/x/Any.ai"));
         assert!(!other.whitelist.lists(FIRST_FIGHT[0], "C:/x/Any.ai"));
         assert!(other.whitelist.lists("", "C:/l/Level_Definition_214.ai"));
+        // Level 214's first encounter is 214's (openspec AS.54): its
+        // placements and its clones' template by name, chapter 1's fight's
+        // names off; no other level lists them.
+        let e = encounter("level_214_tutotial_2").expect("214's encounter");
+        let l214 = level_config(Mode::Play, &files, level, e.level);
+        for name in e.placements.iter().chain(e.clones) {
+            assert!(l214.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+            assert!(!other.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+            assert!(
+                !fight.whitelist.lists(name, "C:/x/Any.ai") || FIRST_FIGHT.contains(name),
+                "{name}"
+            );
+        }
+        assert!(!l214.whitelist.lists("Enemy_Chompy(4)", "C:/x/Any.ai"));
+        // Not its intro yet (openspec AS.47, AS.60).
+        assert!(!l214.whitelist.lists("214_Intro_IGC", "C:/x/Any.ai"));
+        assert!(
+            !l214
+                .whitelist
+                .lists("Enemy_Chompy_Spawner(2)", "C:/x/Any.ai")
+        );
+        assert!(encounter("level_212").is_none());
+    }
+
+    /// openspec AS.54: a level's first encounter walks its placements that
+    /// have movement numbers (its spawners), in the level's own file alone,
+    /// and each clone made later of one of its templates walks as it's
+    /// made; a clone of another template doesn't, nor does a placement it
+    /// doesn't name.
+    #[test]
+    fn a_levels_encounter_walks_its_placements_and_its_templates_clones() {
+        const SCRIPT: &str = "C:/tfb/Content/Levels/_Enemies/Chompy/scripts/S2_Enemy_Chompy.ai";
+        let o = |unit, index| Obj { unit, index };
+        let (spawner, legs, template, other, elsewhere) =
+            (o(4, 10), o(4, 11), o(4, 12), o(4, 13), o(2, 14));
+        let moving = |obj, name: &str, state| Placed {
+            physics: Some(Physics::default()),
+            ..Placed::named(obj, name, Some(SCRIPT), state)
+        };
+        let files = Files {
+            placed: vec![
+                moving(spawner, "Enemy_Chompy_Spawner(1)", RUNNING),
+                Placed::named(legs, "Enemy_Chompy_Spawner(5)", Some(SCRIPT), RUNNING),
+                moving(template, "_Template_Undead_Chompy", 5),
+                moving(other, "Enemy_Chompy", 5),
+                moving(elsewhere, "Enemy_Chompy_Spawner(1)", RUNNING),
+            ],
+            ..Files::default()
+        };
+        let handles = headless_handles(&files);
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let e = encounter("level_214_tutotial_2").unwrap();
+        assert_eq!(
+            world.walk_encounter(4, e),
+            (1, 1),
+            "the spawner, the template"
+        );
+        assert_eq!(world.creatures(), [handles[&spawner]]);
+        let mut spawn = headless_spawner(1 << 40);
+        let mut clone_of = |world: &mut ScriptWorld, t: Obj| {
+            let Answer::Run {
+                result: Some(Value::Entity(h)),
+                ..
+            } = world.spawn(
+                Value::Object(t),
+                None,
+                None,
+                handles[&spawner],
+                &mut spawn,
+                &mut NoEngine,
+            )
+            else {
+                panic!("spawned");
+            };
+            h
+        };
+        let chompy = clone_of(&mut world, template);
+        let plain = clone_of(&mut world, other);
+        assert!(world.actor(chompy).is_some_and(|a| a.walker.is_some()));
+        assert!(world.actor(plain).is_some_and(|a| a.walker.is_none()));
+        assert_eq!(world.creatures(), [handles[&spawner], chompy]);
     }
 
     /// AS.51's review: a level definition by its file name, every way the
@@ -5884,15 +6202,11 @@ mod tests {
         }
     }
 
-    /// openspec AR.23: the level's music scripts wait for the level's
-    /// sounds. With no book, or one lacking the level's archive, each
-    /// placement of the level running one of [`MUSIC_SCRIPTS`] is held
-    /// before its first tick (another script's runs on; one a script
-    /// suspended isn't taken as held); once the book holds the level's
-    /// sounds the held ones go, each running its STARTUP at its next tick,
-    /// and after that there's nothing to hold.
-    #[test]
-    fn the_levels_music_waits_for_its_sounds_then_starts() {
+    /// The music hold's run (openspec AR.23, AR.30): one unit of three
+    /// placements, a music controller's, another script's and a second music
+    /// one a script suspended, each counting its STARTUPs (`starts`) and
+    /// ticks (`count`); their placements, in that order.
+    fn music_fixture() -> (Vm, ScriptWorld, Files, [PlacementId; 3]) {
         use guac_formats::igz::builder::IgzBuilder;
         use guac_formats::script::Graph;
         use guac_formats::script::builder::{El, Writer};
@@ -5953,36 +6267,56 @@ mod tests {
         let mut c = Config::new(Mode::Strict);
         c.whitelist = Whitelist::All;
         let mut vm = init_chain(program, &files, &handles, &[0], c);
-        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
         let id = |o: &Obj| {
             let vm = &vm;
             vm.placement_of(handles[o]).unwrap()
         };
-        let (music_id, other_id, suspended_id) = (id(&music), id(&other), id(&suspended));
+        let ids = [id(&music), id(&other), id(&suspended)];
         assert!(vm.set_suspended(handles[&suspended], true), "a script's");
-        let step = |vm: &mut Vm, world: &mut ScriptWorld| {
-            let mut spawn = headless_spawner(1 << 40);
-            let mut host = WorldHost {
-                world,
-                engine: &mut NoEngine,
-                generator: &mut Generator::seeded(1),
-                spawn: &mut spawn,
-            };
-            vm.step(&mut host).unwrap_or_else(|h| panic!("{h}"));
+        (vm, world, files, ids)
+    }
+
+    /// One step of [`music_fixture`]'s run.
+    fn music_step(vm: &mut Vm, world: &mut ScriptWorld) {
+        let mut spawn = headless_spawner(1 << 40);
+        let mut host = WorldHost {
+            world,
+            engine: &mut NoEngine,
+            generator: &mut Generator::seeded(1),
+            spawn: &mut spawn,
         };
-        let book = |archive: &str| {
-            Arc::new(guac_sound::SoundBook::new([guac_ir::sound::Sounds {
-                identity: guac_ir::DumpIdentity {
-                    title_id: "BLUS30968".into(),
-                    app_ver: "01.00".into(),
-                    manifest_hash: guac_ir::Sha256([1; 32]),
-                },
-                archive: archive.into(),
-                sounds: Vec::new(),
-                data: Vec::new(),
-                refused: Vec::new(),
-            }]))
-        };
+        vm.step(&mut host).unwrap_or_else(|h| panic!("{h}"));
+    }
+
+    /// A book holding one archive's sounds, none in it.
+    fn book_of(archive: &str) -> Arc<guac_sound::SoundBook> {
+        Arc::new(guac_sound::SoundBook::new([guac_ir::sound::Sounds {
+            identity: guac_ir::DumpIdentity {
+                title_id: "BLUS30968".into(),
+                app_ver: "01.00".into(),
+                manifest_hash: guac_ir::Sha256([1; 32]),
+            },
+            archive: archive.into(),
+            sounds: Vec::new(),
+            data: Vec::new(),
+            refused: Vec::new(),
+        }]))
+    }
+
+    /// openspec AR.23: the level's music scripts wait for the level's
+    /// sounds. With no book, or one lacking the level's archive, each
+    /// placement of the level running one of [`MUSIC_SCRIPTS`] is held
+    /// before its first tick (another script's runs on; one a script
+    /// suspended isn't taken as held); once the book holds the level's
+    /// sounds the held ones go, each running its STARTUP at its next tick,
+    /// and after that there's nothing to hold.
+    #[test]
+    fn the_levels_music_waits_for_its_sounds_then_starts() {
+        const OTHER: &str = "C:/tfb/Synthetic/Other.ai";
+        let (mut vm, mut world, files, [music_id, other_id, suspended_id]) = music_fixture();
+        let step = music_step;
+        let book = book_of;
         let stems = HashMap::from([(0u16, "level_213_tutotial".to_owned())]);
         assert_eq!(hold_music(&mut vm, &mut world, &files, 0), Music::Waits(1));
         assert_eq!(world.music_held(), 1, "reported");
@@ -6023,6 +6357,92 @@ mod tests {
             "c:/tfb/content/levels/level_213/scripts/snd_robo_ducking.ai"
         ));
         assert!(!is_music_script(OTHER));
+    }
+
+    /// openspec AS.47: a level's intro is held before its first tick, by its
+    /// placement in the level's own file (another file's named alike, and
+    /// any other placement, run on), and let go to run its STARTUP at its
+    /// next tick; nothing's let go twice.
+    #[test]
+    fn a_levels_intro_waits_for_a_hero() {
+        let (mut vm, mut world, mut files, [intro_id, other_id, _]) = music_fixture();
+        files.placed[0].name = "214_Intro_IGC".into();
+        assert!(
+            !hold_intro(&mut vm, &mut world, &files, 1, "214_Intro_IGC"),
+            "another file's"
+        );
+        assert!(
+            !hold_intro(&mut vm, &mut world, &files, 0, "Intro"),
+            "no such placement"
+        );
+        assert!(hold_intro(&mut vm, &mut world, &files, 0, "214_Intro_IGC"));
+        for _ in 0..3 {
+            music_step(&mut vm, &mut world);
+        }
+        assert_eq!(
+            vm.local(intro_id, "starts"),
+            None,
+            "held before its first tick"
+        );
+        assert_eq!(vm.local(other_id, "count"), Some(Value::Int(3)));
+        assert!(release_intro(&mut vm, &mut world));
+        assert!(!release_intro(&mut vm, &mut world), "once");
+        music_step(&mut vm, &mut world);
+        assert_eq!(vm.local(intro_id, "starts"), Some(Value::Int(1)));
+        // None on the TV's listing yet (AS.60).
+        assert_eq!(intro("level_214_tutotial_2"), None);
+    }
+
+    /// openspec AR.30 (AR.27's key): the music waits only while the level's
+    /// sounds are on their way. With none coming it isn't held; held ones are
+    /// let go to run silent the moment none are coming, each running its
+    /// STARTUP at its next tick; and a book holding them with none coming is
+    /// the start as ever.
+    #[test]
+    fn the_levels_music_waits_only_while_its_sounds_are_on_their_way() {
+        let stems = HashMap::from([(0u16, "level_214_tutotial_2".to_owned())]);
+        // None coming, no book: nothing held, the music ticks from the start.
+        let (mut vm, mut world, files, [music_id, ..]) = music_fixture();
+        assert_eq!(
+            hold_music_while(&mut vm, &mut world, &files, 0, false),
+            Music::Runs
+        );
+        assert_eq!(world.music_held(), 0);
+        music_step(&mut vm, &mut world);
+        assert_eq!(vm.local(music_id, "starts"), Some(Value::Int(1)));
+        assert_eq!(world.music_silent(), 0, "none held, none let go");
+        // Coming: held; then none coming without the book: let go, silent.
+        let (mut vm, mut world, files, [music_id, _, suspended_id]) = music_fixture();
+        assert_eq!(
+            hold_music_while(&mut vm, &mut world, &files, 0, true),
+            Music::Waits(1)
+        );
+        music_step(&mut vm, &mut world);
+        assert_eq!(vm.local(music_id, "starts"), None, "held");
+        world.set_sounds(book_of("permanent/global.bld"), stems.clone());
+        assert_eq!(
+            hold_music_while(&mut vm, &mut world, &files, 0, false),
+            Music::Silent(1)
+        );
+        assert_eq!(world.music_held(), 0);
+        assert_eq!(world.music_silent(), 1, "said");
+        music_step(&mut vm, &mut world);
+        assert_eq!(vm.local(music_id, "starts"), Some(Value::Int(1)));
+        assert!(vm.is_suspended(suspended_id), "a script's suspension stays");
+        assert_eq!(
+            hold_music_while(&mut vm, &mut world, &files, 0, false),
+            Music::Runs
+        );
+        // The book holding them: never held, coming or not.
+        let (mut vm, mut world, files, _) = music_fixture();
+        world.set_sounds(book_of("level/level_214_tutotial_2.bld"), stems);
+        for coming in [true, false] {
+            assert_eq!(
+                hold_music_while(&mut vm, &mut world, &files, 0, coming),
+                Music::Runs,
+                "coming {coming}"
+            );
+        }
     }
 
     /// The HUD hides while the scripts hide the player's (mergefix4,

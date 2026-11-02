@@ -269,6 +269,10 @@ pub struct LevelStage {
     /// The parts' IR and textures.
     pub files: Files,
     pub took: Duration,
+    /// The level's own sounds, read with it on demand (openspec AR.30); none
+    /// for a stage over the first run's levels, whose sounds are the
+    /// extract-wide part's.
+    pub sounds: Option<crate::sounds::SoundStage>,
 }
 
 /// A script part that didn't read: its part, the archive it stopped at
@@ -480,8 +484,13 @@ pub fn level_stage(
 /// One level off the disc's list ([`levels::on_disc`]), by its archive's
 /// name, extracted as the first run's are (openspec AS.1, design decision
 /// 1): its parts under `levels/<archive>/`, recorded under its name, each
-/// kept when already in, its textures into the shared store. A name the
-/// dump holds no level file of is refused before anything is read.
+/// kept when already in, its textures into the shared store; then, for a
+/// level past the first run's, its own sounds (openspec AR.30,
+/// [`crate::sounds::level_sound_stage`]), so its music plays from its load;
+/// sounds that won't write either (a full disk) are failed as ones that
+/// won't read are, nothing recorded, so the level, its parts in, plays
+/// silent rather than being refused. A name the dump holds no level file of
+/// is refused before anything is read.
 pub fn extract_level(
     dir: &mut IdentityDir,
     level: &str,
@@ -496,7 +505,17 @@ pub fn extract_level(
             level: level.to_owned(),
         });
     }
-    levels_stage(dir, ir, &[level], &levels::PARTS, &level_event, send)
+    let mut stage = levels_stage(dir, ir, &[level], &levels::PARTS, &level_event, send)?;
+    if !levels::FIRST_RUN.contains(&level) {
+        let sounds = crate::sounds::level_sound_stage(dir, level, ir, send).unwrap_or_else(|e| {
+            crate::sounds::SoundStage {
+                failed: Some((crate::sounds::level_archive(level), e.to_string())),
+                ..Default::default()
+            }
+        });
+        stage.sounds = Some(sounds);
+    }
+    Ok(stage)
 }
 
 /// [`level_stage`] over `names`, each level's `parts` alone (in
@@ -534,6 +553,7 @@ fn levels_stage(
         shared: 0,
         files: Files::default(),
         took: Duration::ZERO,
+        sounds: None,
     };
     let total = names.len() * parts.len();
     let mut done = 0;

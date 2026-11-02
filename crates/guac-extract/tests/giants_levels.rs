@@ -86,10 +86,12 @@ fn encoded<T: serde::Serialize>(r: Result<Read<T>, String>) -> Result<Part, Stri
     })
 }
 
-/// Every part of one level, in the stage's order.
+/// Every part of one level, in the stage's order; `archive` its `.bld`,
+/// which the sprites' English pack is read from as the stage reads it.
 fn read_level(
     igz: &Igz<'_>,
     entry: &[u8],
+    archive: &[u8],
     level: &str,
 ) -> Vec<(&'static str, Result<Part, String>)> {
     let id = identity;
@@ -124,6 +126,25 @@ fn read_level(
             }),
             levels::PALETTES => encoded(levels::palettes(igz, level, id())),
             levels::NODES => encoded(levels::nodes(igz, level, id())),
+            levels::SPRITES => {
+                let name = format!("{}/{level}.bld", levels::LEVEL_FOLDER);
+                encoded(
+                    guac_extract::interface::english_pack(archive)
+                        .and_then(|pack| {
+                            guac_extract::interface::read_igz(
+                                &name,
+                                igz,
+                                pack.as_deref(),
+                                None,
+                                id(),
+                            )
+                        })
+                        .map(|r| Read {
+                            ir: r.ir,
+                            textures: r.textures,
+                        }),
+                )
+            }
             other => Err(format!("no reader for {other}")),
         };
         out.push((part, read));
@@ -177,7 +198,7 @@ fn every_level_reads_part_by_part() {
         let archive = std::fs::read(levels::archive_path(&usrdir, level)).unwrap();
         let read = levels::level_bld(&archive).and_then(|entry| {
             let igz = Igz::parse(&entry).map_err(|e| e.to_string())?;
-            Ok(read_level(&igz, &entry, level))
+            Ok(read_level(&igz, &entry, &archive, level))
         });
         let secs = t.elapsed().as_secs_f64();
         let parts = match read {

@@ -422,7 +422,7 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     // The level's own listing (openspec AS.51): chapter 1's names its first
     // fight; any level's definition and its spellings of the listed scripts.
     let config = match source.level_unit() {
-        Some(level) => scripts::level_config(Mode::Play, &source.files, level, source.chapter_1()),
+        Some(level) => scripts::level_config(Mode::Play, &source.files, level, source.level()),
         None => scripts::fight_config(Mode::Play),
     };
     #[allow(unused_mut)]
@@ -461,10 +461,14 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     // What a script's request is held against (openspec AS.15).
     script_world.set_levels(source.levels.clone());
     // Chapter 1's first fight and goats by their names (another level's
-    // placements so named are its own: AS.51).
+    // placements so named are its own: AS.51); another level's first
+    // encounter, where the TV runs one (AS.54).
     if source.chapter_1() {
         script_world.walk_first_fight(level);
         script_world.walk_goats(level);
+    } else if let Some(e) = scripts::encounter(source.level()) {
+        let (walked, templates) = script_world.walk_encounter(level, e);
+        info!(level = %source.level(), walked, templates, "the level's first encounter walks");
     }
     for p in source.files.placed.iter().filter(|p| p.obj.unit == level) {
         if let Some(model) = &p.model
@@ -475,20 +479,41 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     }
     // The level's music waits for its sounds (openspec AR.23).
     hold_music(world, source, level);
+    // Its intro waits for a hero (openspec AS.47).
+    if let Some(intro) = scripts::intro(source.level()) {
+        let held = world.resource_scope::<ScriptRuntime, _>(|world, mut runtime| {
+            let mut script_world = world.resource_mut::<ScriptWorld>();
+            scripts::hold_intro(
+                &mut runtime.vm,
+                &mut script_world,
+                &source.files,
+                level,
+                intro,
+            )
+        });
+        if held {
+            info!(level = %source.level(), "the level's intro waits for a hero");
+        }
+    }
 }
 
-/// [`scripts::hold_music`] on the run just installed, logged: chapter 1's
-/// alone, the one level whose sounds the part holds (AR.5). Another level's
-/// music placements would wait for good (AR.27; level 214 runs
-/// `snd_level_audio_environment.ai`), so they run silent from the start as
-/// before AR.23 (AS.15's review, at the merge of AR.23).
+/// [`scripts::hold_music_while`] on the run just installed, logged: the
+/// level's music waits for its sounds only while they're on their way
+/// ([`crate::level::sounds_coming`], openspec AR.30: a first run's chapter
+/// 1, handed over ahead of its sounds stage). A level past chapter 1 brings
+/// its sounds with it (AR.30); one whose sounds aren't coming runs silent
+/// from its start, never waiting for good (AR.27).
 fn hold_music(world: &mut World, source: &ScriptSource, level: u16) {
-    if !source.chapter_1() {
-        return;
-    }
+    let coming = crate::level::sounds_coming(world.get_resource());
     let music = world.resource_scope::<ScriptRuntime, _>(|world, mut runtime| {
         let mut script_world = world.resource_mut::<ScriptWorld>();
-        scripts::hold_music(&mut runtime.vm, &mut script_world, &source.files, level)
+        scripts::hold_music_while(
+            &mut runtime.vm,
+            &mut script_world,
+            &source.files,
+            level,
+            coming,
+        )
     });
     log_music(music);
 }
@@ -502,6 +527,12 @@ pub(crate) fn log_music(music: scripts::Music) {
         }
         scripts::Music::Starts(released) => {
             info!(released, "the level's music starts with its sounds")
+        }
+        scripts::Music::Silent(released) => {
+            info!(
+                released,
+                "the level's music runs silent: its sounds aren't coming"
+            )
         }
         scripts::Music::Runs => {}
     }
@@ -2084,13 +2115,17 @@ mod music_tests {
 
     const MUSIC: &str = "C:/tfb/Content/Levels/Level_213/Scripts/Music_Level_Controller.ai";
 
-    /// openspec AR.23: an install over a part with no sounds yet (a first
-    /// run's hand-off) holds the placement running the level's music
-    /// controller before its first tick; one over a part whose book holds
-    /// the level's sounds (a reinstall after they landed, or any later run)
+    /// openspec AR.23, AR.30: an install over a part with no sounds yet
+    /// while they're on their way (a first run's hand-off, its extraction
+    /// short of the sounds stage's end) holds the placement running the
+    /// level's music controller before its first tick, any level's; with
+    /// none on their way (no extraction, or one past its sounds) it holds
+    /// nothing, never waiting for good; one over a part whose book holds the
+    /// level's sounds (a reinstall after they landed, or any later run)
     /// holds nothing.
     #[test]
     fn an_install_holds_the_levels_music_until_its_sounds_are_in() {
+        use crate::extraction::{ExtractStatus, Extraction};
         let mut b = IgzBuilder::new();
         let actor;
         {
@@ -2141,14 +2176,37 @@ mod music_tests {
             let vm = &world.resource::<ScriptRuntime>().vm;
             vm.is_suspended(vm.placement_of(h).expect("it runs"))
         };
+        let extraction = |status| Extraction {
+            status,
+            ..Default::default()
+        };
+        let coming = || extraction(ExtractStatus::Sounds { done: 3, total: 69 });
         let mut world = World::new();
+        world.insert_resource(coming());
         install_from(&mut world, &source);
-        assert!(held(&mut world), "no sounds part yet: held");
-        // Another level's music runs silent: the part never holds its
-        // sounds (AR.27; AS.15's review).
+        assert!(held(&mut world), "no sounds part yet, on their way: held");
+        // Any level's, while they're on their way (AR.30).
         let mut other = World::new();
+        other.insert_resource(coming());
         install_from(&mut other, &source.clone().of_level("level_214_tutotial_2"));
-        assert!(!held(&mut other), "level 214's music isn't held");
+        assert!(held(&mut other), "level 214's held while coming");
+        // None on their way: never held (AR.27).
+        for status in [
+            None,
+            Some(ExtractStatus::Idle),
+            Some(ExtractStatus::Interface { done: 0, total: 85 }),
+            Some(ExtractStatus::Ready {
+                intros: 0,
+                ran: true,
+            }),
+        ] {
+            let mut none = World::new();
+            if let Some(status) = status.clone() {
+                none.insert_resource(extraction(status));
+            }
+            install_from(&mut none, &source.clone().of_level("level_214_tutotial_2"));
+            assert!(!held(&mut none), "{status:?}: nothing held");
+        }
         let book = guac_sound::SoundBook::new([guac_ir::sound::Sounds {
             identity: guac_ir::DumpIdentity {
                 title_id: "BLUS30968".into(),

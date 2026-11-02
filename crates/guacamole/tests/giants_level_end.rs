@@ -213,7 +213,7 @@ fn level_214_runs_its_own_scripts_with_eruptor_joined() {
         ..Setup::default()
     };
     let (mut run, _found) = run_on_level(Mode::Play, NEXT, setup);
-    let start = run.hero().pivot;
+    let mut start = run.hero().pivot;
     let listing = run.vm.config().whitelist.clone();
     for script in ["Level_Definition_214.ai", "Pop_to_Camera_X.ai"] {
         assert!(listing.lists("", &format!("C:/x/{script}")), "{script}");
@@ -228,6 +228,10 @@ fn level_214_runs_its_own_scripts_with_eruptor_joined() {
     }
     run.join().unwrap_or_else(|h| panic!("{h}"));
     for k in 0..480u32 {
+        if k == 120 {
+            // Where his intro handed him over (openspec AS.47).
+            start = run.hero().pivot;
+        }
         if k >= 120 {
             run.bench.pads[0] = Pad {
                 stick: Stick::new(0.0, 1.0),
@@ -248,6 +252,354 @@ fn level_214_runs_its_own_scripts_with_eruptor_joined() {
         run.health()
     );
     assert!(moved > 1.0, "he walked: {moved}");
+    assert!(
+        stops.is_empty(),
+        "{:#?}",
+        stops.iter().map(ToString::to_string).collect::<Vec<_>>()
+    );
+    println!(
+        "{:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
+
+/// openspec AS.54: level 214's music by its own scripts on the TV's listing
+/// (`scripts::MUSIC_SCRIPTS`), its sounds read off its own archive as the
+/// TV's book reads its level's record (AR.30): its dynamic sound controller
+/// starts its explore bed at the level's start, looping, the docks'
+/// ambience under it; with the music scripts set apart
+/// (`scripts::without_music`) no music plays. Nothing stops, Eruptor joined
+/// and standing.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_music_plays_from_its_start() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let follow = |no_music: bool| {
+        let setup = Setup {
+            interface: true,
+            props: true,
+            sounds: true,
+            no_music,
+            ..Setup::default()
+        };
+        let (mut run, _found) = run_on_level(Mode::Play, NEXT, setup);
+        let listing = run.vm.config().whitelist.clone();
+        let mut stops = Vec::new();
+        for _ in 0..2 {
+            stops.extend(run.step_play().unwrap());
+        }
+        run.join().unwrap_or_else(|h| panic!("{h}"));
+        let mut first: std::collections::BTreeMap<String, (u64, f32, bool)> = Default::default();
+        for _ in 0..600 {
+            stops.extend(run.step_play().unwrap());
+            for p in run.world.plays() {
+                let Some(name) = p.name.clone() else { continue };
+                let rate = run.world.sequences()[p.sequence as usize].rate;
+                let looping = run.world.play_params(p).looping;
+                first.entry(name).or_insert((p.started, rate, looping));
+            }
+        }
+        (first, stops, listing)
+    };
+    let (with, stops, listing) = follow(false);
+    for script in [
+        "snd_dynamic_sound_controller_214.ai",
+        "snd_combat_watcher_214.ai",
+        "snd_jukebox_controller.ai",
+        "IGC_Music_Player.ai",
+    ] {
+        assert!(listing.lists("", &format!("C:/x/{script}")), "{script}");
+    }
+    let beds: Vec<(&String, &(u64, f32, bool))> = with
+        .iter()
+        .filter(|(n, _)| n.starts_with("mu_") || n.starts_with("am_"))
+        .collect();
+    println!("214's beds: {beds:?}; {} sounds started", with.len());
+    let explore = with
+        .get("mu_214_explore_v2")
+        .expect("214's explore bed plays");
+    assert!(explore.0 <= 2, "from the level's start: {explore:?}");
+    assert_eq!(explore.1, 100.0);
+    assert!(explore.2, "looping");
+    assert!(with.contains_key("am_air_docks_wind_birds"), "the ambience");
+    assert!(
+        stops.is_empty(),
+        "{:#?}",
+        stops.iter().map(ToString::to_string).collect::<Vec<_>>()
+    );
+    let (without, stops, _) = follow(true);
+    assert!(
+        !without.keys().any(|n| n.starts_with("mu_")),
+        "no music without its scripts: {:?}",
+        without.keys().collect::<Vec<_>>()
+    );
+    assert!(stops.is_empty());
+    println!(
+        "{:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
+
+/// Where Setup_001's first trigger stands on 214's first island, past the
+/// dock, as its file places it: the hero set down here sets off the pods'
+/// scene.
+const POD_TRIGGER: [f32; 3] = [17.934004, -13.715616, 20.65423];
+/// Among the pods, on the ground the Chompies run on.
+const AMONG_THE_PODS: [f32; 3] = [55.0, -17.5, 35.0];
+
+/// A beaten creature's or clone's hit points, as its scripts hold them.
+fn hit_points(run: &Run, h: guac_script::Handle) -> Option<f32> {
+    let vm = &run.vm;
+    let id = vm.placement_of(h)?;
+    let d = vm.local(id, "description").map(|v| vm.value(v))?;
+    let c = vm.field(d, "creature info").map(|v| vm.value(v))?;
+    vm.field(c, "hp").map(|v| vm.value(v))?.as_f32()
+}
+
+/// openspec AS.54: level 214's first encounter on the TV's listing for it
+/// (`scripts::ENCOUNTERS`), fought with Eruptor, its palettes off the level
+/// (AS.54's rule: every skinned model a placement names). Its two spawners
+/// walk from the start; set down past Setup_001's trigger, the controller
+/// plays the pods' scene and wakes them; among the pods, they clone Chompies
+/// off the undead template, each walked as it's made; the Chompies notice
+/// him and bite, and his attack (South, pulsed) beats them, paying his
+/// figure experience (a spawner beaten too, some runs: printed). Nothing
+/// stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_first_encounter_is_fought_with_eruptor() {
+    use guac_motion::stick::Stick;
+    use guacamole::script_engine::Pad;
+    use std::collections::BTreeMap;
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let setup = Setup {
+        interface: true,
+        props: true,
+        sounds: true,
+        ..Setup::default()
+    };
+    let (mut run, _found) = run_on_level(Mode::Play, NEXT, setup);
+    let mut stops = Vec::new();
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap());
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    let spawners: Vec<guac_script::Handle> = ["Enemy_Chompy_Spawner(1)", "Enemy_Chompy_Spawner(5)"]
+        .iter()
+        .map(|n| run.placed(n).0)
+        .collect();
+    assert_eq!(run.world.creatures(), spawners, "the spawners walk");
+    let controller = run.placement("Setup_001_Controller");
+    // His arrival and the intro's hand-over played out, as the TV's dev
+    // entry settles him (openspec AS.47).
+    for _ in 0..120 {
+        stops.extend(run.step_play().unwrap());
+    }
+    run.put(Vec3::from_array(POD_TRIGGER), 0.0);
+    let mut scene = None;
+    for _ in 0..400 {
+        stops.extend(run.step_play().unwrap());
+        if scene.is_none() && run.vm.behaviour(controller) == Some("chompy pod - cutscene out") {
+            scene = Some(run.steps);
+        }
+    }
+    let scene = scene.expect("the pods' scene");
+    run.put(Vec3::from_array(AMONG_THE_PODS), 90.0);
+    let health_before = run.health().unwrap();
+    let xp_before = run.figure_values().map_or(0, |v| v.xp);
+    // Each clone walked, by when it was first seen and when it went.
+    let mut chompies: BTreeMap<guac_script::Handle, (u32, Option<u32>)> = BTreeMap::new();
+    for k in 0..1200u32 {
+        run.bench.pads[0] = Pad {
+            stick: Stick::new(0.0, 0.0),
+            actions: [k % 20 < 2, false, false, false],
+            connected: true,
+        };
+        stops.extend(run.step_play().unwrap());
+        for h in run.world.creatures() {
+            if spawners.contains(&h) {
+                continue;
+            }
+            let gone = run.world.actor(h).is_none_or(|a| a.removed)
+                || run.vm.placement_of(h).is_none_or(|i| run.vm.removed(i));
+            let e = chompies.entry(h).or_insert((run.steps, None));
+            if gone && e.1.is_none() {
+                e.1 = Some(run.steps);
+            }
+        }
+    }
+    let beaten = chompies.values().filter(|c| c.1.is_some()).count();
+    let spawners_beaten = spawners
+        .iter()
+        .filter(|h| hit_points(&run, **h).is_some_and(|hp| hp <= 0.0))
+        .count();
+    let (health, xp) = (
+        run.health().unwrap(),
+        run.figure_values().map_or(0, |v| v.xp),
+    );
+    println!(
+        "the scene at step {scene}; {} Chompies cloned, {beaten} beaten; spawners beaten {spawners_beaten}; health {health_before} -> {health}; experience {xp_before} -> {xp}",
+        chompies.len()
+    );
+    for (h, (seen, gone)) in &chompies {
+        println!(
+            "  {h:#x} {}: from {seen}, gone {gone:?}",
+            run.world.name(*h)
+        );
+    }
+    assert!(
+        chompies.len() >= 3,
+        "the spawners clone Chompies: {chompies:?}"
+    );
+    assert!(
+        chompies
+            .keys()
+            .all(|h| run.world.name(*h) == "_Template_Undead_Chompy"),
+        "off the undead template"
+    );
+    assert!(beaten >= 2, "he beats them: {beaten}");
+    assert!(health < health_before, "they bite: {health}");
+    assert!(xp > xp_before, "his figure's paid: {xp}");
+    assert_eq!(
+        run.vm.stopped(run.minion.unwrap()),
+        None,
+        "his script runs on"
+    );
+    assert!(
+        stops.is_empty(),
+        "{:#?}",
+        stops.iter().map(ToString::to_string).collect::<Vec<_>>()
+    );
+    println!(
+        "{:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
+
+/// Where level 214's intro hands the player over (metres, the run's own
+/// read): its cutscene, skipped a frame in, sets him down on the deck here,
+/// 4.3 m from the level's `InitializeLevel.ai` marker.
+const HANDED_OVER: [f32; 3] = [-9.144, -12.578118, 18.10268];
+
+/// The cutscene in play's macro's name, if any (as `level_end` reads it).
+fn cutscene_name(run: &Run) -> Option<String> {
+    let vm = &run.vm;
+    let data = vm.global_peek(vm.program().global_named("cs control data")?)?;
+    let current = vm
+        .field(data, "current cs")
+        .filter(|v| *v != guac_script::Value::Null)?;
+    let def = vm.field(current, "cutscene definition")?;
+    match vm.field(def, "define macro")? {
+        guac_script::Value::Object(o) => vm.program().name_of(o).map(str::to_owned),
+        _ => None,
+    }
+}
+
+/// openspec AS.47: level 214's own intro (`214_Intro_IGC`, listed here past
+/// the TV's listing, which doesn't run it yet: AS.60), held before its
+/// first tick until Eruptor's minion is in, as the TV's install would hold
+/// it; then its cutscene begins with him in it, is skipped a frame in by the
+/// original's own skip (`level_end::SKIPPED_CUTSCENES`), and its hand-over
+/// sets him down on the deck; the intro takes itself off, nothing stops.
+/// Its first line (Flynn's, voiced, since AT.44 reads a lone string as a set
+/// of one) is up as the skip comes and plays on past it, its box holding the
+/// HUD hidden until it's over (the as-214-alive review, on the merge of
+/// AT.44: 350 steps); then the HUD shows again. And what keeps it off the
+/// TV: its STARTUP
+/// takes `The_Ship_1` off, and the skip takes off both clones its cutscene
+/// made of `214_Intro_Ship`, so no ship is left under him.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_intro_hands_over_and_takes_the_ship() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let setup = Setup {
+        interface: true,
+        props: true,
+        sounds: true,
+        scripts: &["214_Intro_IGC.ai"],
+        ..Setup::default()
+    };
+    let (mut run, _found) = run_on_level(Mode::Play, NEXT, setup);
+    let marker = run.hero().pivot;
+    let intro = run.placement("214_Intro_IGC");
+    let mut stops = Vec::new();
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap());
+    }
+    assert!(run.vm.is_suspended(intro), "held until a hero joins");
+    assert_eq!(run.vm.behaviour(intro), None);
+    assert_eq!(cutscene_name(&run), None);
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    let joined_at = run.steps;
+    let (mut began, mut skipped, mut gone, mut shown) = (None, None, None, None);
+    let mut lines = Lines::default();
+    for _ in 0..600 {
+        stops.extend(run.step_play().unwrap());
+        lines.record(&run);
+        let cs = cutscene_name(&run);
+        if began.is_none() && cs.as_deref() == Some("214 Intro IGC") {
+            began = Some(run.steps);
+        }
+        if began.is_some() && skipped.is_none() && cs.is_none() {
+            skipped = Some(run.steps);
+        }
+        if gone.is_none() && run.vm.removed(intro) {
+            gone = Some(run.steps);
+        }
+        if gone.is_some() && shown.is_none() && !guacamole::scripts::player_hud_hidden(&run.vm) {
+            shown = Some(run.steps);
+        }
+    }
+    let at = run.hero().pivot;
+    let (ship, _) = run.placed("The_Ship_1");
+    let (template, _) = run.placed("214_Intro_Ship");
+    let ship_clones: Vec<(guac_script::Handle, bool)> = run
+        .world
+        .clones()
+        .into_iter()
+        .filter(|h| {
+            run.world.actor(*h).and_then(|a| a.template)
+                == run.world.actor(template).and_then(|a| a.obj)
+        })
+        .map(|h| (h, run.world.removed(h)))
+        .collect();
+    println!(
+        "The_Ship_1 taken off {}; the intro ship's clones (taken off): {ship_clones:?}",
+        run.world.removed(ship)
+    );
+    assert!(
+        run.world.removed(ship),
+        "the intro takes the placed ship off"
+    );
+    assert!(
+        !ship_clones.is_empty() && ship_clones.iter().all(|(_, off)| *off),
+        "and the skip its cutscene's ship clones: {ship_clones:?}"
+    );
+    println!(
+        "the marker {marker:?}; joined at {joined_at}; the intro's cutscene at {began:?}, skipped by {skipped:?}, the intro off at {gone:?}, the HUD shown at {shown:?}; handed over at {at:?} ({:.2} m off the marker)",
+        at.distance(marker)
+    );
+    println!("its lines: {:?}; {:?}", lines.boxes, lines.voices);
+    assert!(began.is_some_and(|b| b <= joined_at + 2), "{began:?}");
+    assert!(skipped.is_some() && gone.is_some() && shown.is_some());
+    // The HUD back once the line its box holds up is over, not before.
+    let last_box = lines.boxes.iter().filter_map(|b| b.gone).max();
+    assert!(
+        last_box.is_none_or(|g| shown.is_some_and(|s| s >= g)),
+        "{shown:?} {:?}",
+        lines.boxes
+    );
+    let handed = Vec3::from_array(HANDED_OVER);
+    assert!(
+        Vec3::new(at.x - handed.x, 0.0, at.z - handed.z).length() < 0.05,
+        "set down where the hand-over puts him: {at:?}"
+    );
     assert!(
         stops.is_empty(),
         "{:#?}",

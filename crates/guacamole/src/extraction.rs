@@ -2613,21 +2613,40 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
         );
         assert!(f.failed.is_empty(), "{:?}", f.failed);
         assert!(dir.join(format!("levels/{arena}/scene.ron")).is_file());
+        // Its own sounds with it (openspec AR.30): the arena holds none, so
+        // an IR of no sounds, recorded as its `sounds` part.
+        let sounds = f.sounds.clone().expect("a level past chapter 1's sounds");
+        assert!(
+            sounds.read && !sounds.kept && sounds.failed.is_none(),
+            "{sounds:?}"
+        );
+        // No audio written, the IR alone in its bytes.
+        assert_eq!((sounds.sounds, sounds.audio, sounds.written), (0, 0, 0));
+        assert!(sounds.bytes > 0, "{sounds:?}");
+        assert!(dir.join(format!("sounds/{arena}.ron")).is_file());
         let parts = manifest()["levels"][arena]["parts"]
             .as_object()
             .unwrap()
             .len();
-        assert_eq!(parts, guac_extract::levels::PARTS.len());
+        assert_eq!(parts, guac_extract::levels::PARTS.len() + 1);
         let seen = events.lock().unwrap().clone();
         assert!(
             seen.iter().any(|e| e.starts_with("Opened { kind: Pvp")),
             "{seen:?}"
         );
+        // The sounds one more step of the header's.
         let last = format!(
             "Parts {{ done: {n}, total: {n} }}",
-            n = guac_extract::levels::PARTS.len()
+            n = guac_extract::levels::PARTS.len() + 1
         );
         assert_eq!(seen.last(), Some(&last), "{seen:?}");
+        let total = format!("total: {} }}", guac_extract::levels::PARTS.len() + 1);
+        assert!(
+            seen.iter()
+                .filter(|e| e.starts_with("Parts"))
+                .all(|e| e.ends_with(&total)),
+            "{seen:?}"
+        );
         // Chapter 1 stays whole beside it: the next start is current.
         assert!(!run_all(&dump, &job, &known).0.unwrap().ran);
 
@@ -2636,6 +2655,10 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
             (again.parts_read, again.parts_kept),
             (0, guac_extract::levels::PARTS.len())
         );
+        assert!(again.sounds.is_some_and(|s| s.kept && !s.read));
+        // Chapter 1 by name: its sounds are the extract-wide part's.
+        let chapter_1 = fetch(&dump, &job, guac_extract::levels::LEVELS[0], &|_| {}).unwrap();
+        assert!(chapter_1.sounds.is_none());
 
         let Err(FetchError::Failed(why)) = fetch(&dump, &job, broken, &|_| {}) else {
             panic!("a level without its scene failed");

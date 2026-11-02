@@ -29,6 +29,11 @@
 //!   player waypoint ([`END_POSE`]) and `Temp_Level_Ender` woken the step
 //!   after, as `Rope_around_Post(2)` wakes it: chapter 1's end runs from
 //!   there on the scripts ([`guacamole::level_end`]), into the next level.
+//! - Pods (openspec AS.54): level 214's first encounter, as its headless
+//!   test runs it: once he's settled, set down past Setup_001's first
+//!   trigger ([`POD_TRIGGER`]: the pods' scene), then among the pods
+//!   ([`AMONG_THE_PODS`]) once it's over, past the breakable wall the
+//!   original's bombs open (the bombs' carry and throw aren't run yet).
 //! - Norticus' scene, once the four are beaten, ends from his own script as
 //!   the original's does (openspec AH.56: the cutscene system's update in
 //!   the game systems' tick), freeing the hero: the entry sets nothing
@@ -70,6 +75,9 @@ pub(crate) enum Anchor {
     /// waypoint and `Temp_Level_Ender` woken there, as `Rope_around_Post(2)`
     /// wakes it once the last rope is pulled.
     End,
+    /// Level 214's first encounter (openspec AS.54): set down past its
+    /// pods' trigger, then among the pods.
+    Pods,
 }
 
 impl Anchor {
@@ -79,6 +87,7 @@ impl Anchor {
             "b" | "B" | "anchor_b" => Some(Anchor::B),
             "start" => Some(Anchor::Start),
             "end" => Some(Anchor::End),
+            "pods" => Some(Anchor::Pods),
             _ => None,
         }
     }
@@ -132,6 +141,14 @@ pub(crate) const END_POSE: ([f32; 3], f32) = ([-10.282436, -153.01357, 318.01202
 /// What the end anchor wakes: what `Rope_around_Post(2)`'s last behaviour
 /// wakes.
 pub(crate) const END_WAKES: [&str; 1] = ["Temp_Level_Ender"];
+/// Level 214's Setup_001 trigger as its file places it (metres): set down
+/// here, the controller plays the pods' scene and wakes the spawners.
+pub(crate) const POD_TRIGGER: [f32; 3] = [17.934004, -13.715616, 20.65423];
+/// Among level 214's pods, on the ground their Chompies run on (metres),
+/// facing them.
+pub(crate) const AMONG_THE_PODS: ([f32; 3], f32) = ([55.0, -17.5, 35.0], 90.0);
+/// Steps from the trigger's set-down to the pods': the scene played out.
+pub(crate) const POD_SCENE: u32 = 400;
 
 impl Plan {
     pub(crate) fn of(anchor: Anchor) -> Self {
@@ -159,6 +176,25 @@ impl Plan {
                 loot: None,
                 view: None,
                 wake: END_WAKES.to_vec(),
+            },
+            Anchor::Pods => Plan {
+                anchor,
+                settle: SETTLE,
+                set_downs: vec![
+                    (0, Vec3::from_array(POD_TRIGGER), 0.0),
+                    (
+                        POD_SCENE,
+                        Vec3::from_array(AMONG_THE_PODS.0),
+                        AMONG_THE_PODS.1,
+                    ),
+                ],
+                creatures_at: u32::MAX,
+                creatures: Vec::new(),
+                f0: POD_SCENE + 1,
+                first_alert: None,
+                loot: None,
+                view: None,
+                wake: Vec::new(),
             },
             Anchor::B => Plan {
                 anchor,
@@ -331,7 +367,7 @@ impl Plugin for DevEntryPlugin {
         let env = std::env::var("GUAC_DEV_ENTRY").ok();
         let at_start = asked_at_start(true, env.as_deref());
         if env.is_some() && at_start.is_none() {
-            warn!(value = ?env, "GUAC_DEV_ENTRY isn't `b`, `start` or `end`: no entry");
+            warn!(value = ?env, "GUAC_DEV_ENTRY isn't `b`, `start`, `end` or `pods`: no entry");
         }
         if let Some(a) = &at_start {
             info!(anchor = ?a.plan.anchor, "the dev entry asked at start");
@@ -609,7 +645,20 @@ mod tests {
         assert_eq!(anchor("b"), Some(Anchor::B));
         assert_eq!(anchor("anchor_b"), Some(Anchor::B));
         assert_eq!(anchor("start"), Some(Anchor::Start));
+        assert_eq!(anchor("pods"), Some(Anchor::Pods));
         assert_eq!(anchor("pit"), None);
+        // Level 214's pods (openspec AS.54): the trigger, then among the
+        // pods once the scene's played out, F0 the step after.
+        let pods = Plan::of(Anchor::Pods);
+        assert_eq!(
+            pods.set_downs,
+            [
+                (0, Vec3::from_array(POD_TRIGGER), 0.0),
+                (POD_SCENE, Vec3::from_array(AMONG_THE_PODS.0), 90.0)
+            ]
+        );
+        assert_eq!((pods.settle, pods.f0), (SETTLE, POD_SCENE + 1));
+        assert!(pods.creatures.is_empty() && pods.wake.is_empty());
         assert_eq!(asked_at_start(true, None), None);
         // Anchor B's plan is AH.8's route and AH.4's reads: the camera
         // volumes on the way to the strip, then the route from the strip,
