@@ -705,7 +705,9 @@ fn a_first_runs_music_starts_once_its_sounds_land() {
     assert!((volume - 78.0).abs() < 0.5, "at its volume: {volume}");
     assert_eq!(explore(&late), explore(&booked));
     assert!(
-        late.beds.iter().any(|b| b.0.starts_with("am_") && b.3 > 0.0),
+        late.beds
+            .iter()
+            .any(|b| b.0.starts_with("am_") && b.3 > 0.0),
         "the ambience bed: {:?}",
         late.beds
     );

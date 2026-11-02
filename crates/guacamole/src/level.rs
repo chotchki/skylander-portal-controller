@@ -5220,7 +5220,10 @@ mod tests {
         }
 
         fn music_held(&self, app: &App) -> bool {
-            let vm = &app.world().resource::<guacamole::scripts::ScriptRuntime>().vm;
+            let vm = &app
+                .world()
+                .resource::<guacamole::scripts::ScriptRuntime>()
+                .vm;
             vm.is_suspended(vm.placement_of(self.music).unwrap())
         }
     }

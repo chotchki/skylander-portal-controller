@@ -5159,9 +5159,17 @@ mod tests {
         for _ in 0..3 {
             step(&mut vm, &mut world);
         }
-        assert_eq!(vm.local(music_id, "starts"), None, "held before its first tick");
+        assert_eq!(
+            vm.local(music_id, "starts"),
+            None,
+            "held before its first tick"
+        );
         assert_eq!(vm.local(other_id, "count"), Some(Value::Int(3)));
-        assert_eq!(hold_music(&mut vm, &mut world, &files, 0), Music::Waits(1), "once");
+        assert_eq!(
+            hold_music(&mut vm, &mut world, &files, 0),
+            Music::Waits(1),
+            "once"
+        );
         world.set_sounds(book("permanent/global.bld"), stems.clone());
         assert_eq!(
             hold_music(&mut vm, &mut world, &files, 0),
@@ -5172,11 +5180,17 @@ mod tests {
         assert_eq!(hold_music(&mut vm, &mut world, &files, 0), Music::Starts(1));
         step(&mut vm, &mut world);
         assert_eq!(vm.local(music_id, "starts"), Some(Value::Int(1)));
-        assert_eq!(vm.local(music_id, "count"), Some(Value::Int(1)), "from then");
+        assert_eq!(
+            vm.local(music_id, "count"),
+            Some(Value::Int(1)),
+            "from then"
+        );
         assert!(vm.is_suspended(suspended_id), "a script's suspension stays");
         assert_eq!(vm.local(suspended_id, "starts"), None);
         assert_eq!(hold_music(&mut vm, &mut world, &files, 0), Music::Runs);
-        assert!(is_music_script("c:/tfb/content/levels/level_213/scripts/snd_robo_ducking.ai"));
+        assert!(is_music_script(
+            "c:/tfb/content/levels/level_213/scripts/snd_robo_ducking.ai"
+        ));
         assert!(!is_music_script(OTHER));
     }
 
