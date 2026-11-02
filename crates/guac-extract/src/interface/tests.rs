@@ -221,6 +221,20 @@ fn an_archive_without_a_level_bld_or_with_a_broken_one_is_refused() {
         )
         .build();
     assert!(read("misc/ui_options.bld", &off, None, identity()).is_err());
+    // A pack with no language pack info refuses an archive naming text,
+    // and is left unread by one naming none (the voice pack's).
+    let no_info = IgzBuilder::new().build();
+    let texts = IgaBuilder::new()
+        .lzma("level.bld", &sample().bytes)
+        .lzma("ENGLISH.pak", &no_info)
+        .build();
+    assert!(read("misc/ui_options.bld", &texts, None, identity()).is_err());
+    let none = IgaBuilder::new()
+        .lzma("level.bld", &IgzBuilder::new().build())
+        .lzma("ENGLISH.pak", &no_info)
+        .build();
+    let r = read("level/challengevo.bld", &none, None, identity()).unwrap();
+    assert!(r.ir.strings.is_empty() && r.ir.templates.is_empty());
 }
 
 #[test]

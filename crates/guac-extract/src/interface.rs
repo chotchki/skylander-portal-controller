@@ -269,6 +269,9 @@ pub fn read_igz(
     let ui = finterface::Interface::read(igz).map_err(|e| format!("level.bld: {e}"))?;
     let strings = match pack {
         None => Vec::new(),
+        // Text it names none of, so none read off its pack: the voice
+        // pack's (`level/challengevo.bld`) holds no language pack info.
+        Some(_) if ui.strings.is_empty() => Vec::new(),
         Some(pack) => {
             let pack = Igz::parse(pack).map_err(|e| format!("{}: {e}", sounds::ENGLISH_PACK))?;
             let pack = LanguagePack::read(&pack).map_err(|e| e.to_string())?;
