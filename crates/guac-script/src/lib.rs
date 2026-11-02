@@ -356,9 +356,30 @@
 //!   review; `for each` walks the object its path reads with no check that
 //!   it's a set). The same set for the same object is ours: nothing on the
 //!   disc changes a set made so (AT.44's review: 411 places over every
-//!   level, none written into), so whose it is can't show. A number
-//!   variable handed by reference (the bit-field macros' `values in`, its
-//!   edit type `AbstractNumberMeasurement`) still drops, AT.47.
+//!   level, none written into), so whose it is can't show.
+//! - A number variable handed to a set reference by reference (a run-time
+//!   one, a file's, a structure's field, a number a member holds) reads as
+//!   a set of that variable: a reference read off it at an index is the
+//!   variable, so a read through that reference reads its number and a
+//!   write through it lands in the variable (openspec AT.47). Read off the
+//!   disc: the bit-field macros (`Save - Bit Field - Get Bit Field` and
+//!   `Set Bit Field`, `UI - Get/Set Sprite Bits`) take `values in` by set
+//!   reference and read or write `values in[set index]` through a
+//!   reference, and their callers hand one number variable, the right
+//!   side's edit type `AbstractNumberMeasurement`, the shape AT.44 read for
+//!   objects. Dropped, every Get read 0 and every Set wrote nothing. The
+//!   same set again while it holds that variable alone, as an object's; a
+//!   member's number is a fresh set each time, as its reference read is a
+//!   fresh place. A literal number still drops. A reading, as AT.44's:
+//!   whether the original makes a set of the variable or each reader takes
+//!   it as one isn't read, and the same set again is ours. An index past 0
+//!   wraps modulo the count, as every set's reference read at an index does
+//!   here, so it reads the one variable again, where the original's would
+//!   reach past the set (unread): the bit-field macros step `set index` on
+//!   by `bit index` / 32, so a `bit index` past 31 reads past the first.
+//!   None of the disc's callers does so on one number (AT.47's review: no
+//!   index past 0 on such a set over every level's `giants_levels` run and
+//!   chapter 1's route).
 //! - `global.bld`'s numbers, screen positions, colours, sets, structures and
 //!   references are cells made from the file on first use and shared by
 //!   every placement.

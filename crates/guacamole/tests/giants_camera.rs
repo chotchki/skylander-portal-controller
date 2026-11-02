@@ -1823,7 +1823,9 @@ fn kept_in_order(a: &[String], b: &[String]) -> Vec<String> {
 /// Only the read's: placements with no script, which the activity rule
 /// wakes in the world and the VM doesn't hold. Only the VM's: placements off
 /// the whitelist, inert here, whose own STARTUP took them off there (the
-/// read's group 3).
+/// read's group 3), and `Eon_1_Move_along_path`, listed since AR.29 and
+/// waiting for the hero's touch, which the original's took before the state
+/// with him standing at the spawn (AR.37).
 #[test]
 #[ignore = "reads the Giants dump and AH.195's read"]
 fn the_levels_placements_tick_as_the_scheduler_holds_them_at_the_fresh_state() {
@@ -1913,8 +1915,16 @@ fn the_levels_placements_tick_as_the_scheduler_holds_them_at_the_fresh_state() {
     let taken_off = read_group(3);
     for n in &only_vm {
         let h = run.handles[&placed(n).obj];
-        assert!(run.vm.inert().contains(&h), "{n} isn't inert");
         assert!(taken_off.contains(n), "{n} isn't taken off in the read");
+        if *n == "Eon_1_Move_along_path" {
+            // On the TV's listing since AR.29, it waits for the hero's touch,
+            // which a hero standing at the spawn doesn't give here and does
+            // in the original (AR.37).
+            let id = run.vm.placement_of(h).unwrap();
+            assert_eq!(run.vm.behaviour(id), Some("wait"), "{n}");
+            continue;
+        }
+        assert!(run.vm.inert().contains(&h), "{n} isn't inert");
     }
     // The goats' rock still ticks ahead of them here: AH.209's.
     assert!(at(&read_shared, "Sheep_1") < at(&read_shared, "Sliding_Rock(5)"));

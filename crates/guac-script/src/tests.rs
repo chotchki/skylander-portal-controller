@@ -1466,6 +1466,246 @@ fn a_lone_object_in_a_set_reference_reads_as_a_set_of_one() {
 }
 
 #[test]
+fn a_number_variable_in_a_set_reference_is_read_and_written_through_its_element() {
+    // Variables, structures and sets (openspec AT.47): Giants' bit-field
+    // macros take `values in` by set reference and read and write
+    // `values in[set index]` through a reference; their callers hand one
+    // number variable. A run-time number, a file's and a member's each read
+    // as a set of it: the reference off it reads the number, a write
+    // through that reference lands in the variable, and the same variable
+    // again is the same set.
+    let callee = std::cell::Cell::new(None);
+    let p = program(|w| {
+        let bits = var(w, "bits");
+        let f = w.b.object(0, "ValueInfo", 0x24);
+        w.text(f, 0x08, "file bits");
+        w.meta_word(f, 0x1C, INT);
+        w.word(f, 0x20, 9);
+        let r = w.variable("r", "ScriptReference", None);
+        let held = w.variable("held", "ScriptSetReference", None);
+        let again = w.variable("again", "ScriptSetReference", None);
+        let gots = [
+            var(w, "got local"),
+            var(w, "got file"),
+            var(w, "got member"),
+        ];
+        let same = var(w, "same");
+        frame(
+            w,
+            |_| {},
+            |_| {},
+            |w| {
+                // Bump: last := values in[set index]; through it, + 1.
+                let (at, d) = w.open(Class::DefineMacro, "Bump");
+                let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
+                let values = set_reference_parameter(w, "values in", d);
+                let none = w.reference(&[El::Member("abstractscriptgroup", "null")], None);
+                w.refer(values, 0x30, none);
+                w.push(values);
+                let index = parameter(w, "set index", d);
+                let zero = w.int(0);
+                w.refer(index, 0x30, zero);
+                w.push(index);
+                let enter = w.flow(Class::FlowMacro);
+                w.push(enter);
+                w.close(iface);
+                let set_ref = w.reference(&[El::Local(values)], None);
+                let ix = w.rhs(INT, &[El::Local(index)]);
+                let o = w.op(Class::SetReference, "set *reference||to");
+                let lhs = w.stack(StackClass::Reference, &[El::Local(r)]);
+                w.refer(o, 0x1C, lhs);
+                w.refer(o, 0x20, set_ref);
+                w.refer(o, 0x24, ix);
+                w.push(o);
+                let n = w.rhs(INT, &[El::Local(values), El::Member("setvariant", "count")]);
+                w.set(&[El::Member("test", "count")], n);
+                let got = w.rhs(INT, &[El::Local(r)]);
+                w.set(&[El::Member("test", "last")], got);
+                let got = w.rhs(INT, &[El::Local(r)]);
+                let one = w.int(1);
+                let bumped = w.expr(got, Some((0, one)));
+                w.set(
+                    &[
+                        El::Local(r),
+                        El::Member("abstractscriptgroup", "valuedereferencer"),
+                    ],
+                    bumped,
+                );
+                w.end_block(at);
+                callee.set(Some(d));
+            },
+            |_| {},
+            |w| {
+                let d = callee.get().unwrap();
+                let bh = w.behaviour("idle");
+                let five = w.int(5);
+                w.set(&[El::Local(bits)], five);
+                let three = w.int(3);
+                w.set(&[El::Member("test", "bits")], three);
+                let targets: [&[El<'_>]; 3] = [
+                    &[El::Local(bits)],
+                    &[El::Local(f)],
+                    &[El::Member("test", "bits")],
+                ];
+                for (target, got) in targets.into_iter().zip(gots) {
+                    // Bump(values in := the variable, set index := 0).
+                    let np = w.group(&[El::Local(d)], None);
+                    let (call, o) = w.open(Class::UseMacro, "use macro");
+                    w.refer(o, 0x1C, np);
+                    let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
+                    let values = set_reference_parameter(w, "values in", d);
+                    let arg = w.reference(target, None);
+                    w.refer(values, 0x30, arg);
+                    w.push(values);
+                    let index = parameter(w, "set index", d);
+                    let zero = w.int(0);
+                    w.refer(index, 0x30, zero);
+                    w.push(index);
+                    let enter = w.flow(Class::FlowMacro);
+                    w.push(enter);
+                    w.close(iface);
+                    w.end_block(call);
+                    let last = w.rhs(INT, &[El::Member("test", "last")]);
+                    w.set(&[El::Local(got)], last);
+                }
+                // held := bits; again := bits: the same set.
+                for to in [held, again] {
+                    let rhs = w.reference(&[El::Local(bits)], None);
+                    let lhs = w.stack(StackClass::Reference, &[El::Local(to)]);
+                    let o = w.op(Class::SetReference, "set *reference||to");
+                    w.refer(o, 0x1C, lhs);
+                    w.refer(o, 0x20, rhs);
+                    w.push(o);
+                }
+                let p = w.check_ref(&[El::Local(held)], 1, &[El::Local(again)]);
+                w.inc(&[El::Local(same)]);
+                w.end_block(p);
+                w.end_block(bh);
+            },
+        );
+    });
+    let mut vm = Vm::new(p.clone(), config(Mode::Strict, &["count", "last", "bits"]));
+    let id = vm.add(HANDLE, "Thing", 0);
+    let g = p.global_named("file bits").expect("a file variable");
+    vm.tick(id, &mut Bare).unwrap_or_else(|h| panic!("{h}"));
+    assert_eq!(cell(&vm, "count"), Some(Value::Int(1)), "a set of one");
+    assert_eq!(vm.local(id, "got local"), Some(Value::Int(5)), "read");
+    assert_eq!(vm.local(id, "bits"), Some(Value::Int(6)), "written");
+    assert_eq!(vm.local(id, "got file"), Some(Value::Int(9)), "read");
+    assert_eq!(vm.global(g), Some(Value::Int(10)), "written");
+    assert_eq!(vm.local(id, "got member"), Some(Value::Int(3)), "read");
+    assert_eq!(cell(&vm, "bits"), Some(Value::Int(4)), "written");
+    assert_eq!(vm.local(id, "same"), Some(Value::Int(1)), "the same set");
+}
+
+#[test]
+fn a_number_variables_set_is_its_own_and_made_anew_once_grown() {
+    // Variables, structures and sets (openspec AT.47's review): the set a
+    // number variable by reference reads as is that variable's alone: the
+    // same set again with another variable handed between, never the
+    // other's; grown past the variable it isn't the variable's, so the next
+    // write makes one anew; a write straight into the variable reads
+    // through the set it already gave; an index past 0 wraps to it.
+    let p = program(|w| {
+        let a = var(w, "a");
+        let b = var(w, "b");
+        let held = w.variable("held", "ScriptSetReference", None);
+        let other = w.variable("other", "ScriptSetReference", None);
+        let again = w.variable("again", "ScriptSetReference", None);
+        let fresh = w.variable("fresh", "ScriptSetReference", None);
+        let r = w.variable("r", "ScriptReference", None);
+        let same = var(w, "same");
+        let apart = var(w, "apart");
+        let through = var(w, "through");
+        let past = var(w, "past");
+        let before = var(w, "before");
+        let after_growing = var(w, "after growing");
+        let set_ref = |w: &mut Writer<'_>, to: Location, rhs: Location, index: Option<Location>| {
+            let lhs = w.stack(StackClass::Reference, &[El::Local(to)]);
+            let o = w.op(Class::SetReference, "set *reference||to");
+            w.refer(o, 0x1C, lhs);
+            w.refer(o, 0x20, rhs);
+            if let Some(ix) = index {
+                w.refer(o, 0x24, ix);
+            }
+            w.push(o);
+        };
+        frame(
+            w,
+            |_| {},
+            |_| {},
+            |_| {},
+            |_| {},
+            |w| {
+                let bh = w.behaviour("idle");
+                for (to, from) in [(held, a), (other, b), (again, a)] {
+                    let rhs = w.reference(&[El::Local(from)], None);
+                    set_ref(w, to, rhs, None);
+                }
+                let p = w.check_ref(&[El::Local(held)], 1, &[El::Local(again)]);
+                w.inc(&[El::Local(same)]);
+                w.end_block(p);
+                let p = w.check_ref(&[El::Local(held)], 5, &[El::Local(other)]);
+                w.inc(&[El::Local(apart)]);
+                w.end_block(p);
+                // A write straight into `a` reads through the set it gave.
+                let seven = w.int(7);
+                w.set(&[El::Local(a)], seven);
+                let set = w.reference(&[El::Local(held)], None);
+                let zero = w.int(0);
+                set_ref(w, r, set, Some(zero));
+                let got = w.rhs(INT, &[El::Local(r)]);
+                w.set(&[El::Local(through)], got);
+                // An index past 0 wraps (the crate docs): 1 and -1 read `a`.
+                for (k, wrapped) in [(1, past), (-1, before)] {
+                    let set = w.reference(&[El::Local(held)], None);
+                    let ix = w.int(k);
+                    set_ref(w, r, set, Some(ix));
+                    let got = w.rhs(INT, &[El::Local(r)]);
+                    w.set(&[El::Local(wrapped)], got);
+                }
+                // Grown, the set holds more than `a`: handing `a` again makes one anew.
+                w.inc(&[El::Local(held), El::Member("setvariant", "count")]);
+                let rhs = w.reference(&[El::Local(a)], None);
+                set_ref(w, fresh, rhs, None);
+                let n = w.rhs(INT, &[El::Local(fresh), El::Member("setvariant", "count")]);
+                w.set(&[El::Local(after_growing)], n);
+                w.end_block(bh);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, config(Mode::Strict, &[]));
+    let id = vm.add(HANDLE, "Thing", 0);
+    vm.tick(id, &mut Bare).unwrap_or_else(|h| panic!("{h}"));
+    assert_eq!(
+        vm.local(id, "same"),
+        Some(Value::Int(1)),
+        "the same set again"
+    );
+    assert_eq!(
+        vm.local(id, "apart"),
+        Some(Value::Int(1)),
+        "never the other's"
+    );
+    assert_eq!(
+        vm.local(id, "through"),
+        Some(Value::Int(7)),
+        "a write into the variable read through its set"
+    );
+    assert_eq!(vm.local(id, "past"), Some(Value::Int(7)), "index 1 wraps");
+    assert_eq!(
+        vm.local(id, "before"),
+        Some(Value::Int(7)),
+        "index -1 wraps"
+    );
+    assert_eq!(
+        vm.local(id, "after growing"),
+        Some(Value::Int(1)),
+        "a set grown past the variable isn't the variable's"
+    );
+}
+
+#[test]
 fn a_placement_off_the_whitelist_stays_inert() {
     let p = program(|w| {
         let count = var(w, "count");

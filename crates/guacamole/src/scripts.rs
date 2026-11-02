@@ -2329,8 +2329,8 @@ pub const BREAKABLES: [&str; 3] = [
 /// makes itself a combat target), the cannon's rubble wall, the sliding
 /// rocks and the global reference the chests share; then the scripts of
 /// what those spawn. The Titan boulders run their first tick alone
-/// ([`START_PROPS_FIRST_TICK`]). Off: Eon's lines (`Eon_Line_Activator.ai`,
-/// dialogue, AJ's) and the chest's (`Chest.ai` and its locks'), a creature's
+/// ([`START_PROPS_FIRST_TICK`]). Off: the chest's (`Chest.ai` and its
+/// locks'), a creature's
 /// left out as the creatures are: undrawn, it took `Active_Collectable` and
 /// stopped on `clonedsequence.clones` (its triggered sound's, unmodelled) the
 /// moment he came within 18 ft (the AG.60 review).
@@ -2714,6 +2714,8 @@ pub fn smash_config(mode: Mode) -> Config {
         scripts.extend(LEVEL_END_SCRIPTS.iter().map(|s| (*s).to_owned()));
         // Its interface placement the scheduler holds (openspec AT.44).
         scripts.extend(LEVEL_UI.iter().map(|s| (*s).to_owned()));
+        // Eon's lines (openspec AR.29).
+        scripts.extend(LINE_SCRIPTS.iter().map(|s| (*s).to_owned()));
         first_tick.extend(START_PROPS_FIRST_TICK.iter().map(|s| (*s).to_owned()));
     }
     c
@@ -2734,14 +2736,18 @@ pub fn smash_config(mode: Mode) -> Config {
 /// has them already ([`init_chain`] adds running placements, 4, alone).
 pub const LEVEL_UI: [&str; 1] = ["213_UI_Controller.ai"];
 
-/// Eon's lines' activators (openspec AR.17), by script: each plays its
-/// line through the dialogue UI (its `string reference` and `voice
-/// reference` tags a lone string and sound each, a set of one), voiced,
-/// as `Eon_1_Move_along_path` does as the level starts on a run that lists
-/// it. Not on the TV's listing (AR.29): listed, his line at the start
-/// hides the player's HUD outside any scene and moves the join's checks,
-/// and his activator's take-off waits on its sound's `percent remaining`,
-/// which the host answers nothing for on a sound info itself (AR.28).
+/// Eon's lines' activators (openspec AR.17, AR.29), by script, every tick
+/// on the TV's listing: each waits for the hero to touch it while no other
+/// line holds the level's (`Global(393)`), then plays its line. Level 213
+/// holds two. `Eon_1_Move_along_path`, as the level starts, through the
+/// dialogue UI (its `string reference` and `voice reference` tags a lone
+/// string and sound each, a set of one): his box with his portrait over
+/// the level, the player's HUD hidden while it's up as the original's is
+/// (AG.6's `ag6-explore1-c1-place` shots at flips 30,073 and 30,160, shown
+/// again at 30,247), his voice on the dialogue UI's placement; the
+/// activator off on 'text box remove''s first tick (AR.36), so the line it
+/// held lets go. `Eon_2_Keep_Going`, on the ledge path, a voice alone (no
+/// string: `Sound - Play VO`), off as its copy ends.
 pub const LINE_SCRIPTS: [&str; 1] = ["Eon_Line_Activator.ai"];
 
 /// One walker's scripts on the whitelist (openspec AG.27, AH.42's way) and
@@ -5442,14 +5448,18 @@ mod tests {
             c.whitelist
                 .lists("movementUpdate", "C:/x/movementUpdate.ai")
         );
-        // The pit's intro cutscene runs since AH.28; Eon's lines, the
-        // hints and the cutscene manager's placement stay off (decision 6).
+        // The pit's intro cutscene runs since AH.28, Eon's lines since
+        // AR.29; the hints and the cutscene manager's placement stay off
+        // (decision 6).
         assert!(
             c.whitelist
                 .lists("Eon_4_help_Norticus", "C:/x/Pan_Show_Norticu.ai")
         );
+        assert!(
+            c.whitelist
+                .lists("Eon_2_Keep_Going", "C:/x/Eon_Line_Activator.ai")
+        );
         for (name, script) in [
-            ("Eon_2_Keep_Going", "C:/x/Eon_Line_Activator.ai"),
             ("Hint_Combat", "C:/x/Hints_Passive.ai"),
             ("CutsceneManager", "C:/x/Spyro_CutsceneManager.ai"),
         ] {
@@ -6091,7 +6101,7 @@ mod tests {
     /// openspec AT.44: level 213's UI controller is in the scheduler's list
     /// as the June record holds it, every tick on the TV's listing and the
     /// fight's, by its script, so level 212's running the same file is too
-    /// (AT.44's review), Eon's lines' activators off it (AR.17); an
+    /// (AT.44's review), Eon's lines' activators on it (AR.29); an
     /// interface template (5, as
     /// `Dialogue_UI` is) never joins the run, whatever the listing, while a
     /// running placement (4) does, in its file's root-list order.
@@ -6122,13 +6132,13 @@ mod tests {
                 guac_script::Listed::Off,
                 "by its script, not its placement's name"
             );
-            // Eon's lines (openspec AR.17): off the TV's listing (AR.29).
+            // Eon's lines (openspec AR.29): on the TV's listing.
             assert_eq!(
                 c.whitelist.listing(
                     "Eon_2_Keep_Going",
                     "C:/tfb/Content/Levels/Level_213/Scripts/Eon_Line_Activator.ai"
                 ),
-                guac_script::Listed::Off
+                guac_script::Listed::Every
             );
         }
         let mut b = IgzBuilder::new();

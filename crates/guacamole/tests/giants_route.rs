@@ -548,6 +548,21 @@ struct Driven {
     /// `scripts::player_hud_hidden`) in a scene, and outside one.
     hidden_steps: u32,
     hidden_outside: u32,
+    /// Outside a scene, the steps a line's dialogue box stood on the
+    /// interface's model (openspec AR.29: Eon's at the level's start), and
+    /// of those the steps the HUD was hidden; `hidden_outside` counts none
+    /// of them.
+    line_steps: u32,
+    hidden_line: u32,
+}
+
+/// Whether a line's dialogue box stands on the interface's model.
+fn line_up(run: &Run) -> bool {
+    run.world.interface().is_some_and(|k| {
+        k.instances()
+            .into_iter()
+            .any(|id| k.model().sprite(id).name == DIALOGUE_BACKDROP)
+    })
 }
 
 /// Whether the joined hero's minion reads invulnerable
@@ -635,6 +650,7 @@ fn drive_with(mut run: Run, mode: Mode, each: &mut dyn FnMut(&Run)) -> Driven {
     };
     let (mut scene_steps, mut held_steps) = (0, 0);
     let (mut hidden_steps, mut hidden_outside) = (0, 0);
+    let (mut line_steps, mut hidden_line) = (0, 0);
     while run.steps < limit {
         for n in &watch {
             let now = ours(&run, n).map(|s| (s.state, s.behaviour));
@@ -666,6 +682,9 @@ fn drive_with(mut run: Run, mode: Mode, each: &mut dyn FnMut(&Run)) -> Driven {
                     scene_steps += 1;
                     held_steps += u32::from(invulnerable(&run));
                     hidden_steps += u32::from(hidden);
+                } else if line_up(&run) {
+                    line_steps += 1;
+                    hidden_line += u32::from(hidden);
                 } else {
                     hidden_outside += u32::from(hidden);
                 }
@@ -682,6 +701,8 @@ fn drive_with(mut run: Run, mode: Mode, each: &mut dyn FnMut(&Run)) -> Driven {
         held_steps,
         hidden_steps,
         hidden_outside,
+        line_steps,
+        hidden_line,
     }
 }
 
@@ -1105,14 +1126,19 @@ fn from_the_start_to_anchor_b_and_the_open_gate_on_the_scripts_alone() {
     // control wrapper: under designer control, invulnerable), then lets go.
     println!(
         "the scene's steps on the route {}, his minion held {}, the player's HUD hidden {} \
-         (outside it {})",
-        d.scene_steps, d.held_steps, d.hidden_steps, d.hidden_outside
+         (outside it {}); a line's box up outside a scene {} steps, the HUD hidden {} of them",
+        d.scene_steps, d.held_steps, d.hidden_steps, d.hidden_outside, d.line_steps, d.hidden_line
     );
     assert!(d.scene_steps > 0, "the intro set Cutscene State");
     assert!(d.held_steps + 1 >= d.scene_steps, "held through the intro");
     // The scripts hide the player's HUD for the intro (`Game - Cutscene`'s
-    // hide UI), so the TV hides its own: through it and nowhere else.
+    // hide UI) and for Eon's line at the level's start (the dialogue's UI;
+    // AR.29: the original's hidden with his box up, AG.6's `c1-place` at
+    // flips 30,073 and 30,160, back at 30,247), so the TV hides its own:
+    // through those and nowhere else.
     assert_eq!(d.hidden_steps, d.scene_steps, "hidden through the intro");
+    assert!(d.line_steps > 0, "Eon's line's box at the level's start");
+    assert_eq!(d.hidden_line, d.line_steps, "hidden while his box is up");
     assert_eq!(d.hidden_outside, 0);
     assert!(!invulnerable(&d.run), "let go once it's over");
     // Anchor B, where AH.8's stood, its triggers fired as AH.8's were bar
@@ -1724,8 +1750,8 @@ fn pit_intro(sounds: bool) -> PitIntro {
     pit_intro_with(sounds, &[])
 }
 
-/// [`pit_intro`] with `scripts` listed past the TV's listing (openspec
-/// AR.17: Eon's lines, `scripts::LINE_SCRIPTS`).
+/// [`pit_intro`] with `scripts` listed past the TV's listing (a probe's
+/// way to run what the TV doesn't yet; AR.17 listed Eon's lines so).
 fn pit_intro_with(sounds: bool, scripts: &'static [&'static str]) -> PitIntro {
     let (run, stops, _) = joined_with(
         Mode::Strict,
@@ -1854,36 +1880,116 @@ fn the_pit_intro_voices_norticus_line_and_waits_on_it() {
     assert!((430..=455).contains(&out), "AH.8: 449; ours {out}");
 }
 
-/// openspec AR.17: Eon's lines ride the same path, on a run listing them
-/// (`scripts::LINE_SCRIPTS`; the TV's doesn't yet, AR.29).
-/// `Eon_1_Move_along_path` (`Eon_Line_Activator.ai`) wakes as the level
-/// starts and plays its line through the dialogue UI: his box (his
-/// portrait) and his voice, started on the placement running the dialogue
-/// UI's update, the recording's length, the box down after it, the
-/// dialogue UI setting its `speaking_done`. `Eon_2_Keep_Going` waits on:
-/// AH.8's route never brings him where it speaks.
+/// openspec AR.17, AR.29 and AR.36: Eon's lines ride the same path, on the
+/// TV's listing (`scripts::LINE_SCRIPTS`). `Eon_1_Move_along_path`
+/// (`Eon_Line_Activator.ai`) wakes as the level starts and plays its line
+/// through the dialogue UI: his box (his portrait) and his voice, started on
+/// the placement running the dialogue UI's update, the recording's length,
+/// the box down after it, the dialogue UI setting its `speaking_done`. Its
+/// 'text box remove' waits on `percent remaining` of the line's sound info
+/// itself, which reads the most over its copies on the asker: none on the
+/// activator, so 0, and it takes itself off on that behaviour's first
+/// tick, his line playing on to its end (AR.28: AG.7's fresh state, game
+/// frame 5962, is past both readings). Its shutdown lets go of the line
+/// the level holds (`Global(393)`), so `Eon_2_Keep_Going`, which waits while
+/// another line holds it, plays its own as the route touches it on the
+/// ledge path (`vo_eon_lvl213_008`, no words: `Sound - Play VO` on the
+/// sound system's placement, its copy what it waits on), then takes itself
+/// off; AH.34's review read the original's played and gone by AH.8's
+/// `ledge_e1_before`. Before AR.36 the first never let go and the second
+/// waited all route.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn eons_first_line_is_voiced_as_the_level_starts() {
     println!("load before: {}", load());
-    let p = pit_intro_with(true, &scripts::LINE_SCRIPTS);
+    let (run, stops, _) = joined_with(
+        Mode::Strict,
+        Setup {
+            props: true,
+            interface: true,
+            sounds: true,
+            ..Setup::default()
+        },
+    );
+    assert!(stops.is_empty());
+    for name in ["Eon_1_Move_along_path", "Eon_2_Keep_Going"] {
+        let p = run
+            .files
+            .placed
+            .iter()
+            .find(|p| p.obj.unit == LEVEL && p.name == name)
+            .expect("placed");
+        println!(
+            "{name}: at {:?} turned {:?} scale {:?}, its trigger {:?}; the hero at {:?}",
+            p.position,
+            p.rotation,
+            p.scale,
+            p.solid,
+            run.hero().pivot
+        );
+    }
+    let first = run.placed("Eon_1_Move_along_path").0;
+    let second = run.placed("Eon_2_Keep_Going").0;
+    let mut lines = Lines::default();
+    let (mut done, mut off, mut off2) = (None, None, None);
+    // Where each of his voices plays from (AR.29): its sound's 3D setting
+    // and falloff (feet), and how far its actor is from the hero (metres),
+    // at its first engine frame.
+    type Heard = (String, bool, Option<(f32, f32)>, f32);
+    let mut heard: Vec<Heard> = Vec::new();
+    let driven = drive_with(run, Mode::Strict, &mut |run: &Run| {
+        lines.record(run);
+        for p in run.world.plays() {
+            let Some(name) = p.name.as_deref().filter(|n| n.starts_with("vo_eon")) else {
+                continue;
+            };
+            let (Some(at), false) = (p.at, heard.iter().any(|h| h.0 == name)) else {
+                continue;
+            };
+            let params = run.world.play_params(p);
+            let d = at.distance(run.hero().pivot);
+            heard.push((
+                name.to_owned(),
+                params.three_d,
+                params.falloff.map(|f| (f.full, f.silent)),
+                d,
+            ));
+        }
+        if let Some(id) = run.vm.placement_of(second)
+            && run.vm.removed(id)
+            && off2.is_none()
+        {
+            off2 = Some(run.steps);
+        }
+        let Some(id) = run.vm.placement_of(first) else {
+            return;
+        };
+        let spoken = run.vm.local(id, "speaking_done").map(|v| run.vm.value(v))
+            == Some(guac_script::Value::Int(1));
+        if spoken && done.is_none() {
+            done = Some(run.steps);
+        }
+        if run.vm.removed(id) && off.is_none() {
+            off = Some(run.steps);
+        }
+    });
     println!("load after: {}", load());
-    let eon: Vec<&DialogueBox> = p
-        .lines
+    assert!(driven.stops.is_empty());
+    let eon: Vec<&DialogueBox> = lines
         .boxes
         .iter()
         .filter(|b| b.portrait.as_deref() == Some("Eon"))
         .collect();
     let [b] = eon.as_slice() else {
-        panic!("one line of his: {:?}", p.lines.boxes);
+        panic!("one line of his: {:?}", lines.boxes);
     };
-    let v = p
-        .lines
+    let v = lines
         .voices
         .iter()
         .find(|v| v.sound.starts_with("vo_eon_lvl213"))
-        .unwrap_or_else(|| panic!("his line voiced: {:?}", p.lines.voices));
-    println!("Eon: {b:?} {v:?}");
+        .unwrap_or_else(|| panic!("his line voiced: {:?}", lines.voices));
+    let (done, off) = (done.expect("speaking done"), off.expect("taken off"));
+    println!("Eon: {b:?} {v:?}; speaking done at {done}, taken off at {off}");
     assert!(b.made < 200, "as the level starts: {b:?}");
     assert!((v.started as i64 - b.made as i64).abs() <= 1, "{v:?} {b:?}");
     let ended = v.ended.expect("ended");
@@ -1891,23 +1997,44 @@ fn eons_first_line_is_voiced_as_the_level_starts() {
     assert!(ended.abs_diff(v.started + frames) <= 1, "{v:?}");
     let gone = u64::from(b.gone.expect("taken off"));
     assert!(gone >= ended, "{b:?} {v:?}");
-    // Its take-off waits on `percent remaining` of the line's sound info
-    // itself, which our host answers nothing for (AR.28): it stays in
-    // 'text box remove', its speaking done set.
-    let first = p.driven.run.placed("Eon_1_Move_along_path").0;
-    let id = p.driven.run.vm.placement_of(first).expect("in the run");
-    assert_eq!(p.driven.run.vm.behaviour(id), Some("text box remove"));
-    assert_eq!(
-        p.driven
-            .run
-            .vm
-            .local(id, "speaking_done")
-            .map(|v| p.driven.run.vm.value(v)),
-        Some(guac_script::Value::Int(1))
+    assert!(u64::from(done) >= ended, "done once the line is over");
+    assert!(
+        off > b.made && off <= b.made + 2,
+        "off as 'text box remove' first ticks, his box just up: {off}"
     );
-    let second = p.driven.run.placed("Eon_2_Keep_Going").0;
-    let id = p.driven.run.vm.placement_of(second).expect("in the run");
-    assert_eq!(p.driven.run.vm.behaviour(id), Some("wait"), "not reached");
+    assert!(u64::from(off) < ended, "his line plays on: {off}");
+    let keep = lines
+        .voices
+        .iter()
+        .find(|v| v.sound == "vo_eon_lvl213_008")
+        .unwrap_or_else(|| panic!("his second line voiced: {:?}", lines.voices));
+    let off2 = off2.expect("the second taken off");
+    println!("Eon_2_Keep_Going: {keep:?}, taken off at {off2}");
+    for (name, three_d, falloff, d) in &heard {
+        println!(
+            "{name}: 3D {three_d}, falloff {falloff:?} ft, its actor {d:.2} m ({:.1} ft) from \
+             the hero",
+            d * 3.280_84
+        );
+    }
+    assert!(
+        keep.started > u64::from(off),
+        "once the first let go: {keep:?}"
+    );
+    assert_eq!(keep.actor, "Macros_Sound", "{keep:?}");
+    let ended = keep.ended.expect("played out");
+    let frames = (keep.length * 60.0).round() as u64;
+    assert!(ended.abs_diff(keep.started + frames) <= 1, "{keep:?}");
+    assert!(
+        u64::from(off2) + 3 >= ended && u64::from(off2) <= ended + 1,
+        "off as its copy ends: {off2} {keep:?}"
+    );
+    assert_eq!(
+        eon.len(),
+        1,
+        "the second's line has no words: {:?}",
+        lines.boxes
+    );
 }
 
 /// A development probe for AT.44 and AR.17: AH.8's route with the sounds
