@@ -128,6 +128,32 @@ fn a_named_level_extracts_end_to_end_and_resumes() {
         }
         assert!(first.failed.is_empty(), "{name}: every part reads");
         assert_eq!(first.parts_read, levels::PARTS.len());
+        // Its own sounds with it past the first run's levels (openspec AR.30).
+        let first_run = levels::FIRST_RUN.contains(&name.as_str());
+        match &first.sounds {
+            Some(s) => {
+                let audio_bytes = s.audio_files.bytes;
+                println!(
+                    "  sounds: {} sounds, {} data infos, {} audio files ({} written, {} kept, {:.1} MiB of audio), {} refused, {:?} in {:.2} s; load average {}",
+                    s.sounds,
+                    s.data,
+                    s.audio,
+                    s.audio_files.written,
+                    s.audio_files.kept,
+                    audio_bytes as f64 / (1 << 20) as f64,
+                    s.refused.len(),
+                    s.files,
+                    s.took.as_secs_f64(),
+                    load_average()
+                );
+                assert!(s.failed.is_none(), "{name}'s sounds: {:?}", s.failed);
+                assert!(s.read && !first_run);
+            }
+            None => assert!(
+                first_run,
+                "{name}: a level past the first run's reads its sounds"
+            ),
+        }
         let again = stages::extract_level(dir, name, IrFormat::Ron, &|_| {}).unwrap();
         println!(
             "  resumed: {} kept, {:?} in {:.3} s",
@@ -140,6 +166,12 @@ fn a_named_level_extracts_end_to_end_and_resumes() {
             (0, levels::PARTS.len())
         );
         assert_eq!(again.files.written, 0);
+        assert!(
+            again
+                .sounds
+                .as_ref()
+                .is_none_or(|s| s.kept && s.files.written == 0)
+        );
 
         // Every file as the same level read in memory gives it.
         let identity = dir.manifest().identity.clone();
@@ -183,6 +215,35 @@ fn a_named_level_extracts_end_to_end_and_resumes() {
         }
         let script = std::fs::read(dir.path().join(levels::script_path(name))).unwrap();
         assert!(script == entry, "the script entry is the disc's");
+        // The sounds' IR as the same archive read in memory gives it, each
+        // audio file it names recorded and as the remux writes it.
+        if !first_run {
+            use guac_extract::sounds;
+            let archive = sounds::level_archive(name);
+            let bld = std::fs::read(usrdir.join(&archive)).unwrap();
+            let arc = std::fs::read(usrdir.join(&archive).with_extension("arc")).ok();
+            let exports = sounds::exports(&usrdir).unwrap();
+            let read =
+                sounds::read(&archive, &bld, arc.as_deref(), &exports, identity.clone()).unwrap();
+            let rel = sounds::path(IrFormat::Ron, &archive);
+            assert!(
+                std::fs::read(dir.path().join(&rel)).unwrap()
+                    == guac_ir::to_ron(&read.ir).unwrap().into_bytes(),
+                "{rel}"
+            );
+            let recorded = &m.levels[name.as_str()].parts[sounds::PART];
+            for (path, mp3) in &read.audio {
+                assert!(recorded.contains(path), "{path} recorded");
+                assert!(
+                    std::fs::read(dir.path().join(path)).unwrap() == *mp3,
+                    "{path}"
+                );
+            }
+            println!(
+                "  sounds checked: the IR and {} audio files against the in-memory read",
+                read.audio.len()
+            );
+        }
         let bytes: u64 = m.outputs.iter().map(|o| o.size).sum();
         println!(
             "  checked: every part's RON, the script entry and {checked} texture binds against the in-memory read; {} files, {bytes} bytes in the dir",

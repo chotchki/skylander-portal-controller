@@ -705,13 +705,38 @@ fn the_palettes_follow_a_whitelisted_script_to_its_creature() {
         let r = palettes(parsed(&creature_level(script)), LEVEL, identity()).unwrap();
         assert!(r.ir.palettes.is_empty(), "{script:?}");
     }
-    // A level off the whitelist runs none of its scripts.
-    let r = palettes(parsed(&spec), "level_999_elsewhere", identity()).unwrap();
-    assert!(r.ir.palettes.is_empty());
-    // Nor a walker's script there: the level runs none of its own.
-    let walker = creature_level(Some("Levels/Synthetic/Scripts/PortalEntry_Air.ai"));
-    let r = palettes(parsed(&walker), "level_999_elsewhere", identity()).unwrap();
-    assert!(r.ir.palettes.is_empty());
+    // Past the first run's levels (openspec AS.54), every skinned model a
+    // placement names, its script listed, off the whitelist or none (a
+    // template a spawner clones): the TV runs each level's own scripts.
+    for script in [
+        Some("Levels/Synthetic/Scripts/Chest_Unlisted.ai"),
+        Some("Levels/Synthetic/Scripts/PortalEntry_Air.ai"),
+        None,
+    ] {
+        let r = palettes(
+            parsed(&creature_level(script)),
+            "level_999_elsewhere",
+            identity(),
+        )
+        .unwrap();
+        assert_eq!(
+            r.ir.palettes
+                .iter()
+                .map(|p| p.owner.as_str())
+                .collect::<Vec<_>>(),
+            [CHEST],
+            "{script:?}"
+        );
+    }
+    // Its file named for its rule there, chapter 1's as it was.
+    assert_eq!(
+        part_path(crate::intros::IrFormat::Ron, "level_999_elsewhere", PALETTES),
+        "levels/level_999_elsewhere/palettes.v2.ron"
+    );
+    assert_eq!(
+        part_path(crate::intros::IrFormat::Postcard, LEVEL, PALETTES),
+        format!("levels/{LEVEL}/palettes.postcard")
+    );
 }
 
 /// The nodes part (openspec AH.138): the skinned chest's attach list on its

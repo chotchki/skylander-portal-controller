@@ -28,7 +28,7 @@ use guac_ir::{DumpIdentity, Roster};
 use sha2::Digest;
 
 use crate::intros::IrFormat;
-use crate::stages::{Event, Files, count_kept, put};
+use crate::stages::{Event, Files, count_kept, held, put};
 use crate::{ExtractError, IdentityDir, Result, levels, models, roster, scripts};
 
 /// The extract-wide part ([`crate::PARTS`]).
@@ -428,6 +428,105 @@ pub fn sound_stage(
     dir.record_part(PART, files)?;
     stage.read = true;
     stage.took = started.elapsed();
+    Ok(stage)
+}
+
+/// A level's archive under `PS3_GAME/USRDIR`: `level/<level>.bld`.
+pub fn level_archive(level: &str) -> String {
+    format!("{}/{level}.bld", levels::LEVEL_FOLDER)
+}
+
+/// One level's own sounds, read as the part reads chapter 1's (openspec
+/// AR.30), into `sounds/<level>.<ron|postcard>` and `audio/sounds/`,
+/// recorded as the level's `sounds` part in the manifest's `levels` map, so
+/// the TV's book finds them by the level's stem at its load; kept when in.
+/// Its `global.bld` refs lean on the extract-wide part, and a first-run
+/// level's sounds are that part's, never this stage's. An archive that
+/// won't read is [`SoundStage::failed`], nothing recorded: the level plays
+/// silent and the next ask tries again.
+pub fn level_sound_stage(
+    dir: &mut IdentityDir,
+    level: &str,
+    ir: IrFormat,
+    send: &(dyn Fn(Event) + Sync),
+) -> Result<SoundStage> {
+    let started = Instant::now();
+    let archive = level_archive(level);
+    let rel = path(ir, &archive);
+    let mut stage = SoundStage::default();
+    send(Event::Sounds { done: 0, total: 1 });
+    if dir.level_part_done(level, PART, &rel)? {
+        let recorded = dir.manifest().levels[level].parts[PART].clone();
+        count_kept(dir, &recorded, &mut stage.files);
+        stage.audio = recorded.iter().filter(|f| f.starts_with(AUDIO_DIR)).count();
+        stage.kept = true;
+        stage.archives = 1;
+        stage.took = started.elapsed();
+        send(Event::Sounds { done: 1, total: 1 });
+        return Ok(stage);
+    }
+    let usrdir = PathBuf::from(&dir.manifest().source_dir).join("PS3_GAME/USRDIR");
+    let identity = dir.manifest().identity.clone();
+    let failed = |stage: &mut SoundStage, archive: &str, reason: String| {
+        let e = ExtractError::ScriptsUnreadable {
+            part: PART.to_owned(),
+            archive: archive.to_owned(),
+            reason,
+        };
+        stage.failed = Some((archive.to_owned(), e.to_string()));
+        stage.took = started.elapsed();
+    };
+    let exports = match exports(&usrdir) {
+        Ok(x) => x,
+        Err(reason) => {
+            failed(&mut stage, roster::GLOBAL, reason);
+            return Ok(stage);
+        }
+    };
+    let bld_path = usrdir.join(&archive);
+    let bld = std::fs::read(&bld_path).map_err(ExtractError::io(&bld_path))?;
+    let arc_path = bld_path.with_extension("arc");
+    let arc = match std::fs::read(&arc_path) {
+        Ok(b) => Some(b),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(ExtractError::io(&arc_path)(e)),
+    };
+    let r = match read(&archive, &bld, arc.as_deref(), &exports, identity) {
+        Ok(r) => r,
+        Err(reason) => {
+            failed(&mut stage, &archive, reason);
+            return Ok(stage);
+        }
+    };
+    let mut files: Vec<String> = Vec::with_capacity(r.audio.len() + 1);
+    let mut new: Vec<(String, &[u8])> = Vec::new();
+    for (file, bytes) in &r.audio {
+        files.push(file.clone());
+        if !held(dir, file, bytes, &mut stage.audio_files)? {
+            new.push((file.clone(), bytes));
+        }
+    }
+    // The level's new audio under one manifest save, as the part's.
+    dir.write_outputs(&new)?;
+    let bytes = ir.encode(&r.ir, dir, &rel)?;
+    put(dir, &rel, &bytes, &mut stage.files)?;
+    files.push(rel);
+    dir.record_level_part(level, PART, files)?;
+    stage.archives = 1;
+    stage.sounds = r.ir.sounds.len();
+    stage.data = r.ir.data.len();
+    stage.audio = r.audio.len();
+    stage.refused =
+        r.ir.refused
+            .iter()
+            .map(|(n, why)| (format!("{archive}: {n}"), why.clone()))
+            .collect();
+    stage.files.written += stage.audio_files.written;
+    stage.files.kept += stage.audio_files.kept;
+    stage.files.bytes += stage.audio_files.bytes;
+    stage.read = true;
+    stage.took = started.elapsed();
+    send(Event::Sounds { done: 1, total: 1 });
     Ok(stage)
 }
 

@@ -872,6 +872,27 @@ pub fn sound_part() -> (Arc<guac_sound::SoundBook>, HashMap<u16, String>) {
     .clone()
 }
 
+/// The sounds part of a part linking `archives` (by unit): `global.bld`'s,
+/// Eruptor's and the level's, read off the dump in memory, uncached: a level
+/// past chapter 1's, whose own sounds the TV reads off its level's record
+/// (openspec AR.30).
+pub fn sound_part_of(archives: &[String]) -> (Arc<guac_sound::SoundBook>, HashMap<u16, String>) {
+    let usr = dump().join("PS3_GAME/USRDIR");
+    let exports = guac_extract::sounds::exports(&usr).expect("global's exports");
+    let mut stems = HashMap::new();
+    let mut parts = Vec::new();
+    for unit in [1u16, ERUPTOR, LEVEL] {
+        let archive = &archives[unit as usize];
+        let bld = std::fs::read(usr.join(archive)).unwrap_or_else(|e| panic!("{archive}: {e}"));
+        let arc = std::fs::read(usr.join(archive).with_extension("arc")).ok();
+        let read = guac_extract::sounds::read(archive, &bld, arc.as_deref(), &exports, identity())
+            .unwrap_or_else(|e| panic!("{archive}'s sounds: {e}"));
+        stems.insert(unit, guac_sound::stem(archive));
+        parts.push(read.ir);
+    }
+    (Arc::new(guac_sound::SoundBook::new(parts)), stems)
+}
+
 pub fn run_on(mode: Mode) -> (Run, HashMap<MemberId, String>) {
     run_on_with(mode, Setup::default())
 }
@@ -924,7 +945,7 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     let files = Files::read(&read).unwrap();
     let handles = headless_handles(&files);
     let objects = headless_objects(&handles);
-    let mut config = scripts::level_config(mode, &files, LEVEL, chapter_1);
+    let mut config = scripts::level_config(mode, &files, LEVEL, level);
     if setup.no_music {
         config = scripts::without_music(config);
     }
@@ -939,7 +960,10 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     let mut world = ScriptWorld::new(&files, &handles, objects);
     world.set_inert(vm.inert());
     if setup.sounds {
-        let (book, stems) = sound_part();
+        let (book, stems) = match chapter_1 {
+            true => sound_part(),
+            false => sound_part_of(&archives),
+        };
         world.set_sounds(book, stems);
     }
     if setup.interface {
@@ -980,6 +1004,8 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     if chapter_1 {
         world.walk_first_fight(LEVEL);
         world.walk_goats(LEVEL);
+    } else if let Some(e) = scripts::encounter(level) {
+        world.walk_encounter(LEVEL, e);
     }
     let (meshes, start) = level_bodies(&igzs[LEVEL as usize], level);
     let parry = ParryWorld::new(&meshes).expect("the level's collision");

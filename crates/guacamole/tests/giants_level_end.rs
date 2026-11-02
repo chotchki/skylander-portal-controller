@@ -259,3 +259,215 @@ fn level_214_runs_its_own_scripts_with_eruptor_joined() {
         load()
     );
 }
+
+/// openspec AS.54: level 214's music by its own scripts on the TV's listing
+/// (`scripts::MUSIC_SCRIPTS`), its sounds read off its own archive as the
+/// TV's book reads its level's record (AR.30): its dynamic sound controller
+/// starts its explore bed at the level's start, looping, the docks'
+/// ambience under it; with the music scripts set apart
+/// (`scripts::without_music`) no music plays. Nothing stops, Eruptor joined
+/// and standing.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_music_plays_from_its_start() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let follow = |no_music: bool| {
+        let setup = Setup {
+            interface: true,
+            props: true,
+            sounds: true,
+            no_music,
+            ..Setup::default()
+        };
+        let (mut run, _found) = run_on_level(Mode::Play, NEXT, setup);
+        let listing = run.vm.config().whitelist.clone();
+        let mut stops = Vec::new();
+        for _ in 0..2 {
+            stops.extend(run.step_play().unwrap());
+        }
+        run.join().unwrap_or_else(|h| panic!("{h}"));
+        let mut first: std::collections::BTreeMap<String, (u64, f32, bool)> = Default::default();
+        for _ in 0..600 {
+            stops.extend(run.step_play().unwrap());
+            for p in run.world.plays() {
+                let Some(name) = p.name.clone() else { continue };
+                let rate = run.world.sequences()[p.sequence as usize].rate;
+                let looping = run.world.play_params(p).looping;
+                first.entry(name).or_insert((p.started, rate, looping));
+            }
+        }
+        (first, stops, listing)
+    };
+    let (with, stops, listing) = follow(false);
+    for script in [
+        "snd_dynamic_sound_controller_214.ai",
+        "snd_combat_watcher_214.ai",
+        "snd_jukebox_controller.ai",
+        "IGC_Music_Player.ai",
+    ] {
+        assert!(listing.lists("", &format!("C:/x/{script}")), "{script}");
+    }
+    let beds: Vec<(&String, &(u64, f32, bool))> = with
+        .iter()
+        .filter(|(n, _)| n.starts_with("mu_") || n.starts_with("am_"))
+        .collect();
+    println!("214's beds: {beds:?}; {} sounds started", with.len());
+    let explore = with
+        .get("mu_214_explore_v2")
+        .expect("214's explore bed plays");
+    assert!(explore.0 <= 2, "from the level's start: {explore:?}");
+    assert_eq!(explore.1, 100.0);
+    assert!(explore.2, "looping");
+    assert!(with.contains_key("am_air_docks_wind_birds"), "the ambience");
+    assert!(
+        stops.is_empty(),
+        "{:#?}",
+        stops.iter().map(ToString::to_string).collect::<Vec<_>>()
+    );
+    let (without, stops, _) = follow(true);
+    assert!(
+        !without.keys().any(|n| n.starts_with("mu_")),
+        "no music without its scripts: {:?}",
+        without.keys().collect::<Vec<_>>()
+    );
+    assert!(stops.is_empty());
+    println!(
+        "{:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
+
+/// Where Setup_001's first trigger stands on 214's first island, past the
+/// dock, as its file places it: the hero set down here sets off the pods'
+/// scene.
+const POD_TRIGGER: [f32; 3] = [17.934004, -13.715616, 20.65423];
+/// Among the pods, on the ground the Chompies run on.
+const AMONG_THE_PODS: [f32; 3] = [55.0, -17.5, 35.0];
+
+/// A beaten creature's or clone's hit points, as its scripts hold them.
+fn hit_points(run: &Run, h: guac_script::Handle) -> Option<f32> {
+    let vm = &run.vm;
+    let id = vm.placement_of(h)?;
+    let d = vm.local(id, "description").map(|v| vm.value(v))?;
+    let c = vm.field(d, "creature info").map(|v| vm.value(v))?;
+    vm.field(c, "hp").map(|v| vm.value(v))?.as_f32()
+}
+
+/// openspec AS.54: level 214's first encounter on the TV's listing for it
+/// (`scripts::ENCOUNTERS`), fought with Eruptor, its palettes off the level
+/// (AS.54's rule: every skinned model a placement names). Its two spawners
+/// walk from the start; set down past Setup_001's trigger, the controller
+/// plays the pods' scene and wakes them; among the pods, they clone Chompies
+/// off the undead template, each walked as it's made; the Chompies notice
+/// him and bite, and his attack (South, pulsed) beats them, paying his
+/// figure experience (a spawner beaten too, some runs: printed). Nothing
+/// stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_first_encounter_is_fought_with_eruptor() {
+    use guac_motion::stick::Stick;
+    use guacamole::script_engine::Pad;
+    use std::collections::BTreeMap;
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let setup = Setup {
+        interface: true,
+        props: true,
+        sounds: true,
+        ..Setup::default()
+    };
+    let (mut run, _found) = run_on_level(Mode::Play, NEXT, setup);
+    let mut stops = Vec::new();
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap());
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    let spawners: Vec<guac_script::Handle> = ["Enemy_Chompy_Spawner(1)", "Enemy_Chompy_Spawner(5)"]
+        .iter()
+        .map(|n| run.placed(n).0)
+        .collect();
+    assert_eq!(run.world.creatures(), spawners, "the spawners walk");
+    let controller = run.placement("Setup_001_Controller");
+    run.put(Vec3::from_array(POD_TRIGGER), 0.0);
+    let mut scene = None;
+    for _ in 0..400 {
+        stops.extend(run.step_play().unwrap());
+        if scene.is_none() && run.vm.behaviour(controller) == Some("chompy pod - cutscene out") {
+            scene = Some(run.steps);
+        }
+    }
+    let scene = scene.expect("the pods' scene");
+    run.put(Vec3::from_array(AMONG_THE_PODS), 90.0);
+    let health_before = run.health().unwrap();
+    let xp_before = run.figure_values().map_or(0, |v| v.xp);
+    // Each clone walked, by when it was first seen and when it went.
+    let mut chompies: BTreeMap<guac_script::Handle, (u32, Option<u32>)> = BTreeMap::new();
+    for k in 0..1200u32 {
+        run.bench.pads[0] = Pad {
+            stick: Stick::new(0.0, 0.0),
+            actions: [k % 20 < 2, false, false, false],
+            connected: true,
+        };
+        stops.extend(run.step_play().unwrap());
+        for h in run.world.creatures() {
+            if spawners.contains(&h) {
+                continue;
+            }
+            let gone = run.world.actor(h).is_none_or(|a| a.removed)
+                || run.vm.placement_of(h).is_none_or(|i| run.vm.removed(i));
+            let e = chompies.entry(h).or_insert((run.steps, None));
+            if gone && e.1.is_none() {
+                e.1 = Some(run.steps);
+            }
+        }
+    }
+    let beaten = chompies.values().filter(|c| c.1.is_some()).count();
+    let spawners_beaten = spawners
+        .iter()
+        .filter(|h| hit_points(&run, **h).is_some_and(|hp| hp <= 0.0))
+        .count();
+    let (health, xp) = (
+        run.health().unwrap(),
+        run.figure_values().map_or(0, |v| v.xp),
+    );
+    println!(
+        "the scene at step {scene}; {} Chompies cloned, {beaten} beaten; spawners beaten {spawners_beaten}; health {health_before} -> {health}; experience {xp_before} -> {xp}",
+        chompies.len()
+    );
+    for (h, (seen, gone)) in &chompies {
+        println!(
+            "  {h:#x} {}: from {seen}, gone {gone:?}",
+            run.world.name(*h)
+        );
+    }
+    assert!(
+        chompies.len() >= 3,
+        "the spawners clone Chompies: {chompies:?}"
+    );
+    assert!(
+        chompies
+            .keys()
+            .all(|h| run.world.name(*h) == "_Template_Undead_Chompy"),
+        "off the undead template"
+    );
+    assert!(beaten >= 2, "he beats them: {beaten}");
+    assert!(health < health_before, "they bite: {health}");
+    assert!(xp > xp_before, "his figure's paid: {xp}");
+    assert_eq!(
+        run.vm.stopped(run.minion.unwrap()),
+        None,
+        "his script runs on"
+    );
+    assert!(
+        stops.is_empty(),
+        "{:#?}",
+        stops.iter().map(ToString::to_string).collect::<Vec<_>>()
+    );
+    println!(
+        "{:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}

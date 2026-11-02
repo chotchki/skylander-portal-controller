@@ -220,6 +220,14 @@ pub const PLAYED: [&str; 9] = [
     SCENE, PROPS, COLLISION, PLACEMENTS, LIGHTS, ATMOSPHERE, SCRIPT, PALETTES, NODES,
 ];
 
+/// The palettes part's rule past the first run's levels (openspec AS.54:
+/// every skinned model a placement names, [`palettes`]), which its file's
+/// name carries, `palettes.v2.<ron|postcard>`, so a level extracted on
+/// demand under the whitelist's rule (which held none of its creatures)
+/// reads its palettes again on its next ask. The first run's levels keep
+/// theirs, and their name.
+pub const PALETTES_PAST_FIRST_RUN: u32 = 2;
+
 /// The script part's file, `levels/<archive>/script.igz`: raw, so the same
 /// in either IR format.
 pub fn script_path(level: &str) -> String {
@@ -232,6 +240,9 @@ pub fn part_path(ir: crate::intros::IrFormat, level: &str, part: &str) -> String
     match part {
         SCRIPT => script_path(level),
         SPRITES => crate::interface::level_path(ir, level),
+        PALETTES if !FIRST_RUN.contains(&level) => {
+            ir.level_path(level, &format!("{PALETTES}.v{PALETTES_PAST_FIRST_RUN}"))
+        }
         _ => ir.level_path(level, part),
     }
 }
@@ -961,8 +972,12 @@ pub fn script(igz: &Igz<'_>) -> Result<usize, String> {
 
 /// The palettes part: every slot of each skinned model a placement running
 /// one of the level's whitelisted scripts or a walker's (AG.162) names, each
-/// model once, in object order. A model with no skeleton (a breakable, a
-/// coin) has none; one whose skeleton won't read refuses the part.
+/// model once, in object order; past the first run's levels every skinned
+/// model any placement names, scripted or not (openspec AS.54: level 214's
+/// Chompy pods are unscripted templates its spawners clone and play clips
+/// on), since the TV runs each level's own scripts (AS.51). A model with no
+/// skeleton (a breakable, a coin) has none; one whose skeleton won't read
+/// refuses the part.
 pub fn palettes(
     igz: &Igz<'_>,
     level: &str,
@@ -974,13 +989,14 @@ pub fn palettes(
     if !listed.is_empty() {
         listed.extend(crate::scripts::whitelisted_walker_scripts());
     }
+    let every = !FIRST_RUN.contains(&level);
     let placements = FormatPlacements::read(igz).map_err(s)?;
     let mut creatures: BTreeMap<usize, &str> = BTreeMap::new();
     for a in &placements.actors {
         let Some(model) = a.info.model else {
             continue;
         };
-        if !a.script.is_some_and(|p| crate::scripts::listed(&listed, p)) {
+        if !every && !a.script.is_some_and(|p| crate::scripts::listed(&listed, p)) {
             continue;
         }
         let Some(info) = placements.models.get(&model) else {

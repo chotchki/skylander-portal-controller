@@ -75,18 +75,31 @@ pub fn creature_model(prop: &guac_ir::level::Prop, identity: DumpIdentity) -> Op
     })
 }
 
-/// Each skinned model the first fight's placements ([`FIRST_FIGHT`]) and
-/// the templates [`SKINNED_SPAWNS`] names name, once, by its path, the
-/// fight's first, each in its list's order, as [`creature_model`] makes it:
-/// what the TV draws its creatures and those templates' clones with. A
-/// model the props part doesn't hold, or holds static, is left out.
+/// Each skinned model the first fight's placements ([`FIRST_FIGHT`]) on
+/// chapter 1, or a later level's first encounter's placements and clones'
+/// templates (openspec AS.54, [`crate::scripts::encounter`]), and the
+/// templates [`SKINNED_SPAWNS`] names name, once, by its path, the fight's
+/// first, each in its list's order, as [`creature_model`] makes it: what the
+/// TV draws its creatures and those templates' clones with. A model the
+/// props part doesn't hold, or holds static, is left out.
 pub fn skinned_models(
     placements: &Placements,
     props: &Props,
     identity: &DumpIdentity,
 ) -> Vec<(String, Model)> {
     let mut out: Vec<(String, Model)> = Vec::new();
-    for name in FIRST_FIGHT.iter().chain(SKINNED_SPAWNS.iter()) {
+    // A level's first encounter past chapter 1's (openspec AS.54): its
+    // placements and the templates it clones, by name in its own file.
+    let encounter = crate::scripts::encounter(&placements.level)
+        .map(|e| e.placements.iter().chain(e.clones.iter()))
+        .into_iter()
+        .flatten();
+    let first_fight = guac_extract::levels::FIRST_RUN
+        .contains(&placements.level.as_str())
+        .then_some(FIRST_FIGHT.iter())
+        .into_iter()
+        .flatten();
+    for name in first_fight.chain(encounter).chain(SKINNED_SPAWNS.iter()) {
         let Some(path) = placements
             .actors
             .iter()
@@ -228,6 +241,44 @@ mod tests {
         assert!(m.idle.tracks.is_empty());
         assert!(m.attachments.is_empty() && m.attachments_unsettled.is_none());
         assert!(creature_model(&prop("barrel.mdl", false), identity()).is_none());
+    }
+
+    /// openspec AS.54: past chapter 1, a level's first encounter's models
+    /// (its spawners', its clones' template's) in its list's order, chapter
+    /// 1's fight's names in it left out (214's own `Enemy_Chompy(4)`); the
+    /// skinned templates' after them as on chapter 1.
+    #[test]
+    fn a_levels_encounter_draws_its_own_models() {
+        let level = "level_214_tutotial_2";
+        let placements = Placements {
+            identity: identity(),
+            level: level.into(),
+            actors: vec![
+                placed("Enemy_Chompy(4)", Some("chompy_placed.mdl")),
+                placed("_Template_Undead_Chompy", Some("chompy_undead.mdl")),
+                placed("Enemy_Chompy_Spawner(5)", Some("legs.mdl")),
+                placed("Enemy_Chompy_Spawner(1)", Some("legs.mdl")),
+                placed("Setup_001_Controller", None),
+                placed("2_Push_Block_Art_Sheep", Some("tortoise.mdl")),
+            ],
+            waypoints: Vec::new(),
+        };
+        let props = Props {
+            identity: identity(),
+            level: level.into(),
+            props: vec![
+                prop("chompy_placed.mdl", true),
+                prop("chompy_undead.mdl", true),
+                prop("legs.mdl", true),
+                prop("tortoise.mdl", true),
+            ],
+            refused: Vec::new(),
+        };
+        let models = skinned_models(&placements, &props, &identity());
+        assert_eq!(
+            models.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(),
+            ["legs.mdl", "chompy_undead.mdl", "tortoise.mdl"]
+        );
     }
 
     /// The models the first fight's placements name, each once, in their

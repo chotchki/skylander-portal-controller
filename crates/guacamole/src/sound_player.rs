@@ -204,8 +204,8 @@ pub(crate) struct SoundReport {
     pub files: usize,
     pub released: usize,
     /// The level's music placements held until the level's sounds are read
-    /// (openspec AR.23): over 0 while a first run's sounds haven't landed,
-    /// and for good when they never do.
+    /// (openspec AR.23): over 0 while a first run's sounds haven't landed;
+    /// let go to run silent once none are on their way (AR.30).
     pub music_held: usize,
 }
 

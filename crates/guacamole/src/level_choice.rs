@@ -123,6 +123,42 @@ pub(crate) struct AskedReport {
     /// Parts that didn't extract, by part, with why.
     pub failed: Vec<(String, String)>,
     pub reason: Option<String>,
+    /// The level's own sounds (openspec AR.30), once its fetch is done:
+    /// none for a level a first run extracts, whose sounds are the
+    /// extract-wide part's.
+    pub sounds: Option<SoundsAsked>,
+}
+
+/// What the fetch did with the asked level's own sounds (openspec AR.30).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub(crate) struct SoundsAsked {
+    /// Read this time, or already in and kept.
+    pub read: bool,
+    pub kept: bool,
+    pub sounds: usize,
+    /// Its distinct audio files, those written this time, and the bytes of
+    /// every file its record names.
+    pub audio: usize,
+    pub written: usize,
+    pub bytes: u64,
+    pub ms: u64,
+    /// Why they didn't read: the level plays silent.
+    pub failed: Option<String>,
+}
+
+impl SoundsAsked {
+    fn of(s: &guac_extract::sounds::SoundStage) -> Self {
+        Self {
+            read: s.read,
+            kept: s.kept,
+            sounds: s.sounds,
+            audio: s.audio,
+            written: s.files.written,
+            bytes: s.files.bytes,
+            ms: s.took.as_millis() as u64,
+            failed: s.failed.as_ref().map(|(_, why)| why.clone()),
+        }
+    }
 }
 
 /// What the fetch's thread reports.
@@ -161,6 +197,8 @@ pub(crate) struct Fetched {
     pub(crate) written: usize,
     pub(crate) bytes: u64,
     pub(crate) failed: Vec<(String, String)>,
+    /// The level's own sounds (openspec AR.30): none for a first-run level.
+    pub(crate) sounds: Option<SoundsAsked>,
     pub(crate) opened: Duration,
     pub(crate) extracted: Duration,
 }
@@ -186,10 +224,26 @@ pub(crate) fn fetch(
         .kind;
     send(FetchEvent::Opened { kind });
     let opened_after = started.elapsed();
-    let stage = stages::extract_level(&mut dir, name, job.ir, &|e| {
-        if let Event::Level { done, total } = e {
-            send(FetchEvent::Parts { done, total });
+    // A level past the first run's reads its own sounds after its parts
+    // (openspec AR.30): one more step of the header's.
+    let sounds = usize::from(!levels::FIRST_RUN.contains(&name));
+    let parts = std::sync::atomic::AtomicUsize::new(0);
+    let stage = stages::extract_level(&mut dir, name, job.ir, &|e| match e {
+        Event::Level { done, total } => {
+            parts.store(total, std::sync::atomic::Ordering::Relaxed);
+            send(FetchEvent::Parts {
+                done,
+                total: total + sounds,
+            });
         }
+        Event::Sounds { done, total } => {
+            let parts = parts.load(std::sync::atomic::Ordering::Relaxed);
+            send(FetchEvent::Parts {
+                done: parts + done,
+                total: parts + total,
+            });
+        }
+        _ => {}
     })
     .map_err(failed)?;
     let failed: Vec<(String, String)> = stage
@@ -215,6 +269,7 @@ pub(crate) fn fetch(
         written: stage.files.written,
         bytes: stage.files.bytes,
         failed,
+        sounds: stage.sounds.as_ref().map(SoundsAsked::of),
         opened: opened_after,
         extracted: started.elapsed(),
     })
@@ -626,6 +681,25 @@ fn drain_fetch(
             for (part, why) in &f.failed {
                 warn!(level = %name, %part, reason = %why, "a part of the level asked for didn't extract; it loads without it");
             }
+            match &f.sounds {
+                Some(SoundsAsked {
+                    failed: Some(why), ..
+                }) => {
+                    warn!(level = %name, reason = %why, "the level's sounds didn't extract; it plays silent")
+                }
+                Some(s) => info!(
+                    level = %name,
+                    read = s.read,
+                    kept = s.kept,
+                    sounds = s.sounds,
+                    audio = s.audio,
+                    written = s.written,
+                    bytes = s.bytes,
+                    took_s = s.ms as f64 / 1e3,
+                    "the level's sounds are in the extract"
+                ),
+                None => {}
+            }
             level.update_asked(|a| {
                 a.state = "loading".into();
                 a.kind = Some(format!("{:?}", f.kind));
@@ -636,6 +710,7 @@ fn drain_fetch(
                 a.open_ms = ms(f.opened);
                 a.extract_ms = ms(f.extracted);
                 a.failed = f.failed.clone();
+                a.sounds = f.sounds.clone();
             });
             if let Some(tx) = job.as_ref().and_then(|j| j.level.as_ref()) {
                 let _ = tx.send(f.source);
@@ -1072,6 +1147,7 @@ mod tests {
                 written: 1,
                 bytes: 1,
                 failed: Vec::new(),
+                sounds: None,
                 opened: Duration::ZERO,
                 extracted: Duration::ZERO,
             }))))

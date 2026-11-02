@@ -285,3 +285,147 @@ fn an_archive_that_wont_read_refuses_the_part() {
     assert!(!st.read);
     assert!(!opened.dir.manifest().parts.contains_key(PART));
 }
+
+/// A level past chapter 1, the sound builder's archive under its name.
+const NEXT: &str = "level_214_tutotial_2";
+
+/// [`setup`] with [`NEXT`] on the dump beside chapter 1, holding the same
+/// sounds (so the same banks), its `.arc` given by `arc`.
+fn setup_with_next(arc: Option<&[u8]>) -> Setup {
+    let tmp = tempfile::tempdir().unwrap();
+    let dump = make_dump(tmp.path());
+    let usr = dump.join("PS3_GAME/USRDIR");
+    let (bld, sound_arc) = sound_archive();
+    let level = levels::archive_path(&usr, NEXT);
+    fs::write(&level, &bld).unwrap();
+    fs::write(level.with_extension("arc"), arc.unwrap_or(&sound_arc)).unwrap();
+    let known = known_for(&dump);
+    let root = ExtractRoot::checked(tmp.path().join("out/extract")).unwrap();
+    Setup {
+        _tmp: tmp,
+        dump,
+        root,
+        known,
+    }
+}
+
+/// AR.30: a level past chapter 1 asked for by name brings its own sounds
+/// with its parts: its IR under its stem, its banks as the part's audio (a
+/// bank chapter 1's part holds already kept, not written again), recorded
+/// as the level's `sounds` part with every file it names; asked again,
+/// kept; a lost IR file read again alone. Chapter 1's part and its record
+/// stay as they were, and chapter 1 asked by name reads no sounds of its
+/// own (the extract-wide part holds them).
+#[test]
+fn a_levels_own_sounds_extract_with_it_on_demand_and_resume() {
+    let s = setup_with_next(None);
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    let roster = stages::roster_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
+    sounds::sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron, &|_| {}).unwrap();
+    let dir = &mut opened.dir;
+    let part_before = dir.manifest().parts[PART].clone();
+
+    let events = std::sync::Mutex::new(Vec::new());
+    let stage = stages::extract_level(dir, NEXT, IrFormat::Ron, &|e| {
+        if let stages::Event::Sounds { done, total } = e {
+            events.lock().unwrap().push((done, total));
+        }
+    })
+    .unwrap();
+    let st = stage
+        .sounds
+        .expect("a level past chapter 1 reads its sounds");
+    assert!(
+        st.read && !st.kept && st.failed.is_none(),
+        "{:?}",
+        st.failed
+    );
+    assert_eq!((st.archives, st.sounds, st.audio), (1, 6, 5));
+    assert_eq!(
+        (st.audio_files.written, st.audio_files.kept),
+        (0, 5),
+        "every bank shared with chapter 1's part"
+    );
+    assert_eq!(events.into_inner().unwrap(), [(0, 1), (1, 1)]);
+    let rel = sounds::path(IrFormat::Ron, &sounds::level_archive(NEXT));
+    assert_eq!(rel, format!("sounds/{NEXT}.ron"));
+    let recorded = dir.manifest().levels[NEXT].parts[PART].clone();
+    assert_eq!(recorded.len(), 5 + 1, "its audio and its IR");
+    assert!(recorded.contains(&rel));
+    for f in &recorded {
+        assert!(dir.output_done(f).unwrap(), "{f}");
+    }
+    let ir: guac_ir::sound::Sounds = IrFormat::Ron.decode(dir, &rel).unwrap();
+    assert_eq!(ir.archive, format!("level/{NEXT}.bld"));
+    assert_eq!(ir.sounds.len(), 6);
+    for d in ir.data.iter().filter_map(|d| d.audio.as_ref()) {
+        assert!(recorded.contains(&d.file), "{}", d.file);
+    }
+    assert_eq!(dir.manifest().parts[PART], part_before, "chapter 1's part");
+
+    // Asked again: kept, nothing written.
+    let again = stages::extract_level(dir, NEXT, IrFormat::Ron, &|_| {})
+        .unwrap()
+        .sounds
+        .unwrap();
+    assert!(again.kept && !again.read);
+    assert_eq!((again.files.written, again.files.kept), (0, 6));
+
+    // Its IR lost: read again, the audio kept.
+    fs::remove_file(dir.path().join(&rel)).unwrap();
+    let lost = sounds::level_sound_stage(dir, NEXT, IrFormat::Ron, &|_| {}).unwrap();
+    assert!(lost.read);
+    assert_eq!((lost.files.written, lost.files.kept), (1, 5));
+    assert!(dir.output_done(&rel).unwrap());
+
+    // Chapter 1 by name: the extract-wide part holds its sounds.
+    let chapter_1 = stages::extract_level(dir, levels::LEVELS[0], IrFormat::Ron, &|_| {}).unwrap();
+    assert!(chapter_1.sounds.is_none());
+    assert!(
+        !dir.manifest().levels[levels::LEVELS[0]]
+            .parts
+            .contains_key(PART),
+        "no level record of chapter 1's sounds"
+    );
+}
+
+/// AR.30: a level's sounds read before the extract-wide part (or without
+/// it) write their own audio.
+#[test]
+fn a_levels_sounds_without_the_part_write_their_own_audio() {
+    let s = setup_with_next(None);
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    let st = sounds::level_sound_stage(&mut opened.dir, NEXT, IrFormat::Ron, &|_| {}).unwrap();
+    assert!(st.read);
+    assert_eq!((st.audio_files.written, st.audio_files.kept), (5, 0));
+    assert_eq!(audio_outputs(&opened.dir).len(), 5);
+    assert!(!opened.dir.manifest().parts.contains_key(PART));
+}
+
+/// AR.30: a level whose sounds won't read (a junk `.arc`) reports why and
+/// records nothing, its other parts going as they go; the next ask tries
+/// again.
+#[test]
+fn a_levels_sounds_that_wont_read_are_failed_and_nothing_recorded() {
+    let s = setup_with_next(Some(b"not an archive"));
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    let stage = stages::extract_level(&mut opened.dir, NEXT, IrFormat::Ron, &|_| {}).unwrap();
+    let st = stage.sounds.unwrap();
+    let (archive, why) = st.failed.expect("refused");
+    assert_eq!(archive, format!("level/{NEXT}.bld"));
+    assert!(
+        why.contains("GUAC-E-SCRIPTS-UNREADABLE") && why.contains(".arc"),
+        "{why}"
+    );
+    assert!(!st.read);
+    assert!(
+        opened
+            .dir
+            .manifest()
+            .levels
+            .get(NEXT)
+            .is_none_or(|l| !l.parts.contains_key(PART))
+    );
+    let again = sounds::level_sound_stage(&mut opened.dir, NEXT, IrFormat::Ron, &|_| {}).unwrap();
+    assert!(again.failed.is_some(), "tried again, failed again");
+}
