@@ -1493,6 +1493,24 @@ impl Vm {
         }
     }
 
+    /// A number field of the structure `v` holds or names as a reference
+    /// read gives it, the place itself (what a script hands a macro's set
+    /// reference by reference, openspec AT.47); `None` when missing or not
+    /// a number variable.
+    pub fn field_place(&self, v: Value, name: &str) -> Option<Value> {
+        let sym = self.program.find_sym(name)?;
+        let Value::Struct(s) = self.peek(v) else {
+            return None;
+        };
+        let &(_, c) = self
+            .structs
+            .get(s as usize)?
+            .fields
+            .iter()
+            .find(|(n, _)| *n == sym)?;
+        (self.cells[c as usize].kind == CellKind::Value).then_some(Value::Cell(c))
+    }
+
     /// Sets a number field of the structure `v` holds or names: how an
     /// embedder puts a recorded state's shared numbers in (the combat
     /// manager's next alert at an anchor). False when the structure has no
