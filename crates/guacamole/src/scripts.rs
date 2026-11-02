@@ -523,6 +523,11 @@ pub struct ScriptWorld {
     /// first woken (those of one step by handle): a range trigger has fired
     /// once it has been active (AH.4's rule; openspec AH.25's equivalence).
     pub fired: Vec<Handle>,
+    /// Where the activity rule measured from as this step began (the
+    /// heroes' pivots, or the TV's stand-in with none in): what the asleep
+    /// placements' checks after the walk measure from again (openspec
+    /// AS.83, [`ScriptWorld::wakes`]).
+    pub(crate) activity_from: Vec<Vec3>,
     /// The bodies the embedder keeps in its seam for actors (openspec
     /// AH.25: the TV's heroes and awake creatures in Avian's world, as the
     /// headless runs keep theirs in parry's), each actor's handle and body:
@@ -836,6 +841,7 @@ impl ScriptWorld {
             inert: Default::default(),
             woken: Vec::new(),
             fired: Vec::new(),
+            activity_from: Vec::new(),
             embodied: Vec::new(),
             walking_alone: Default::default(),
             written: Default::default(),
@@ -1071,6 +1077,7 @@ impl ScriptWorld {
     /// which before a hero is in measures from the level's start, as its
     /// props stand (openspec AH.27).
     pub fn activity_at(&mut self, heroes: &[Vec3]) -> Vec<(Handle, bool)> {
+        self.activity_from = heroes.to_vec();
         let mut out = Vec::new();
         for (&h, a) in &mut self.actors {
             if !a.managed || a.removed {
@@ -1087,6 +1094,37 @@ impl ScriptWorld {
         for &(h, active) in &out {
             if active && !self.fired.contains(&h) {
                 self.fired.push(h);
+            }
+        }
+        out
+    }
+
+    /// The asleep placements' checks after the walk (openspec AS.83,
+    /// `guac_script`'s crate docs, The tick): of `asleep`, those the
+    /// activity rule finds awake now, measured from where this step's pass
+    /// measured ([`ScriptWorld::activity_at`]), each taken as awake and as
+    /// fired. What a script's write of a range or a buffer during the walk,
+    /// or its move of one into range, wakes the step it does it.
+    pub fn wakes(&mut self, asleep: &[Handle]) -> Vec<Handle> {
+        let mut out = Vec::new();
+        for &h in asleep {
+            let Some(a) = self.actors.get_mut(&h) else {
+                continue;
+            };
+            if !a.managed || a.removed || a.active {
+                continue;
+            }
+            let d = self
+                .activity_from
+                .iter()
+                .map(|p| (*p - a.position).length() * crate::script_engine::FEET_PER_METRE)
+                .reduce(f32::min);
+            if awake(a.range, a.buffer, false, d) {
+                a.active = true;
+                if !self.fired.contains(&h) {
+                    self.fired.push(h);
+                }
+                out.push(h);
             }
         }
         out
@@ -2196,6 +2234,9 @@ impl Host for WorldHost<'_, '_> {
     fn set_ref(&mut self, at: &Access) -> Option<Vec<Value>> {
         self.world.set_ref(at)
     }
+    fn wakes(&mut self, asleep: &[Handle]) -> Vec<Handle> {
+        self.world.wakes(asleep)
+    }
 }
 
 /// `global.bld`'s running placements' scripts: their first tick only.
@@ -2359,7 +2400,12 @@ pub struct Encounter {
 /// and waits for Eon's elemental hint, `Explain_Elemental`, to take itself
 /// off once its line has played, then at its second trigger runs them in)
 /// and its helper (the two Elf Nears spar, invulnerable, until a bomb opens
-/// their wall, then play their scene and fight).
+/// their wall, then play their scene and fight); then the second island's
+/// first fight (openspec AS.75), Setup_003's controller (at its trigger off
+/// the ship it wakes its Tree Rex and four undead Chompies; the Tree Rex
+/// eats one). Off: the Tree Rex's homing charge
+/// (`TreeRex_special_homing_actor`), whose clone stops on `move to` on our
+/// host (AS.68): its clones stay inert.
 pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
     level: "level_214_tutotial_2",
     placements: &[
@@ -2376,6 +2422,13 @@ pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
         "Enemy_Chompy2_H",
         "Enemy_Elf_Near_S2(3)",
         "Enemy_Elf_Near_S2(4)",
+        // Setup_003, the second island's first fight (openspec AS.75).
+        "Setup_003_Controller",
+        "Enemy_Chompy2_E(1)",
+        "Enemy_Chompy2_E(2)",
+        "Enemy_Chompy2_E(3)",
+        "Enemy_Chompy2_E(4)",
+        "Enemy_TreeRex(2)",
     ],
     clones: &["_Template_Undead_Chompy"],
 }];
@@ -2491,7 +2544,8 @@ pub const BREAKABLES: [&str; 3] = [
 /// and bricks' scales (`Scale.ai`), the propeller's turn, the bird nests'
 /// size and eggs, every placed coin and gem (the spinning ones spin by the
 /// UI's loot update), the push blocks and the cannon (their art, their 15 x
-/// 12 x 15 ft boxes), the walkway's fence (its cross beam and planks; it
+/// 12 x 15 ft boxes; level 214's three by its pods, its way up onto the
+/// rise, openspec AS.74), the walkway's fence (its cross beam and planks; it
 /// makes itself a combat target), the cannon's rubble wall, the sliding
 /// rocks and the global reference the chests share; then the scripts of
 /// what those spawn. The Titan boulders run their first tick alone
@@ -3168,8 +3222,10 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
 /// by level and placement name, listed and never walked. Level 214's from
 /// its first island to its second: once both Elf Nears are beaten the jump
 /// pad's activator pans to the jump pad (`PvP_JumpPad_NORMAL(2)`) and wakes
-/// it, meant to launch a hero up to the rise holding the first ship part
-/// (`Ship_part_1(1)`; headless it bounces him in place, AS.75); taken after
+/// it, which launches a hero at its own pitch and speed along his facing,
+/// his stick steering him up onto the ledge holding the first ship part
+/// (`Ship_part_1(1)`), or with it let go straight up and back onto it (the
+/// mover update takes the launch's ground speed off: AS.75); taken after
 /// a press, the part goes and wakes the sail (`214_Recover_First_Part_IGC`),
 /// whose cutscene sets him down on the second island's ship and which the
 /// TV skips ([`crate::level_end::SKIPPED_CUTSCENES`]); Setup_003 waits for
@@ -5013,7 +5069,37 @@ mod tests {
         assert!(
             !l214
                 .whitelist
-                .lists("Enemy_Chompy2_E(1)", "C:/x/S2_Enemy_Chompy.ai")
+                .lists("Enemy_Chompy2_E(5)", "C:/x/S2_Enemy_Chompy.ai")
+        );
+    }
+
+    /// openspec AS.75: the second island's first fight by name, its homing
+    /// charge's template left off (AS.68), so its clones stay inert.
+    #[test]
+    fn level_214s_third_fight_is_listed_by_name_without_its_homing_charge() {
+        let files = Files::default();
+        let l214 = level_config(Mode::Play, &files, 4, "level_214_tutotial_2");
+        for name in [
+            "Setup_003_Controller",
+            "Enemy_Chompy2_E(1)",
+            "Enemy_Chompy2_E(2)",
+            "Enemy_Chompy2_E(3)",
+            "Enemy_Chompy2_E(4)",
+            "Enemy_TreeRex(2)",
+        ] {
+            assert!(l214.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+        }
+        assert!(
+            !l214.whitelist.lists(
+                "TreeRex_special_homing_actor",
+                "C:/x/Enemy_TreeRex_special_homingcharge_actor.ai"
+            ),
+            "the homing charge off"
+        );
+        assert!(
+            !l214
+                .whitelist
+                .lists("Enemy_TreeRex(1)", "C:/x/S2_Enemy_TreeRex.ai")
         );
     }
 
@@ -6184,6 +6270,41 @@ mod tests {
         assert!(w.taken_off(obj));
         assert!(w.activity_at(&[start]).is_empty(), "left out for good");
         assert!(!w.take_off(Obj { unit: 9, index: 9 }));
+    }
+
+    /// openspec AS.83: the asleep placements' checks after the walk measure
+    /// from where the step's pass measured. Asleep at the pass (no range, a
+    /// buffer: its scripts' to wake), the Grunt wakes only once a write
+    /// during the walk brings him in range (the elf helper's 500 ft, here
+    /// past the 29.5 ft he stands off; 20 ft doesn't), fired as the pass
+    /// fires; taken as awake, he isn't woken twice, and the next pass keeps
+    /// him awake; with no one to measure from, or unmanaged, he isn't.
+    #[test]
+    fn the_checks_after_the_walk_wake_what_a_write_brought_into_range() {
+        let (mut w, grunt, _) = world();
+        let g = w.actors.get_mut(&grunt).unwrap();
+        (g.range, g.buffer, g.managed) = (0.0, 250.0, true);
+        let at = Vec3::new(9.0, 0.0, 0.0);
+        assert_eq!(w.activity_at(&[at]), vec![(grunt, false)]);
+        assert!(w.wakes(&[grunt]).is_empty(), "nothing written");
+        w.actors.get_mut(&grunt).unwrap().range = 20.0;
+        assert!(w.wakes(&[grunt]).is_empty(), "20 ft, out of range");
+        assert!(w.fired.is_empty());
+        w.actors.get_mut(&grunt).unwrap().range = 500.0;
+        assert!(w.wakes(&[]).is_empty(), "only those asked");
+        assert_eq!(w.wakes(&[grunt, 0xdead]), [grunt]);
+        assert_eq!(w.fired, [grunt]);
+        assert!(w.wakes(&[grunt]).is_empty(), "awake now");
+        assert_eq!(w.activity_at(&[at]), vec![(grunt, true)]);
+        // From where the pass measured: none in, the range reaches no one.
+        let g = w.actors.get_mut(&grunt).unwrap();
+        (g.range, g.buffer) = (0.0, 250.0);
+        assert_eq!(w.activity_at(&[]), vec![(grunt, false)]);
+        w.actors.get_mut(&grunt).unwrap().range = 500.0;
+        assert!(w.wakes(&[grunt]).is_empty(), "no one to measure from");
+        w.actors.get_mut(&grunt).unwrap().managed = false;
+        w.activity_from = vec![at];
+        assert!(w.wakes(&[grunt]).is_empty(), "unmanaged");
     }
 
     /// AH.25: a placement the activity rule wakes is fired from then on, in

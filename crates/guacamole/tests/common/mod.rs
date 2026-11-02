@@ -104,7 +104,13 @@ pub struct Bench {
     /// camera's view, every run but those judging the scripts' camera.
     pub hold_view: bool,
     pub pads: [Pad; 2],
+    /// The bodies in the seam now, by actor: the heroes and the awake
+    /// creatures, as the TV keeps them (openspec AS.85: an actor asleep or
+    /// taken off has none, so the scripts' engine knows it by none).
     pub bodies: HashMap<Handle, BodyId>,
+    /// Each actor's body once it has had one, kept while it has none, so
+    /// one waking again is the same body, as the TV's are.
+    pub ids: HashMap<Handle, BodyId>,
     pub props: Option<StandingProps>,
 }
 
@@ -253,8 +259,9 @@ impl Bench {
         let walkers = world.creature_bodies();
         let awake: Vec<Handle> = walkers.iter().map(|w| w.0).collect();
         for (h, solid, pose) in walkers {
-            let next = BodyId(HERO_BODY.0 + 1 + self.bodies.len() as u32);
-            let id = *self.bodies.entry(h).or_insert(next);
+            let next = BodyId(HERO_BODY.0 + 1 + (self.heroes.len() + self.ids.len()) as u32);
+            let id = *self.ids.entry(h).or_insert(next);
+            self.bodies.insert(h, id);
             self.world
                 .set_body(&Body {
                     id,
@@ -264,15 +271,17 @@ impl Bench {
                 })
                 .unwrap();
         }
-        // A creature asleep or taken off is out of the world.
+        // A creature asleep or taken off is out of the world, and has no
+        // body for the scripts' engine either, as the TV's (AS.85).
         let gone: Vec<(Handle, BodyId)> = self
             .bodies
             .iter()
             .filter(|(h, _)| !self.heroes.contains_key(h) && !awake.contains(h))
             .map(|(h, b)| (*h, *b))
             .collect();
-        for (_, b) in gone {
+        for (h, b) in gone {
             self.world.remove_body(b);
+            self.bodies.remove(&h);
         }
     }
 }
@@ -1101,6 +1110,7 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
         hold_view: true,
         pads: [Pad::default(); 2],
         bodies: HashMap::new(),
+        ids: HashMap::new(),
         props,
     };
     // The activity rule from where he stands, as the first step's will

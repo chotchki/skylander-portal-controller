@@ -2930,7 +2930,13 @@ impl ScriptWorld {
     /// other's last move stopped on it, or its solid is within [`TOUCH`] of
     /// it where it stands (openspec AH.18: what a Chompy's bite reads). Two
     /// actors neither of which the seam holds touch when their solids are
-    /// within a centimetre (AH.20); one with no solid isn't modelled.
+    /// within a centimetre (AH.20); with one of them shapeless (no solid,
+    /// a mesh, or no actor at all) they don't (openspec AS.85, a reading:
+    /// the original gives a shapeless `CollisionInfo` a sphere its world
+    /// never holds, AG.7, and the state system's two dead-falling states
+    /// take a creature's shape off as it dies, so a lob in flight can't
+    /// burst on the corpse; unmodelled, level 214's dying Elf Near against
+    /// Eruptor's lava lob stopped the portal manager here).
     fn touching(&self, a: Handle, b: Handle, engine: &mut dyn Engine) -> Result<bool, HostFault> {
         let pair = [(a, b), (b, a)];
         let mut asked = false;
@@ -2966,16 +2972,10 @@ impl ScriptWorld {
                 return Ok(true);
             }
         }
-        if asked {
-            Ok(false)
-        } else if self.query(a, engine).is_some() && self.query(b, engine).is_some() {
-            // Neither a body in the seam (a thrown ball against a breakable
-            // the loot system listed, AH.20): their solids where they
-            // stand.
-            Ok(near)
-        } else {
-            Err(HostFault::Unmodelled)
-        }
+        // Neither a body in the seam (a thrown ball against a breakable the
+        // loot system listed, AH.20): their solids where they stand, where
+        // a shapeless one touches nothing (AS.85).
+        Ok(!asked && near)
     }
 
     /// The engine's move for the actors the scripts set going, a frame of
@@ -4161,7 +4161,9 @@ mod tests {
 
     /// Two actors the seam doesn't hold (a thrown ball and a breakable the
     /// loot system lists, AH.20) touch by their solids where they stand;
-    /// one with no solid isn't modelled.
+    /// with one shapeless they don't, however near (openspec AS.85: a
+    /// creature whose dead state took its shape off, against a lob in
+    /// flight), nor with one no actor stands for.
     #[test]
     fn two_actors_off_the_seam_touch_by_their_solids() {
         let mut e = bench();
@@ -4185,12 +4187,18 @@ mod tests {
         assert_eq!(collision(&mut w, &mut e), Ok(Value::Int(1)), "overlapping");
         w.actors.get_mut(&OTHER).unwrap().position = here + Vec3::X * 10.0;
         assert_eq!(collision(&mut w, &mut e), Ok(Value::Int(0)), "10 m apart");
+        // Overlapping again, then its shape taken off as the state
+        // system's dead states take a creature's (`collisioninfo.shape` 0).
+        w.actors.get_mut(&OTHER).unwrap().position = here + Vec3::X;
+        assert_eq!(collision(&mut w, &mut e), Ok(Value::Int(1)), "overlapping");
+        w.actors.get_mut(&OTHER).unwrap().solid.shape = 0;
+        assert_eq!(collision(&mut w, &mut e), Ok(Value::Int(0)), "shapeless");
+        w.actors.get_mut(&OTHER).unwrap().solid.shape = 5;
+        assert_eq!(collision(&mut w, &mut e), Ok(Value::Int(0)), "a mesh");
         w.actors.insert(OTHER, Actor::blank());
-        assert_eq!(
-            collision(&mut w, &mut e),
-            Err(HostFault::Unmodelled),
-            "no solid"
-        );
+        assert_eq!(collision(&mut w, &mut e), Ok(Value::Int(0)), "no solid");
+        w.actors.remove(&OTHER);
+        assert_eq!(collision(&mut w, &mut e), Ok(Value::Int(0)), "no actor");
     }
 
     /// AH.50's hand: an actor hung on his node 7 sits there; posed again,

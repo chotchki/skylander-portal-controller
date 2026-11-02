@@ -1803,9 +1803,49 @@ impl Vm {
             self.list_mut(group).push(id);
             self.tick_in_place(id, &program, report, host, native)?;
         }
+        // Then the asleep placements' checks (crate docs, The tick; openspec
+        // AS.83): one the host's rule finds awake now wakes onto its group's
+        // end and ticks there, this step.
+        self.wake_checks(&program, report, host, native)?;
         // Then what was taken off this step, or since the last, runs its
         // SHUTDOWN (crate docs, The tick).
         self.shut_down_into(report, host)
+    }
+
+    /// The asleep placements' checks after the walk (crate docs, The tick):
+    /// the host asked which of the asleep, in the asleep list's order, its
+    /// activity rule finds awake now ([`Host::wakes`]), each it names woken
+    /// onto its group's end and ticked there. One put to sleep this step,
+    /// its last tick still to come or behind it, isn't asked: it goes
+    /// through the shutdown queue.
+    fn wake_checks(
+        &mut self,
+        program: &Program,
+        report: &mut StepReport,
+        host: &mut dyn Host,
+        native: &mut Native<'_>,
+    ) -> Result<(), Halt> {
+        let asleep: Vec<Handle> = self
+            .sleeping
+            .iter()
+            .map(|&id| &self.placements[id as usize])
+            .filter(|p| p.asleep && !p.last_tick && !p.removed)
+            .map(|p| p.handle)
+            .collect();
+        if asleep.is_empty() {
+            return Ok(());
+        }
+        for h in host.wakes(&asleep) {
+            let Some(&id) = self.handles.get(&h) else {
+                continue;
+            };
+            if !self.placements[id as usize].asleep {
+                continue;
+            }
+            self.wake(id);
+            self.tick_in_place(id, program, report, host, native)?;
+        }
+        Ok(())
     }
 
     /// Placement `id`'s turn in the walk: nothing if it's inert, taken off,

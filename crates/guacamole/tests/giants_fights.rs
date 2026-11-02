@@ -9,7 +9,7 @@
 //! TV's listing, the hero set down where a walk would take him.
 
 use guac_motion::seam::Vec3;
-use guac_motion::stick::Stick;
+use guac_motion::stick::{DEAD_ZONE, Stick};
 use guac_script::{Handle, Mode};
 use guacamole::script_engine::Pad;
 
@@ -222,12 +222,246 @@ fn level_214s_bomb_comes_back_for_the_next_wall() {
     assert!(stops.is_empty(), "{stops:#?}");
 }
 
+/// The stick that pushes at `strength` along `heading` against a view
+/// looking along `view`, past the dead zone per axis
+/// (`guac_motion::stick`), as giants_route's driver makes it.
+fn stick_for(view: f32, heading: f32, strength: f32) -> Stick {
+    let d = (heading - view).to_radians();
+    let raw = |a: f32| {
+        let a = a * strength;
+        if a.abs() < 1e-4 {
+            0.0
+        } else {
+            a.signum() * (DEAD_ZONE + (1.0 - DEAD_ZONE) * a.abs())
+        }
+    };
+    Stick::new(raw(-d.sin()), raw(d.cos()))
+}
+
+/// A step with the stick held toward `to` (across the ground), the view
+/// the step before's.
+fn push_toward(run: &mut Run, stops: &mut Vec<String>, to: [f32; 2]) {
+    let at = run.hero().pivot;
+    let heading = (to[0] - at.x).atan2(to[1] - at.z).to_degrees();
+    run.bench.pads[0] = Pad {
+        stick: stick_for(run.bench.view, heading, 1.0),
+        actions: [false; 4],
+        connected: true,
+    };
+    stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+}
+
+/// Walked on the stick through `points` (across the ground), each within
+/// 1 m, at most 1200 steps each, then 20 steps at rest: whether he got to
+/// each, and where he stopped if not.
+fn walk(run: &mut Run, stops: &mut Vec<String>, points: &[[f32; 2]]) -> Result<(), Vec3> {
+    for &to in points {
+        let mut reached = false;
+        for _ in 0..1200 {
+            let at = run.hero().pivot;
+            if (to[0] - at.x).hypot(to[1] - at.z) <= 1.0 {
+                reached = true;
+                break;
+            }
+            push_toward(run, stops, to);
+        }
+        if !reached {
+            return Err(run.hero().pivot);
+        }
+    }
+    for _ in 0..20 {
+        step(run, stops, [false; 4]);
+    }
+    Ok(())
+}
+
+/// The push blocks by the pods (openspec AS.74), each with where its push
+/// is made from (on its far side from its track, across the ground) and the
+/// end marker its track drops it onto: `Push_Block_Template(1)` from the
+/// east terrace into the channel below at `Push_block_End_Template(2)`,
+/// then `(2)` beside it (carrying `(3)`, stacked on it) at `(1)`, then
+/// `(3)` from `(1)`'s top at `(3)`, the third span of the bridge.
+const PUSHES: [(&str, [f32; 2], &str); 3] = [
+    (
+        "Push_Block_Template(1)",
+        [66.9, 49.8],
+        "Push_block_End_Template(2)",
+    ),
+    (
+        "Push_Block_Template(2)",
+        [63.2, 52.4],
+        "Push_block_End_Template(1)",
+    ),
+    (
+        "Push_Block_Template(3)",
+        [61.3, 43.8],
+        "Push_block_End_Template(3)",
+    ),
+];
+
+/// What each push came to: the block, the step it lay inactive at its end
+/// (`special - push block inactive`) and where.
+#[derive(Debug)]
+struct Pushed {
+    block: &'static str,
+    inactive: Option<u32>,
+    at: Vec3,
+}
+
+/// openspec AS.74: from the east terrace above the pods (where Setup_002's
+/// second trigger leaves him), the three push blocks pushed on the stick
+/// into the channel along their tracks, across the bridge they make to the
+/// west terrace and up its slope onto the rise, by the second bomb spawner;
+/// each push's outcome, then where he stopped if a walk didn't get there.
+fn up_the_push_blocks(run: &mut Run, stops: &mut Vec<String>) -> (Vec<Pushed>, Result<(), Vec3>) {
+    let mut pushed = Vec::new();
+    // Up onto the terrace, round its rocks, to the first block's far side.
+    if let Err(at) = walk(
+        run,
+        stops,
+        &[[72.0, 62.0], [68.0, 58.0], [68.0, 52.0], PUSHES[0].1],
+    ) {
+        return (pushed, Err(at));
+    }
+    for (k, (block, from, end)) in PUSHES.into_iter().enumerate() {
+        let (h, _) = run.placed(block);
+        if k > 0
+            && let Err(at) = walk(run, stops, &[from])
+        {
+            return (pushed, Err(at));
+        }
+        let end_at = run.at(end);
+        let mut inactive = None;
+        for _ in 0..360 {
+            push_toward(run, stops, [end_at.x, end_at.z]);
+            if behaviour(run, h).as_deref() == Some("special - push block inactive") {
+                inactive = Some(run.steps);
+                break;
+            }
+        }
+        for _ in 0..30 {
+            step(run, stops, [false; 4]);
+        }
+        let at = run.world.actor(h).map_or(Vec3::ZERO, |a| a.position);
+        pushed.push(Pushed {
+            block,
+            inactive,
+            at,
+        });
+    }
+    // Across the bridge to the west terrace, up its slope onto the rise.
+    let walked = walk(
+        run,
+        stops,
+        &[[56.0, 47.5], [50.5, 50.0], [51.0, 57.0], [56.0, 63.0]],
+    );
+    (pushed, walked)
+}
+
+/// openspec AS.74: level 214's rise past the pods reached on foot over its
+/// push blocks. From the east terrace above the pods the hero pushes
+/// `Push_Block_Template(1)` off its edge into the channel below, where it
+/// drops onto its end marker and goes inactive, a stepping stone level
+/// with the terrace; `(2)`, with `(3)` stacked on it, the same, so `(3)`
+/// rides down onto it; and `(3)`, pushed from `(1)`'s top, off `(2)` onto
+/// the last marker: the three make a bridge from the east terrace to the
+/// west one, whose slope climbs onto the rise holding the second bomb
+/// spawner. Every push and walk is the stick; every block moves by its own
+/// script (`PushBlock_Template.ai`, its track and its drop to
+/// `Push_Block_End.ai`). Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_push_blocks_bridge_the_way_up_to_the_rise() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, mut stops) = joined_214();
+    // Where Setup_002's second trigger leaves him (AS.58's walk).
+    run.put(Vec3::new(78.0, -16.5, 61.2), 0.0);
+    let (pushed, walked) = up_the_push_blocks(&mut run, &mut stops);
+    let at = run.hero().pivot;
+    println!(
+        "{pushed:?}; walked {walked:?}, on the rise at {at} at step {}; {:.1} s; load at end: {}",
+        run.steps,
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    assert_eq!(pushed.len(), 3, "{pushed:?}");
+    for p in &pushed {
+        let end = PUSHES.iter().find(|(b, ..)| *b == p.block).unwrap().2;
+        let end_at = run.at(end);
+        assert!(p.inactive.is_some(), "{} pushed in", p.block);
+        assert!(
+            Vec3::new(p.at.x - end_at.x, 0.0, p.at.z - end_at.z).length() < 0.6
+                && (p.at.y - end_at.y).abs() < 0.2,
+            "{} on {end}: {}",
+            p.block,
+            p.at
+        );
+    }
+    assert_eq!(walked, Ok(()), "across the bridge and up");
+    assert!(at.y > -12.6, "on the rise: {at}");
+    assert!(
+        at.distance(Vec3::from_array(SECOND_SPAWNER)) < 4.0,
+        "by the second spawner: {at}"
+    );
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
 /// Where level 214's second bomb spawner stands, on the rise past the
 /// pods (metres, its file's place).
 const SECOND_SPAWNER: [f32; 3] = [57.78, -12.1, 65.85];
-/// Short of the castle wall shutting the two elves in
-/// (`Breakable_Stone_Wall_Castle_206(3)`), facing it.
-const BEFORE_THE_ELVES_WALL: ([f32; 3], f32) = ([51.0, -11.5, 73.0], 307.8);
+/// On the rise at the ridge along its south edge, facing the castle wall
+/// that shuts the two elves in (`Breakable_Stone_Wall_Castle_206(3)`) over
+/// it, 9.9 m off: a bomb thrown there lands on it (AS.74).
+const BEFORE_THE_ELVES_WALL: ([f32; 3], f32) = ([51.7, -11.8, 70.1], 318.7);
+/// On the rise at the ridge, facing the castle wall
+/// (`Breakable_Stone_Wall_Castle_206(5)`) that shuts the rise's south part
+/// off from the east terrace over it, 7.9 m off.
+const BEFORE_THE_RIDGE_WALL: ([f32; 3], f32) = ([58.3, -11.9, 70.6], 29.6);
+/// From the rise's ridge down to the elves (AS.74): east off its edge onto
+/// the terrace below, round through the opened `(5)` into the rise's south
+/// part, west across it through the opened `(3)`.
+const ROUND_TO_THE_ELVES: [[f32; 2]; 9] = [
+    [63.0, 66.0],
+    [68.0, 67.0],
+    [68.0, 72.0],
+    [64.5, 77.5],
+    [60.0, 77.5],
+    [55.0, 77.0],
+    [50.0, 77.0],
+    [46.0, 77.5],
+    [42.0, 76.5],
+];
+
+/// The second spawner's bomb taken on the stick, then carried to `before`
+/// on the stick, turned there to face its wall and thrown at it: the step
+/// it was thrown at and the step `wall` went (AS.74).
+fn bomb_over_the_ridge(
+    run: &mut Run,
+    stops: &mut Vec<String>,
+    before: ([f32; 3], f32),
+    wall: Handle,
+) -> (Option<u32>, Option<u32>) {
+    let mut bomb = None;
+    for _ in 0..600 {
+        push_toward(run, stops, [SECOND_SPAWNER[0], SECOND_SPAWNER[2]]);
+        bomb = bombs(run)
+            .into_iter()
+            .find(|b| behaviour(run, *b).as_deref() == Some("following player"));
+        if bomb.is_some() {
+            break;
+        }
+    }
+    let Some(bomb) = bomb else {
+        return (None, None);
+    };
+    if walk(run, stops, &[[before.0[0], before.0[2]]]).is_err() {
+        return (None, None);
+    }
+    // Turned where he stands, as a tap of the stick would.
+    let at = run.hero().pivot;
+    throw_at(run, stops, bomb, (at.to_array(), before.1), wall)
+}
 
 /// The placement named `name` in the level's file, by handle.
 fn handle(run: &Run, name: &str) -> Handle {
@@ -243,7 +477,8 @@ fn gone(run: &Run, h: Handle) -> bool {
 /// Up to `steps` steps of a fight with `foes`: every 20 steps the hero set
 /// down 1.5 m short of the nearest standing, facing it, his first attack
 /// pulsed two steps in four (a hand mashing South), until every one is
-/// beaten. The step each was beaten at.
+/// beaten. The step each was beaten at; a foe standing shapeless (a dead
+/// state's) with a body in the bench fails it (AS.85).
 fn fight(run: &mut Run, stops: &mut Vec<String>, foes: &[Handle], steps: u32) -> Vec<Option<u32>> {
     let mut beaten: Vec<Option<u32>> = vec![None; foes.len()];
     for k in 0..steps {
@@ -266,6 +501,18 @@ fn fight(run: &mut Run, stops: &mut Vec<String>, foes: &[Handle], steps: u32) ->
             if beaten[i].is_none() && gone(run, *h) {
                 beaten[i] = Some(run.steps);
             }
+            // A foe its dead states took the shape off has no body, as the
+            // TV's (openspec AS.85): the scripts' touch test sees it so.
+            if let Some(a) = run.world.actor(*h)
+                && !a.removed
+                && a.havok().is_none()
+            {
+                assert!(
+                    !run.bench.bodies.contains_key(h),
+                    "{} shapeless but a body",
+                    run.world.name(*h)
+                );
+            }
         }
         if beaten.iter().all(Option::is_some) {
             break;
@@ -284,10 +531,12 @@ fn fight(run: &mut Run, stops: &mut Vec<String>, foes: &[Handle], steps: u32) ->
 /// fight; beaten, the second spawner's bomb opens the wall the two Elf
 /// Nears spar behind (`Setup_002_Controller_Helper`), whose scene sets them
 /// on him; both beaten, the helper takes itself off. Nothing stops. The
-/// hero is set down where a walk would take him, but on foot the rise
-/// holding the second spawner lies past a wall no walk opens yet,
-/// `Breakable_Stone_Wall_Castle_206(5)` (AS.74): the set-down there stands
-/// for a way the TV doesn't walk.
+/// hero is set down where a walk would take him up to the Chompies' fight;
+/// from there he walks on the stick (AS.74): up to the rise over the push
+/// blocks ([`up_the_push_blocks`]), to the second spawner for a bomb to
+/// throw over the ridge along the rise's south edge at the wall between its
+/// south part and the terrace, and another at the elves' wall, then down
+/// off the rise's east edge and round through both walls to the elves.
 #[test]
 #[ignore = "reads the Giants dump"]
 fn level_214s_second_fight_is_fought_on_the_first_island() {
@@ -359,34 +608,39 @@ fn level_214s_second_fight_is_fought_on_the_first_island() {
         chompies_beaten.iter().all(Option::is_some),
         "the four beaten: {chompies_beaten:?}"
     );
-    // The elves spar behind their wall until a bomb opens it. Their
-    // invulnerability meanwhile doesn't land on our host (AS.83): set down
-    // among them, he'd beat both.
+    // The elves spar behind their wall until a bomb opens it, invulnerable
+    // meanwhile (AS.83). Up to the rise on foot over the push blocks
+    // (AS.74), from where the Chompies' fight leaves him, then to the
+    // second spawner: its bomb his as he comes within its reach.
     let elves_wall = handle(&run, "Breakable_Stone_Wall_Castle_206(3)");
-    run.put(Vec3::from_array(SECOND_SPAWNER) - Vec3::X * 3.0, 90.0);
-    let mut bomb = None;
-    for _ in 0..300 {
-        step(&mut run, &mut stops, [false; 4]);
-        bomb = bombs(&run)
-            .into_iter()
-            .find(|b| behaviour(&run, *b).as_deref() == Some("following player"));
-        if bomb.is_some() {
-            break;
-        }
-    }
-    let bomb = bomb.expect("the second spawner's bomb taken");
-    let (_, opened) = throw_at(
-        &mut run,
-        &mut stops,
-        bomb,
-        BEFORE_THE_ELVES_WALL,
-        elves_wall,
+    run.put(Vec3::new(78.0, -16.5, 61.2), 0.0);
+    let (pushed, walked) = up_the_push_blocks(&mut run, &mut stops);
+    assert!(
+        pushed.len() == 3 && pushed.iter().all(|p| p.inactive.is_some()) && walked.is_ok(),
+        "up the push blocks: {pushed:?}, {walked:?}"
     );
+    // The rise's ridge shuts its south part off: the second spawner's bombs
+    // thrown over it open the wall between that part and the terrace, then
+    // the elves' wall; down off the rise's east edge, round through the one
+    // and across through the other to the elves (AS.74).
+    let ridge_wall = handle(&run, "Breakable_Stone_Wall_Castle_206(5)");
+    let (_, ridge_opened) =
+        bomb_over_the_ridge(&mut run, &mut stops, BEFORE_THE_RIDGE_WALL, ridge_wall);
+    let ridge_opened = ridge_opened.expect("the ridge's wall opened");
+    for _ in 0..90 {
+        step(&mut run, &mut stops, [false; 4]);
+    }
+    let (_, opened) = bomb_over_the_ridge(&mut run, &mut stops, BEFORE_THE_ELVES_WALL, elves_wall);
     let opened = opened.expect("the elves' wall opened");
     println!(
-        "the elves' wall opened at {opened}; health {:?}, the helper {:?}",
+        "the ridge's wall opened at {ridge_opened}, the elves' at {opened}; health {:?}, the helper {:?}",
         run.health(),
         behaviour(&run, helper)
+    );
+    assert_eq!(
+        walk(&mut run, &mut stops, &ROUND_TO_THE_ELVES),
+        Ok(()),
+        "round to the elves"
     );
     let elves_beaten = fight(&mut run, &mut stops, &elves, 3600);
     println!(
@@ -416,6 +670,93 @@ fn level_214s_second_fight_is_fought_on_the_first_island() {
     );
     assert!(gone(&run, helper), "the helper's done");
     assert!(xp > xp_before, "his figure's paid: {xp}");
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
+/// A creature's hit points as its scripts hold them
+/// (`description.creature info.hp`), once its STARTUP has made them.
+fn hit_points(run: &Run, h: Handle) -> Option<f32> {
+    let vm = &run.vm;
+    let id = vm.placement_of(h)?;
+    let d = vm.local(id, "description").map(|v| vm.value(v))?;
+    let c = vm.field(d, "creature info").map(|v| vm.value(v))?;
+    vm.field(c, "hp").map(|v| vm.value(v))?.as_f32()
+}
+
+/// openspec AS.83: level 214's two Elf Nears can't be hurt while they spar.
+/// At Setup_002's first trigger their helper gives them a range that wakes
+/// them and, a tick on, asks combat for each to make them invulnerable and
+/// immune to every state. They wake, and so register with combat, the step
+/// of the write (the asleep placements' checks after the walk, `guac_script`'s
+/// crate docs, The tick), so the helper's writes land: set down among them
+/// behind their shut wall, the hero mashing his first attack hurts neither,
+/// where on the step-late wake he beat both. Once the second spawner's bomb
+/// opens their wall their scene clears it, and both are beaten. Nothing
+/// stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_elves_cant_be_hurt_while_they_spar() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, mut stops) = joined_214();
+    let helper = handle(&run, "Setup_002_Controller_Helper");
+    let elves: Vec<Handle> = ["Enemy_Elf_Near_S2(3)", "Enemy_Elf_Near_S2(4)"]
+        .iter()
+        .map(|n| handle(&run, n))
+        .collect();
+    let elves_wall = handle(&run, "Breakable_Stone_Wall_Castle_206(3)");
+    // Its first trigger: the helper wakes them and makes them invulnerable.
+    run.put(Vec3::new(82.6, -18.0, 38.6), 0.0);
+    for _ in 0..60 {
+        step(&mut run, &mut stops, [false; 4]);
+    }
+    let full: Vec<Option<f32>> = elves.iter().map(|h| hit_points(&run, *h)).collect();
+    assert!(full.iter().all(Option::is_some), "both awake: {full:?}");
+    // Among them behind their shut wall, mashing (the review beat both by
+    // step 1477 on the step-late wake).
+    let mashed = fight(&mut run, &mut stops, &elves, 1500);
+    let after: Vec<Option<f32>> = elves.iter().map(|h| hit_points(&run, *h)).collect();
+    let sparring = behaviour(&run, helper);
+    println!(
+        "hit points {full:?} -> {after:?} after 1500 steps of mashing, beaten {mashed:?}, the helper {sparring:?}, health {:?}",
+        run.health()
+    );
+    assert_eq!(mashed, [None, None], "neither beaten while they spar");
+    assert_eq!(after, full, "neither hurt");
+    assert!(!gone(&run, elves_wall), "their wall still shut");
+    // Their wall opened by the second spawner's bomb: their scene, then the
+    // fight.
+    run.put(Vec3::from_array(SECOND_SPAWNER) - Vec3::X * 3.0, 90.0);
+    let mut bomb = None;
+    for _ in 0..300 {
+        step(&mut run, &mut stops, [false; 4]);
+        bomb = bombs(&run)
+            .into_iter()
+            .find(|b| behaviour(&run, *b).as_deref() == Some("following player"));
+        if bomb.is_some() {
+            break;
+        }
+    }
+    let bomb = bomb.expect("the second spawner's bomb taken");
+    let (_, opened) = throw_at(
+        &mut run,
+        &mut stops,
+        bomb,
+        BEFORE_THE_ELVES_WALL,
+        elves_wall,
+    );
+    let opened = opened.expect("the elves' wall opened");
+    let beaten = fight(&mut run, &mut stops, &elves, 3600);
+    println!(
+        "the wall opened at {opened}, the elves beaten at {beaten:?}; health {:?}; {:.1} s; load at end: {}",
+        run.health(),
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    assert!(
+        beaten.iter().all(Option::is_some),
+        "both beaten: {beaten:?}"
+    );
     assert!(stops.is_empty(), "{stops:#?}");
 }
 
@@ -494,5 +835,279 @@ fn level_214s_first_ship_part_sails_to_the_second_island() {
         !guacamole::scripts::player_hud_hidden(&run.vm),
         "the HUD back"
     );
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
+/// The first island's jump pad (its file's place) and where the walk onto
+/// it starts, 4 m south of it in the elves' yard.
+const JUMP_PAD: [f32; 3] = [25.149, -10.869, 71.414];
+const ONTO_THE_PAD: [f32; 2] = [25.15, 75.4];
+
+/// openspec AS.75: level 214's way off its first island on foot. Both elves
+/// beaten, `Jumpad_Activator_First_Island` pans to `PvP_JumpPad_NORMAL(2)`
+/// and gives it a range. Stepped onto with the stick let go, the pad
+/// launches him at its own pitch and speed (80° and 90 ft/s, its
+/// placement's `pitch` and `velocity`) along his facing, and the mover
+/// update (`movementUpdate.ai`, on the VM) takes the launch's ground speed
+/// off at his air deceleration while no stick pushes, as it does any
+/// mover's: he goes up 9 m and lands back on it. Walked onto with the stick
+/// held toward `Ship_part_1(1)`, the same launch, the ground speed his
+/// stick's, carries him up onto the rise holding the part, a ledge no walk
+/// climbs; at the part, a press (South) takes it, and the sail takes him to
+/// the second island's ship, which stands (AS.77). The elves are fought as
+/// AS.58's are, set down by them; from there every step is the stick.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_jump_pad_carries_him_to_the_first_ship_part() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, mut stops) = joined_214();
+    let elves: Vec<Handle> = ["Enemy_Elf_Near_S2(3)", "Enemy_Elf_Near_S2(4)"]
+        .iter()
+        .map(|n| handle(&run, n))
+        .collect();
+    let elves_wall = handle(&run, "Breakable_Stone_Wall_Castle_206(3)");
+    let activator = handle(&run, "Jumpad_Activator_First_Island");
+    let part = handle(&run, "Ship_part_1(1)");
+    let sail = handle(&run, "214_Recover_First_Part_IGC");
+    let ship = handle(&run, "The_Ship_2");
+    // Setup_002's first trigger wakes the elves; the second spawner's bomb
+    // opens their wall; both beaten (AS.58, AS.83).
+    run.put(Vec3::new(82.6, -18.0, 38.6), 0.0);
+    for _ in 0..60 {
+        step(&mut run, &mut stops, [false; 4]);
+    }
+    run.put(Vec3::from_array(SECOND_SPAWNER) - Vec3::X * 3.0, 90.0);
+    let mut bomb = None;
+    for _ in 0..300 {
+        step(&mut run, &mut stops, [false; 4]);
+        bomb = bombs(&run)
+            .into_iter()
+            .find(|b| behaviour(&run, *b).as_deref() == Some("following player"));
+        if bomb.is_some() {
+            break;
+        }
+    }
+    let (_, opened) = throw_at(
+        &mut run,
+        &mut stops,
+        bomb.expect("the second spawner's bomb taken"),
+        BEFORE_THE_ELVES_WALL,
+        elves_wall,
+    );
+    assert!(opened.is_some(), "the elves' wall opened");
+    let beaten = fight(&mut run, &mut stops, &elves, 3600);
+    assert!(
+        beaten.iter().all(Option::is_some),
+        "both beaten: {beaten:?}"
+    );
+    // The activator's pan, then the pad is given its range.
+    let mut panned = None;
+    for _ in 0..900 {
+        step(&mut run, &mut stops, [false; 4]);
+        if gone(&run, activator) {
+            panned = Some(run.steps);
+            break;
+        }
+    }
+    let panned = panned.expect("the activator's pan done");
+    // In the elves' yard (the fight's set-downs can leave him wedged at its
+    // edge), then south of the pad on the stick.
+    run.put(Vec3::new(24.0, -10.8, 79.0), 0.0);
+    assert_eq!(walk(&mut run, &mut stops, &[ONTO_THE_PAD]), Ok(()));
+    // Onto the pad, the stick let go once he's on it: up and back down.
+    let pad = Vec3::from_array(JUMP_PAD);
+    let on_pad = |run: &Run| {
+        let at = run.hero().pivot;
+        Vec3::new(at.x - pad.x, 0.0, at.z - pad.z).length() < 1.0
+    };
+    for _ in 0..240 {
+        if on_pad(&run) {
+            break;
+        }
+        push_toward(&mut run, &mut stops, [pad.x, pad.z]);
+    }
+    let (mut top, mut left_at, mut bounces, mut was) = (f32::MIN, None, 0, 0.0);
+    let mut drift = 0.0f32;
+    for _ in 0..240 {
+        step(&mut run, &mut stops, [false; 4]);
+        let at = run.hero().pivot;
+        top = top.max(at.y);
+        if left_at.is_none() && at.y > pad.y + 0.2 {
+            left_at = Some(run.steps);
+        }
+        let vy = run.hero().walk.velocity.y;
+        bounces += u32::from(was < 0.0 && vy > 0.0);
+        was = vy;
+        drift = drift.max(Vec3::new(at.x - pad.x, 0.0, at.z - pad.z).length());
+    }
+    println!(
+        "let go on the pad: launched at {left_at:?}, {:.2} m up, {bounces} bounces more in 240 steps, at most {drift:.2} m off it",
+        top - pad.y
+    );
+    assert!(left_at.is_some(), "launched");
+    assert!(bounces >= 2, "bouncing on it: {bounces}");
+    assert!(drift < 1.5, "straight up and down over it: {drift}");
+    assert!(
+        (8.0..10.0).contains(&(top - pad.y)),
+        "9 m up: {}",
+        top - pad.y
+    );
+    // Off it: the stick toward the yard as he bounces again, then at rest.
+    for _ in 0..600 {
+        push_toward(&mut run, &mut stops, ONTO_THE_PAD);
+        let at = run.hero().pivot;
+        if Vec3::new(at.x - pad.x, 0.0, at.z - pad.z).length() > 2.5
+            && run.hero().walk.velocity.y == 0.0
+            && at.y < pad.y + 0.3
+        {
+            break;
+        }
+    }
+    assert_eq!(walk(&mut run, &mut stops, &[ONTO_THE_PAD]), Ok(()));
+    // Onto it again with the stick held toward the part.
+    let target = [SHIP_PART_1[0], SHIP_PART_1[2]];
+    let (mut launched, mut landed, mut taken, mut sailed) = (None, None, None, None);
+    let mut flight = Vec::new();
+    for k in 0..1800u32 {
+        let at = run.hero().pivot;
+        // South pulsed as a hand would once he's by the part (with none it
+        // never goes, AS.59).
+        let by_part = Vec3::new(at.x - target[0], 0.0, at.z - target[1]).length() < 6.0;
+        if by_part && taken.is_none() && landed.is_some() {
+            step(&mut run, &mut stops, [k % 20 < 2, false, false, false]);
+        } else if sailed.is_none() && taken.is_none() {
+            push_toward(&mut run, &mut stops, target);
+        } else {
+            step(&mut run, &mut stops, [false; 4]);
+        }
+        let at = run.hero().pivot;
+        if launched.is_none() && at.y > pad.y + 0.2 {
+            launched = Some((run.steps, run.hero().walk.velocity));
+        }
+        if launched.is_some() && landed.is_none() {
+            flight.push(at);
+            if run.hero().walk.velocity.y.abs() < 1e-3 && at.y > SHIP_PART_1[1] - 0.5 {
+                landed = Some((run.steps, at));
+            }
+        }
+        if taken.is_none() && gone(&run, part) {
+            taken = Some(run.steps);
+        }
+        if sailed.is_none() && gone(&run, sail) {
+            sailed = Some(run.steps);
+        }
+        if sailed.is_some() && run.steps > sailed.unwrap() + 120 {
+            break;
+        }
+    }
+    let apex = flight.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+    let at = run.hero().pivot;
+    println!(
+        "on the stick: launched at {launched:?}, apex {apex:.2} (pad {:.2}), landed at {landed:?}, the part taken at {taken:?}, the sail done at {sailed:?}; the hero at {at}, The_Ship_2 standing {}; the pan done at {panned}; {:.1} s; load at end: {}",
+        pad.y,
+        !off_the_world(&run, ship),
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    let (_, down) = landed.expect("landed on the part's rise");
+    assert!(
+        down.y > SHIP_PART_1[1] - 0.5 && down.z < pad.z - 3.0,
+        "up on the part's rise, toward it: {down}"
+    );
+    assert!(taken.is_some(), "the part taken");
+    assert!(sailed.is_some(), "the sail done");
+    assert!(
+        at.distance(Vec3::from_array(ON_THE_SECOND_ISLAND)) < 2.0,
+        "on the second island's ship: {at}"
+    );
+    assert!(!off_the_world(&run, ship), "The_Ship_2 standing under him");
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
+/// Where Setup_003's trigger lies on the second island, off the ship's
+/// gangplank (metres, its file's place).
+const SETUP_003_TRIGGER: [f32; 2] = [-357.64, 723.11];
+
+/// openspec AS.75: level 214's second island's first fight, Setup_003, on
+/// the TV's listing (`scripts::ENCOUNTERS`). Set down at the first ship part,
+/// a press takes it and the sail sets him on the second island's ship; off
+/// it on the stick to Setup_003's trigger, its controller wakes its Tree Rex
+/// and four undead Chompies and goes; the Tree Rex eats a Chompy, and the
+/// rest and the Tree Rex are beaten. The Tree Rex's homing charge stays off
+/// the listing (its `move to` is AS.68's): each ranged attack's clone of
+/// `TreeRex_special_homing_actor` stands inert. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_third_fight_is_fought_on_the_second_island() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, mut stops) = joined_214();
+    let controller = handle(&run, "Setup_003_Controller");
+    let foes: Vec<Handle> = [
+        "Enemy_TreeRex(2)",
+        "Enemy_Chompy2_E(1)",
+        "Enemy_Chompy2_E(2)",
+        "Enemy_Chompy2_E(3)",
+        "Enemy_Chompy2_E(4)",
+    ]
+    .iter()
+    .map(|n| handle(&run, n))
+    .collect();
+    let sail = handle(&run, "214_Recover_First_Part_IGC");
+    run.put(Vec3::from_array(SHIP_PART_1), 0.0);
+    for k in 0..600u32 {
+        step(&mut run, &mut stops, [k % 20 < 2, false, false, false]);
+        if gone(&run, sail) {
+            break;
+        }
+    }
+    assert!(gone(&run, sail), "the sail done");
+    for _ in 0..60 {
+        step(&mut run, &mut stops, [false; 4]);
+    }
+    let on_ship = run.hero().pivot;
+    // Off the ship on the stick to the trigger: the controller wakes the
+    // fight and goes.
+    assert_eq!(walk(&mut run, &mut stops, &[SETUP_003_TRIGGER]), Ok(()));
+    let mut woke = None;
+    for _ in 0..120 {
+        step(&mut run, &mut stops, [false; 4]);
+        if woke.is_none() && gone(&run, controller) {
+            woke = Some(run.steps);
+        }
+    }
+    let woke = woke.expect("the controller woke its fight and went");
+    // Before his first attack, the Tree Rex has eaten one of the four.
+    let eaten: Vec<String> = foes[1..]
+        .iter()
+        .filter(|h| gone(&run, **h))
+        .map(|h| run.world.name(*h))
+        .collect();
+    assert_eq!(eaten.len(), 1, "the Tree Rex eats one: {eaten:?}");
+    let health_before = run.health().unwrap();
+    let beaten = fight(&mut run, &mut stops, &foes, 3600);
+    let charges: Vec<Handle> = run
+        .world
+        .clones()
+        .into_iter()
+        .filter(|h| run.world.name(*h) == "TreeRex_special_homing_actor")
+        .collect();
+    let inert = run.vm.inert();
+    let running: Vec<Handle> = charges
+        .iter()
+        .copied()
+        .filter(|h| run.vm.placement_of(*h).is_some() && !inert.contains(h))
+        .collect();
+    let charges = charges.len();
+    println!(
+        "off the ship at {on_ship}, the controller gone at {woke}, {eaten:?} eaten; beaten at {beaten:?} (the Tree Rex, then the four); {charges} homing charges made, inert; health {health_before} -> {:?}; {:.1} s; load at end: {}",
+        run.health(),
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    assert!(beaten.iter().all(Option::is_some), "all beaten: {beaten:?}");
+    assert!(charges > 0, "its ranged attack made its charge");
+    assert!(running.is_empty(), "no homing charge runs: {running:?}");
     assert!(stops.is_empty(), "{stops:#?}");
 }
