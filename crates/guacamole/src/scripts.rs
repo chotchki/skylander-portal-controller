@@ -498,6 +498,13 @@ pub struct ScriptWorld {
     pub(crate) skipped_cutscene: Option<Value>,
     /// Whether [`crate::level_end`] has asked for the level end's level.
     pub(crate) level_end_asked: bool,
+    /// The movie the level end queued and how far its play has got
+    /// (openspec AS.19, [`crate::level_end`]); none queued, or none yet.
+    pub(crate) level_end_movie: Option<LevelEndMovie>,
+    /// Whether the embedder plays the level end's movie (the TV's
+    /// `movies`): one that doesn't has it over as soon as it's queued, the
+    /// level asked in the same step as before AS.19.
+    pub plays_movies: bool,
     /// The level end [`crate::level_end`] wrote, and why it changed no level
     /// yet if it hasn't.
     level_end: Option<LevelEnd>,
@@ -593,6 +600,37 @@ pub struct LevelChange {
     pub name: String,
     pub text: String,
     pub value: Value,
+}
+
+/// The movie a level end queued (openspec AS.19: `Game - Level End - Play
+/// Movie`'s, chapter 1's FMV02), by the disc's name for it (`fmv02`), and
+/// how far its play has got.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LevelEndMovie {
+    pub name: String,
+    pub state: MovieState,
+}
+
+/// Where a level end's movie stands: queued for the TV, playing (its
+/// conversion included), or over and why.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MovieState {
+    Queued,
+    Playing,
+    Over(MovieEnd),
+}
+
+/// How a level end's movie ended.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MovieEnd {
+    /// Played to its end.
+    Finished,
+    /// Ended early by the original's skip (△ or Start).
+    Skipped,
+    /// No player plays it (a headless run): over as it's queued.
+    Unplayed,
+    /// It wouldn't convert or play, and why: the level goes on as if it had.
+    Failed(String),
 }
 
 /// The level end the TV wrote to `system.load level` in the Pause
@@ -791,6 +829,8 @@ impl ScriptWorld {
             streams: Default::default(),
             skipped_cutscene: None,
             level_end_asked: false,
+            level_end_movie: None,
+            plays_movies: false,
             level_end: None,
             achievements: Vec::new(),
             inert: Default::default(),
@@ -1369,6 +1409,40 @@ impl ScriptWorld {
     /// The TV's level end, once written.
     pub fn level_end(&self) -> Option<&LevelEnd> {
         self.level_end.as_ref()
+    }
+
+    /// The movie the level end queued, once [`crate::level_end`] has read
+    /// it (openspec AS.19).
+    pub fn level_end_movie(&self) -> Option<&LevelEndMovie> {
+        self.level_end_movie.as_ref()
+    }
+
+    /// `name` queued as a level end queues its movie
+    /// ([`crate::level_end`]): what the TV's player tests start from.
+    pub fn queue_movie(&mut self, name: &str) {
+        self.level_end_movie = Some(LevelEndMovie {
+            name: name.to_owned(),
+            state: MovieState::Queued,
+        });
+    }
+
+    /// The queued movie taken up by the player: playing (or converting).
+    pub fn movie_playing(&mut self) {
+        if let Some(m) = &mut self.level_end_movie
+            && m.state == MovieState::Queued
+        {
+            m.state = MovieState::Playing;
+        }
+    }
+
+    /// The level end's movie over, `end` saying how: the level end asks its
+    /// level at its next step.
+    pub fn movie_over(&mut self, end: MovieEnd) {
+        if let Some(m) = &mut self.level_end_movie
+            && !matches!(m.state, MovieState::Over(_))
+        {
+            m.state = MovieState::Over(end);
+        }
     }
 
     /// Whether the disc's level list is in (some level on it).

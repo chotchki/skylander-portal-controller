@@ -31,6 +31,7 @@ mod level_choice;
 mod look;
 mod mirror;
 mod motion;
+mod movies;
 mod orbs;
 mod pad;
 mod pause;
@@ -515,6 +516,8 @@ fn run_tv(
             emitters::EmittersPlugin,
             // AR.9: the original's sounds, as the scripts play them.
             sound_player::SoundPlayerPlugin,
+            // AS.19: the movie a level end queues, converted and played.
+            movies::MoviesPlugin,
             slow_frames::SlowFramesPlugin,
             // AG.290: the world's button prompts by the walking pad.
             button_prompt::ButtonPromptPlugin,

@@ -149,6 +149,10 @@ pub struct TvSnapshot {
     /// script stopped in it, the level change a script asked for and the
     /// requests that changed none; none while no run is in.
     pub run: Option<crate::hero_scripts::RunShot>,
+    /// The movie a level end queued (openspec AS.19): its name, converting,
+    /// playing or over and how, what converting it did and the frames
+    /// shown; none before one was queued.
+    pub movie: Option<crate::movies::MovieReport>,
 }
 
 /// Shared with the routes: the last snapshot, skips asked for over HTTP,
@@ -1294,11 +1298,12 @@ fn mirror_tv(
         Option<Res<crate::emitters::ParticleReport>>,
         Option<Res<crate::sound_player::SoundReport>>,
     ),
-    (warm, level, prepare, arrival): (
+    (warm, level, prepare, arrival, movies): (
         Option<Res<Warm>>,
         Option<Res<Level>>,
         Option<Res<Prepare>>,
         crate::arrival::ArrivalShots,
+        Option<Res<crate::movies::Movies>>,
     ),
 ) {
     let Some(screen) = screen.shot() else {
@@ -1345,6 +1350,11 @@ fn mirror_tv(
         sounds: sounds.map(|s| s.clone()),
         watch: watch.shot(),
         run: run.shot(),
+        movie: movies
+            .as_deref()
+            .map(crate::movies::Movies::report)
+            .filter(|r| r.name.is_some())
+            .cloned(),
     };
     let mut shared = mirror.0.lock().unwrap_or_else(|e| e.into_inner());
     if *shared != snapshot {
