@@ -2620,7 +2620,9 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
             sounds.read && !sounds.kept && sounds.failed.is_none(),
             "{sounds:?}"
         );
-        assert_eq!((sounds.sounds, sounds.audio, sounds.written), (0, 0, 1));
+        // No audio written, the IR alone in its bytes.
+        assert_eq!((sounds.sounds, sounds.audio, sounds.written), (0, 0, 0));
+        assert!(sounds.bytes > 0, "{sounds:?}");
         assert!(dir.join(format!("sounds/{arena}.ron")).is_file());
         let parts = manifest()["levels"][arena]["parts"]
             .as_object()

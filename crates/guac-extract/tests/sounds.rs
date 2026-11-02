@@ -429,3 +429,81 @@ fn a_levels_sounds_that_wont_read_are_failed_and_nothing_recorded() {
     let again = sounds::level_sound_stage(&mut opened.dir, NEXT, IrFormat::Ron, &|_| {}).unwrap();
     assert!(again.failed.is_some(), "tried again, failed again");
 }
+
+/// AR.30's review: a level whose sounds won't write (here their IR's folder
+/// is a file, as a full disk refuses a write) is failed as one whose sounds
+/// won't read, not refused: the ask lands with its parts recorded and no
+/// sounds record, so the level plays silent. The next ask once the write can
+/// go finishes it, the audio the failed one wrote kept.
+#[test]
+fn a_levels_sounds_that_wont_write_are_failed_and_the_next_ask_finishes_them() {
+    let s = setup_with_next(None);
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    let dir = &mut opened.dir;
+    let blocker = dir.path().join(sounds::DIR);
+    fs::write(&blocker, b"in the way").unwrap();
+    let stage = stages::extract_level(dir, NEXT, IrFormat::Ron, &|_| {})
+        .expect("the ask lands: its sounds failing to write refuse nothing");
+    let st = stage.sounds.expect("a level past chapter 1's sounds");
+    let (archive, _why) = st.failed.expect("failed");
+    assert_eq!(archive, sounds::level_archive(NEXT));
+    assert!(!st.read && !st.kept);
+    let parts = &dir.manifest().levels[NEXT].parts;
+    assert!(!parts.contains_key(PART), "nothing of its sounds recorded");
+    assert!(
+        parts.keys().any(|p| levels::PARTS.contains(&p.as_str())),
+        "its parts recorded: {:?}",
+        parts.keys().collect::<Vec<_>>()
+    );
+
+    fs::remove_file(&blocker).unwrap();
+    let again = stages::extract_level(dir, NEXT, IrFormat::Ron, &|_| {})
+        .unwrap()
+        .sounds
+        .unwrap();
+    assert!(again.read && again.failed.is_none(), "{:?}", again.failed);
+    assert_eq!(
+        (again.audio_files.written, again.audio_files.kept),
+        (0, 5),
+        "the audio the failed ask wrote kept"
+    );
+    assert!(dir.manifest().levels[NEXT].parts.contains_key(PART));
+}
+
+/// AR.30's review: a level extracted before AR.30 (its parts recorded, no
+/// `sounds` record) gets its sounds on its next ask, its parts kept: the
+/// upgrade from an extract a build without AR.30 made.
+#[test]
+fn a_level_extracted_without_its_sounds_gets_them_on_its_next_ask() {
+    let s = setup_with_next(None);
+    {
+        let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+        let stage = stages::extract_level(&mut opened.dir, NEXT, IrFormat::Ron, &|_| {}).unwrap();
+        assert!(stage.sounds.is_some_and(|s| s.read));
+        // As a build before AR.30 leaves the manifest: the level's parts,
+        // no sounds record.
+        let path = opened.dir.path().join("manifest.json");
+        let mut m: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        m["levels"][NEXT]["parts"]
+            .as_object_mut()
+            .unwrap()
+            .remove(PART)
+            .expect("recorded");
+        fs::write(&path, serde_json::to_string_pretty(&m).unwrap()).unwrap();
+    }
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    let parts_before = opened.dir.manifest().levels[NEXT].parts.len();
+    let stage = stages::extract_level(&mut opened.dir, NEXT, IrFormat::Ron, &|_| {}).unwrap();
+    assert_eq!(stage.parts_read, 0, "its parts kept");
+    let st = stage.sounds.expect("its sounds asked");
+    assert!(
+        st.read && !st.kept && st.failed.is_none(),
+        "{:?}",
+        st.failed
+    );
+    assert_eq!(
+        opened.dir.manifest().levels[NEXT].parts.len(),
+        parts_before + 1
+    );
+}

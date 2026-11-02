@@ -136,8 +136,9 @@ pub(crate) struct SoundsAsked {
     pub read: bool,
     pub kept: bool,
     pub sounds: usize,
-    /// Its distinct audio files, those written this time, and the bytes of
-    /// every file its record names.
+    /// Its distinct audio files, those of them written this time (the rest
+    /// another archive's part held already; its IR not counted), and the
+    /// bytes of every file its record names, its IR's with them.
     pub audio: usize,
     pub written: usize,
     pub bytes: u64,
@@ -153,7 +154,7 @@ impl SoundsAsked {
             kept: s.kept,
             sounds: s.sounds,
             audio: s.audio,
-            written: s.files.written,
+            written: s.audio_files.written,
             bytes: s.files.bytes,
             ms: s.took.as_millis() as u64,
             failed: s.failed.as_ref().map(|(_, why)| why.clone()),
