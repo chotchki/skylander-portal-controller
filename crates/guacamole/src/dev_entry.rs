@@ -192,12 +192,13 @@ impl Plan {
     /// Whether the route holds for another step `ran` steps into his join
     /// (openspec AR.17): at its anchor set-down, the step it sets the
     /// creatures where the anchor has them, while a scene holds the game
-    /// ([`anchors::route_waits`]).
-    pub(crate) fn waits(&self, ran: u32, scene: bool, waited: u32) -> bool {
+    /// and the level's sounds voice it (`voiced`: a run without them keeps
+    /// AH.25's schedule; [`anchors::route_waits`]).
+    pub(crate) fn waits(&self, ran: u32, voiced: bool, scene: bool, waited: u32) -> bool {
         anchors::route_waits(
             ran.checked_sub(self.settle),
             self.creatures_at,
-            scene,
+            voiced && scene,
             waited,
         )
     }
@@ -437,11 +438,7 @@ pub(crate) fn drive(
     // set-down, as AH.8's walked to anchor B only after the pit's intro
     // (openspec AR.17), when the level's sounds voice its lines.
     let voiced = world.holds_sounds_of(level);
-    if plan.waits(
-        ran,
-        voiced && anchors::scene_holds(&runtime.vm),
-        entry.waited,
-    ) {
+    if plan.waits(ran, voiced, anchors::scene_holds(&runtime.vm), entry.waited) {
         entry.waited += 1;
         return;
     }
@@ -884,18 +881,20 @@ mod tests {
     }
 
     /// openspec AR.17: anchor B's route holds at its anchor set-down while a
-    /// scene holds, never at F0 or another step; the level's start never.
+    /// voiced scene holds, never at F0 or another step, nor unvoiced; the
+    /// level's start never.
     #[test]
     fn the_route_holds_at_anchor_bs_set_down_while_a_scene_plays() {
         let b = Plan::of(Anchor::B);
         let at = b.settle + b.creatures_at;
-        assert!(b.waits(at, true, 0));
-        assert!(!b.waits(at, false, 0), "no scene");
-        assert!(!b.waits(b.settle + b.f0, true, 0), "not F0");
-        assert!(!b.waits(at - 1, true, 0));
-        assert!(!b.waits(at, true, anchors::SCENE_WAIT_LIMIT));
+        assert!(b.waits(at, true, true, 0));
+        assert!(!b.waits(at, true, false, 0), "no scene");
+        assert!(!b.waits(at, false, true, 0), "unvoiced: AH.25's schedule");
+        assert!(!b.waits(b.settle + b.f0, true, true, 0), "not F0");
+        assert!(!b.waits(at - 1, true, true, 0));
+        assert!(!b.waits(at, true, true, anchors::SCENE_WAIT_LIMIT));
         let start = Plan::of(Anchor::Start);
-        assert!(!start.waits(start.settle + 1, true, 0));
+        assert!(!start.waits(start.settle + 1, true, true, 0));
     }
 
     /// Once he's in the level an ask is refused: nothing is set.

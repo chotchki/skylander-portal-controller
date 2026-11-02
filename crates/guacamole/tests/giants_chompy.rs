@@ -26,7 +26,9 @@
 //! tree>` writes that step's ops as script and position, and `AH19_BALLS`
 //! prints what flies from F0 + 85 to F0 + 150; in AH.60's, `AH60_DRIVES=
 //! <names>` runs those drives alone and `AH60_BURST` prints the four
-//! around each burst.
+//! around each burst; `AR17_TRACE=<words>` (with `AR17_FROM=<steps from
+//! F0>`, 0) prints each step's ops in the scripts whose path holds one, a
+//! run of them as its first and last with the definition it's in.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
