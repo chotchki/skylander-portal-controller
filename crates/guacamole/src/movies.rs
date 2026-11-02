@@ -504,36 +504,48 @@ mod tests {
         assert!(r.converted.as_ref().is_some_and(|c| c.transcoded));
     }
 
-    /// AS.19: the original's skip ends it: △ (or Start) pressed on a pad
-    /// while it plays hands it back skipped, its overlay gone.
+    /// AS.19: the original's skip ends it: △ or Start pressed on a pad
+    /// while it plays hands it back skipped, its overlay gone; another
+    /// button skips nothing.
     #[test]
     fn a_press_of_the_skip_ends_the_movie() {
         let tmp = tempfile::tempdir().unwrap();
         let mut app = tv(clip(tmp.path(), 250));
-        app.world_mut()
-            .resource_mut::<ScriptWorld>()
-            .queue_movie("fmv02");
-        until(&mut app, "the movie playing", |app| {
-            app.world().resource::<Movies>().report().shown > 0
-        });
         let pad = crate::test_support::test_pad::connect(&mut app, None, None);
-        app.update();
-        assert_eq!(
-            state(&app),
-            Some(MovieState::Playing),
-            "connecting skips nothing"
-        );
-        crate::test_support::test_pad::press(&mut app, pad, GamepadButton::North);
-        assert_eq!(state(&app), Some(MovieState::Over(MovieEnd::Skipped)));
-        let r = app.world().resource::<Movies>().report();
-        assert!(r.shown < 250, "ended early: {r:?}");
-        assert_eq!(r.ended.as_deref(), Some("skipped"));
-        let overlays = app
-            .world_mut()
-            .query_filtered::<(), With<crate::intro_player::IntroOverlay>>()
-            .iter(app.world())
-            .count();
-        assert_eq!(overlays, 0, "its overlay taken down");
+        for (k, skip) in [GamepadButton::North, GamepadButton::Start]
+            .into_iter()
+            .enumerate()
+        {
+            app.world_mut()
+                .resource_mut::<ScriptWorld>()
+                .queue_movie("fmv02");
+            until(&mut app, "the movie playing", |app| {
+                app.world().resource::<Movies>().report().shown > 0
+            });
+            app.update();
+            crate::test_support::test_pad::press(&mut app, pad, GamepadButton::South);
+            assert_eq!(
+                state(&app),
+                Some(MovieState::Playing),
+                "{skip:?}: ✕ skips nothing"
+            );
+            crate::test_support::test_pad::press(&mut app, pad, skip);
+            assert_eq!(
+                state(&app),
+                Some(MovieState::Over(MovieEnd::Skipped)),
+                "{skip:?}"
+            );
+            let r = app.world().resource::<Movies>().report();
+            assert!(r.shown < 250, "{skip:?} ended early: {r:?}");
+            assert_eq!(r.ended.as_deref(), Some("skipped"));
+            assert_eq!(r.plays, k + 1);
+            let overlays = app
+                .world_mut()
+                .query_filtered::<(), With<crate::intro_player::IntroOverlay>>()
+                .iter(app.world())
+                .count();
+            assert_eq!(overlays, 0, "{skip:?}: its overlay taken down");
+        }
     }
 
     /// AS.19: one that won't convert is over all the same, with why, so the
