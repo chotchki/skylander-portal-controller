@@ -398,6 +398,9 @@ impl Run {
         let r =
             self.with_host(|vm, host| player_loop.frame_with(vm, host, joined, &mut stopped, then));
         assert!(stopped.is_empty(), "strict mode stops by halting");
+        // The level's end where the host doesn't run the original's, as the
+        // TV's step makes it (openspec AS.15).
+        self.with_host(guacamole::level_end::step)?;
         self.world.end_step();
         scripts::add_scripted(&mut self.vm, &mut self.world);
         // The props stand by where he is as the step began, after the
@@ -431,6 +434,9 @@ impl Run {
         let r = self.with_host(|vm, host| {
             player_loop.frame_with(vm, host, joined, &mut stopped, &mut |_, _, _| Ok(()))
         });
+        if let Err(h) = self.with_host(guacamole::level_end::step) {
+            stopped.push(h);
+        }
         self.world.end_step();
         scripts::add_scripted(&mut self.vm, &mut self.world);
         self.bench.stand_props(&self.world);
@@ -572,6 +578,49 @@ impl Run {
         let (h, _) = self.placed(name);
         self.world.actor(h).unwrap().position
     }
+}
+
+/// A level's collision meshes, each a static body, and where the hero
+/// starts (openspec AS.51: any level by its archive).
+pub fn level_bodies(level: &Igz<'_>, name: &str) -> (Vec<Body>, Vec3) {
+    let placements = levels::placements(level, name, identity())
+        .expect("the placements")
+        .ir;
+    let collision = levels::collision(level, name, identity())
+        .expect("the collision")
+        .ir;
+    let start = level_scene::start_point(&placements).expect("the start");
+    let bodies = collision
+        .meshes
+        .iter()
+        .enumerate()
+        .map(|(i, m)| Body {
+            id: BodyId(level_scene::LEVEL_BODIES + i as u32),
+            kind: BodyKind::Static,
+            pose: Pose::IDENTITY,
+            collider: Collider::Mesh(Arc::new(
+                Mesh::new(
+                    m.vertices.iter().map(|v| Vec3::from_array(*v)).collect(),
+                    m.triangles.iter().map(|t| t.map(u32::from)).collect(),
+                    m.materials.clone(),
+                )
+                .unwrap(),
+            )),
+        })
+        .collect();
+    (bodies, start)
+}
+
+/// A level's props through the extractor's own readers, as the TV's load
+/// builds them.
+pub fn level_props_of(level: &Igz<'_>, name: &str) -> LevelProps {
+    let props = levels::props(level, name, identity())
+        .expect("the props")
+        .ir;
+    let placements = levels::placements(level, name, identity())
+        .expect("the placements")
+        .ir;
+    LevelProps::new(&props, &placements).expect("the props")
 }
 
 /// The level's collision mesh and where the hero starts.
@@ -725,6 +774,9 @@ pub struct Setup {
     /// does once the extract holds the part (openspec AT.9); without it the
     /// members are cells, as before AT.9.
     pub interface: bool,
+    /// Scripts listed past the TV's listing, by file name (a probe's way to
+    /// run what the TV doesn't yet).
+    pub scripts: &'static [&'static str],
 }
 
 /// The interface records of the script part's archives (`ARCHIVES`, by
@@ -752,10 +804,33 @@ pub fn interface_records() -> Vec<guac_ir::interface::Interface> {
         .clone()
 }
 
+/// The interface records of a part linking `archives` (by unit), read off
+/// the dump in memory, uncached: a level past chapter 1's (openspec AS.51).
+pub fn interface_records_of(archives: &[String]) -> Vec<guac_ir::interface::Interface> {
+    let usr = dump().join("PS3_GAME/USRDIR");
+    archives
+        .iter()
+        .map(|archive| {
+            let bld = std::fs::read(usr.join(archive)).unwrap_or_else(|e| panic!("{archive}: {e}"));
+            let arc = std::fs::read(usr.join(archive).with_extension("arc")).ok();
+            guac_extract::interface::read(archive, &bld, arc.as_deref(), identity())
+                .unwrap_or_else(|e| panic!("{archive}'s interface: {e}"))
+                .ir
+        })
+        .collect()
+}
+
 /// The interface's model over the script part's files (`igzs`, by unit) and
 /// [`interface_records`], as the TV's install loads it.
 pub fn interface_part(igzs: &[Igz<'_>]) -> guac_interface::load::Loaded {
-    let records = interface_records();
+    interface_part_with(igzs, interface_records())
+}
+
+/// [`interface_part`] over `records`.
+pub fn interface_part_with(
+    igzs: &[Igz<'_>],
+    records: Vec<guac_ir::interface::Interface>,
+) -> guac_interface::load::Loaded {
     let keys: Vec<guac_interface::load::Keys> = igzs
         .iter()
         .enumerate()
@@ -802,11 +877,29 @@ pub fn run_on(mode: Mode) -> (Run, HashMap<MemberId, String>) {
 }
 
 pub fn run_on_with(mode: Mode, setup: Setup) -> (Run, HashMap<MemberId, String>) {
+    run_on_level(mode, levels::LEVELS[0], setup)
+}
+
+/// [`run_on_with`] over the level whose archive is `level` (openspec AS.51):
+/// its file linked last, the TV's listing for it (`scripts::level_config`),
+/// the hero at its start on its collision; chapter 1's first fight and goats
+/// walk on chapter 1 alone.
+pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<MemberId, String>) {
     let dump = dump();
     let usr = dump.join("PS3_GAME/USRDIR");
-    let part: Vec<Vec<u8>> = ARCHIVES
+    let chapter_1 = level == levels::LEVELS[0];
+    let level_archive = format!("level/{level}.bld");
+    let archives: Vec<String> = ARCHIVES
         .iter()
-        .map(|(a, _)| guac_extract::scripts::entry(&usr, a).unwrap_or_else(|e| panic!("{a}: {e}")))
+        .enumerate()
+        .map(|(u, (a, _))| match u as u16 == LEVEL {
+            true => level_archive.clone(),
+            false => (*a).to_owned(),
+        })
+        .collect();
+    let part: Vec<Vec<u8>> = archives
+        .iter()
+        .map(|a| guac_extract::scripts::entry(&usr, a).unwrap_or_else(|e| panic!("{a}: {e}")))
         .collect();
     let igzs: Vec<Igz<'_>> = part.iter().map(|b| Igz::parse(b).unwrap()).collect();
     let graphs: Vec<Graph<'_>> = igzs.iter().map(|i| Graph::read(i).unwrap()).collect();
@@ -831,12 +924,15 @@ pub fn run_on_with(mode: Mode, setup: Setup) -> (Run, HashMap<MemberId, String>)
     let files = Files::read(&read).unwrap();
     let handles = headless_handles(&files);
     let objects = headless_objects(&handles);
-    let mut config = scripts::fight_config(mode);
+    let mut config = scripts::level_config(mode, &files, LEVEL, chapter_1);
     if setup.no_music {
         config = scripts::without_music(config);
     }
     if setup.interface {
         config = guacamole::interface_host::with_interface(config);
+    }
+    if let guac_script::Whitelist::Only { scripts, .. } = &mut config.whitelist {
+        scripts.extend(setup.scripts.iter().map(|s| (*s).to_owned()));
     }
     let found = discovery(&mut config);
     let vm = scripts::init_chain(program, &files, &handles, &ORDER, config);
@@ -847,8 +943,21 @@ pub fn run_on_with(mode: Mode, setup: Setup) -> (Run, HashMap<MemberId, String>)
         world.set_sounds(book, stems);
     }
     if setup.interface {
-        world.set_interface(interface_part(&igzs).keeper);
+        let records = match chapter_1 {
+            true => interface_records(),
+            false => interface_records_of(&archives),
+        };
+        world.set_interface(interface_part_with(&igzs, records).keeper);
     }
+    world.set_levels(Arc::new(
+        std::fs::read_dir(usr.join("level"))
+            .expect("the dump's levels")
+            .filter_map(|e| {
+                let name = e.ok()?.file_name().into_string().ok()?;
+                name.strip_suffix(".bld").map(str::to_owned)
+            })
+            .collect(),
+    ));
     let template = files
         .placed
         .iter()
@@ -858,7 +967,7 @@ pub fn run_on_with(mode: Mode, setup: Setup) -> (Run, HashMap<MemberId, String>)
     let rig = eruptor_rig(&part);
     world.set_palette_of(template, &rig.palette);
     // The creatures' palettes, by the model each placement names.
-    let palettes = levels::palettes(&igzs[LEVEL as usize], levels::LEVELS[0], identity())
+    let palettes = levels::palettes(&igzs[LEVEL as usize], level, identity())
         .expect("the level's palettes")
         .ir;
     for p in files.placed.iter().filter(|p| p.obj.unit == LEVEL) {
@@ -868,14 +977,16 @@ pub fn run_on_with(mode: Mode, setup: Setup) -> (Run, HashMap<MemberId, String>)
             world.set_palette_of(p.obj, pal);
         }
     }
-    world.walk_first_fight(LEVEL);
-    world.walk_goats(LEVEL);
-    let (mesh, start) = chapter_1(&igzs[LEVEL as usize]);
-    let parry = ParryWorld::new(&[mesh]).expect("the level's collision");
+    if chapter_1 {
+        world.walk_first_fight(LEVEL);
+        world.walk_goats(LEVEL);
+    }
+    let (meshes, start) = level_bodies(&igzs[LEVEL as usize], level);
+    let parry = ParryWorld::new(&meshes).expect("the level's collision");
     let mut hero = Hero::new(eruptor_solid(), Tuning::ERUPTOR, start, 0.0);
     hero.settle(&parry, &[]);
     let props = setup.props.then(|| {
-        let level = level_props(&igzs[LEVEL as usize]);
+        let level = level_props_of(&igzs[LEVEL as usize], level);
         let by_object = level
             .props
             .iter()

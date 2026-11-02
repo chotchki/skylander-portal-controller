@@ -3,10 +3,16 @@
 //! with `GUAC_LEVEL=<archive>`, a `test-hooks` build over `POST
 //! /api/_test/tv/level` (`{"name": "level_200"}`).
 //!
+//! - Or the scripts (openspec AS.15): a level change a script asked for
+//!   (`system.load level` naming a level on the disc, which the run holds
+//!   while it loads: [`guacamole::scripts::ScriptWorld::level_change`]) is
+//!   asked by name the frame it's made.
 //! - When: once the Giants pick's extraction has ended (it owns the extract
 //!   while it runs: two writers would each save the manifest over the
-//!   other's), and not while the TV is in a level, which leaving for
-//!   another is AS.49's (checked again when its parts are in).
+//!   other's). In a level too (openspec AS.49): the level held while the
+//!   next is read ([`LevelChoice::changing`]), then left with the hero in
+//!   it for the next as it comes, the portal's figures carried over
+//!   ([`crate::play`]).
 //! - How: on a thread of its own, the extract opened as a pick opens it, the
 //!   name checked against the dump's own level list
 //!   (`guac_extract::levels::on_disc`) before anything is read, then
@@ -15,9 +21,7 @@
 //!   portal's header shows its progress where the first run's shows. A part
 //!   the TV's load reads that didn't extract stops it, named.
 //! - Then the level's load ([`crate::level`]) takes it as it takes chapter 1,
-//!   the level it replaces taken down first. Chapter 1 runs its scripts;
-//!   another level is drawn, solid and propped by AG.7's rule with its
-//!   scripts unread until AS.15.
+//!   the level it replaces taken down first, its own scripts run (AS.51).
 //! - Its getting-ready screen (openspec AS.14): the header goes on saying
 //!   what the load is at ([`loading_band`]) until the level is ready, its
 //!   own keys (the census of what it draws, read off its parts at its load)
@@ -52,10 +56,6 @@ pub(crate) const NEEDED: [&str; 6] = [
     levels::LIGHTS,
     levels::ATMOSPHERE,
 ];
-
-/// Why an ask is refused while a hero is in a level, at its start or at its
-/// hand-off to the load (a figure placed while its parts were read).
-const IN_A_LEVEL: &str = "the TV is in a level: leaving it for another is AS.49's";
 
 /// Levels asked for over `POST /api/_test/tv/level`, waiting for a frame;
 /// the last asked wins.
@@ -99,6 +99,9 @@ pub(crate) fn on_the_list<'a>(list: &'a [DiscLevel], name: &str) -> Result<&'a D
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub(crate) struct AskedReport {
     pub name: String,
+    /// Who asked: `scripts` (a script's level change, openspec AS.15), or
+    /// none for the route or `GUAC_LEVEL`.
+    pub by: Option<String>,
     /// `waiting` (for the Giants pick's extraction to end), `opening` (the
     /// extract, its dump checked), `extracting`, `loading` (handed to the
     /// level's load), `refused` or `failed`.
@@ -222,6 +225,17 @@ pub(crate) fn fetch(
 pub(crate) struct LevelChoice {
     waiting: Option<String>,
     running: Option<Running>,
+    /// The last level change the scripts asked for, by run and level: each
+    /// is asked once.
+    scripts_asked: Option<(u64, String)>,
+}
+
+impl LevelChoice {
+    /// A level asked for and not yet handed to the load: what holds a level
+    /// the TV is in while the next is read (openspec AS.49).
+    pub(crate) fn changing(&self) -> bool {
+        self.waiting.is_some() || self.running.is_some()
+    }
 }
 
 struct Running {
@@ -330,11 +344,11 @@ impl Plugin for LevelChoicePlugin {
         app.insert_resource(self.asks.clone())
             .insert_resource(LevelChoice {
                 waiting: at_start,
-                running: None,
+                ..Default::default()
             })
             .add_systems(
                 Update,
-                (take_asks, start_fetch, drain_fetch)
+                (take_asks, take_script_asks, start_fetch, drain_fetch)
                     .chain()
                     .before(crate::level::LevelSystems),
             )
@@ -356,12 +370,39 @@ fn take_asks(asks: Res<LevelAsks>, mut choice: ResMut<LevelChoice>, mut level: R
     choice.waiting = Some(name);
 }
 
+/// A level change the scripts asked for (openspec AS.15): asked by name
+/// the frame it's made, once a run, as the route asks, over one waiting.
+fn take_script_asks(
+    world: Option<Res<guacamole::scripts::ScriptWorld>>,
+    mut choice: ResMut<LevelChoice>,
+    mut level: ResMut<Level>,
+) {
+    let Some(world) = world else {
+        return;
+    };
+    let Some(change) = world.level_change() else {
+        return;
+    };
+    let key = (world.run(), change.name.clone());
+    if choice.scripts_asked.as_ref() == Some(&key) {
+        return;
+    }
+    info!(name = %change.name, text = %change.text, "a script asked for a level: asked by name");
+    level.set_asked(AskedReport {
+        name: change.name.clone(),
+        by: Some("scripts".into()),
+        state: "waiting".into(),
+        ..Default::default()
+    });
+    choice.waiting = Some(change.name.clone());
+    choice.scripts_asked = Some(key);
+}
+
 /// The waiting ask's fetch, once the extraction's ended and no other runs.
 fn start_fetch(
     mut choice: ResMut<LevelChoice>,
     mut level: ResMut<Level>,
     extraction: Res<Extraction>,
-    play: Option<Res<crate::play::Play>>,
     job: Option<Res<ExtractJob>>,
     setup: Res<Setup>,
 ) {
@@ -383,11 +424,6 @@ fn start_fetch(
             a.reason = Some(why);
         });
     };
-    if play.as_deref().is_some_and(crate::play::Play::started) {
-        choice.waiting = None;
-        refuse(&mut level, IN_A_LEVEL.into());
-        return;
-    }
     if !extraction_ended(&extraction) {
         return;
     }
@@ -428,14 +464,14 @@ fn start_fetch(
 }
 
 /// The fetch's events into the report and the header; its level handed to
-/// the load once every part it needs is in, unless the TV went into a level
-/// while it was read (a figure placed meanwhile): refused then, as an ask
-/// in a level is, its parts kept for the next ask.
+/// the load once every part it needs is in, the TV in a level or not (a
+/// figure placed while its parts were read included: the level it went
+/// into is left for this one, openspec AS.49).
 fn drain_fetch(
     mut choice: ResMut<LevelChoice>,
     mut level: ResMut<Level>,
     extraction: Res<Extraction>,
-    (job, play): (Option<Res<ExtractJob>>, Option<Res<crate::play::Play>>),
+    job: Option<Res<ExtractJob>>,
     mut drawn: ResMut<ExtractBand>,
 ) {
     let Some(running) = choice.running.as_mut() else {
@@ -487,17 +523,7 @@ fn drain_fetch(
     // The header goes back to what the extraction leaves it (nothing, or
     // its failure).
     drawn.set_if_neq(ExtractBand(crate::extraction::band(&extraction.status)));
-    let in_level = play.as_deref().is_some_and(crate::play::Play::started);
     match result {
-        Ok(f) if in_level => {
-            warn!(level = %name, "the TV went into a level while the level asked for was read: not loaded");
-            level.update_asked(|a| {
-                a.state = "refused".into();
-                a.kind = Some(format!("{:?}", f.kind));
-                (a.parts_read, a.parts_kept) = (f.parts_read, f.parts_kept);
-                a.reason = Some(format!("{IN_A_LEVEL} (it went in while {name} was read)"));
-            });
-        }
         Ok(f) => {
             info!(
                 level = %name,
@@ -829,7 +855,7 @@ mod tests {
             app.insert_resource(Level::new(false))
                 .insert_resource(LevelChoice {
                     waiting: Some("level_200".into()),
-                    running: None,
+                    ..Default::default()
                 })
                 .insert_resource(Extraction {
                     status,
@@ -886,28 +912,24 @@ mod tests {
         let (mut app, _keep) = app_with(ready.clone(), false, false);
         app.update();
         assert_eq!(state(&app), ("refused".into(), false, false));
-        // A hero in a level: refused at once, the extraction running or not.
-        let (mut app, _keep) = app_with(sprites, true, true);
-        let camera = app.world_mut().spawn_empty().id();
-        app.insert_resource(crate::play::Play::started_for_tests(camera));
-        app.update();
-        assert_eq!(state(&app), ("refused".into(), false, false));
-        assert_eq!(
-            app.world()
-                .resource::<Level>()
-                .asked()
-                .and_then(|a| a.reason.clone())
-                .as_deref(),
-            Some(IN_A_LEVEL)
-        );
+        // A hero in a level (openspec AS.49): the ask waits on the
+        // extraction as any does, then its fetch starts.
+        for (status, running, after) in [(sprites, true, "waiting"), (ready, false, "opening")] {
+            let (mut app, _keep) = app_with(status, running, true);
+            let camera = app.world_mut().spawn_empty().id();
+            app.insert_resource(crate::play::Play::started_for_tests(camera));
+            app.update();
+            let asked = app.world().resource::<Level>().asked().cloned().unwrap();
+            assert_eq!((asked.state.as_str(), asked.reason), (after, None));
+        }
     }
 
-    /// A fetch that ends after the TV went into a level (a figure placed
-    /// while its parts were read) hands the load nothing: the ask refused as
-    /// one asked in a level is, its parts kept, the header given back. With
-    /// no level started the same fetch hands its level over.
+    /// A fetch that ends while the TV is in a level (asked there, or a
+    /// figure placed while its parts were read) hands its level to the load
+    /// as one with no level started does (openspec AS.49: the level the TV
+    /// is in is left for it), the header given back either way.
     #[test]
-    fn a_fetch_ending_after_the_tv_went_into_a_level_hands_the_load_nothing() {
+    fn a_fetch_ending_while_the_tv_is_in_a_level_hands_the_load_its_level() {
         let run = |started: bool| {
             let (to_load, loads) = crossbeam_channel::unbounded();
             let (tx, feed) = crossbeam_channel::unbounded();
@@ -921,6 +943,7 @@ mod tests {
                         feed,
                         status: Progress::Parts { done: 4, total: 10 },
                     }),
+                    scripts_asked: None,
                 })
                 .insert_resource(Extraction {
                     status: ExtractStatus::Ready {
@@ -973,23 +996,64 @@ mod tests {
             let band = app.world().resource::<ExtractBand>().0.clone();
             (asked, sent, band)
         };
-        let (asked, sent, band) = run(true);
-        assert_eq!(sent, Vec::<String>::new(), "nothing handed to the load");
-        assert_eq!(asked.state, "refused");
-        assert_eq!(asked.parts_read, 10, "its parts in, kept for the next ask");
-        assert!(
-            asked
-                .reason
-                .as_deref()
-                .is_some_and(|r| r.starts_with(IN_A_LEVEL) && r.contains("level_208_ice")),
-            "{asked:?}"
-        );
-        assert_eq!(band, None, "the header given back");
-        let (asked, sent, _) = run(false);
+        for started in [true, false] {
+            let (asked, sent, band) = run(started);
+            assert_eq!(
+                (asked.state.as_str(), sent, asked.parts_read, asked.reason),
+                ("loading", vec!["level_208_ice".to_owned()], 10, None),
+                "started {started}"
+            );
+            assert_eq!(band, None, "the header given back");
+        }
+    }
+
+    /// A level change a script asked for (openspec AS.15) is asked by name
+    /// the frame it's made, by the scripts, over one waiting, and once a
+    /// run: the same run's held request asks nothing more, and a request
+    /// naming no level (a stream) asks nothing.
+    #[test]
+    fn a_scripts_level_change_is_asked_by_name_once_a_run() {
+        use guacamole::scripts::ScriptWorld;
+        let mut app = App::new();
+        app.insert_resource(Level::new(false))
+            .insert_resource(LevelChoice {
+                waiting: Some("level_200".into()),
+                ..Default::default()
+            })
+            .add_systems(Update, take_script_asks);
+        let (mut world, text) =
+            crate::test_support::hero_scripts::world_with_text("Level_214_Tutotial_2");
+        world.set_levels(std::sync::Arc::new(
+            ["level_214_tutotial_2".to_owned(), "level_200".to_owned()].into(),
+        ));
+        app.insert_resource(world);
+        app.update();
+        let waiting = |app: &App| app.world().resource::<LevelChoice>().waiting.clone();
         assert_eq!(
-            (asked.state.as_str(), sent),
-            ("loading", vec!["level_208_ice".to_owned()])
+            waiting(&app).as_deref(),
+            Some("level_200"),
+            "no request yet"
         );
+        app.world_mut()
+            .resource_mut::<ScriptWorld>()
+            .ask_level(text);
+        app.world_mut().resource_mut::<ScriptWorld>().end_step();
+        app.update();
+        assert_eq!(waiting(&app).as_deref(), Some("level_214_tutotial_2"));
+        let asked = app.world().resource::<Level>().asked().cloned().unwrap();
+        assert_eq!(
+            (
+                asked.name.as_str(),
+                asked.by.as_deref(),
+                asked.state.as_str()
+            ),
+            ("level_214_tutotial_2", Some("scripts"), "waiting")
+        );
+        // Held, and asked once: a fetch taking the ask isn't asked again.
+        app.world_mut().resource_mut::<LevelChoice>().waiting = None;
+        app.world_mut().resource_mut::<ScriptWorld>().end_step();
+        app.update();
+        assert_eq!(waiting(&app), None);
     }
 
     /// The header while a level is fetched: the dump's check, then its

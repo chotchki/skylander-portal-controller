@@ -476,6 +476,18 @@ pub struct ScriptWorld {
     load_level: Value,
     /// The levels the scripts asked for, as each step took them.
     pub requests: Vec<Value>,
+    /// The disc's levels by archive name (openspec AS.15): a request whose
+    /// text names one is a level change; none set, no request is one.
+    levels: Option<Arc<std::collections::HashSet<String>>>,
+    /// The level change a script asked for, held while it loads.
+    level_change: Option<LevelChange>,
+    /// The last requests that changed no level, as their text read
+    /// (unresolved: `None`), newest last.
+    pub streams: std::collections::VecDeque<Option<String>>,
+    /// The cutscene [`crate::level_end`] last skipped, so it skips each once.
+    pub(crate) skipped_cutscene: Option<Value>,
+    /// Whether [`crate::level_end`] has asked for the level end's level.
+    pub(crate) level_end_asked: bool,
     /// The achievements the scripts unlocked, by id, in the order written
     /// (`system.game achievement`, openspec AH.220): kept and logged, none
     /// awarded until AM's per-profile achievements read them
@@ -539,6 +551,30 @@ static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1)
 /// A fresh number, unique on the TV.
 pub(crate) fn fresh_serial() -> u64 {
     RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A level change a script asked for (openspec AS.15): the level's archive,
+/// the request's text and what was written.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LevelChange {
+    pub name: String,
+    pub text: String,
+    pub value: Value,
+}
+
+/// How many requests that changed no level a world keeps for its report.
+const STREAMS_KEPT: usize = 8;
+
+/// The level archive a request's text names (openspec AS.15): the text
+/// lower-cased, a `level/` folder and a `.bld` taken off. The original's
+/// level strings read as their archives' names in English
+/// (`Level_214_Tutotial_2`), a stream's as a path (`debug/debug`); none
+/// for an empty text.
+pub fn level_name(text: &str) -> Option<String> {
+    let t = text.trim().to_ascii_lowercase();
+    let t = t.strip_prefix("level/").unwrap_or(&t);
+    let t = t.strip_suffix(".bld").unwrap_or(t);
+    (!t.is_empty()).then(|| t.to_owned())
 }
 
 /// A script's write to a hero off his scripts (openspec AH.151): to his
@@ -676,6 +712,11 @@ impl ScriptWorld {
             time_scale: FULL_SPEED,
             load_level: Value::Null,
             requests: Vec::new(),
+            levels: None,
+            level_change: None,
+            streams: Default::default(),
+            skipped_cutscene: None,
+            level_end_asked: false,
             achievements: Vec::new(),
             inert: Default::default(),
             woken: Vec::new(),
@@ -1034,17 +1075,89 @@ impl ScriptWorld {
         });
     }
 
-    /// The end of a step: a level a script asked for is taken, and reads
-    /// none from the next step on.
+    /// The end of a step (openspec AS.15): a request a script wrote to
+    /// `system.load level` is taken. One whose text names a level on the
+    /// disc ([`level_name`]) is a level change: it's held, so the member
+    /// reads it while the level loads, as the original's does, until this
+    /// run gives way to that level's. Any other (a stream: a menu, a
+    /// character's, the objectives screen; one whose text doesn't read)
+    /// isn't loaded and reads none from the next step on, as one loaded at
+    /// once (stand-in ledger: `level-request`).
     pub fn end_step(&mut self) {
-        if self.load_level != Value::Null {
-            self.requests.push(self.load_level);
-            info!(
-                level = ?self.load_level,
-                "a script asked for a level; guacamole loads chapter 1 by its own rule"
-            );
-            self.load_level = Value::Null;
+        if self.load_level == Value::Null
+            || self
+                .level_change
+                .as_ref()
+                .is_some_and(|c| c.value == self.load_level)
+        {
+            return;
         }
+        let value = self.load_level;
+        self.requests.push(value);
+        let text = self.text_of(value);
+        let name = text.as_deref().and_then(level_name);
+        let level = name.filter(|n| self.levels.as_ref().is_some_and(|l| l.contains(n)));
+        match level {
+            Some(name) => {
+                info!(%name, ?text, "a script asked for a level: it loads, the run holds its request");
+                self.level_change = Some(LevelChange {
+                    name,
+                    text: text.unwrap_or_default(),
+                    value,
+                });
+            }
+            None => {
+                info!(
+                    ?value,
+                    ?text,
+                    "a script asked for a stream (or a level not on the disc): read as loaded, nothing loaded"
+                );
+                if self.streams.len() == STREAMS_KEPT {
+                    self.streams.pop_front();
+                }
+                self.streams.push_back(text);
+                self.load_level = Value::Null;
+            }
+        }
+    }
+
+    /// The placement under `h` woken as a script wakes one: its activation
+    /// range and deactivation buffer set to 0 (what `Rope_around_Post(2)`'s
+    /// last behaviour writes on `Temp_Level_Ender`, openspec AS.15's dev
+    /// entry). False when `h` is no actor.
+    pub fn wake(&mut self, h: Handle) -> bool {
+        let Some(a) = self.actors.get_mut(&h) else {
+            return false;
+        };
+        a.range = 0.0;
+        a.buffer = 0.0;
+        true
+    }
+
+    /// The disc's levels by archive name, which a request's text is held
+    /// against ([`ScriptWorld::end_step`]).
+    pub fn set_levels(&mut self, levels: Arc<std::collections::HashSet<String>>) {
+        self.levels = Some(levels);
+    }
+
+    /// The level change a script asked for, held while it loads.
+    pub fn level_change(&self) -> Option<&LevelChange> {
+        self.level_change.as_ref()
+    }
+
+    /// `v` written to `system.load level`, as a script's write is: what the
+    /// TV's level end does in the Pause Controller's place
+    /// ([`crate::level_end`]).
+    pub fn ask_level(&mut self, v: Value) {
+        self.load_level = v;
+    }
+
+    /// A string's text as the run's interface reads it (a file's
+    /// `StringInfo` in English, or one the converter made): none without
+    /// the interface's model, or for anything else.
+    pub fn text_of(&self, v: Value) -> Option<String> {
+        let s = self.interface.as_ref()?.model().string(v)?;
+        Some(String::from_utf16_lossy(&s.units))
     }
 
     /// The pads the next step reads: the step before's become the ones a
@@ -1963,6 +2076,68 @@ pub const MUSIC_SCRIPTS: [&str; 8] = [
     "snd_robo_ducking.ai",
 ];
 
+/// Chapter 1's end (openspec AS.15), every tick: `Temp_Level_Ender`, asleep
+/// until a script wakes it (`Rope_around_Post(2)`'s last behaviour, or the
+/// dev entry's end anchor), fades the screen out and wakes the outro, whose
+/// cutscene (skipped on the TV, [`crate::level_end`]) ends in the outro's
+/// own `Game - Level End`, naming the next level.
+pub const LEVEL_END_SCRIPTS: [&str; 2] = ["Temp_Level_Ender.ai", "213_Outro_IGC.ai"];
+
+/// `config` over a level's own file, linked as `level` (openspec AS.51):
+/// each level placement's definition script (`Level_Definition_*.ai`;
+/// chapter 1's is on [`EVERY_TICK`] already) listed every tick, and each
+/// script the listing names that the level's file spells in another case
+/// listed under the level's spelling (level 214's camera volumes run
+/// `Pop_to_Camera_X.ai`, chapter 1's [`CAMERA_SCRIPTS`] name
+/// `Pop_To_Camera_x.ai`), a first tick's as a first tick. Chapter 1 gains
+/// nothing by it.
+pub fn with_level(mut config: Config, files: &Files, level: u16) -> Config {
+    let Whitelist::Only {
+        scripts,
+        first_tick,
+        ..
+    } = &mut config.whitelist
+    else {
+        return config;
+    };
+    let exact = |l: &[String], path: &str| {
+        l.iter()
+            .any(|s| !s.is_empty() && path.ends_with(s.as_str()))
+    };
+    let any_case =
+        |l: &[String], file: &str| l.iter().any(|s| file_name(s).eq_ignore_ascii_case(file));
+    let (mut every, mut first) = (Vec::new(), Vec::new());
+    for p in files.placed.iter().filter(|p| p.obj.unit == level) {
+        let Some(path) = p.script.as_deref() else {
+            continue;
+        };
+        let file = file_name(path);
+        let definition = file.len() > DEFINITION.len()
+            && file
+                .get(..DEFINITION.len())
+                .is_some_and(|h| h.eq_ignore_ascii_case(DEFINITION));
+        if exact(scripts, path) || exact(first_tick, path) {
+            continue;
+        }
+        if definition || any_case(scripts, file) {
+            every.push(file.to_owned());
+        } else if any_case(first_tick, file) {
+            first.push(file.to_owned());
+        }
+    }
+    for (list, add) in [(scripts, every), (first_tick, first)] {
+        for f in add {
+            if !list.contains(&f) {
+                list.push(f);
+            }
+        }
+    }
+    config
+}
+
+/// The start of a level definition script's file name.
+const DEFINITION: &str = "Level_Definition_";
+
 /// Whether a script's source path names one of [`CAMERA_SCRIPTS`], by its
 /// file name, any case.
 pub fn is_camera_script(path: &str) -> bool {
@@ -2012,6 +2187,8 @@ pub fn smash_config(mode: Mode) -> Config {
         // Chapter 1's music (openspec AR.16): their rolls draw on the
         // session's generator, as the original's do.
         scripts.extend(MUSIC_SCRIPTS.iter().map(|s| (*s).to_owned()));
+        // Chapter 1's end (openspec AS.15).
+        scripts.extend(LEVEL_END_SCRIPTS.iter().map(|s| (*s).to_owned()));
         first_tick.extend(START_PROPS_FIRST_TICK.iter().map(|s| (*s).to_owned()));
     }
     c
@@ -2226,6 +2403,20 @@ pub fn fight_config(mode: Mode) -> Config {
         placements.extend(FIRST_FIGHT.iter().map(|s| (*s).to_owned()));
     }
     c
+}
+
+/// The TV's listing for a level whose own file links as `level`: chapter
+/// 1's ([`fight_config`], the first fight's placements by name) on chapter
+/// 1, AH.27's ([`smash_config`]) on any other, whose placements named as
+/// chapter 1's fight's are its own (level 214 holds an `Enemy_Chompy(4)` and
+/// a `Setup_001_Controller`); either with [`with_level`] (openspec AS.51).
+pub fn level_config(mode: Mode, files: &Files, level: u16, chapter_1: bool) -> Config {
+    let config = if chapter_1 {
+        fight_config(mode)
+    } else {
+        smash_config(mode)
+    };
+    with_level(config, files, level)
 }
 
 /// The VM over `program` with every running placement of `files` added

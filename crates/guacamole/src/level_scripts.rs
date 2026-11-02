@@ -118,6 +118,10 @@ pub struct Linked {
     /// The model the run starts from ([`crate::interface_host::load`]):
     /// [`load`] leaves it unread, the level's load reads it beside.
     pub interface: Option<crate::interface_host::InterfacePart>,
+    /// The disc's levels by archive name, off the extract's manifest
+    /// (openspec AS.15): a script's request naming one changes level. Empty
+    /// when the manifest doesn't read.
+    pub levels: Vec<String>,
     /// Every entry, the level's own included, and their bytes in all.
     pub files: usize,
     pub bytes: u64,
@@ -153,6 +157,19 @@ pub fn files_with(walkers: &[String], level: &str) -> Vec<(String, Role)> {
         .map(|a| (scripts::script_path(a), role(a)))
         .chain(std::iter::once((levels::script_path(level), Role::Other)))
         .collect()
+}
+
+/// The disc's levels by archive name, off the manifest of the extract at
+/// `dir` (`guac_extract::levels::on_disc_at`): none, logged, when it
+/// doesn't read.
+pub fn disc_levels(dir: &Path) -> Vec<String> {
+    match levels::on_disc_at(dir) {
+        Ok(l) => l.into_iter().map(|l| l.name).collect(),
+        Err(why) => {
+            tracing::warn!(reason = %why, "the disc's level list didn't read: no script's request changes level");
+            Vec::new()
+        }
+    }
 }
 
 /// `level`'s script part from the extract at `dir`, parsed and linked. Why
@@ -267,6 +284,7 @@ pub fn load(dir: &Path, level: &str) -> Result<Linked, String> {
         interface_keys,
         interface_imports,
         interface: None,
+        levels: disc_levels(dir),
         files: entries.len(),
         bytes: entries.iter().map(|(_, _, b)| b.len() as u64).sum(),
         read,

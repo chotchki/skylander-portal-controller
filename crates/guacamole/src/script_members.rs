@@ -2477,8 +2477,24 @@ impl ScriptWorld {
             .and_then(|a| a.walker.as_deref())
             .is_none()
         {
-            // Only a creature the engine moves steers.
-            return Err(HostFault::Unmodelled);
+            // Only a creature the engine moves steers. Any other actor but
+            // a hero (a scene's actor: openspec AS.15, the outro's) is set
+            // down where the move ends, the path's last waypoint, and has
+            // reached it (stand-in ledger: `scene-move`).
+            if engine.hero(mover).is_some() || !toward {
+                return Err(HostFault::Unmodelled);
+            }
+            let end = match &path {
+                Some(p) => p.last().copied().and_then(|v| self.point(v, engine)),
+                None => Some(point),
+            }
+            .ok_or(HostFault::Nothing)?;
+            let facing = self.actors.get(&mover).map_or(0.0, |a| a.angles.facing);
+            self.place(mover, end, facing);
+            return Ok(Answer::Run {
+                receiver: None,
+                result: None,
+            });
         }
         // `with anim` (openspec AH.282): the palette's clip at `_indexRHS`
         // played on the mover while he moves, as `start sequence` plays it,

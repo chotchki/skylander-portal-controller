@@ -145,6 +145,10 @@ pub struct TvSnapshot {
     /// each one's state, behaviour and place, decision 17's list and
     /// `Cutscene State`; none unless asked.
     pub watch: Option<WatchShot>,
+    /// The scripts' run (openspec AS.15, AS.51): whose level's it is, every
+    /// script stopped in it, the level change a script asked for and the
+    /// requests that changed none; none while no run is in.
+    pub run: Option<crate::hero_scripts::RunShot>,
 }
 
 /// Shared with the routes: the last snapshot, skips asked for over HTTP,
@@ -1278,7 +1282,12 @@ fn mirror_tv(
     play: PlayShots,
     alert: AlertShots,
     loot: LootShots,
-    (creatures, entry, watch): (CreatureShots, Option<Res<DevEntry>>, WatchShots),
+    (creatures, entry, watch, run): (
+        CreatureShots,
+        Option<Res<DevEntry>>,
+        WatchShots,
+        crate::hero_scripts::RunShots,
+    ),
     (hud, defeat, particles, sounds): (
         HudShots,
         DefeatShots,
@@ -1335,6 +1344,7 @@ fn mirror_tv(
         particles: particles.map(|p| p.clone()),
         sounds: sounds.map(|s| s.clone()),
         watch: watch.shot(),
+        run: run.shot(),
     };
     let mut shared = mirror.0.lock().unwrap_or_else(|e| e.into_inner());
     if *shared != snapshot {

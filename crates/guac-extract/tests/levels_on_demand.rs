@@ -82,6 +82,11 @@ fn any_level_on_the_disc_extracts_on_demand_beside_the_first_runs() {
     let m = dir.manifest();
     assert_eq!(m.levels.keys().collect::<Vec<_>>(), [FIRST_RUN[0]]);
     assert!(levels::complete(m));
+    // The list off the manifest on disk (openspec AS.15) is the same; a
+    // folder holding none says why.
+    assert_eq!(levels::on_disc_at(dir.path()).unwrap(), list);
+    let e = levels::on_disc_at(tmp.path()).unwrap_err();
+    assert!(e.contains("manifest.json"), "{e}");
 
     // A name off the list: refused, nothing read or written.
     let before = (dir.manifest().clone(), files(dir.path()));

@@ -172,6 +172,17 @@ pub fn on_disc(m: &Manifest) -> Vec<DiscLevel> {
     out
 }
 
+/// [`on_disc`] off the manifest of the extract at `dir` (openspec AS.15:
+/// what a level's run checks a script's request against), why not when it
+/// doesn't read.
+pub fn on_disc_at(dir: &Path) -> Result<Vec<DiscLevel>, String> {
+    let path = dir.join(crate::extract::MANIFEST);
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let m: Manifest =
+        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(on_disc(&m))
+}
+
 /// The parts, in the order the stage reads them.
 pub const SCENE: &str = "scene";
 pub const PROPS: &str = "props";

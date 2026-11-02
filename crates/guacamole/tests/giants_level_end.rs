@@ -1,0 +1,187 @@
+//! AS.15's and AS.51's disc tests, headless with guacamole's host: chapter
+//! 1's end asking for the next level by name, and that level's own scripts
+//! running with Eruptor joined. Ignored by default; they read
+//! `GUAC_GIANTS_DUMP` (process env, else `.env.dev`):
+//!
+//! `cargo test -p guacamole --profile disc --test giants_level_end -- --ignored --nocapture --test-threads=1`
+//!
+//! Chapter 1's end is woken as `Rope_around_Post(2)`'s last behaviour wakes
+//! it (`Temp_Level_Ender`'s range and buffer to 0), the hero set down on the
+//! outro's player waypoint, as the TV's dev entry's end anchor does; from
+//! there every step is the scripts' (the fade, the outro woken and its
+//! cutscene begun, the outro skipped by the original's skip and its own
+//! `Game - Level End`), with guacamole's stand-ins between that and the
+//! level change (`guacamole::level_end`).
+
+use guac_motion::seam::Vec3;
+use guac_script::{Mode, Value};
+use guacamole::level_end;
+
+mod common;
+
+use common::*;
+
+/// The outro's player waypoint (`213_Outro_Player_WP`) as its file places
+/// it, facing `Temp_Level_Ender`: the dev entry's end anchor.
+const END: ([f32; 3], f32) = ([-10.282436, -153.01357, 318.01202], 17.6);
+/// The level chapter 1's end names, as the run resolves it.
+const NEXT: &str = "level_214_tutotial_2";
+
+/// Chapter 1's end on the TV's listing (`scripts::LEVEL_END_SCRIPTS`), the
+/// interface's model loaded (the level string's English text is what names
+/// the archive): `Temp_Level_Ender` woken 120 steps after his join, the run
+/// stepped in play mode until a level change is held or 600 steps pass.
+/// The scripts' own level end names `Level_214`, whose text
+/// `Level_214_Tutotial_2` is the archive `level_214_tutotial_2`; the outro
+/// is skipped once its cutscene has run a frame; `system.load level` holds
+/// the request on later steps; nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn chapter_1s_end_asks_for_the_next_level_by_name() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let setup = Setup {
+        interface: true,
+        ..Setup::default()
+    };
+    let (mut run, _found) = run_on_with(Mode::Play, setup);
+    let mut stops = Vec::new();
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap());
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    for _ in 0..120 {
+        stops.extend(run.step_play().unwrap());
+    }
+    run.put(Vec3::from_array(END.0), END.1);
+    let (ender, _) = run.placed("Temp_Level_Ender");
+    assert!(run.world.wake(ender));
+    let woken_at = run.steps;
+    let outro = run.placement("213_Outro_IGC");
+    let mut outro_began = None;
+    let mut recorded_at = None;
+    while run.world.level_change().is_none() {
+        assert!(
+            run.steps < woken_at + 600,
+            "no level change by step {}",
+            run.steps
+        );
+        stops.extend(run.step_play().unwrap());
+        if outro_began.is_none() && run.vm.behaviour(outro).is_some() {
+            outro_began = Some(run.steps);
+        }
+        if recorded_at.is_none() && level_end::recorded(&run.vm).is_some() {
+            recorded_at = Some(run.steps);
+        }
+    }
+    let change = run.world.level_change().cloned().unwrap();
+    println!(
+        "woken at step {woken_at}; outro at {outro_began:?}; level end recorded at {recorded_at:?}; level change at {}: {change:?}",
+        run.steps
+    );
+    assert_eq!(change.name, NEXT);
+    assert_eq!(change.text, "Level_214_Tutotial_2");
+    let to = level_end::recorded(&run.vm).expect("the level end recorded");
+    assert_eq!(change.value, to, "the level end's own string");
+    let named = match to {
+        Value::Object(o) => run.vm.program().name_of(o),
+        _ => None,
+    };
+    assert_eq!(named, Some("Level_214"));
+    assert!(
+        outro_began.is_some() && run.vm.removed(outro),
+        "the outro ran through and took itself off"
+    );
+    // Held: the request reads on, taken once.
+    let asked = run.world.requests.iter().filter(|r| **r == to).count();
+    for _ in 0..30 {
+        stops.extend(run.step_play().unwrap());
+    }
+    assert_eq!(
+        run.world.requests.iter().filter(|r| **r == to).count(),
+        asked
+    );
+    assert_eq!(asked, 1);
+    assert_eq!(run.world.level_change(), Some(&change));
+    // The init chain's own request (`DEBUG_LevelLoad`, `debug/debug`) is a
+    // stream, read as loaded.
+    assert_eq!(
+        run.world.streams.iter().cloned().collect::<Vec<_>>(),
+        [Some("debug/debug".to_owned())]
+    );
+    assert!(
+        stops.is_empty(),
+        "{:#?}",
+        stops.iter().map(ToString::to_string).collect::<Vec<_>>()
+    );
+    println!(
+        "{:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
+
+/// Level 214 on the TV's listing for it (`scripts::level_config`: AH.27's,
+/// its definition and its spellings of the listed scripts), its props
+/// standing and the interface's model loaded, Eruptor joined at its start
+/// (`_Initialize2`) and walked 6 s on the stick: his scripts joined and on
+/// to the end, no script stopped, his place moved off the start.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214_runs_its_own_scripts_with_eruptor_joined() {
+    use guac_motion::stick::Stick;
+    use guacamole::script_engine::Pad;
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let setup = Setup {
+        interface: true,
+        props: true,
+        ..Setup::default()
+    };
+    let (mut run, _found) = run_on_level(Mode::Play, NEXT, setup);
+    let start = run.hero().pivot;
+    let listing = run.vm.config().whitelist.clone();
+    for script in ["Level_Definition_214.ai", "Pop_to_Camera_X.ai"] {
+        assert!(listing.lists("", &format!("C:/x/{script}")), "{script}");
+    }
+    assert!(
+        !listing.lists("Enemy_Chompy(4)", "C:/x/Nothing.ai"),
+        "chapter 1's fight's names aren't 214's listing"
+    );
+    let mut stops = Vec::new();
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap());
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    for k in 0..480u32 {
+        if k >= 120 {
+            run.bench.pads[0] = Pad {
+                stick: Stick::new(0.0, 1.0),
+                actions: [false; 4],
+                connected: true,
+            };
+        }
+        stops.extend(run.step_play().unwrap());
+    }
+    let minion = run.minion.expect("joined");
+    assert_eq!(run.vm.stopped(minion), None, "his script runs on");
+    assert!(run.health().is_some_and(|h| h > 0.0), "{:?}", run.health());
+    let moved = run.hero().pivot.distance(start);
+    println!(
+        "start {start:?}; after {} steps {:?} ({moved:.2} m on); health {:?}",
+        run.steps,
+        run.hero().pivot,
+        run.health()
+    );
+    assert!(moved > 1.0, "he walked: {moved}");
+    assert!(
+        stops.is_empty(),
+        "{:#?}",
+        stops.iter().map(ToString::to_string).collect::<Vec<_>>()
+    );
+    println!(
+        "{:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
