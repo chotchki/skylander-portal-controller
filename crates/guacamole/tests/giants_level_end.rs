@@ -1,6 +1,6 @@
-//! AS.15's and AS.51's disc tests, headless with guacamole's host: chapter
-//! 1's end asking for the next level by name, and that level's own scripts
-//! running with Eruptor joined. Ignored by default; they read
+//! AS.15's, AS.51's and AS.52's disc tests, headless with guacamole's
+//! host: chapter 1's end, its outro played, asking for the next level by
+//! name, and that level's own scripts running with Eruptor joined. Ignored by default; they read
 //! `GUAC_GIANTS_DUMP` (process env, else `.env.dev`):
 //!
 //! `cargo test -p guacamole --profile disc --test giants_level_end -- --ignored --nocapture --test-threads=1`
@@ -9,9 +9,9 @@
 //! it (`Temp_Level_Ender`'s range and buffer to 0), the hero set down on the
 //! outro's player waypoint, as the TV's dev entry's end anchor does; from
 //! there every step is the scripts' (the fade, the outro woken and its
-//! cutscene begun, the outro skipped by the original's skip and its own
-//! `Game - Level End`), then `guacamole::level_end`'s level change
-//! (stand-in ledger: `cutscene-skip`, `level-end`).
+//! cutscene played to its end since AS.52, its own `Game - Level End`),
+//! then `guacamole::level_end`'s level change.
+//! (Stand-in ledger: `level-end`.)
 
 use guac_motion::seam::Vec3;
 use guac_script::{Mode, Value};
@@ -30,11 +30,11 @@ const NEXT: &str = "level_214_tutotial_2";
 /// Chapter 1's end on the TV's listing (`scripts::LEVEL_END_SCRIPTS`), the
 /// interface's model loaded (the level string's English text is what names
 /// the archive): `Temp_Level_Ender` woken 120 steps after his join, the run
-/// stepped in play mode until a level change is held or 600 steps pass.
+/// stepped in play mode until a level change is held or 1,200 steps pass.
 /// The scripts' own level end names `Level_214`, whose text
 /// `Level_214_Tutotial_2` is the archive `level_214_tutotial_2`; the outro
-/// is skipped once its cutscene has run a frame; `system.load level` holds
-/// the request on later steps; nothing stops.
+/// plays to its end (AS.52); `system.load level` holds the request on later
+/// steps; nothing stops.
 #[test]
 #[ignore = "reads the Giants dump"]
 fn chapter_1s_end_asks_for_the_next_level_by_name() {
@@ -62,7 +62,7 @@ fn chapter_1s_end_asks_for_the_next_level_by_name() {
     let mut recorded_at = None;
     while run.world.level_change().is_none() {
         assert!(
-            run.steps < woken_at + 600,
+            run.steps < woken_at + 1200,
             "no level change by step {}",
             run.steps
         );
@@ -148,7 +148,7 @@ fn chapter_1s_end_without_the_interfaces_model_is_held_and_said() {
     let woken_at = run.steps;
     while run.world.level_end().is_none_or(|e| e.unread.is_none()) {
         assert!(
-            run.steps < woken_at + 600,
+            run.steps < woken_at + 1200,
             "no level end by step {}",
             run.steps
         );
@@ -696,10 +696,11 @@ fn cutscene_name(run: &Run) -> Option<String> {
 /// deck's hatch and the barrels it took off, and a reset brings a placement
 /// taken off back (AS.60): the ship stands under him again, its script
 /// cloning its engine, masthead and roof onto it (`scripts::SHIP`). Its
-/// first line (Flynn's, voiced, since AT.44 reads a lone string as a set of
-/// one) is up as the skip comes and plays on past it, its box holding the
-/// HUD hidden until it's over (the as-214-alive review, on the merge of
-/// AT.44: 350 steps); then the HUD shows again.
+/// first line (Flynn's) ends with the skip, no box held up past it, and the
+/// HUD shows again within a few steps of the hand-over (AS.69: until
+/// AS.52's typed read, the step's dialogue data read nothing at the skip's
+/// completion and the line played on to step 341, its box holding the HUD
+/// hidden to 356).
 #[test]
 #[ignore = "reads the Giants dump"]
 fn level_214s_intro_hands_over_on_the_ship() {
@@ -742,9 +743,19 @@ fn level_214s_intro_hands_over_on_the_ship() {
     let joined_at = run.steps;
     let (mut began, mut skipped, mut gone, mut shown, mut off) = (None, None, None, None, None);
     let mut lines = Lines::default();
+    // Flynn's first line as it ended (started, ended, how): started and
+    // stopped within the skip's step, so `lines` never sees it playing.
+    let mut flynn = None;
     for _ in 0..600 {
         stops.extend(run.step_play().unwrap());
         lines.record(&run);
+        if flynn.is_none() {
+            flynn = run
+                .world
+                .sounds_ended()
+                .find(|e| e.name.as_deref() == Some("vo_flynn_lvl214_igc01_002"))
+                .map(|e| (e.started, e.ended, e.how));
+        }
         let cs = cutscene_name(&run);
         if began.is_none() && cs.as_deref() == Some("214 Intro IGC") {
             began = Some(run.steps);
@@ -842,6 +853,42 @@ fn level_214s_intro_hands_over_on_the_ship() {
         "{shown:?} {:?}",
         lines.boxes
     );
+    // AS.69: the skip ends its scene's line with it (the step's dialogue
+    // data found among its actor's, AS.52's typed read): no voice plays on
+    // past the skip, no box, and the HUD is back within a few steps of the
+    // hand-over (before AS.52, Flynn's line played on to step 341 and its
+    // box held the HUD hidden to 356).
+    let skip = skipped.unwrap();
+    assert!(
+        lines
+            .voices
+            .iter()
+            .all(|v| v.ended.is_some_and(|e| e <= u64::from(skip))),
+        "a line playing past the skip at {skip}: {:?}",
+        lines.voices
+    );
+    assert!(
+        lines
+            .boxes
+            .iter()
+            .all(|b| b.gone.is_some_and(|g| g <= skip + 1)),
+        "{:?}",
+        lines.boxes
+    );
+    assert!(
+        shown.unwrap() <= gone.unwrap() + 3,
+        "the HUD back at {shown:?}, handed over at {gone:?}"
+    );
+    // The line did start, and the skip stopped it: a line that never
+    // started would pass the two checks above as well (the as-ch1-ending
+    // review).
+    println!("Flynn's first line (started, ended, how): {flynn:?}");
+    assert!(
+        flynn.is_some_and(|(started, ended, how)| started >= u64::from(began.unwrap())
+            && ended <= u64::from(skip) + 1
+            && how == guacamole::sounds::Ended::Stopped),
+        "{flynn:?}"
+    );
     let handed = Vec3::from_array(HANDED_OVER);
     assert!(
         Vec3::new(at.x - handed.x, 0.0, at.z - handed.z).length() < 0.05,
@@ -859,14 +906,42 @@ fn level_214s_intro_hands_over_on_the_ship() {
     );
 }
 
-/// openspec AR.17: chapter 1's end with its sounds. The outro's lines (its
-/// cutscene skipped a frame in, `level_end::SKIPPED_CUTSCENES`, AS.15) go
-/// with the skip: no voice the outro started plays on at the level change,
-/// so none plays into level 214. Every voice started from the ender's wake
-/// printed with how it ended.
+/// The scene of the cutscene in play, as its definition lists them: its
+/// index (none outside a cutscene) and how many there are.
+fn scene_of(run: &Run) -> Option<(usize, usize)> {
+    let vm = &run.vm;
+    let data = vm.global_peek(vm.program().global_named("cs control data")?)?;
+    let current = vm
+        .field(data, "current cs")
+        .filter(|v| *v != guac_script::Value::Null)?;
+    let scenes = vm.set(vm.field(vm.field(current, "cutscene definition")?, "scenes")?)?;
+    let this = vm.field(vm.field(current, "cur scene data")?, "scene definition")?;
+    Some((scenes.iter().position(|s| *s == this)?, scenes.len()))
+}
+
+/// The outro's Mabu (`213_Outro_Mabu_A` to `_C`) and the placement whose
+/// waypoints each one's walk follows.
+const OUTRO_MABU: [(&str, &str); 3] = [
+    ("213_Outro_Mabu_A", "Outro_Mabu_1_WP"),
+    ("213_Outro_Mabu_B", "Outro_Mabu_2_WP"),
+    ("213_Outro_Mabu_C", "Outro_Mabu_3_WP"),
+];
+
+/// openspec AS.52: chapter 1's outro (`213 Outro IGC`) played to its end on
+/// the TV's host, its sounds and the interface's model in, nothing skipped
+/// (`level_end::SKIPPED_CUTSCENES` lists it no more): its four scenes in
+/// order, Norticus' animations started on him from his palette, the Mabu
+/// walked to their last waypoints by `move to` with no creature's body
+/// under them, the actors on their own scripts (140 %, a hat each), every
+/// line voiced in order; then its own `Game - Level End`
+/// names level 214, which the TV asks for. Nothing stops. The second scene
+/// ends a frame in, its animated camera's clip unread.
+/// (Stand-in ledger: `cinematic-camera`.)
 #[test]
 #[ignore = "reads the Giants dump"]
-fn the_outros_lines_go_with_its_skip() {
+fn chapter_1s_outro_plays_to_its_end() {
+    assert!(!level_end::SKIPPED_CUTSCENES.contains(&"213 Outro IGC"));
+    let started = std::time::Instant::now();
     println!("load at start: {}", load());
     let setup = Setup {
         interface: true,
@@ -885,14 +960,80 @@ fn the_outros_lines_go_with_its_skip() {
     run.put(Vec3::from_array(END.0), END.1);
     let (ender, _) = run.placed("Temp_Level_Ender");
     assert!(run.world.wake(ender));
-    let woken = u64::from(run.steps);
+    let woken = run.steps;
     let mut lines = Lines::default();
+    let mut scenes: Vec<(usize, u32)> = Vec::new();
+    let mut ended = None;
+    let mut since = run.world.start_count();
+    let mut clips: Vec<(u32, String)> = Vec::new();
+    let (mut hats, mut scales) = (0usize, Vec::new());
     while run.world.level_change().is_none() {
-        assert!(u64::from(run.steps) < woken + 600, "no level change");
+        assert!(
+            run.steps < woken + 1200,
+            "no level change by step {}",
+            run.steps
+        );
         stops.extend(run.step_play().unwrap());
         lines.record(&run);
+        // Their own scripts: each actor at 140 %, his hat on his head.
+        let on: Vec<String> = run
+            .world
+            .clones()
+            .into_iter()
+            .filter(|h| !run.world.removed(*h))
+            .map(|h| run.world.name(h))
+            .collect();
+        hats = hats.max(
+            on.iter()
+                .filter(|n| *n == "Turban_hat" || *n == "Propellar_Beenie")
+                .count(),
+        );
+        let actor = |n: &str| n == "213_Outro_Norticus_Actor" || n.starts_with("213_Outro_Mabu_");
+        // The step all four are made, then the next: made by the outro's
+        // tick, which the wake check runs after the walk (2.0's AS.83), they
+        // first tick, and scale themselves, at the next step's walk.
+        if scales.len() < 2 && on.iter().filter(|n| actor(n)).count() == 4 {
+            scales.push(
+                run.world
+                    .clones()
+                    .into_iter()
+                    .filter(|h| !run.world.removed(*h) && actor(&run.world.name(*h)))
+                    .map(|h| run.world.actor(h).unwrap().scale[0])
+                    .collect::<Vec<f32>>(),
+            );
+        }
+        match scene_of(&run) {
+            Some((k, n)) => {
+                assert_eq!(n, 4, "the outro's four scenes");
+                if scenes.last().is_none_or(|(at, _)| *at != k) {
+                    scenes.push((k, run.steps));
+                }
+            }
+            None if !scenes.is_empty() && ended.is_none() => ended = Some(run.steps),
+            None => {}
+        }
+        for i in run.world.started_since(since) {
+            let sq = &run.world.sequences()[i];
+            // A clip (a palette slot's object), not a line's sound.
+            if run.world.name(sq.actor) == "213_Outro_Norticus_Actor"
+                && matches!(sq.template, Value::Entity(_))
+            {
+                clips.push((run.steps, format!("{:.2} s", sq.length)));
+            }
+        }
+        since = run.world.start_count();
     }
-    let since: Vec<&Voice> = lines.voices.iter().filter(|v| v.started >= woken).collect();
+    let change = run.world.level_change().cloned().unwrap();
+    let voices: Vec<(String, u64)> = lines
+        .voices
+        .iter()
+        .filter(|v| v.started >= u64::from(woken))
+        .map(|v| (v.sound.clone(), v.started))
+        .collect();
+    // AR.17's check kept (the as-ch1-ending review): no line plays on at the
+    // level change but Norticus' last, which AS.78's one-step second scene
+    // leaves playing (in the original its 11.78 s end inside that scene's
+    // camera clip); the TV's change takes it off with the run.
     let playing: Vec<String> = run
         .world
         .plays()
@@ -900,20 +1041,92 @@ fn the_outros_lines_go_with_its_skip() {
         .filter_map(|p| p.name.clone())
         .filter(|n| n.starts_with("vo_"))
         .collect();
-    println!(
-        "woken at {woken}, the change at {}: voices since {since:?}; boxes {:?}; playing at the change {playing:?}; load at end: {}",
-        run.steps,
-        lines
-            .boxes
-            .iter()
-            .filter(|b| u64::from(b.made) >= woken)
-            .collect::<Vec<_>>(),
-        load()
+    println!("lines playing at the change: {playing:?}");
+    assert!(
+        playing.iter().all(|n| n == "vo_norticus_lvl213_igc24_005"),
+        "{playing:?}"
     );
-    assert!(playing.is_empty(), "{playing:?}");
+    println!(
+        "woken at {woken}; scenes (index, first step) {scenes:?}; the cutscene over at {ended:?}; \
+         Norticus' clips {clips:?}; voices {voices:?}; the change at {}: {change:?}",
+        run.steps
+    );
+    assert_eq!(
+        scenes.iter().map(|(k, _)| *k).collect::<Vec<_>>(),
+        [0, 1, 2, 3],
+        "every scene, in order, none skipped"
+    );
+    let ended = ended.expect("the cutscene ends");
+    for (k, (_, at)) in scenes.iter().enumerate() {
+        let next = scenes.get(k + 1).map_or(ended, |(_, n)| *n);
+        println!(
+            "scene {k}: {} steps ({:.2} s)",
+            next - at,
+            f64::from(next - at) / 60.0
+        );
+    }
+    // The first scene's walks run to the end: each Mabu stopped within its
+    // walk's 20 ft of its path's last waypoint (a walk not skipped leaves
+    // him where he reached it).
+    for (name, path) in OUTRO_MABU {
+        let last = run
+            .files
+            .placed
+            .iter()
+            .find(|p| p.name == path)
+            .and_then(|p| p.waypoints.last())
+            .and_then(|w| run.files.points.get(w))
+            .copied()
+            .unwrap_or_else(|| panic!("{path}'s last waypoint"));
+        let (x, z) = (last.x, last.z);
+        let h = run
+            .world
+            .clones()
+            .into_iter()
+            .find(|h| run.world.name(*h) == name)
+            .unwrap_or_else(|| panic!("{name} cloned"));
+        let at = run.world.actor(h).unwrap().position;
+        let off = (at.x - x).hypot(at.z - z);
+        println!("{name} stopped {off:.2} m from {path}'s last waypoint");
+        assert!(
+            off <= 20.0 * 0.3048 + 0.01 && off > 5.0,
+            "{name} at {at}: {off}"
+        );
+    }
+    assert!(clips.len() >= 3, "Norticus' animations: {clips:?}");
+    println!("hats on at once: {hats}; the actors' scales as made and a step on: {scales:?}");
+    assert_eq!(hats, 4, "Norticus' turban and the three Mabu's beanies");
+    assert_eq!(
+        scales.get(1).map(Vec::as_slice),
+        Some([140.0; 4].as_slice()),
+        "140 % by their own scripts' first tick"
+    );
+    assert_eq!(
+        voices.iter().map(|(v, _)| v.as_str()).collect::<Vec<_>>(),
+        [
+            "vo_norticus_lvl213_igc24_001",
+            "vo_snucklesicus_lvl213_igc24_002",
+            "vo_rizzopolus_lvl213_igc24_003",
+            "vo_norticus_lvl213_igc24_005",
+        ]
+    );
+    let to = level_end::recorded(&run.vm).expect("the level end recorded");
+    assert_eq!(
+        match to {
+            Value::Object(o) => run.vm.program().name_of(o),
+            _ => None,
+        },
+        Some("Level_214")
+    );
+    assert_eq!(change.name, NEXT);
     assert!(
         stops.is_empty(),
         "{:#?}",
         stops.iter().map(ToString::to_string).collect::<Vec<_>>()
+    );
+    println!(
+        "{:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
     );
 }

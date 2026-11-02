@@ -160,6 +160,10 @@ pub struct Files {
     /// Every waypoint's place in the level, metres (openspec AH.18: what a
     /// `move to` along a path walks to and a measurement is taken from).
     pub points: HashMap<Obj, Vec3>,
+    /// Every waypoint's turn as its file holds it (openspec AS.52: what a
+    /// script reads of one until a script turns it, a cutscene's camera
+    /// looking from it as it faces).
+    pub turns: HashMap<Obj, Angles>,
     /// Every placed light's values as its file holds them (openspec AH.65):
     /// the point-light manager's template and the lights the scripts name
     /// for it to copy.
@@ -191,13 +195,14 @@ impl Files {
             for (index, o) in igz.objects().iter().enumerate() {
                 if is_a(igz.type_name(o), ActorWaypoint::TYPE) {
                     let w = ActorWaypoint::read(igz, index).map_err(|e| e.to_string())?;
-                    out.points.insert(
-                        Obj {
-                            unit,
-                            index: index as u32,
-                        },
-                        Vec3::from_array(w.init_matrix.position),
-                    );
+                    let obj = Obj {
+                        unit,
+                        index: index as u32,
+                    };
+                    out.points
+                        .insert(obj, Vec3::from_array(w.init_matrix.position));
+                    let [tilt, facing, roll] = w.init_matrix.rotation;
+                    out.turns.insert(obj, Angles { tilt, facing, roll });
                 }
             }
             let placements = Placements::read(igz).map_err(|e| e.to_string())?;
@@ -417,8 +422,8 @@ pub struct ScriptWorld {
     pub(crate) emitters: HashMap<Obj, String>,
     /// Every waypoint's place, metres.
     pub(crate) points: HashMap<Obj, Vec3>,
-    /// The file waypoints' turns the scripts wrote (openspec AG.60); one
-    /// never written reads nothing, its file's turn unread.
+    /// The file waypoints' turns: as their files hold them (openspec
+    /// AS.52), then as the scripts wrote them (AG.60).
     pub(crate) point_turns: HashMap<Obj, Angles>,
     pub(crate) controllers: [Handle; 2],
     pub(crate) physical: [Handle; 4],
@@ -493,6 +498,13 @@ pub struct ScriptWorld {
     pub(crate) skipped_cutscene: Option<Value>,
     /// Whether [`crate::level_end`] has asked for the level end's level.
     pub(crate) level_end_asked: bool,
+    /// The movie the level end queued and how far its play has got
+    /// (openspec AS.19, [`crate::level_end`]); none queued, or none yet.
+    pub(crate) level_end_movie: Option<LevelEndMovie>,
+    /// Whether the embedder plays the level end's movie (the TV's
+    /// `movies`): one that doesn't has it over as soon as it's queued, the
+    /// level asked in the same step as before AS.19.
+    pub plays_movies: bool,
     /// The level end [`crate::level_end`] wrote, and why it changed no level
     /// yet if it hasn't.
     level_end: Option<LevelEnd>,
@@ -563,6 +575,13 @@ pub struct ScriptWorld {
     /// The level's intro held until a hero's minion is in (openspec AS.47,
     /// [`hold_intro`]), by handle.
     pub(crate) intro_held: Option<Handle>,
+    /// The actors the engine walks as a scene walks them, under a `move
+    /// to` with no creature's body (openspec AS.52,
+    /// [`crate::script_engine::SceneWalk`]), by handle.
+    pub(crate) scene_walks: HashMap<Handle, crate::script_engine::SceneWalk>,
+    /// What the static member being read is read under ([`Host::told`]):
+    /// the running placement, or the object a tell's block tells.
+    pub(crate) told: Value,
     /// The original's interface the scripts write (openspec AT.9), when
     /// the run's install loaded it ([`crate::interface_host`]).
     pub(crate) interface: Option<guac_interface::Keeper>,
@@ -586,6 +605,37 @@ pub struct LevelChange {
     pub name: String,
     pub text: String,
     pub value: Value,
+}
+
+/// The movie a level end queued (openspec AS.19: `Game - Level End - Play
+/// Movie`'s, chapter 1's FMV02), by the disc's name for it (`fmv02`), and
+/// how far its play has got.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LevelEndMovie {
+    pub name: String,
+    pub state: MovieState,
+}
+
+/// Where a level end's movie stands: queued for the TV, playing (its
+/// conversion included), or over and why.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MovieState {
+    Queued,
+    Playing,
+    Over(MovieEnd),
+}
+
+/// How a level end's movie ended.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MovieEnd {
+    /// Played to its end.
+    Finished,
+    /// Ended early by the original's skip (△ or Start).
+    Skipped,
+    /// No player plays it (a headless run): over as it's queued.
+    Unplayed,
+    /// It wouldn't convert or play, and why: the level goes on as if it had.
+    Failed(String),
 }
 
 /// The level end the TV wrote to `system.load level` in the Pause
@@ -751,7 +801,7 @@ impl ScriptWorld {
             light_templates: files.lights.clone(),
             emitters: files.emitters.clone(),
             points: files.points.clone(),
-            point_turns: HashMap::new(),
+            point_turns: files.turns.clone(),
             controllers: [objects[0], objects[1]],
             physical: [objects[2], objects[3], objects[4], objects[5]],
             portal: objects[6],
@@ -784,6 +834,8 @@ impl ScriptWorld {
             streams: Default::default(),
             skipped_cutscene: None,
             level_end_asked: false,
+            level_end_movie: None,
+            plays_movies: false,
             level_end: None,
             achievements: Vec::new(),
             inert: Default::default(),
@@ -807,6 +859,8 @@ impl ScriptWorld {
             music_silent: 0,
             walk_clones: Default::default(),
             intro_held: None,
+            scene_walks: HashMap::new(),
+            told: Value::Null,
             interface: None,
             run: fresh_serial(),
         }
@@ -1393,6 +1447,40 @@ impl ScriptWorld {
     /// The TV's level end, once written.
     pub fn level_end(&self) -> Option<&LevelEnd> {
         self.level_end.as_ref()
+    }
+
+    /// The movie the level end queued, once [`crate::level_end`] has read
+    /// it (openspec AS.19).
+    pub fn level_end_movie(&self) -> Option<&LevelEndMovie> {
+        self.level_end_movie.as_ref()
+    }
+
+    /// `name` queued as a level end queues its movie
+    /// ([`crate::level_end`]): what the TV's player tests start from.
+    pub fn queue_movie(&mut self, name: &str) {
+        self.level_end_movie = Some(LevelEndMovie {
+            name: name.to_owned(),
+            state: MovieState::Queued,
+        });
+    }
+
+    /// The queued movie taken up by the player: playing (or converting).
+    pub fn movie_playing(&mut self) {
+        if let Some(m) = &mut self.level_end_movie
+            && m.state == MovieState::Queued
+        {
+            m.state = MovieState::Playing;
+        }
+    }
+
+    /// The level end's movie over, `end` saying how: the level end asks its
+    /// level at its next step.
+    pub fn movie_over(&mut self, end: MovieEnd) {
+        if let Some(m) = &mut self.level_end_movie
+            && !matches!(m.state, MovieState::Over(_))
+        {
+            m.state = MovieState::Over(end);
+        }
     }
 
     /// Whether the disc's level list is in (some level on it).
@@ -2134,6 +2222,9 @@ impl Host for WorldHost<'_, '_> {
     fn referenced(&mut self, cell: u32, target: Value) {
         self.world.referenced(cell, target, self.engine);
     }
+    fn told(&mut self, receiver: Value) {
+        self.world.told = receiver;
+    }
     fn adopt(&mut self, program: &Program) -> Vec<(Handle, String, ScriptId)> {
         self.world.adopt(program)
     }
@@ -2616,9 +2707,17 @@ pub const MUSIC_SCRIPTS: [&str; 20] = [
 /// Chapter 1's end (openspec AS.15), every tick: `Temp_Level_Ender`, asleep
 /// until a script wakes it (`Rope_around_Post(2)`'s last behaviour, or the
 /// dev entry's end anchor), fades the screen out and wakes the outro, whose
-/// cutscene (skipped on the TV, [`crate::level_end`]) ends in the outro's
-/// own `Game - Level End`, naming the next level.
-pub const LEVEL_END_SCRIPTS: [&str; 2] = ["Temp_Level_Ender.ai", "213_Outro_IGC.ai"];
+/// cutscene (played to its end since AS.52, its actors clones of their
+/// templates the scene walks and animates) ends in the outro's own `Game -
+/// Level End`, naming the next level. The outro's actors run their own
+/// (AS.52): Norticus and the Mabu at 140 %, each with his hat on his head's
+/// node.
+pub const LEVEL_END_SCRIPTS: [&str; 4] = [
+    "Temp_Level_Ender.ai",
+    "213_Outro_IGC.ai",
+    "213_Norticus_NPC.ai",
+    "213_Mabu_Generic.ai",
+];
 
 /// `config` over a level's own file, linked as `level` (openspec AS.51):
 /// each level placement's definition script ([`is_level_definition`];
@@ -4449,6 +4548,7 @@ mod tests {
             }],
             ids: HashMap::from([(GRUNT, 41), (SPRITE, 77)]),
             points: HashMap::new(),
+            turns: HashMap::new(),
         };
         let handles = headless_handles(&files);
         let objects = headless_objects(&handles);
@@ -4552,6 +4652,34 @@ mod tests {
             Some(obj.index as usize),
             igz.object_at(s.emitter).map(|(i, _)| i)
         );
+    }
+
+    /// AS.52: each waypoint a file holds is read with its turn beside its
+    /// place, and the world the scripts read it in starts with that turn
+    /// (the outro's camera looks from its waypoint as the waypoint faces).
+    #[test]
+    fn the_files_read_each_waypoints_place_and_turn() {
+        let s = guac_formats::level::builder::sample();
+        let igz = Igz::parse(&s.bytes).unwrap();
+        let files = Files::read(&[(3, &igz)]).unwrap();
+        let obj = |l| Obj {
+            unit: 3,
+            index: igz.object_at(l).unwrap().0 as u32,
+        };
+        let [w0, w1, w2] = s.waypoints.map(obj);
+        assert_eq!(files.points[&w1], Vec3::new(12.0, 43.0, -90.0));
+        let turn = |facing| Angles {
+            tilt: 0.0,
+            facing,
+            roll: 0.0,
+        };
+        assert_eq!(
+            [w0, w1, w2].map(|w| files.turns[&w]),
+            [turn(0.0), turn(45.0), turn(90.0)]
+        );
+        let handles = HashMap::new();
+        let world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        assert_eq!(world.point_turns[&w1], turn(45.0));
     }
 
     fn at(namespace: &str, name: &str, receiver: Option<Value>) -> Access {
@@ -5171,6 +5299,7 @@ mod tests {
             placed: vec![Placed::named(obj, "Unlocker", Some(PATH), RUNNING)],
             ids: HashMap::new(),
             points: HashMap::new(),
+            turns: HashMap::new(),
             emitters: HashMap::new(),
         };
         let handles = headless_handles(&files);
@@ -5278,6 +5407,7 @@ mod tests {
             ],
             ids: HashMap::new(),
             points: HashMap::new(),
+            turns: HashMap::new(),
             emitters: HashMap::new(),
         };
         let handles = headless_handles(&files);
@@ -5482,6 +5612,7 @@ mod tests {
             placed: vec![Placed::named(obj, "Ship", Some(PATH), 5)],
             ids: HashMap::new(),
             points: HashMap::new(),
+            turns: HashMap::new(),
             emitters: HashMap::new(),
         };
         let handles = headless_handles(&files);
@@ -5549,6 +5680,7 @@ mod tests {
             placed: vec![Placed::named(obj, "Ship", Some(PATH), RUNNING)],
             ids: HashMap::new(),
             points: HashMap::new(),
+            turns: HashMap::new(),
             emitters: HashMap::new(),
         };
         let handles = headless_handles(&files);
@@ -5790,6 +5922,7 @@ mod tests {
             }],
             ids: HashMap::new(),
             points: HashMap::new(),
+            turns: HashMap::new(),
         };
         let objects = |app: &mut App| {
             let w = app.world_mut();
@@ -6322,6 +6455,7 @@ mod tests {
             ],
             ids: HashMap::new(),
             points: HashMap::new(),
+            turns: HashMap::new(),
         };
         let mut handles = headless_handles(&files);
         handles.insert(hero, HIM);

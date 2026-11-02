@@ -457,12 +457,22 @@ fn an_ffmpeg_without_the_codecs_or_none_at_all_is_named() {
 }
 
 /// What a whole run's level stage and extract-wide parts record (AG.15,
-/// AH.2, AH.22), each part with no files of its own here: a current extract
-/// needs them.
+/// AH.2, AH.22), each part with no files of its own here but the
+/// palettes' file under its rule's name (AS.52): a current extract needs
+/// them.
 fn record_levels(dir: &mut guac_extract::IdentityDir) {
     for level in guac_extract::levels::LEVELS {
         for part in guac_extract::levels::PARTS {
-            dir.record_level_part(level, part, Vec::new()).unwrap();
+            // The palettes under their rule's name (openspec AS.52).
+            let files = match part {
+                guac_extract::levels::PALETTES => vec![guac_extract::levels::part_path(
+                    guac_extract::intros::IrFormat::Ron,
+                    level,
+                    part,
+                )],
+                _ => Vec::new(),
+            };
+            dir.record_level_part(level, part, files).unwrap();
         }
     }
     for part in guac_extract::PARTS {

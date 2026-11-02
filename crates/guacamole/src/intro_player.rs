@@ -113,7 +113,7 @@ struct Opened {
     end: f64,
 }
 
-struct Playback {
+pub(crate) struct Playback {
     entry: IntroEntry,
     rx: Receiver<Feed>,
     mp3: Option<PathBuf>,
@@ -351,54 +351,102 @@ fn start(
     library: Option<&IntroLibrary>,
     now: Instant,
 ) -> Playback {
-    let overlay = commands
-        .spawn((
-            IntroOverlay,
-            Node {
-                position_type: PositionType::Absolute,
-                left: px(0),
-                top: px(0),
-                width: percent(100),
-                height: percent(100),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            BackgroundColor(Color::BLACK),
-            GlobalZIndex(OVERLAY_Z),
-        ))
-        .id();
-    let (rx, mp3) = match library {
-        Some(library) => {
-            let (mp4, mp3) = intro::files(library, &entry.movie);
-            info!(id = entry.id, video = %mp4.display(), "intro opening");
-            (video::spawn_decoder(mp4), Some(mp3))
-        }
-        // A movie only ever comes from a library; fail rather than panic.
-        None => {
-            let (tx, rx) = crossbeam_channel::bounded(1);
-            let _ = tx.send(Feed::Failed("no extract to play from".into()));
-            (rx, None)
-        }
-    };
-    Playback {
-        entry,
-        rx,
-        mp3,
-        started: now,
-        overlay,
-        image: None,
-        opened: None,
-        pending: None,
-        decoded: false,
-        audio: Audio::Waiting,
-        clock: AnchoredClock::default(),
-        shown: 0,
-        skipped: 0,
-    }
+    let files = library.map(|library| intro::files(library, &entry.movie));
+    Playback::open(commands, entry, files, now)
 }
 
 impl Playback {
+    /// A movie's playback over the screen, its MP4 and MP3 at `files`
+    /// (openspec AS.19: the level end's movie plays on it as an intro
+    /// does); it fails as it opens with none.
+    pub(crate) fn open(
+        commands: &mut Commands,
+        entry: IntroEntry,
+        files: Option<(PathBuf, PathBuf)>,
+        now: Instant,
+    ) -> Playback {
+        let overlay = commands
+            .spawn((
+                IntroOverlay,
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(0),
+                    top: px(0),
+                    width: percent(100),
+                    height: percent(100),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::BLACK),
+                GlobalZIndex(OVERLAY_Z),
+            ))
+            .id();
+        let (rx, mp3) = match files {
+            Some((mp4, mp3)) => {
+                info!(id = entry.id, video = %mp4.display(), "intro opening");
+                (video::spawn_decoder(mp4), Some(mp3))
+            }
+            // A movie only ever comes from a library; fail rather than panic.
+            None => {
+                let (tx, rx) = crossbeam_channel::bounded(1);
+                let _ = tx.send(Feed::Failed("no extract to play from".into()));
+                (rx, None)
+            }
+        };
+        Playback {
+            entry,
+            rx,
+            mp3,
+            started: now,
+            overlay,
+            image: None,
+            opened: None,
+            pending: None,
+            decoded: false,
+            audio: Audio::Waiting,
+            clock: AnchoredClock::default(),
+            shown: 0,
+            skipped: 0,
+        }
+    }
+
+    /// [`Playback::step`] for a movie that isn't the queue's: `Some(Ok)`
+    /// once it's played to its end, `Some(Err)` with why it failed.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn step_movie(
+        &mut self,
+        now: Instant,
+        latency: Duration,
+        muted: bool,
+        commands: &mut Commands,
+        images: &mut Assets<Image>,
+        sounds: Option<&mut Assets<AudioSource>>,
+        sinks: &Query<&AudioSink>,
+    ) -> Option<Result<(), String>> {
+        Some(
+            match self.step(now, latency, muted, commands, images, sounds, sinks)? {
+                Over::Finished => Ok(()),
+                Over::Failed(why) => Err(why),
+            },
+        )
+    }
+
+    /// Frames shown so far and the video's count, once it's open.
+    pub(crate) fn progress(&self) -> (usize, Option<usize>) {
+        (self.shown, self.opened.as_ref().map(|o| o.frames))
+    }
+
+    /// Its sound: `waiting`, `starting`, `playing` (a sink) or `none`.
+    pub(crate) fn audio(&self) -> &'static str {
+        match self.audio {
+            Audio::Waiting => "waiting",
+            Audio::Spawned { .. } => "starting",
+            Audio::Sink(_) => "playing",
+            Audio::Silent => "none",
+        }
+    }
+
     /// Fills `pending` from the decode thread if it's empty.
     fn pull(&mut self, commands: &mut Commands, images: &mut Assets<Image>) -> Result<(), String> {
         while self.pending.is_none() && !self.decoded {
@@ -590,7 +638,7 @@ impl Playback {
 
     /// Takes the overlay, sound and picture down. Dropping `rx` stops the
     /// decode thread at its next frame.
-    fn stop(
+    pub(crate) fn stop(
         self,
         commands: &mut Commands,
         images: &mut Assets<Image>,

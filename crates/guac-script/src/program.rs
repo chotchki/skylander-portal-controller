@@ -134,6 +134,9 @@ pub enum Operand {
         literal: Option<Literal>,
         /// The path names `abstractscriptgroup.its`.
         names_its: bool,
+        /// An RHS reference or group stack's `_editType`: what the path
+        /// names, which a `set reference` checks a structure against.
+        edit: Contents,
     },
     /// `a <op> b`, or `a` alone.
     Expr {
@@ -1210,12 +1213,14 @@ impl<'l, 'u, 'a> Linker<'l, 'u, 'a> {
                     bits: r.bits as u32,
                     random: r.is_random,
                 });
+                let edit = self.contents(unit, path.edit_type)?;
                 Operand::Path {
                     class: path.class,
                     elems,
                     other: self.operand_id(unit, path.other_point)?,
                     literal,
                     names_its,
+                    edit,
                 }
             }
         };

@@ -1777,8 +1777,9 @@ fn would_enter(
 }
 
 /// The portal's alert ([`judge`]) on the portal view and over the level, and
-/// the level held ([`LevelPads::hold`]) while one shows, no hero is in it or
-/// the next level is read (openspec AS.49).
+/// the level held ([`LevelPads::hold`]) while one shows, no hero is in it,
+/// the next level is read (openspec AS.49) or the level end's movie plays
+/// (AS.19).
 /// A replacement whose model can't be drawn counts as one that can't come
 /// in, so the call for a Skylander stays up.
 fn judge_portal(
@@ -1790,7 +1791,10 @@ fn judge_portal(
     (prepare, queue): (Option<Res<Prepare>>, Option<Res<IntroQueue>>),
     mut pads: ResMut<LevelPads>,
     source: Option<Res<ScriptSource>>,
-    choice: Option<Res<crate::level_choice::LevelChoice>>,
+    (choice, movies): (
+        Option<Res<crate::level_choice::LevelChoice>>,
+        Option<Res<crate::movies::Movies>>,
+    ),
 ) {
     let on_portal = current.is_some_and(|c| matches!(c.screen, TvScreen::Portal { .. }));
     let alert = match turntables.shelf().filter(|_| on_portal) {
@@ -1829,8 +1833,10 @@ fn judge_portal(
     // And while the next level is read, the hero still in this one
     // (openspec AS.49): the level a script's level end or an ask leaves.
     let changing = choice.as_deref().is_some_and(|c| c.changing());
+    // And while the level end's movie converts or plays (openspec AS.19).
+    let movie = movies.as_deref().is_some_and(crate::movies::Movies::holds);
     let held = play.inside.as_ref().is_some_and(|i| {
-        alert.is_some() || i.hero.is_none() || play.arrivals.holding() || changing
+        alert.is_some() || i.hero.is_none() || play.arrivals.holding() || changing || movie
     });
     if pads.held() != held {
         pads.hold(held);
@@ -6380,6 +6386,28 @@ mod tests {
         let on = hero(&app).pivot;
         assert!(on.distance(at) > 0.1, "he walks on: {at} -> {on}");
         assert!(on.distance(at) < 3.0, "from where he stopped: {at} -> {on}");
+    }
+
+    /// AS.19: the level end's movie holds the level while it converts or
+    /// plays, him and the clock still under the stick, and lets it go once
+    /// it's over.
+    #[test]
+    fn the_level_ends_movie_holds_the_level() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = walking(tmp.path());
+        assert_eq!(mode(&app), Mode::Level);
+        let (movies, _feed) = crate::movies::Movies::converting("fmv02");
+        app.insert_resource(movies);
+        until(&mut app, "the hold", |a| mode(a) == Mode::Held);
+        assert_eq!(alert(&app), None, "no alert: the movie's hold");
+        let at = stands_still(&mut app, 30);
+        app.insert_resource(crate::movies::Movies::default());
+        until(&mut app, "the walk again", |a| mode(a) == Mode::Level);
+        for _ in 0..10 {
+            app.update();
+        }
+        let on = hero(&app).pivot;
+        assert!(on.distance(at) > 0.1, "he walks on: {at} -> {on}");
     }
 
     /// AG.63: with a second Eruptor holding the level, the hero taken off

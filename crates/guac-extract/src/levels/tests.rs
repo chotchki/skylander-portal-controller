@@ -462,16 +462,17 @@ fn every_level_part_is_named_and_complete_wants_them_all() {
         "an older manifest reads with no levels"
     );
     assert!(!complete(&m));
+    let file = |part: &str| vec![part_path(crate::intros::IrFormat::Ron, LEVELS[0], part)];
     let entry = m.levels.entry(LEVELS[0].to_owned()).or_default();
     for part in &PARTS[..4] {
-        entry.parts.insert((*part).to_owned(), Vec::new());
+        entry.parts.insert((*part).to_owned(), file(part));
     }
     assert!(!complete(&m), "lights missing");
     m.levels
         .get_mut(LEVELS[0])
         .unwrap()
         .parts
-        .insert(LIGHTS.to_owned(), Vec::new());
+        .insert(LIGHTS.to_owned(), file(LIGHTS));
     // AG.15's five parts: an extract written before AG.41 resumes for its
     // atmosphere alone.
     assert!(!complete(&m), "the atmosphere missing");
@@ -479,7 +480,7 @@ fn every_level_part_is_named_and_complete_wants_them_all() {
         .get_mut(LEVELS[0])
         .unwrap()
         .parts
-        .insert(ATMOSPHERE.to_owned(), Vec::new());
+        .insert(ATMOSPHERE.to_owned(), file(ATMOSPHERE));
     // AH.22's two: an extract written before them resumes for those alone.
     assert!(!complete(&m), "the script and the palettes missing");
     for part in [SCRIPT, PALETTES] {
@@ -487,7 +488,7 @@ fn every_level_part_is_named_and_complete_wants_them_all() {
             .get_mut(LEVELS[0])
             .unwrap()
             .parts
-            .insert(part.to_owned(), Vec::new());
+            .insert(part.to_owned(), file(part));
     }
     // AH.138's nodes: an extract written before them resumes for those alone.
     assert!(!complete(&m), "the nodes missing");
@@ -495,14 +496,14 @@ fn every_level_part_is_named_and_complete_wants_them_all() {
         .get_mut(LEVELS[0])
         .unwrap()
         .parts
-        .insert(NODES.to_owned(), Vec::new());
+        .insert(NODES.to_owned(), file(NODES));
     // AT.8's sprites: an extract written before them resumes for those alone.
     assert!(!complete(&m), "the sprites missing");
     m.levels
         .get_mut(LEVELS[0])
         .unwrap()
         .parts
-        .insert(SPRITES.to_owned(), Vec::new());
+        .insert(SPRITES.to_owned(), file(SPRITES));
     // AS.17's particles: an extract written before them resumes for those
     // alone.
     assert!(!complete(&m), "the particles missing");
@@ -510,7 +511,25 @@ fn every_level_part_is_named_and_complete_wants_them_all() {
         .get_mut(LEVELS[0])
         .unwrap()
         .parts
-        .insert(PARTICLES.to_owned(), Vec::new());
+        .insert(PARTICLES.to_owned(), file(PARTICLES));
+    assert!(complete(&m));
+    // AS.52: a part recorded under an older name than its rule's (chapter
+    // 1's palettes as `palettes.ron`, before `palettes.v2`) is a part to
+    // read again; its file in the other IR format holds it too.
+    let palettes = &mut m.levels.get_mut(LEVELS[0]).unwrap().parts;
+    palettes.insert(
+        PALETTES.to_owned(),
+        vec![crate::intros::IrFormat::Ron.level_path(LEVELS[0], PALETTES)],
+    );
+    assert!(!complete(&m), "the palettes under their old name");
+    m.levels.get_mut(LEVELS[0]).unwrap().parts.insert(
+        PALETTES.to_owned(),
+        vec![part_path(
+            crate::intros::IrFormat::Postcard,
+            LEVELS[0],
+            PALETTES,
+        )],
+    );
     assert!(complete(&m));
     // The script is the entry as the disc holds it, in either format.
     for ir in [
@@ -523,12 +542,14 @@ fn every_level_part_is_named_and_complete_wants_them_all() {
         );
         assert_eq!(
             part_path(ir, LEVELS[0], PALETTES),
-            ir.level_path(LEVELS[0], PALETTES)
+            ir.level_path(LEVELS[0], "palettes.v2")
         );
     }
+    // Named for its rule since AS.52 (its outro's actors), so an extract
+    // before it reads it again.
     assert_eq!(
         part_path(crate::intros::IrFormat::Ron, LEVELS[0], PALETTES),
-        "levels/level_213_tutotial/palettes.ron"
+        "levels/level_213_tutotial/palettes.v2.ron"
     );
     assert_eq!(
         archive_path(Path::new("/u"), LEVELS[0]),
@@ -737,7 +758,7 @@ fn the_palettes_follow_a_whitelisted_script_to_its_creature() {
             "{script:?}"
         );
     }
-    // Its file named for its rule there, chapter 1's as it was.
+    // Its file named for its rule there, chapter 1's for its own.
     assert_eq!(
         part_path(
             crate::intros::IrFormat::Ron,
@@ -748,8 +769,29 @@ fn the_palettes_follow_a_whitelisted_script_to_its_creature() {
     );
     assert_eq!(
         part_path(crate::intros::IrFormat::Postcard, LEVEL, PALETTES),
-        format!("levels/{LEVEL}/palettes.postcard")
+        format!("levels/{LEVEL}/palettes.v{PALETTES_FIRST_RUN}.postcard")
     );
+}
+
+/// AS.52: on a first run's level the outro's actors' palettes are read,
+/// by their scripts on the whitelist.
+#[test]
+fn the_outros_actors_have_their_palettes() {
+    const CHEST: &str = "C:/tfb/Content/Models/Objects/Treasure_Chest.mdl";
+    for script in [
+        "C:/tfb/Content/Levels/Level_213/cutscenes/scripts/213_Mabu_Generic.ai",
+        "C:/tfb/Content/Levels/Level_213/cutscenes/scripts/213_Norticus_NPC.ai",
+    ] {
+        let r = palettes(parsed(&creature_level(Some(script))), LEVEL, identity()).unwrap();
+        assert_eq!(
+            r.ir.palettes
+                .iter()
+                .map(|p| p.owner.as_str())
+                .collect::<Vec<_>>(),
+            [CHEST],
+            "{script}"
+        );
+    }
 }
 
 /// The nodes part (openspec AH.138): the skinned chest's attach list on its

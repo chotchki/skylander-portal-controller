@@ -146,6 +146,8 @@ pub(super) struct Engine {
     /// What each read of a set reference it copies finds changed, in turn.
     refs: std::collections::VecDeque<Option<Vec<Value>>>,
     resets: usize,
+    /// What each static member's read was told it's read under.
+    told: Vec<Value>,
 }
 
 impl Host for Engine {
@@ -202,6 +204,9 @@ impl Host for Engine {
     }
     fn set_ref(&mut self, _: &Access) -> Option<Vec<Value>> {
         self.refs.pop_front().flatten()
+    }
+    fn told(&mut self, receiver: Value) {
+        self.told.push(receiver);
     }
 }
 
@@ -687,6 +692,232 @@ fn a_file_colour_reads_red_from_its_low_byte() {
     assert_eq!(vm.global(g), Some(Value::Color(0x2214_14FF)));
     vm.tick(id, &mut Engine::default()).unwrap();
     assert_eq!(vm.local(id, "red"), Some(Value::Int(34)));
+}
+
+/// AS.52: a `set reference` whose right side's edit type names a structure
+/// takes nothing for a structure of another definition, as the original's
+/// checks the object against the side's edit type (aj-vm's OpSetReference
+/// reading). A cutscene step finds its own data among its actor's so,
+/// looping until a typed read takes one: read untyped, chapter 1's outro
+/// read its dialogue's data as Norticus' animation's and never started it.
+/// The same definition, an untyped side or one naming a class takes the
+/// structure as it is; a copy keeps its definition.
+#[test]
+fn a_typed_set_reference_takes_nothing_for_another_structure() {
+    let p = program(|w| {
+        let (section, _) = w.open(Class::StructureSection, "STRUCTURES");
+        let (dp, dialogue) = w.open(Class::DefineStructure, "Dialogue Data");
+        let line = w.variable("line", "ValueInfo", Some(INT));
+        w.push(line);
+        w.end_block(dp);
+        let (ap, anim) = w.open(Class::DefineStructure, "Play Anim Data");
+        let started = w.variable("started", "ValueInfo", Some(INT));
+        w.push(started);
+        w.end_block(ap);
+        w.end_block(section);
+        w.end("C:/tfb/Synthetic/Types.ai");
+        let d = w.variable("d", "ScriptStructure", None);
+        w.refer(d, 0x24, dialogue);
+        let a = w.variable("a", "ScriptStructure", None);
+        w.refer(a, 0x24, anim);
+        let extra = w.variable("extra", "ScriptSet", None);
+        let outs = [
+            "anim_of_0",
+            "anim_of_1",
+            "untyped_0",
+            "dialogue_of_0",
+            "class_of_0",
+            "anim_of_dialogues_copy",
+            "anim_of_anims_copy",
+        ]
+        .map(|n| w.variable(n, "ScriptReference", None));
+        idle(
+            w,
+            |_| {},
+            |w| {
+                add_to(w, extra, &[El::Local(d)]);
+                add_to(w, extra, &[El::Local(a)]);
+                let typed =
+                    |w: &mut Writer<'_>, out: Location, index: i32, edit: Option<Location>| {
+                        let r = w.reference(&[El::Local(extra)], None);
+                        if let Some(def) = edit {
+                            w.refer(r, 0x28, def);
+                        }
+                        let i = w.int(index);
+                        let lhs = w.stack(StackClass::Reference, &[El::Local(out)]);
+                        let o = w.op(Class::SetReference, "set *reference||to");
+                        w.refer(o, 0x1C, lhs);
+                        w.refer(o, 0x20, r);
+                        w.refer(o, 0x24, i);
+                        w.push(o);
+                    };
+                typed(w, outs[0], 0, Some(anim));
+                typed(w, outs[1], 1, Some(anim));
+                typed(w, outs[2], 0, None);
+                typed(w, outs[3], 0, Some(dialogue));
+                let r = w.reference(&[El::Local(d)], Some("ActorInfo"));
+                let lhs = w.stack(StackClass::Reference, &[El::Local(outs[4])]);
+                let o = w.op(Class::SetReference, "set *reference||to");
+                w.refer(o, 0x1C, lhs);
+                w.refer(o, 0x20, r);
+                w.push(o);
+                // A copy (a spawn of the structure) is of its definition too:
+                // the dialogue's copy at 2, the animation's at 3.
+                for of in [d, a] {
+                    let template = w.stack(StackClass::PlacementList, &[El::Local(of)]);
+                    let at = w.stack(StackClass::Position, &[]);
+                    let zero = w.int(0);
+                    let (s, so) = w.open(Class::Spawn, "clone||at|facing||cloned");
+                    w.refer(so, 0x20, template);
+                    w.refer(so, 0x28, at);
+                    w.refer(so, 0x2C, zero);
+                    add_to(w, extra, &[El::Local(so)]);
+                    w.end_block(s);
+                }
+                typed(w, outs[5], 2, Some(anim));
+                typed(w, outs[6], 3, Some(anim));
+            },
+        );
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "Step", 1);
+    vm.tick(id, &mut Engine::default()).unwrap();
+    let of = |name: &str| vm.local(id, name).map(|v| vm.value(v));
+    let (d, a) = (of("d"), of("a"));
+    assert_eq!(
+        of("anim_of_0"),
+        Some(Value::Null),
+        "the dialogue's data isn't the animation's"
+    );
+    assert_eq!(of("anim_of_1"), a);
+    assert_eq!(of("untyped_0"), d, "an untyped side takes it as it is");
+    assert_eq!(of("dialogue_of_0"), d);
+    assert_eq!(
+        of("class_of_0"),
+        d,
+        "a side naming a class doesn't check a structure"
+    );
+    assert_eq!(
+        of("anim_of_dialogues_copy"),
+        Some(Value::Null),
+        "a copy keeps its definition"
+    );
+    let copy = of("anim_of_anims_copy").unwrap();
+    assert_ne!(Some(copy), a, "the copy, not the original");
+    assert_eq!(vm.field(copy, "started"), Some(Value::Int(0)));
+}
+
+/// AS.52, the as-ch1-ending review: two definitions that aren't the same
+/// one are compared by name, ignoring case, as the original's check does
+/// once the objects differ: a structure of a same-named definition placed
+/// in another file (a hero's file and a level's copy of his scripts, a hero
+/// and his alt) is taken through a reference typed for the other; one of
+/// another name isn't.
+#[test]
+fn a_typed_set_reference_takes_a_same_named_definitions_structure() {
+    let p = program(|w| {
+        let mut defs = Vec::new();
+        for (file, name) in [
+            ("C:/tfb/Synthetic/Hero.ai", "Play Anim Data"),
+            ("C:/tfb/Synthetic/Level.ai", "play anim DATA"),
+            ("C:/tfb/Synthetic/Other.ai", "Play Anim Datum"),
+        ] {
+            let (section, _) = w.open(Class::StructureSection, "STRUCTURES");
+            let (dp, def) = w.open(Class::DefineStructure, name);
+            let started = w.variable("started", "ValueInfo", Some(INT));
+            w.push(started);
+            w.end_block(dp);
+            w.end_block(section);
+            w.end(file);
+            defs.push(def);
+        }
+        let held: Vec<Location> = ["hero", "level", "other"]
+            .into_iter()
+            .zip(&defs)
+            .map(|(n, def)| {
+                let s = w.variable(n, "ScriptStructure", None);
+                w.refer(s, 0x24, *def);
+                s
+            })
+            .collect();
+        let extra = w.variable("extra", "ScriptSet", None);
+        let outs =
+            ["hero_of_level", "hero_of_other"].map(|n| w.variable(n, "ScriptReference", None));
+        idle(
+            w,
+            |_| {},
+            |w| {
+                for s in &held {
+                    add_to(w, extra, &[El::Local(*s)]);
+                }
+                for (out, index) in [(outs[0], 1), (outs[1], 2)] {
+                    let r = w.reference(&[El::Local(extra)], None);
+                    w.refer(r, 0x28, defs[0]);
+                    let i = w.int(index);
+                    let lhs = w.stack(StackClass::Reference, &[El::Local(out)]);
+                    let o = w.op(Class::SetReference, "set *reference||to");
+                    w.refer(o, 0x1C, lhs);
+                    w.refer(o, 0x20, r);
+                    w.refer(o, 0x24, i);
+                    w.push(o);
+                }
+            },
+        );
+    });
+    let test = p.script_named("Test.ai").unwrap();
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "Step", test);
+    vm.tick(id, &mut Engine::default()).unwrap();
+    let of = |name: &str| vm.local(id, name).map(|v| vm.value(v));
+    assert!(matches!(of("level"), Some(Value::Struct(_))));
+    assert_eq!(
+        of("hero_of_level"),
+        of("level"),
+        "the same name, another file"
+    );
+    assert_eq!(of("hero_of_other"), Some(Value::Null), "another name");
+}
+
+/// AS.52: a static member's host read is told what it's read under
+/// (`Host::told`): the running placement, inside a tell's block the object
+/// told, and the placement again once the block ends; a member read on a
+/// receiver of its own isn't told anything (a cutscene's game systems'
+/// placement reads the palette of each actor it tells).
+#[test]
+fn a_static_members_read_is_told_its_receiver() {
+    let mut thing = None;
+    let (p, obj) = program_and_objects(|w| {
+        let t = actor(w);
+        thing = Some(t);
+        let n = var(w, "n");
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let health = |w: &mut Writer<'_>| {
+                    let r = w.rhs(INT, &[El::Member("actorinfo", "health")]);
+                    w.set(&[El::Local(n)], r);
+                };
+                health(w);
+                let told = tell(w, &[El::Local(t)]);
+                health(w);
+                w.end_block(told);
+                health(w);
+                let r = w.rhs(INT, &[El::Local(t), El::Member("actorinfo", "health")]);
+                w.set(&[El::Local(n)], r);
+            },
+        );
+    });
+    let t = obj.at(thing.unwrap());
+    let mut c = Config::new(Mode::Strict);
+    c.members
+        .host("actorinfo", "health", MemberSpec::new(Kind::Int, 0.0, 0.0));
+    let mut vm = Vm::new(p, c);
+    let id = vm.add(HANDLE, "Me", 0);
+    let mut host = Engine::default();
+    vm.tick(id, &mut host).unwrap();
+    let me = Value::Entity(HANDLE);
+    assert_eq!(host.told, [me, Value::Object(t), me]);
 }
 
 #[test]

@@ -2016,7 +2016,7 @@ fn write_level(dir: &mut guac_extract::IdentityDir, entry: LevelEntry) -> Result
         level: level.clone(),
         palettes: Vec::new(),
     };
-    let rel = ir.level_path(&level, guac_extract::levels::PALETTES);
+    let rel = guac_extract::levels::part_path(ir, &level, guac_extract::levels::PALETTES);
     dir.write_output(&rel, &ir.encode(&palettes, dir, &rel)?)?;
     dir.record_level_part(&level, guac_extract::levels::PALETTES, vec![rel])?;
     // AH.138's nodes: no attach lists, so nothing hangs on a creature's node.
