@@ -265,3 +265,30 @@ pub(crate) fn progression_rows() -> guac_ir::progression::Progression {
         gold_cap: 65_000,
     }
 }
+
+/// A run's world over no files whose interface holds one file string with
+/// `text` (openspec AS.15: a level's English text, as `global.bld`'s level
+/// strings read): the world and the string's object, what a script writes
+/// to `system.load level`.
+pub(crate) fn world_with_text(text: &str) -> (guacamole::scripts::ScriptWorld, guac_script::Value) {
+    let files = guacamole::scripts::Files::default();
+    let handles = guacamole::scripts::headless_handles(&files);
+    let objects = guacamole::scripts::headless_objects(&handles);
+    let mut world = guacamole::scripts::ScriptWorld::new(&files, &handles, objects);
+    let mut keeper = guac_interface::load::load(&[], None).keeper;
+    let v = keeper.model_mut().add_file_string(
+        guac_script::Obj {
+            unit: 1,
+            index: 4242,
+        },
+        text,
+        guac_interface::Str {
+            units: Vec::new(),
+            flags: 0,
+            integer_digits: 0,
+            decimal_digits: 0,
+        },
+    );
+    world.set_interface(keeper);
+    (world, v)
+}

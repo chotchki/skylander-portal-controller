@@ -141,6 +141,19 @@ impl Kind {
             Self::Other
         }
     }
+
+    /// Whether the game takes a player into a level of this kind alone (a
+    /// story level, a hub stage, a PvP arena, a challenge or an arena
+    /// challenge), rather than streaming it into one (the mesh bundles, the
+    /// voice pack, the ship parts, the packs) or loading it for a menu (the
+    /// title, the credits): what a script's level change can name
+    /// (openspec AS.15's review).
+    pub fn is_level(self) -> bool {
+        matches!(
+            self,
+            Self::Story | Self::Hub | Self::Pvp | Self::Challenge | Self::ArenaChallenge
+        )
+    }
 }
 
 /// A level file on the disc: its archive's name, kind and size.
@@ -170,6 +183,17 @@ pub fn on_disc(m: &Manifest) -> Vec<DiscLevel> {
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
     out
+}
+
+/// [`on_disc`] off the manifest of the extract at `dir` (openspec AS.15:
+/// what a level's run checks a script's request against), why not when it
+/// doesn't read.
+pub fn on_disc_at(dir: &Path) -> Result<Vec<DiscLevel>, String> {
+    let path = dir.join(crate::extract::MANIFEST);
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let m: Manifest =
+        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(on_disc(&m))
 }
 
 /// The parts, in the order the stage reads them.

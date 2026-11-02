@@ -40,7 +40,12 @@
 //!   rewrite none of his materials.
 //!
 //! The TV leaves the level when it leaves the portal view (the game
-//! quit, a server error) or the level gives way to another load.
+//! quit, a server error) or the level gives way to another load: a level
+//! change (openspec AS.49, a script's level end or an ask by name) holds the
+//! level while the next is read, then takes it down as the next comes with
+//! the hero in it (his progress written first, as every level's end writes
+//! it), and the portal's figures come into the next as they stood, the
+//! first placed that walks the hero again once its run is in.
 //!
 //! The portal and the level (AG.29, with AG.63's too-many hold and AG.73's
 //! wrong-toy alert; level-scene's One hero at a time, Removing the hero
@@ -1772,7 +1777,8 @@ fn would_enter(
 }
 
 /// The portal's alert ([`judge`]) on the portal view and over the level, and
-/// the level held ([`LevelPads::hold`]) while one shows or no hero is in it.
+/// the level held ([`LevelPads::hold`]) while one shows, no hero is in it or
+/// the next level is read (openspec AS.49).
 /// A replacement whose model can't be drawn counts as one that can't come
 /// in, so the call for a Skylander stays up.
 fn judge_portal(
@@ -1784,6 +1790,7 @@ fn judge_portal(
     (prepare, queue): (Option<Res<Prepare>>, Option<Res<IntroQueue>>),
     mut pads: ResMut<LevelPads>,
     source: Option<Res<ScriptSource>>,
+    choice: Option<Res<crate::level_choice::LevelChoice>>,
 ) {
     let on_portal = current.is_some_and(|c| matches!(c.screen, TvScreen::Portal { .. }));
     let alert = match turntables.shelf().filter(|_| on_portal) {
@@ -1819,10 +1826,12 @@ fn judge_portal(
         );
         play.alert = alert;
     }
-    let held = play
-        .inside
-        .as_ref()
-        .is_some_and(|i| alert.is_some() || i.hero.is_none() || play.arrivals.holding());
+    // And while the next level is read, the hero still in this one
+    // (openspec AS.49): the level a script's level end or an ask leaves.
+    let changing = choice.as_deref().is_some_and(|c| c.changing());
+    let held = play.inside.as_ref().is_some_and(|i| {
+        alert.is_some() || i.hero.is_none() || play.arrivals.holding() || changing
+    });
     if pads.held() != held {
         pads.hold(held);
     }
@@ -2387,6 +2396,9 @@ pub(crate) fn drawn_clips(
         (at, weight)
     })
 }
+
+#[cfg(test)]
+mod level_change_tests;
 
 #[cfg(test)]
 mod tests {

@@ -118,6 +118,10 @@ pub struct Linked {
     /// The model the run starts from ([`crate::interface_host::load`]):
     /// [`load`] leaves it unread, the level's load reads it beside.
     pub interface: Option<crate::interface_host::InterfacePart>,
+    /// The disc's levels by archive name, off the extract's manifest
+    /// (openspec AS.15): a script's request naming one changes level. Empty
+    /// when the manifest doesn't read.
+    pub levels: Vec<String>,
     /// Every entry, the level's own included, and their bytes in all.
     pub files: usize,
     pub bytes: u64,
@@ -153,6 +157,25 @@ pub fn files_with(walkers: &[String], level: &str) -> Vec<(String, Role)> {
         .map(|a| (scripts::script_path(a), role(a)))
         .chain(std::iter::once((levels::script_path(level), Role::Other)))
         .collect()
+}
+
+/// The disc's levels by archive name, off the manifest of the extract at
+/// `dir` (`guac_extract::levels::on_disc_at`), the ones a player is taken
+/// into alone (`Kind::is_level`: a stream a script names, the voice pack
+/// `challengevo` among them, or the title or the credits isn't a level
+/// change; AS.15's review): none, logged, when it doesn't read.
+pub fn disc_levels(dir: &Path) -> Vec<String> {
+    match levels::on_disc_at(dir) {
+        Ok(l) => l
+            .into_iter()
+            .filter(|l| l.kind.is_level())
+            .map(|l| l.name)
+            .collect(),
+        Err(why) => {
+            tracing::warn!(reason = %why, "the disc's level list didn't read: no script's request changes level");
+            Vec::new()
+        }
+    }
 }
 
 /// `level`'s script part from the extract at `dir`, parsed and linked. Why
@@ -267,6 +290,7 @@ pub fn load(dir: &Path, level: &str) -> Result<Linked, String> {
         interface_keys,
         interface_imports,
         interface: None,
+        levels: disc_levels(dir),
         files: entries.len(),
         bytes: entries.iter().map(|(_, _, b)| b.len() as u64).sum(),
         read,
@@ -281,6 +305,63 @@ mod tests {
     use guac_formats::roster::builder::{disc, sample};
 
     const LEVEL: &str = "level_213_tutotial";
+
+    /// AS.15's review: the disc's level list a script's request is held
+    /// against holds the levels a player is taken into, off the manifest,
+    /// and none of what levels stream or menus load (the voice pack,
+    /// `global.bld` names in English, a ship part, the title, the credits);
+    /// a folder with no manifest gives none.
+    #[test]
+    fn the_disc_levels_a_request_is_held_against_are_the_levels_alone() {
+        use guac_extract::dump::SourceFile;
+        use guac_extract::extract::{MANIFEST, Manifest};
+        let tmp = tempfile::tempdir().unwrap();
+        let source = |path: &str| SourceFile {
+            path: path.into(),
+            size: 1,
+            mtime_ns: None,
+            ino: None,
+            ctime_ns: None,
+            sha256: guac_ir::Sha256([0; 32]),
+        };
+        let manifest = Manifest {
+            extractor: "test".into(),
+            layout: 0,
+            ir_version: 0,
+            identity: guac_ir::DumpIdentity {
+                title_id: "BLUS30968".into(),
+                app_ver: "01.00".into(),
+                manifest_hash: guac_ir::Sha256([0; 32]),
+            },
+            source_dir: String::new(),
+            complete: true,
+            sources: [
+                "level/challengevo.bld",
+                "level/credits_giants.bld",
+                "level/level_214_tutotial_2.bld",
+                "level/pvp_level_001_cubedungeon.bld",
+                "level/ship_part_003.bld",
+                "level/title.bld",
+                "permanent/global.bld",
+            ]
+            .map(source)
+            .to_vec(),
+            outputs: Vec::new(),
+            transcode: None,
+            levels: Default::default(),
+            parts: Default::default(),
+        };
+        assert!(disc_levels(tmp.path()).is_empty(), "no manifest, no list");
+        std::fs::write(
+            tmp.path().join(MANIFEST),
+            serde_json::to_string(&manifest).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            disc_levels(tmp.path()),
+            ["level_214_tutotial_2", "pvp_level_001_cubedungeon"]
+        );
+    }
 
     /// An extract dir holding a synthetic script part: the roster
     /// builder's bootstrap, global and init_setup entries, AH.13's creature

@@ -152,9 +152,61 @@ pub(crate) struct ScriptSource {
     /// The original's interface each install starts its run from (openspec
     /// AT.9); none when the extract held no part at the level's load.
     interface: Option<guacamole::interface_host::InterfacePart>,
+    /// The level whose own file the part links last, by archive (openspec
+    /// AS.51): chapter 1's listing is its own.
+    level: String,
+    /// The disc's levels by archive name (openspec AS.15): what a script's
+    /// request is held against.
+    levels: Arc<std::collections::HashSet<String>>,
+    /// The extract the part came from, and each unit's interface keys: what
+    /// a level end whose string the run can't read is read again by, off
+    /// the interface's part once it's in (openspec AS.15's review).
+    extract: Option<(std::path::PathBuf, guac_extract::intros::IrFormat)>,
+    interface_keys: Vec<guac_interface::load::Keys>,
 }
 
 impl ScriptSource {
+    /// The English text of the file string `obj`, off the interface's part
+    /// in the extract the part came from ([`guacamole::interface_host::file_text`]).
+    pub(crate) fn file_text(&self, obj: guac_script::Obj) -> Result<String, String> {
+        let (dir, ir) = self
+            .extract
+            .as_ref()
+            .ok_or("the part's extract isn't known")?;
+        guacamole::interface_host::file_text(
+            dir,
+            *ir,
+            &self.program.units,
+            &self.interface_keys,
+            obj,
+        )
+    }
+
+    /// The disc's levels read again off the extract the part came from
+    /// (openspec AS.15's review); none when that isn't known or the list
+    /// doesn't read.
+    pub(crate) fn disc_levels(&self) -> Arc<std::collections::HashSet<String>> {
+        Arc::new(
+            self.extract
+                .as_ref()
+                .map(|(dir, _)| guacamole::level_scripts::disc_levels(dir))
+                .unwrap_or_default()
+                .into_iter()
+                .collect(),
+        )
+    }
+
+    /// The level whose own file the part links last, by archive.
+    pub(crate) fn level(&self) -> &str {
+        &self.level
+    }
+
+    /// Whether the part is chapter 1's, whose listing names its first
+    /// fight's placements (openspec AS.51).
+    pub(crate) fn chapter_1(&self) -> bool {
+        guac_extract::levels::FIRST_RUN.contains(&self.level.as_str())
+    }
+
     /// The unit the level's own file links as: the last whose placements
     /// run from the level's start.
     pub(crate) fn level_unit(&self) -> Option<u16> {
@@ -262,7 +314,30 @@ impl ScriptSource {
             palettes: Vec::new(),
             sounds: None,
             interface: None,
+            level: guac_extract::levels::LEVELS[0].to_owned(),
+            levels: Arc::default(),
+            extract: None,
+            interface_keys: Vec::new(),
         }
+    }
+
+    /// This part as level `level`'s, its own file linked last.
+    pub(crate) fn of_level(mut self, level: &str) -> Self {
+        self.level = level.to_owned();
+        self
+    }
+
+    /// This part as read off the extract at `dir`, its units' interface
+    /// keys `keys`.
+    pub(crate) fn with_extract(
+        mut self,
+        dir: &std::path::Path,
+        ir: guac_extract::intros::IrFormat,
+        keys: Vec<guac_interface::load::Keys>,
+    ) -> Self {
+        self.extract = Some((dir.to_path_buf(), ir));
+        self.interface_keys = keys;
+        self
     }
 }
 
@@ -279,6 +354,14 @@ pub(crate) struct Part {
     pub(crate) sounds: Option<guacamole::sounds::SoundPart>,
     /// The original's interface each run starts from (openspec AT.9).
     pub(crate) interface: Option<guacamole::interface_host::InterfacePart>,
+    /// The level whose own file the part links last, and the disc's levels
+    /// (openspec AS.15, AS.51).
+    pub(crate) level: String,
+    pub(crate) levels: Vec<String>,
+    /// The extract it came from and its units' interface keys (AS.15's
+    /// review: a level end read again off the interface's part).
+    pub(crate) extract: Option<(std::path::PathBuf, guac_extract::intros::IrFormat)>,
+    pub(crate) interface_keys: Vec<guac_interface::load::Keys>,
 }
 
 /// Installs the run over a linked part (the level's load), keeping the part
@@ -295,6 +378,10 @@ pub(crate) fn install(world: &mut World, part: Part) {
         palettes: part.palettes,
         sounds: part.sounds,
         interface: part.interface,
+        level: part.level,
+        levels: Arc::new(part.levels.into_iter().collect()),
+        extract: part.extract,
+        interface_keys: part.interface_keys,
     };
     install_from(world, &source);
     world.insert_resource(source);
@@ -332,7 +419,12 @@ pub(crate) struct CameraPlacements(Vec<Handle>);
 /// the level's palettes part holds given its palette, the camera's scripts
 /// idle until a hero joins ([`fresh_camera`]).
 fn install_from(world: &mut World, source: &ScriptSource) {
-    let config = guacamole::scripts::fight_config(Mode::Play);
+    // The level's own listing (openspec AS.51): chapter 1's names its first
+    // fight; any level's definition and its spellings of the listed scripts.
+    let config = match source.level_unit() {
+        Some(level) => scripts::level_config(Mode::Play, &source.files, level, source.chapter_1()),
+        None => scripts::fight_config(Mode::Play),
+    };
     #[allow(unused_mut)]
     let mut config = scripts::with_walkers(config, &source.walkers);
     // The interface's members on the model, when the run holds one (AT.9).
@@ -366,8 +458,14 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     if let Some(i) = &source.interface {
         script_world.set_interface(i.keeper.clone());
     }
-    script_world.walk_first_fight(level);
-    script_world.walk_goats(level);
+    // What a script's request is held against (openspec AS.15).
+    script_world.set_levels(source.levels.clone());
+    // Chapter 1's first fight and goats by their names (another level's
+    // placements so named are its own: AS.51).
+    if source.chapter_1() {
+        script_world.walk_first_fight(level);
+        script_world.walk_goats(level);
+    }
     for p in source.files.placed.iter().filter(|p| p.obj.unit == level) {
         if let Some(model) = &p.model
             && let Some((_, lengths)) = source.palettes.iter().find(|(owner, _)| owner == model)
@@ -379,8 +477,15 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     hold_music(world, source, level);
 }
 
-/// [`scripts::hold_music`] on the run just installed, logged.
+/// [`scripts::hold_music`] on the run just installed, logged: chapter 1's
+/// alone, the one level whose sounds the part holds (AR.5). Another level's
+/// music placements would wait for good (AR.27; level 214 runs
+/// `snd_level_audio_environment.ai`), so they run silent from the start as
+/// before AR.23 (AS.15's review, at the merge of AR.23).
 fn hold_music(world: &mut World, source: &ScriptSource, level: u16) {
+    if !source.chapter_1() {
+        return;
+    }
     let music = world.resource_scope::<ScriptRuntime, _>(|world, mut runtime| {
         let mut script_world = world.resource_mut::<ScriptWorld>();
         scripts::hold_music(&mut runtime.vm, &mut script_world, &source.files, level)
@@ -1318,6 +1423,13 @@ pub(crate) fn step_scripts(
         Ok(r) => stopped.extend(r.stopped),
         Err(h) => stopped.push(h),
     }
+    // A level's end where the host doesn't run the original's (openspec
+    // AS.15): a listed cutscene skipped, the level end's level asked for.
+    match guacamole::level_end::step(vm, &mut host) {
+        Ok(Some(ended)) => info!(?ended, "the level's end"),
+        Ok(None) => {}
+        Err(h) => stopped.push(h),
+    }
     world.end_step();
     scripts::add_scripted(vm, &mut world);
     // What his figure's words hold after the step, onto his slot's values
@@ -1880,6 +1992,77 @@ impl LootShots<'_> {
     }
 }
 
+/// The run's part of `/api/_test/tv` (openspec AS.15, AS.51): whose level's
+/// run it is, every script play mode has stopped in it (each with where and
+/// on what), the level change a script asked for and the last requests that
+/// changed no level, each as its text read.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct RunShot {
+    pub level: String,
+    pub chapter_1: bool,
+    pub stopped: Vec<String>,
+    pub level_change: Option<LevelChangeShot>,
+    pub streams: Vec<Option<String>>,
+    /// The TV's level end, once written: its string's name and, while it
+    /// changes no level, why (AS.15's review).
+    pub level_end: Option<LevelEndShot>,
+}
+
+/// The TV's level end as [`RunShot`] reports it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct LevelEndShot {
+    pub string: Option<String>,
+    pub unread: Option<String>,
+}
+
+/// A level change a script asked for, as [`RunShot`] reports it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct LevelChangeShot {
+    pub name: String,
+    pub text: String,
+}
+
+/// How many stops [`RunShot`] lists, the first first.
+const STOPS_SHOWN: usize = 64;
+
+/// The run's part of `/api/_test/tv`.
+#[derive(SystemParam)]
+pub(crate) struct RunShots<'w> {
+    runtime: Option<Res<'w, ScriptRuntime>>,
+    world: Option<Res<'w, ScriptWorld>>,
+    source: Option<Res<'w, ScriptSource>>,
+}
+
+impl RunShots<'_> {
+    /// None while no run is installed.
+    pub(crate) fn shot(&self) -> Option<RunShot> {
+        let (rt, w, s) = (
+            self.runtime.as_deref()?,
+            self.world.as_deref()?,
+            self.source.as_deref()?,
+        );
+        Some(RunShot {
+            level: s.level().to_owned(),
+            chapter_1: s.chapter_1(),
+            stopped: rt
+                .stopped
+                .iter()
+                .take(STOPS_SHOWN)
+                .map(|h| h.to_string())
+                .collect(),
+            level_change: w.level_change().map(|c| LevelChangeShot {
+                name: c.name.clone(),
+                text: c.text.clone(),
+            }),
+            streams: w.streams.iter().cloned().collect(),
+            level_end: w.level_end().map(|e| LevelEndShot {
+                string: e.string.clone(),
+                unread: e.unread.as_ref().map(ToString::to_string),
+            }),
+        })
+    }
+}
+
 #[cfg(test)]
 mod camera_tests;
 
@@ -1961,6 +2144,11 @@ mod music_tests {
         let mut world = World::new();
         install_from(&mut world, &source);
         assert!(held(&mut world), "no sounds part yet: held");
+        // Another level's music runs silent: the part never holds its
+        // sounds (AR.27; AS.15's review).
+        let mut other = World::new();
+        install_from(&mut other, &source.clone().of_level("level_214_tutotial_2"));
+        assert!(!held(&mut other), "level 214's music isn't held");
         let book = guac_sound::SoundBook::new([guac_ir::sound::Sounds {
             identity: guac_ir::DumpIdentity {
                 title_id: "BLUS30968".into(),
@@ -2619,6 +2807,10 @@ mod tests {
                 palettes: vec![(SMASH_FAR_MODEL.to_owned(), vec![0.0, 0.5])],
                 sounds: None,
                 interface: None,
+                level: LEVEL.to_owned(),
+                levels: Vec::new(),
+                extract: None,
+                interface_keys: Vec::new(),
             },
         );
         let w = world.resource::<ScriptWorld>();
@@ -2691,6 +2883,10 @@ mod tests {
                     palettes: Vec::new(),
                     sounds: None,
                     interface,
+                    level: LEVEL.to_owned(),
+                    levels: Vec::new(),
+                    extract: None,
+                    interface_keys: Vec::new(),
                 },
             );
             world

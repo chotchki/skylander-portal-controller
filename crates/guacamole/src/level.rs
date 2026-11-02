@@ -141,11 +141,10 @@ impl LevelSource {
         }
     }
 
-    /// Whether the TV runs this level's scripts: chapter 1's alone, until
-    /// the scripts' own level loads run another's (openspec AS.15). Any
-    /// other level is drawn, solid and propped by AG.7's rule, its scripts
-    /// unread.
-    pub fn runs_scripts(&self) -> bool {
+    /// Whether this level is chapter 1, whose listing names its first
+    /// fight's placements (openspec AS.51); every level runs its own
+    /// scripts.
+    pub fn is_chapter_1(&self) -> bool {
         FIRST_RUN.contains(&self.level.as_str())
     }
 }
@@ -1376,11 +1375,12 @@ impl Level {
         self.stage = Stage::Failed;
     }
 
-    /// The ready level, its solids spawned: what the hero can be spawned
-    /// into.
+    /// The ready level, its solids spawned and its script part linked and
+    /// installed or failed (openspec AS.49: a hero entering before the run
+    /// would walk it with none): what the hero can be spawned into.
     pub(crate) fn walkable(&self) -> Option<&Loaded> {
         match &self.stage {
-            Stage::Ready(l) => Some(l),
+            Stage::Ready(l) if self.scripts.is_none() => Some(l),
             _ => None,
         }
     }
@@ -1646,10 +1646,11 @@ fn receive_level(
         let source = source.clone();
         AsyncComputeTaskPool::get().spawn(async move { read_level(&source, formats) })
     };
-    // Chapter 1's scripts run; another level's aren't read until AS.15, and
-    // the last level's run goes with it, so it drives nothing of this one.
-    let runs_scripts = source.runs_scripts();
-    level.scripts = runs_scripts.then(|| {
+    // Every level runs its own scripts (openspec AS.51); the last level's
+    // run goes as the next comes, so it drives nothing of this one
+    // (AS.49: a level left with a hero in it included), and the hero comes
+    // in only once this one's run is in ([`Level::walkable`]).
+    level.scripts = Some({
         let (dir, name, ir) = (source.dir.clone(), source.level.clone(), source.ir);
         AsyncComputeTaskPool::get().spawn(async move {
             level_scripts::load(&dir, &name).map(|mut linked| {
@@ -1669,13 +1670,10 @@ fn receive_level(
             })
         })
     });
-    if !runs_scripts {
-        commands.queue(take_down_run);
-    }
+    commands.queue(take_down_run);
     level.report = LevelReport {
         state: "reading".into(),
         level: Some(source.level.clone()),
-        scripts_reason: (!runs_scripts).then(|| NO_SCRIPTS.to_owned()),
         ..Default::default()
     };
     level.source = Some(source);
@@ -1683,13 +1681,11 @@ fn receive_level(
     level.since = Some(Instant::now());
 }
 
-/// Why a level past chapter 1 runs no scripts on the TV (openspec AS.13).
-pub(crate) const NO_SCRIPTS: &str = "only chapter 1's scripts run on the TV: another level's run with the scripts' own level loads (AS.15)";
-
-/// The script run taken down (openspec AS.13): its placements', clones' and
-/// objects' entities and the run itself, so a level whose scripts the TV
-/// doesn't run isn't driven by the last level's (its props stood by that
-/// run's actors, by object, in another level's file). Its voices go too,
+/// The script run taken down (openspec AS.13, AS.49) as the next level
+/// comes: its placements', clones' and objects' entities and the run itself,
+/// so the next level isn't driven by the last one's (its props stood by
+/// that run's actors, by object, in another level's file) before its own
+/// run is in, nor reinstalled when the TV leaves the last. Its voices go too,
 /// which the player follows only while a run is in (a loop would sound on
 /// forever), and the particles' and sounds' reports say nothing draws or
 /// plays. The camera's and the steps' records stay, read by no step without
@@ -1790,7 +1786,11 @@ fn sounds_again(
         level.report.sounds_again_ms = level.ms();
         level.report.sounds_again_archives = Some(part.stems.len());
         source.set_sounds(part);
-        if let (Some(unit), Some(mut runtime)) = (source.level_unit(), runtime) {
+        // Chapter 1's music alone waits for its sounds (AR.27; AS.15's
+        // review: [`crate::hero_scripts::hold_music`]).
+        if let (true, Some(unit), Some(mut runtime)) =
+            (source.chapter_1(), source.level_unit(), runtime)
+        {
             let music =
                 guacamole::scripts::hold_music(&mut runtime.vm, &mut world, source.files(), unit);
             crate::hero_scripts::log_music(music);
@@ -2005,8 +2005,15 @@ fn poll_scripts(level: &mut Level, commands: &mut Commands) {
                 palettes,
                 sounds,
                 interface,
+                levels,
+                interface_keys,
                 ..
             } = linked;
+            let level_name = level
+                .source
+                .as_ref()
+                .map_or_else(String::new, |s| s.level.clone());
+            let extract = level.source.as_ref().map(|s| (s.dir.clone(), s.ir));
             if let Some(s) = &sounds {
                 log_sounds(s, false);
             }
@@ -2036,6 +2043,10 @@ fn poll_scripts(level: &mut Level, commands: &mut Commands) {
                         palettes,
                         sounds,
                         interface,
+                        level: level_name,
+                        levels,
+                        extract,
+                        interface_keys,
                     },
                 );
             });
@@ -2516,7 +2527,7 @@ fn show_level(
     // Chapter 1 at AF's fresh state; another level at its start as that
     // frames chapter 1's (openspec AS.13).
     let at = match (level.source.as_ref(), level.start()) {
-        (Some(source), Some(start)) if !source.runs_scripts() => arithmetic::start_view(start),
+        (Some(source), Some(start)) if !source.is_chapter_1() => arithmetic::start_view(start),
         _ => fresh_state_transform(),
     };
     let camera = commands
@@ -2987,24 +2998,29 @@ mod tests {
         );
     }
 
-    /// AS.13: a level past chapter 1 loads with no script part read and
-    /// takes the last level's run down as it comes (its placements, clones
-    /// and objects, the run itself), so that run drives nothing of it;
-    /// chapter 1 asked for again links and installs its run anew.
+    /// AS.13 and AS.51: a level past chapter 1 takes the last level's run
+    /// down as it comes (its placements, clones and objects, the run
+    /// itself, its voices; the particles' and sounds' reports emptied), so
+    /// that run drives nothing of it, then links and installs its own run
+    /// from its own script part, its listing not chapter 1's; chapter 1
+    /// asked for again links and installs its run anew.
     #[test]
-    fn a_level_past_chapter_1_reads_no_scripts_and_takes_the_last_run_down() {
+    fn a_level_past_chapter_1_takes_the_last_run_down_and_runs_its_own() {
         use guac_formats::roster::builder::{disc, sample};
         use guacamole::scripts::{ScriptPlacement, ScriptRuntime};
+        const ARENA: &str = "pvp_level_001_cubedungeon";
         let tmp = tempfile::tempdir().unwrap();
         let source = write_level(tmp.path(), &lights());
-        assert!(source.runs_scripts());
+        assert!(source.is_chapter_1());
         let d = disc(&sample());
         let (creature, _) = guac_formats::script::builder::creature();
         let entries = [&d.bootstrap, &d.global, &d.init_setup, &creature, &creature];
-        for ((rel, _), bytes) in level_scripts::files(LEVEL).iter().zip(entries) {
-            let path = tmp.path().join(rel);
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, bytes).unwrap();
+        for level in [LEVEL, ARENA] {
+            for ((rel, _), bytes) in level_scripts::files(level).iter().zip(entries) {
+                let path = tmp.path().join(rel);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, bytes).unwrap();
+            }
         }
         let mut app = level_app(tmp.path(), source.clone(), false);
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -3050,16 +3066,29 @@ mod tests {
             source.dir.clone(),
             source.ir,
             source.identity.clone(),
-            "pvp_level_001_cubedungeon",
+            ARENA,
         );
-        assert!(!arena.runs_scripts());
+        assert!(!arena.is_chapter_1());
         send_source(&mut app, &arena, false);
+        // The last run gone: none in, or (its part linked within the frame)
+        // the arena's own.
         let w = app.world();
-        assert!(!w.contains_resource::<ScriptRuntime>());
-        assert!(!w.contains_resource::<ScriptWorld>());
-        assert!(!w.contains_resource::<crate::hero_scripts::ScriptSource>());
-        assert!(w.resource::<Level>().scripts.is_none(), "no part read");
-        assert_eq!(report(&app).scripts_reason.as_deref(), Some(NO_SCRIPTS));
+        let source_level = w
+            .get_resource::<crate::hero_scripts::ScriptSource>()
+            .map(|s| s.level().to_owned());
+        assert!(
+            source_level.as_deref().is_none_or(|l| l == ARENA),
+            "{source_level:?}"
+        );
+        assert_eq!(
+            w.contains_resource::<ScriptRuntime>(),
+            source_level.is_some()
+        );
+        assert!(
+            w.resource::<Level>().scripts.is_some() || source_level.is_some(),
+            "its own part read"
+        );
+        assert_eq!(report(&app).scripts_reason, None);
         assert_eq!(placements(&mut app), 0);
         assert!(app.world().get_entity(voice).is_err(), "its voice went");
         let w = app.world();
@@ -3087,6 +3116,19 @@ mod tests {
             "nothing draws; the starts since the TV came up kept"
         );
         assert!(particles.emitters.is_empty() && particles.seen.len() == 1);
+        // Its own run, from its own part: not chapter 1's listing.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !app.world().contains_resource::<ScriptRuntime>() {
+            assert!(Instant::now() < deadline, "the arena's run never came");
+            app.update();
+        }
+        let s = app.world().resource::<crate::hero_scripts::ScriptSource>();
+        assert_eq!((s.level(), s.chapter_1()), (ARENA, false));
+        assert!(
+            s.program().units.last().is_some_and(|u| u.contains(ARENA)),
+            "{:?}",
+            s.program().units
+        );
 
         send_source(&mut app, &source, false);
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -3095,6 +3137,8 @@ mod tests {
             app.update();
         }
         assert_eq!(report(&app).scripts_reason, None);
+        let s = app.world().resource::<crate::hero_scripts::ScriptSource>();
+        assert_eq!((s.level(), s.chapter_1()), (LEVEL, true));
     }
 
     /// AS.16: leaving a level for another takes the first down as the next
@@ -3237,6 +3281,27 @@ mod tests {
         let pipelines = app.world().resource::<PipelineWatch>().clone();
         until(&mut app, &["ready"], |_| pipelines.compile_all());
         assert_eq!(report(&app).keys_waiting, 0);
+    }
+
+    /// AS.49: a ready level isn't one the hero can come into while its
+    /// script part is still linking (he'd walk it with no run, his join
+    /// off), and is once the part is in.
+    #[test]
+    fn a_ready_level_is_walkable_only_once_its_scripts_are_in() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = write_level(tmp.path(), &lights());
+        let mut app = level_app(tmp.path(), source, false);
+        until(&mut app, &["ready"], |_| {});
+        let mut level = app.world_mut().resource_mut::<Level>();
+        level.scripts = None;
+        assert!(level.walkable().is_some());
+        level.scripts = Some(
+            AsyncComputeTaskPool::get()
+                .spawn(std::future::pending::<Result<level_scripts::Linked, String>>()),
+        );
+        assert!(level.walkable().is_none(), "its part still linking");
+        level.scripts = None;
+        assert!(level.walkable().is_some());
     }
 
     /// A second source while the first still waits on the renderer: what

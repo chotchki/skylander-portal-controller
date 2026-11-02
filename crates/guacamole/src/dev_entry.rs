@@ -23,6 +23,10 @@
 //!   view at anchor B there.
 //! - Start: nothing set, the hero where the level starts him: what the
 //!   e2e's synthetic creature needs.
+//! - End (openspec AS.15): once he's settled, set down on the outro's
+//!   player waypoint ([`END_POSE`]) and `Temp_Level_Ender` woken the step
+//!   after, as `Rope_around_Post(2)` wakes it: chapter 1's end runs from
+//!   there on the scripts ([`guacamole::level_end`]), into the next level.
 //! - Norticus' scene, once the four are beaten, ends from his own script as
 //!   the original's does (openspec AH.56: the cutscene system's update in
 //!   the game systems' tick), freeing the hero: the entry sets nothing
@@ -60,6 +64,10 @@ pub(crate) enum Anchor {
     Start,
     /// Anchor B (AH.8): the pit's floor after the Chompies' scene.
     B,
+    /// Chapter 1's end (openspec AS.15): set down on the outro's player
+    /// waypoint and `Temp_Level_Ender` woken there, as `Rope_around_Post(2)`
+    /// wakes it once the last rope is pulled.
+    End,
 }
 
 impl Anchor {
@@ -68,6 +76,7 @@ impl Anchor {
         match value.trim() {
             "b" | "B" | "anchor_b" => Some(Anchor::B),
             "start" => Some(Anchor::Start),
+            "end" => Some(Anchor::End),
             _ => None,
         }
     }
@@ -109,7 +118,18 @@ pub(crate) struct Plan {
     pub(crate) loot: Option<[f32; 3]>,
     /// The way the follow camera looks once set down there (a heading).
     pub(crate) view: Option<f32>,
+    /// The placements woken at F0, by name, as a script wakes one
+    /// ([`ScriptWorld::wake`]).
+    pub(crate) wake: Vec<&'static str>,
 }
+
+/// Chapter 1's end (openspec AS.15): `213_Outro_Player_WP`, the outro's
+/// player waypoint, as its file places it (metres), facing
+/// `Temp_Level_Ender` 10.4 m on.
+pub(crate) const END_POSE: ([f32; 3], f32) = ([-10.282436, -153.01357, 318.01202], 17.6);
+/// What the end anchor wakes: what `Rope_around_Post(2)`'s last behaviour
+/// wakes.
+pub(crate) const END_WAKES: [&str; 1] = ["Temp_Level_Ender"];
 
 impl Plan {
     pub(crate) fn of(anchor: Anchor) -> Self {
@@ -124,6 +144,19 @@ impl Plan {
                 first_alert: None,
                 loot: None,
                 view: None,
+                wake: Vec::new(),
+            },
+            Anchor::End => Plan {
+                anchor,
+                settle: SETTLE,
+                set_downs: vec![(0, Vec3::from_array(END_POSE.0), END_POSE.1)],
+                creatures_at: u32::MAX,
+                creatures: Vec::new(),
+                f0: 1,
+                first_alert: None,
+                loot: None,
+                view: None,
+                wake: END_WAKES.to_vec(),
             },
             Anchor::B => Plan {
                 anchor,
@@ -149,6 +182,7 @@ impl Plan {
                 first_alert: Some(FIRST_ALERT),
                 loot: Some(ANCHOR_B_LOOT),
                 view: Some(ANCHOR_B_VIEW),
+                wake: Vec::new(),
             },
         }
     }
@@ -274,7 +308,7 @@ impl Plugin for DevEntryPlugin {
         let env = std::env::var("GUAC_DEV_ENTRY").ok();
         let at_start = asked_at_start(true, env.as_deref());
         if env.is_some() && at_start.is_none() {
-            warn!(value = ?env, "GUAC_DEV_ENTRY isn't `b` or `start`: no entry");
+            warn!(value = ?env, "GUAC_DEV_ENTRY isn't `b`, `start` or `end`: no entry");
         }
         if let Some(a) = &at_start {
             info!(anchor = ?a.plan.anchor, "the dev entry asked at start");
@@ -421,6 +455,12 @@ pub(crate) fn drive(
     }
     if let Some(seed) = seed {
         runtime.generator = Generator::seeded(seed);
+    }
+    for name in &plan.wake {
+        match world.placed_in(level, name) {
+            Some(h) if world.wake(h) => info!(%name, "the dev entry wakes it"),
+            _ => warn!(%name, "the dev entry found no such placement to wake"),
+        }
     }
     let figure = earning
         .as_deref()
@@ -579,6 +619,7 @@ mod tests {
                 first_alert: None,
                 loot: None,
                 view: None,
+                wake: Vec::new(),
             },
             seed: Some(77),
         }

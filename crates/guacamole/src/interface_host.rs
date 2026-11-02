@@ -158,6 +158,45 @@ pub fn load(
     })
 }
 
+/// The English text of the file string `obj` (a `StringInfo` of one of
+/// `units`, whose strings `keys` hold), off its file's record in the extract
+/// at `dir` (openspec AS.15, found at its review): how a run without the
+/// model, its part landing after the level's load as a first run's does
+/// (AT.26), reads its level end's string. Why not, when it can't.
+pub fn file_text(
+    dir: &Path,
+    ir: IrFormat,
+    units: &[String],
+    keys: &[Keys],
+    obj: guac_script::Obj,
+) -> Result<String, String> {
+    let unit = units
+        .get(usize::from(obj.unit))
+        .ok_or_else(|| format!("no unit {}", obj.unit))?;
+    let rel = record_path(ir, unit).ok_or_else(|| format!("{unit} has no interface record"))?;
+    let k = keys
+        .iter()
+        .find(|k| k.unit == obj.unit)
+        .ok_or_else(|| format!("{unit}'s strings weren't read"))?;
+    let at = k
+        .strings
+        .iter()
+        .position(|&o| o == obj.index)
+        .ok_or_else(|| format!("object {} isn't one of {unit}'s strings", obj.index))?;
+    if !dir.join(&rel).is_file() {
+        return Err(format!("{rel}: not in the extract yet"));
+    }
+    let r = read_record(dir, ir, &rel)?;
+    if r.strings.len() != k.strings.len() {
+        return Err(format!(
+            "{rel}: {} strings for {} StringInfos",
+            r.strings.len(),
+            k.strings.len()
+        ));
+    }
+    Ok(r.strings[at].text.clone())
+}
+
 /// The level's load's line for the part: what it read, or why the run
 /// keeps its cells.
 pub fn log(part: Option<&InterfacePart>) {
@@ -568,6 +607,59 @@ mod tests {
                 .sprite_of(Value::Object(Obj { unit: 1, index: 3 }))
                 .is_some()
         );
+    }
+
+    /// AS.15's review: a file string's English text read off its record
+    /// once the part is in, by the string's place among its unit's
+    /// `StringInfo`s; why not before the record lands, for an object that
+    /// isn't one of the unit's strings, or a record whose strings don't
+    /// pair with them.
+    #[test]
+    fn a_file_strings_text_reads_off_its_record_once_its_in() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        std::fs::create_dir_all(dir.join(guac_extract::interface::DIR)).unwrap();
+        let units: Vec<String> = ["scripts/bootstrap.igz", "scripts/global.igz"]
+            .map(String::from)
+            .to_vec();
+        let keys = vec![Keys {
+            unit: 1,
+            strings: vec![40, 52, 77],
+            ..Keys::default()
+        }];
+        let at = |index| Obj { unit: 1, index };
+        let read = |obj| file_text(dir, IrFormat::Ron, &units, &keys, obj);
+        assert!(read(at(52)).unwrap_err().contains("not in the extract yet"));
+        let text = |t: &str| guac_ir::interface::Str {
+            text: t.into(),
+            flags: 0,
+            integer_digits: 0,
+            decimal_digits: 0,
+        };
+        let mut record = Interface {
+            identity: guac_ir::DumpIdentity {
+                title_id: "BLUS30968".into(),
+                app_ver: "01.00".into(),
+                manifest_hash: guac_ir::Sha256([0; 32]),
+            },
+            archive: load::GLOBAL.into(),
+            templates: Vec::new(),
+            fonts: Vec::new(),
+            strings: vec![text("Some_Item"), text("Level_214_Tutotial_2"), text("")],
+            refused: Vec::new(),
+        };
+        let rel = record_path(IrFormat::Ron, &units[1]).unwrap();
+        std::fs::write(dir.join(&rel), guac_ir::to_ron(&record).unwrap()).unwrap();
+        assert_eq!(read(at(52)).as_deref(), Ok("Level_214_Tutotial_2"));
+        assert_eq!(read(at(77)).as_deref(), Ok(""));
+        assert!(read(at(53)).is_err(), "not one of its strings");
+        assert!(
+            read(Obj { unit: 0, index: 52 }).is_err(),
+            "its unit's strings unread"
+        );
+        record.strings.pop();
+        std::fs::write(dir.join(&rel), guac_ir::to_ron(&record).unwrap()).unwrap();
+        assert!(read(at(52)).unwrap_err().contains("2 strings for 3"));
     }
 
     #[test]
