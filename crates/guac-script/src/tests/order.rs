@@ -294,3 +294,90 @@ fn placements_waking_together_wake_in_the_order_they_slept() {
         "B, D, then C and A as they slept"
     );
 }
+
+/// [`Engine`] with the asleep placements' checks after the walk answered:
+/// those in `wake` it finds awake, each once, every ask kept.
+#[derive(Default)]
+struct Waking {
+    engine: Engine,
+    wake: Vec<Handle>,
+    asked: Vec<Vec<Handle>>,
+}
+
+impl Host for Waking {
+    fn get(&mut self, at: &Access) -> Result<Value, HostFault> {
+        self.engine.get(at)
+    }
+    fn set(&mut self, at: &Access, value: Value) -> Result<(), HostFault> {
+        self.engine.set(at, value)
+    }
+    fn reset(&mut self, at: &Access) -> Result<(), HostFault> {
+        self.engine.reset(at)
+    }
+    fn draw(&mut self) -> u32 {
+        0
+    }
+    fn wakes(&mut self, asleep: &[Handle]) -> Vec<Handle> {
+        self.asked.push(asleep.to_vec());
+        let woken: Vec<Handle> = asleep
+            .iter()
+            .copied()
+            .filter(|h| self.wake.contains(h))
+            .collect();
+        self.wake.retain(|h| !woken.contains(h));
+        woken
+    }
+}
+
+/// openspec AS.83: the asleep are checked again after the walk, and one the
+/// host finds awake then (a range a script wrote during the walk) wakes
+/// onto its group's end and ticks there that step, its first tick its
+/// STARTUP's, behind every placement the walk ticked; the next step it ticks
+/// at that place. One put to sleep this step isn't asked (its last tick and
+/// the shutdown queue are its), one the host doesn't name stays asleep, and
+/// the asking follows the asleep list's order (C slept before B).
+#[test]
+fn an_asleep_placement_the_host_finds_awake_after_the_walk_ticks_that_step() {
+    let mut vm = Vm::new(counting(), Config::new(Mode::Strict));
+    let ids = [
+        vm.add(0x10, "A", 0),
+        vm.add(0x20, "B", 0),
+        vm.add(0x30, "C", 0),
+        vm.add(0x40, "D", 0),
+    ];
+    let mut host = Waking::default();
+    vm.step(&mut host).unwrap();
+    assert_eq!(seen(&vm, &ids), ints(&[0, 1, 2, 3]));
+    assert!(host.asked.is_empty(), "none asleep, none asked");
+    vm.set_asleep(0x30, true);
+    vm.step(&mut host).unwrap();
+    assert_eq!(seen(&vm, &ids), ints(&[4, 5, 6, 7]), "C's last tick");
+    assert!(
+        host.asked.is_empty(),
+        "C, put to sleep this step, not asked"
+    );
+    vm.set_asleep(0x20, true);
+    host.wake = vec![0x20];
+    vm.step(&mut host).unwrap();
+    assert_eq!(host.asked, [vec![0x30]], "B's last tick this step");
+    assert_eq!(seen(&vm, &ids), ints(&[8, 9, 6, 10]));
+    // B slept through a step's end: its SHUTDOWN queue ran, so it starts
+    // again when it wakes.
+    vm.step(&mut host).unwrap();
+    assert_eq!(host.asked[1], [0x30, 0x20], "in the order they slept");
+    assert_eq!(
+        seen(&vm, &ids),
+        ints(&[11, 13, 6, 12]),
+        "B woken after the walk, behind A and D, this step"
+    );
+    assert!(!vm.asleep(ids[1]) && vm.asleep(ids[2]));
+    let order: Vec<String> = vm.tick_order().into_iter().map(|(_, n)| n).collect();
+    assert_eq!(
+        order.last().map(String::as_str),
+        Some("B"),
+        "on the list's end"
+    );
+    vm.step(&mut host).unwrap();
+    assert_eq!(seen(&vm, &ids), ints(&[14, 16, 6, 15]), "at that place");
+    assert_eq!(host.asked[2], [0x30], "C, never named, still asked");
+}

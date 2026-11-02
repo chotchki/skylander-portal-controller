@@ -414,4 +414,16 @@ pub trait Host {
         let _ = program;
         Vec::new()
     }
+
+    /// The asleep placements' checks after the walk (crate docs, The tick;
+    /// openspec AS.83): of `asleep`, in the asleep list's order, those the
+    /// embedder's activity rule finds awake now (a script wrote a range or
+    /// a buffer during the walk, or moved one into range), each taken as
+    /// awake by the host. The VM wakes each and ticks it this step. The
+    /// default wakes none, so an embedder that wakes only between steps
+    /// ([`crate::Vm::set_activity`]) keeps that.
+    fn wakes(&mut self, asleep: &[Handle]) -> Vec<Handle> {
+        let _ = asleep;
+        Vec::new()
+    }
 }

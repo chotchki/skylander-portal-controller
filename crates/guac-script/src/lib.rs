@@ -141,8 +141,26 @@
 //! that frame's time added and the 9 that went unstarted none, and the 6
 //! woken again each restarted its timer at one frame's. AH.59's decompile
 //! reads the same way (an aid): the state-change handler queues a started
-//! sleeper, and the tick runs a started placement whatever its state. A
-//! placement a tick spawns with a script
+//! sleeper, and the tick runs a started placement whatever its state.
+//!
+//! The asleep are checked again after the walk and those sent round
+//! (openspec AS.83, [`Host::wakes`]): the host's rule is asked which of
+//! them it finds awake now, in the asleep list's order, and each it names
+//! wakes onto its group's end and ticks there, that step, before the
+//! shutdown queue. AH.59's recordings put the original's asleep group
+//! after the awake one in its updater's walk, and its decompile (an aid)
+//! has that walk take each placement's activity, then tick it if it's
+//! awake now, so a placement whose range a script writes wakes and runs
+//! its STARTUP the step of the write. A reading, no recording: level 214's
+//! elf helper writes its two elves' range, then the next tick asks combat
+//! for each, which knows a creature only once its STARTUP has run; woken
+//! the step after, as the pass between steps alone wakes one, both read
+//! nothing and its writes on them dropped. A placement put to sleep this
+//! step isn't asked; the pass between steps still wakes what a hero's walk
+//! brings into range, ahead of the walk's requeued (where the original's
+//! asleep group ticks it after them).
+//!
+//! A placement a tick spawns with a script
 //! of its own ([`Host::adopt`]) joins the end and ticks that same tick:
 //! AH.54's recordings list the eruption's first wave of lava at the
 //! eruption's own first record, which its first tick spawns. It joins at
