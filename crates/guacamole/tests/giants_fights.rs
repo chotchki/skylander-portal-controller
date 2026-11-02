@@ -143,11 +143,27 @@ fn level_214s_bomb_comes_back_for_the_next_wall() {
     let (thrown, opened) = throw_at(&mut run, &mut stops, bomb, BEFORE_THE_WALL, first_wall);
     let (thrown, opened) = (thrown.expect("thrown"), opened.expect("the wall opened"));
     let burst_at = run.world.actor(bomb).map(|a| a.position);
+    // Its burst booms once: a second start the step after was refused while
+    // the burst bomb stayed in its burst (the as-214-walk review).
+    let mut booms: std::collections::BTreeSet<u64> = run
+        .world
+        .plays()
+        .iter()
+        .filter(|p| p.name.as_deref() == Some("Bomb_Boom"))
+        .map(|p| p.serial)
+        .collect();
     // Its burst done, it goes round: back where it was cloned, waiting.
     let spawner = Vec3::from_array(BOMB_SPAWNER);
     let mut back = None;
     for _ in 0..240 {
         step(&mut run, &mut stops, [false; 4]);
+        booms.extend(
+            run.world
+                .plays()
+                .iter()
+                .filter(|p| p.name.as_deref() == Some("Bomb_Boom"))
+                .map(|p| p.serial),
+        );
         let at = run.world.actor(bomb).map(|a| a.position);
         if back.is_none()
             && behaviour(&run, bomb).as_deref() == Some("wait to be grabbed")
@@ -157,10 +173,17 @@ fn level_214s_bomb_comes_back_for_the_next_wall() {
         }
     }
     let back = back.expect("the bomb back on its spawner, waiting");
+    let refused = run
+        .world
+        .sounds_refused()
+        .filter(|r| r.name.as_deref() == Some("Bomb_Boom"))
+        .count();
     println!(
-        "taken at {taken}, thrown at {thrown}, the wall opened at {opened}, burst at {burst_at:?}; back at step {} at {}",
+        "taken at {taken}, thrown at {thrown}, the wall opened at {opened}, burst at {burst_at:?}; back at step {} at {}; booms {booms:?}, refused {refused}",
         back.0, back.1
     );
+    assert_eq!(booms.len(), 1, "one boom: {booms:?}");
+    assert_eq!(refused, 0, "no second start refused");
     // The second spawner, past the pods, clones its own as he nears it.
     let from_first: Vec<Handle> = bombs(&run)
         .into_iter()
