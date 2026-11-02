@@ -2258,13 +2258,29 @@ pub struct Encounter {
 /// Chompy pods on the first island past the dock, Setup_001's controller
 /// (it plays the pods' scene as the hero passes its first trigger, then
 /// wakes them) and its two spawners, each cloning its pod at its start and
-/// Chompies from the undead Chompy template (its `chompy type`) once woken.
+/// Chompies from the undead Chompy template (its `chompy type`) once woken;
+/// then its second fight past the pods (openspec AS.58), Setup_002's
+/// controller (at its first trigger it sets its four undead Chompies going
+/// and waits for Eon's elemental hint, `Explain_Elemental`, to take itself
+/// off once its line has played, then at its second trigger runs them in)
+/// and its helper (the two Elf Nears spar, invulnerable, until a bomb opens
+/// their wall, then play their scene and fight).
 pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
     level: "level_214_tutotial_2",
     placements: &[
         "Setup_001_Controller",
         "Enemy_Chompy_Spawner(1)",
         "Enemy_Chompy_Spawner(5)",
+        // Setup_002 (openspec AS.58).
+        "Setup_002_Controller",
+        "Setup_002_Controller_Helper",
+        "Explain_Elemental",
+        "Enemy_Chompy2_E",
+        "Enemy_Chompy2_F",
+        "Enemy_Chompy2_G",
+        "Enemy_Chompy2_H",
+        "Enemy_Elf_Near_S2(3)",
+        "Enemy_Elf_Near_S2(4)",
     ],
     clones: &["_Template_Undead_Chompy"],
 }];
@@ -4791,6 +4807,34 @@ mod tests {
                 .lists("Enemy_Chompy_Spawner(2)", "C:/x/Any.ai")
         );
         assert!(encounter("level_212").is_none());
+    }
+
+    /// openspec AS.58: level 214's second fight by name: its controller and
+    /// helper, the Eon hint its controller waits on, the four undead
+    /// Chompies and the two Elf Nears, where island 2's Chompies running the
+    /// same script stay off.
+    #[test]
+    fn level_214s_second_fight_is_listed_by_name() {
+        let files = Files::default();
+        let l214 = level_config(Mode::Play, &files, 4, "level_214_tutotial_2");
+        for name in [
+            "Setup_002_Controller",
+            "Setup_002_Controller_Helper",
+            "Explain_Elemental",
+            "Enemy_Chompy2_E",
+            "Enemy_Chompy2_F",
+            "Enemy_Chompy2_G",
+            "Enemy_Chompy2_H",
+            "Enemy_Elf_Near_S2(3)",
+            "Enemy_Elf_Near_S2(4)",
+        ] {
+            assert!(l214.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+        }
+        assert!(
+            !l214
+                .whitelist
+                .lists("Enemy_Chompy2_E(1)", "C:/x/S2_Enemy_Chompy.ai")
+        );
     }
 
     /// openspec AS.54: a level's first encounter walks its placements that

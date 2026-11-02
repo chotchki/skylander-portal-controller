@@ -198,3 +198,194 @@ fn level_214s_bomb_comes_back_for_the_next_wall() {
     assert!(opened2.is_some(), "the second wall opened");
     assert!(stops.is_empty(), "{stops:#?}");
 }
+
+/// Where level 214's second bomb spawner stands, on the rise past the
+/// pods (metres, its file's place).
+const SECOND_SPAWNER: [f32; 3] = [57.78, -12.1, 65.85];
+/// Short of the castle wall shutting the two elves in
+/// (`Breakable_Stone_Wall_Castle_206(3)`), facing it.
+const BEFORE_THE_ELVES_WALL: ([f32; 3], f32) = ([51.0, -11.5, 73.0], 307.8);
+
+/// The placement named `name` in the level's file, by handle.
+fn handle(run: &Run, name: &str) -> Handle {
+    run.placed(name).0
+}
+
+/// Whether `h` is beaten: off the run or its actor gone.
+fn gone(run: &Run, h: Handle) -> bool {
+    run.world.actor(h).is_none_or(|a| a.removed)
+        || run.vm.placement_of(h).is_none_or(|id| run.vm.removed(id))
+}
+
+/// Up to `steps` steps of a fight with `foes`: every 20 steps the hero set
+/// down 1.5 m short of the nearest standing, facing it, his first attack
+/// pulsed two steps in four (a hand mashing South), until every one is
+/// beaten. The step each was beaten at.
+fn fight(run: &mut Run, stops: &mut Vec<String>, foes: &[Handle], steps: u32) -> Vec<Option<u32>> {
+    let mut beaten: Vec<Option<u32>> = vec![None; foes.len()];
+    for k in 0..steps {
+        if k % 20 == 0 {
+            let me = run.hero().pivot;
+            let near = foes
+                .iter()
+                .filter(|h| !gone(run, **h))
+                .filter_map(|h| run.world.actor(*h).map(|a| a.position))
+                .min_by(|a, b| a.distance(me).total_cmp(&b.distance(me)));
+            if let Some(at) = near {
+                let to = Vec3::new(at.x - me.x, 0.0, at.z - me.z);
+                let back = to.normalize_or_zero() * 1.5;
+                let facing = guacamole::script_engine::heading_of(to);
+                run.put(Vec3::new(at.x - back.x, at.y, at.z - back.z), facing);
+            }
+        }
+        step(run, stops, [k % 4 < 2, false, false, false]);
+        for (i, h) in foes.iter().enumerate() {
+            if beaten[i].is_none() && gone(run, *h) {
+                beaten[i] = Some(run.steps);
+            }
+        }
+        if beaten.iter().all(Option::is_some) {
+            break;
+        }
+    }
+    beaten
+}
+
+/// openspec AS.58: level 214's second fight, on the first island past the
+/// pods, on the TV's listing (`scripts::ENCOUNTERS`). The first spawner's
+/// bomb, taken twice (AS.67), opens the wall before the pods and the one
+/// past them. Past it `Setup_002_Controller` sees its first trigger, sets
+/// its four undead Chompies going for a scene and waits for Eon's elemental
+/// hint (`Explain_Elemental`) to take itself off: the hero walking into it,
+/// its line plays and it goes. At its second trigger the Chompies run in and
+/// fight; beaten, the second spawner's bomb opens the wall the two Elf
+/// Nears spar behind (`Setup_002_Controller_Helper`), whose scene sets them
+/// on him; both beaten, the helper takes itself off. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_second_fight_is_fought_on_the_first_island() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, mut stops) = joined_214();
+    let controller = run.placement("Setup_002_Controller");
+    let helper = handle(&run, "Setup_002_Controller_Helper");
+    let hint = handle(&run, "Explain_Elemental");
+    let chompies: Vec<Handle> = ["E", "F", "G", "H"]
+        .iter()
+        .map(|c| handle(&run, &format!("Enemy_Chompy2_{c}")))
+        .collect();
+    let elves: Vec<Handle> = ["Enemy_Elf_Near_S2(3)", "Enemy_Elf_Near_S2(4)"]
+        .iter()
+        .map(|n| handle(&run, n))
+        .collect();
+    // The two walls the first spawner's bomb opens (AS.57, AS.67).
+    let (first_wall, second_wall) = (
+        handle(&run, "Breakable_Stone_Wall_Castle_206(1)"),
+        handle(&run, "Breakable_Stone_Wall_Castle_206(6)"),
+    );
+    for (before, wall) in [
+        (BEFORE_THE_WALL, first_wall),
+        (BEFORE_THE_SECOND_WALL, second_wall),
+    ] {
+        let (bomb, _) = take_the_bomb(&mut run, &mut stops, 300).expect("the bomb taken");
+        let (_, opened) = throw_at(&mut run, &mut stops, bomb, before, wall);
+        assert!(opened.is_some(), "the wall opened");
+        for _ in 0..60 {
+            step(&mut run, &mut stops, [false; 4]);
+        }
+    }
+    let (health_before, xp_before) = (
+        run.health().unwrap(),
+        run.figure_values().map_or(0, |v| v.xp),
+    );
+    // Its first trigger: the Chompies set going, the wait for the hint.
+    run.put(Vec3::new(82.6, -18.0, 38.6), 0.0);
+    let mut waits = None;
+    for _ in 0..300 {
+        step(&mut run, &mut stops, [false; 4]);
+        if waits.is_none() && run.vm.behaviour(controller) == Some("wait for cutscene to finish") {
+            waits = Some(run.steps);
+        }
+    }
+    let waits = waits.expect("it waits on Eon's hint");
+    // Into the hint: its line, then it goes, and the controller with it.
+    run.put(Vec3::new(89.4, -16.5, 51.9), 0.0);
+    let mut hint_gone = None;
+    for _ in 0..900 {
+        step(&mut run, &mut stops, [false; 4]);
+        if hint_gone.is_none() && gone(&run, hint) {
+            hint_gone = Some(run.steps);
+        }
+        if run.vm.behaviour(controller) == Some("wait for next trigger") {
+            break;
+        }
+    }
+    let hint_gone = hint_gone.expect("Eon's hint took itself off");
+    assert_eq!(run.vm.behaviour(controller), Some("wait for next trigger"));
+    // Its second trigger: the Chompies run in; fought.
+    run.put(Vec3::new(78.0, -16.5, 61.2), 0.0);
+    let chompies_beaten = fight(&mut run, &mut stops, &chompies, 2400);
+    println!(
+        "the wait from step {waits}, the hint gone at {hint_gone}; Chompies beaten at {chompies_beaten:?}"
+    );
+    assert!(
+        chompies_beaten.iter().all(Option::is_some),
+        "the four beaten: {chompies_beaten:?}"
+    );
+    // The elves spar behind their wall until a bomb opens it.
+    let elves_wall = handle(&run, "Breakable_Stone_Wall_Castle_206(3)");
+    run.put(Vec3::from_array(SECOND_SPAWNER) - Vec3::X * 3.0, 90.0);
+    let mut bomb = None;
+    for _ in 0..300 {
+        step(&mut run, &mut stops, [false; 4]);
+        bomb = bombs(&run)
+            .into_iter()
+            .find(|b| behaviour(&run, *b).as_deref() == Some("following player"));
+        if bomb.is_some() {
+            break;
+        }
+    }
+    let bomb = bomb.expect("the second spawner's bomb taken");
+    let (_, opened) = throw_at(
+        &mut run,
+        &mut stops,
+        bomb,
+        BEFORE_THE_ELVES_WALL,
+        elves_wall,
+    );
+    let opened = opened.expect("the elves' wall opened");
+    println!(
+        "the elves' wall opened at {opened}; health {:?}, the helper {:?}",
+        run.health(),
+        behaviour(&run, helper)
+    );
+    let elves_beaten = fight(&mut run, &mut stops, &elves, 3600);
+    println!(
+        "the elves beaten at {elves_beaten:?}; health {:?}, hero at {}, his script {:?}",
+        run.health(),
+        run.hero().pivot,
+        run.minion
+            .and_then(|m| run.vm.stopped(m))
+            .map(|h| h.to_string())
+    );
+    for _ in 0..120 {
+        step(&mut run, &mut stops, [false; 4]);
+    }
+    let (health, xp) = (
+        run.health().unwrap(),
+        run.figure_values().map_or(0, |v| v.xp),
+    );
+    println!(
+        "the elves' wall opened at {opened}, the elves beaten at {elves_beaten:?}, the helper gone {}; health {health_before} -> {health}, experience {xp_before} -> {xp}; {:.1} s; load at end: {}",
+        gone(&run, helper),
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    assert!(
+        elves_beaten.iter().all(Option::is_some),
+        "both elves beaten: {elves_beaten:?}"
+    );
+    assert!(gone(&run, helper), "the helper's done");
+    assert!(xp > xp_before, "his figure's paid: {xp}");
+    assert!(stops.is_empty(), "{stops:#?}");
+}
