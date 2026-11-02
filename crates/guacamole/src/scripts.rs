@@ -1911,13 +1911,23 @@ impl ScriptWorld {
     /// at the place it was cloned (`abstractplacement.origin`) with its
     /// turn its template's, keeping what makes it this clone (its id, its
     /// buffer and range, its parent, activator and template, its own
-    /// clones), its motion and what it hung from gone. None for one taken
-    /// off or a template it can't find.
+    /// clones), its motion and what it hung from gone. Either way one the
+    /// engine walks still walks, its body made again ([`ScriptWorld::walk`]
+    /// is the embedder's, once). None for one taken off or a template it
+    /// can't find.
     pub fn as_made(&self, h: Handle) -> Option<Actor> {
         let k = self.actors.get(&h).filter(|k| !k.removed)?;
+        let walker = k.walker.as_ref().map(|_| {
+            Box::new(crate::script_engine::Walker {
+                body: None,
+                aim: guac_motion::steer::Aim::Still,
+                along: 0,
+            })
+        });
         if let Some(p) = k.obj.and_then(|o| self.templates.get(&o)) {
             return Some(Actor {
                 clones: k.clones.clone(),
+                walker,
                 ..actor_of(p)
             });
         }
@@ -1938,13 +1948,7 @@ impl ScriptWorld {
             .template
             .and_then(|t| self.light_templates.get(&t))
             .copied();
-        a.walker = k.walker.as_ref().map(|_| {
-            Box::new(crate::script_engine::Walker {
-                body: None,
-                aim: guac_motion::steer::Aim::Still,
-                along: 0,
-            })
-        });
+        a.walker = walker;
         Some(a)
     }
 
@@ -5302,6 +5306,37 @@ mod tests {
         .unwrap();
         w.op(&reset(900), &mut |_| 0, &mut NoEngine).unwrap();
         assert!(w.removed(900), "one taken off isn't made again");
+    }
+
+    /// The AS.67 review: a file placement's reset of itself stands it again
+    /// as its file has it (its place, its buffer), its motion gone, and one
+    /// the engine walks still walks, its body to be made again. Nothing is
+    /// listed for the embedder to run again: the VM sends its script round.
+    #[test]
+    fn a_file_placement_resetting_itself_stands_as_its_file_has_it_and_still_walks() {
+        let (mut w, grunt, _) = world();
+        let made = w.actor(grunt).unwrap().clone();
+        assert!(w.walk(grunt));
+        {
+            let a = w.actors.get_mut(&grunt).unwrap();
+            a.position += Vec3::new(4.0, 0.5, -2.0);
+            a.velocity = Vec3::new(1.0, 0.0, 0.0);
+            a.buffer = 0.0;
+        }
+        let by_itself = OpCall {
+            placement: grunt,
+            ..call(Class::Reset, Some(Value::Entity(grunt)))
+        };
+        w.op(&by_itself, &mut |_| 0, &mut NoEngine).unwrap();
+        let a = w.actor(grunt).unwrap();
+        assert_eq!(a.position, made.position, "its file's place");
+        assert_eq!(a.velocity, Vec3::ZERO);
+        assert_eq!(a.buffer, 12.5, "its file's buffer");
+        assert!(
+            a.walker.as_ref().is_some_and(|k| k.body.is_none()),
+            "still walked, its body made again"
+        );
+        assert!(w.revived.is_empty());
     }
 
     /// The as-214-walk review: a scripted template's clone joins the run

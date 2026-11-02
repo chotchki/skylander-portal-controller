@@ -34,7 +34,9 @@ use crate::scripts::{WorldHost, running};
 /// its delay of 0, level 214's intro (openspec AS.47), whose first scene
 /// runs on and never ends on our host (70 s of it, headless), and 214's
 /// sail from its first island to its second (AS.59), which the first ship
-/// part's pickup wakes and which never ends either (30 s of it, headless).
+/// part's pickup wakes and whose second scene's walker never arrives: its
+/// `CS Walk Obj to Location` holds on an object whose actor reads nothing,
+/// one of the cutscene file's own structures (AS.82), 32 s of it headless.
 pub const SKIPPED_CUTSCENES: [&str; 3] =
     ["213 Outro IGC", "214 Intro IGC", "214 recover 1st part IGC"];
 

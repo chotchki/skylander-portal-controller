@@ -4416,37 +4416,20 @@ impl Vm {
             // A reference resets what it names, the reference kept.
             Spot::Cell(c) if self.cells[c as usize].kind == CellKind::Reference => {
                 let named = self.cells[c as usize].value;
-                // A number it names (a run-time cell, or a file variable's)
-                // goes back as a reset of the variable itself puts it.
-                let number = match named {
-                    Value::Cell(v) if self.cells[v as usize].kind == CellKind::Value => {
-                        match self.cells[v as usize].value {
-                            // A set's element: the cell it names.
-                            Value::Cell(_) => None,
-                            _ => Some(v),
-                        }
-                    }
-                    Value::Object(o) => match self.program.global_of(o) {
-                        Some(g)
-                            if matches!(self.program.globals[g as usize].1, Global::Number(_)) =>
-                        {
-                            Some(self.global_cell(g)?)
-                        }
-                        _ => None,
-                    },
-                    _ => None,
-                };
-                if let Some(v) = number {
-                    self.reset_cell(v, 0);
-                    return Ok(());
-                }
-                match self.peek(named) {
-                    Value::Null => Ok(()),
-                    Value::Cell(v) => {
-                        self.reset_cell(v, 0);
-                        Ok(())
-                    }
-                    other => self.reset(Spot::Const(other), host),
+                self.reset_named(named, host, 0)
+            }
+            // A set, or a set reference, resets what it holds, the set and
+            // the reference kept (crate docs; openspec AS.77).
+            Spot::Cell(c)
+                if matches!(
+                    self.cells[c as usize].kind,
+                    CellKind::Set | CellKind::SetReference
+                ) =>
+            {
+                let held = self.cells[c as usize].value;
+                match self.materialize(held) {
+                    Value::Set(s) => self.reset_members(s, host, 0),
+                    _ => Ok(()),
                 }
             }
             Spot::Cell(c) => {
@@ -4491,8 +4474,8 @@ impl Vm {
                 self.placements[id as usize].suspended = false;
                 Ok(())
             }
-            // A structure or set a reference names, back to its defaults
-            // as a variable holding it would be.
+            // A structure a reference names, back to its defaults as a
+            // variable holding it would be; a set, what it holds reset.
             Spot::Const(Value::Struct(st)) => {
                 let fields: Vec<u32> = self.structs[st as usize]
                     .fields
@@ -4504,10 +4487,7 @@ impl Vm {
                 }
                 Ok(())
             }
-            Spot::Const(Value::Set(set)) => {
-                self.sets[set as usize].elems.clear();
-                Ok(())
-            }
+            Spot::Const(Value::Set(set)) => self.reset_members(set, host, 0),
             // A placement (or any engine object) reset whole: back to how
             // it was loaded, which is the engine's to do.
             Spot::Const(v @ (Value::Object(_) | Value::Entity(_))) => {
@@ -4536,6 +4516,69 @@ impl Vm {
             }
             other => unsupported(format!("reset of {other:?}")),
         }
+    }
+
+    /// What a reference, or a set's element (`depth` past 0), names, reset:
+    /// a number (a run-time cell, or a file variable's) as a reset of the
+    /// variable itself puts it, a structure's fields back, a set's own
+    /// members, a placement by the host. A number a set holds as itself has
+    /// nothing to put back.
+    fn reset_named(&mut self, named: Value, host: &mut dyn Host, depth: u32) -> Result<(), Fault> {
+        let number = match named {
+            Value::Cell(v) if self.cells[v as usize].kind == CellKind::Value => {
+                match self.cells[v as usize].value {
+                    // A set's element: the cell it names.
+                    Value::Cell(_) => None,
+                    _ => Some(v),
+                }
+            }
+            Value::Object(o) => match self.program.global_of(o) {
+                Some(g) if matches!(self.program.globals[g as usize].1, Global::Number(_)) => {
+                    Some(self.global_cell(g)?)
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(v) = number {
+            self.reset_cell(v, 0);
+            return Ok(());
+        }
+        match self.materialize(named) {
+            Value::Null => Ok(()),
+            Value::Cell(v) => {
+                self.reset_cell(v, 0);
+                Ok(())
+            }
+            Value::Set(s) => self.reset_members(s, host, depth + 1),
+            v @ (Value::Struct(_) | Value::Object(_) | Value::Entity(_)) => {
+                self.reset(Spot::Const(v), host)
+            }
+            _ if depth > 0 => Ok(()),
+            other => self.reset(Spot::Const(other), host),
+        }
+    }
+
+    /// A set's reset (crate docs; openspec AS.77): each thing it holds
+    /// reset once as a reset of that thing would be ([`Vm::reset_named`]),
+    /// in its order, the set kept; one that reads nothing passes.
+    fn reset_members(&mut self, s: u32, host: &mut dyn Host, depth: u32) -> Result<(), Fault> {
+        if depth > MAX_DEPTH {
+            return Ok(());
+        }
+        let held = self.sets[s as usize].elems.clone();
+        let mut done: Vec<Value> = Vec::with_capacity(held.len());
+        for e in held {
+            if done.contains(&e) {
+                continue;
+            }
+            done.push(e);
+            match self.reset_named(e, host, depth + 1) {
+                Ok(()) | Err(Fault::Nothing) => {}
+                Err(f) => return Err(f),
+            }
+        }
+        Ok(())
     }
 
     /// A value read: an expression computed, a literal, or a path read with

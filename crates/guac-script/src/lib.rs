@@ -103,7 +103,13 @@
 //! no recording: level 214's bomb resets itself after its burst, and its
 //! script needs each half: a bounce count it only ever adds to, which
 //! would burst the next bomb at its first landing, and a lit fuse, glow
-//! and gesture manager its SHUTDOWN alone takes off.
+//! and gesture manager its SHUTDOWN alone takes off. The dead automaton
+//! parts of levels 003, 202 and 209 say the same: one explodes and resets
+//! itself, and only a STARTUP gives it a fresh fuse; kept where it was,
+//! its behaviour stays `explode` and it explodes every tick. One that
+//! resets itself again on the way (in that STARTUP) waits for the next
+//! step, as a requeue sent again does: at most two rounds in its first
+//! step, one a step after.
 //!
 //! The embedder puts placements to sleep and wakes them by its activity
 //! rule ([`Vm::set_activity`], a pass at a time, or [`Vm::set_asleep`]);
@@ -699,10 +705,20 @@
 //!
 //! What the VM does itself: a spawn of a structure or a set copies it (its
 //! structures and sets copied too) and runs the block with the copy as the
-//! receiver, the copy the op's result; a reset of a structure, a set or what
-//! a reference names puts it back to its defaults, the reference kept (a
+//! receiver, the copy the op's result; a reset of a structure, or of what a
+//! reference names, puts it back to its defaults, the reference kept (a
 //! reading: `EnemySystem_` resets its action references, then nulls them);
-//! and slides, with their sliders (Slides).
+//! a reset of a set, or of a set reference, resets each thing it holds once
+//! as a reset of that thing would (a number variable to 0, a structure's
+//! fields, a placement by the host), the set and the reference kept, where a
+//! structure's own reset still empties a set among its fields (openspec
+//! AS.77, a reading off the disc's own uses: Combat gathers six of a
+//! creature's per-state flags into `reset on new state` once and resets the
+//! set at each new state; `PuzzleResetter.ai` and level 046's dragon-fire
+//! controllers fill a set with a puzzle's parts, reset it and go; a
+//! cutscene's SHUTDOWN resets the set of placements its STARTUP took off;
+//! emptied, each of those would do nothing); and slides, with their
+//! sliders (Slides).
 //!
 //! Not modelled yet: a colour's multiplication and division and screen
 //! division (they stop as unsupported), the set properties (unmodelled members); and, with no

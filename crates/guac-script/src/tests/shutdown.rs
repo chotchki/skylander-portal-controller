@@ -683,3 +683,91 @@ fn a_placement_resetting_itself_goes_round_from_its_startup() {
         "nor is the one resetting it"
     );
 }
+
+/// The AS.67 review: a placement resetting itself in its STARTUP can't spin
+/// a step. Looper's STARTUP counts and resets it; its SHUTDOWN runs at that
+/// tick's end, before any behaviour, and it goes round to the list's end:
+/// the step ticks it there once more (two STARTUPs in its first step), and
+/// sent again after that turn it waits for the next step, then goes round
+/// once a step, its behaviour never reached. Other, behind it, ticks once a
+/// step throughout, and every step returns.
+#[test]
+fn a_placement_resetting_itself_in_its_startup_goes_round_once_a_step() {
+    let p = program(|w| {
+        let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+        let (start, _) = w.open(Class::StartUp, "STARTUP");
+        w.inc(&[El::Member("test", "starts")]);
+        reset(w, &[El::Member("optoplevelbehavior", "my")]);
+        w.end_block(start);
+        let (shut, _) = w.open(Class::ShutDown, "SHUTDOWN");
+        w.inc(&[El::Member("test", "shuts")]);
+        w.end_block(shut);
+        let (section, _) = w.open(Class::MacroSection, "MACROS");
+        w.end_block(section);
+        w.end_block(pre);
+        behaviour(w, |w| {
+            w.inc(&[El::Member("test", "behaved")]);
+        });
+        w.end("C:/tfb/Synthetic/Looper.ai");
+        script(
+            w,
+            "C:/tfb/Synthetic/Other.ai",
+            |_| {},
+            |_| {},
+            |w| {
+                behaviour(w, |w| {
+                    w.inc(&[El::Member("test", "other")]);
+                })
+            },
+        );
+    });
+    let cells = ["starts", "shuts", "behaved", "other"];
+    let mut vm = Vm::new(p, config(Mode::Strict, &cells));
+    let looper = vm.add(0x10, "Looper", 0);
+    vm.add(0x20, "Other", 1);
+    let mut host = Engine::default();
+    let r = vm.step(&mut host).unwrap();
+    assert_eq!(r.ticked, 3, "Looper, Other, Looper again");
+    assert_eq!(cell(&vm, "starts"), Some(Value::Int(2)));
+    assert_eq!(cell(&vm, "shuts"), Some(Value::Int(2)));
+    for n in 3..=6 {
+        let r = vm.step(&mut host).unwrap();
+        assert_eq!(r.ticked, 2, "Other, then Looper off the rejoin list");
+        assert_eq!(cell(&vm, "starts"), Some(Value::Int(n)));
+        assert_eq!(cell(&vm, "shuts"), Some(Value::Int(n)));
+    }
+    assert_eq!(cell(&vm, "behaved"), None, "its behaviour never reached");
+    assert_eq!(cell(&vm, "other"), Some(Value::Int(5)));
+    assert!(!vm.removed(looper));
+}
+
+/// The AS.67 review: a script with no SHUTDOWN goes round as well. Plain
+/// resets itself from its behaviour every tick: its first tick runs its
+/// STARTUP and behaviour, round it goes and ticks again behind (STARTUP and
+/// behaviour once more), and sent again it waits; each step after, one
+/// round.
+#[test]
+fn a_placement_with_no_shutdown_resetting_itself_goes_round_too() {
+    let p = program(|w| {
+        let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+        let (start, _) = w.open(Class::StartUp, "STARTUP");
+        w.inc(&[El::Member("test", "starts")]);
+        w.end_block(start);
+        let (section, _) = w.open(Class::MacroSection, "MACROS");
+        w.end_block(section);
+        w.end_block(pre);
+        behaviour(w, |w| {
+            w.inc(&[El::Member("test", "behaved")]);
+            reset(w, &[El::Member("optoplevelbehavior", "my")]);
+        });
+        w.end("C:/tfb/Synthetic/Plain.ai");
+    });
+    let mut vm = Vm::new(p, config(Mode::Strict, &["starts", "behaved"]));
+    vm.add(0x10, "Plain", 0);
+    let mut host = Engine::default();
+    for n in 1..=4 {
+        vm.step(&mut host).unwrap();
+        assert_eq!(cell(&vm, "starts"), Some(Value::Int(n + 1)), "round at {n}");
+        assert_eq!(cell(&vm, "behaved"), Some(Value::Int(n + 1)));
+    }
+}

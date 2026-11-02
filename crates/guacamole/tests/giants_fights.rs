@@ -283,7 +283,11 @@ fn fight(run: &mut Run, stops: &mut Vec<String>, foes: &[Handle], steps: u32) ->
 /// its line plays and it goes. At its second trigger the Chompies run in and
 /// fight; beaten, the second spawner's bomb opens the wall the two Elf
 /// Nears spar behind (`Setup_002_Controller_Helper`), whose scene sets them
-/// on him; both beaten, the helper takes itself off. Nothing stops.
+/// on him; both beaten, the helper takes itself off. Nothing stops. The
+/// hero is set down where a walk would take him, but on foot the rise
+/// holding the second spawner lies past a wall no walk opens yet,
+/// `Breakable_Stone_Wall_Castle_206(5)` (AS.74): the set-down there stands
+/// for a way the TV doesn't walk.
 #[test]
 #[ignore = "reads the Giants dump"]
 fn level_214s_second_fight_is_fought_on_the_first_island() {
@@ -355,7 +359,9 @@ fn level_214s_second_fight_is_fought_on_the_first_island() {
         chompies_beaten.iter().all(Option::is_some),
         "the four beaten: {chompies_beaten:?}"
     );
-    // The elves spar behind their wall until a bomb opens it.
+    // The elves spar behind their wall until a bomb opens it. Their
+    // invulnerability meanwhile doesn't land on our host (AS.83): set down
+    // among them, he'd beat both.
     let elves_wall = handle(&run, "Breakable_Stone_Wall_Castle_206(3)");
     run.put(Vec3::from_array(SECOND_SPAWNER) - Vec3::X * 3.0, 90.0);
     let mut bomb = None;
@@ -420,13 +426,26 @@ const SHIP_PART_1: [f32; 3] = [29.45, -6.92, 56.37];
 /// ship (metres, the run's own read: its second scene's player waypoint).
 const ON_THE_SECOND_ISLAND: [f32; 3] = [-383.178, -12.581, 714.414];
 
+/// Whether `h`'s actor is off the world (a placement whose script the
+/// listing leaves out has no run to be off).
+fn off_the_world(run: &Run, h: Handle) -> bool {
+    run.world.actor(h).is_none_or(|a| a.removed)
+}
+
+/// What the sail's STARTUP takes off and its SHUTDOWN resets (its
+/// `deactivated actors`, openspec AS.77): the second island's ship, an NPC
+/// of the island's set and a door of the ship's.
+const OFF_FOR_THE_SAIL: [&str; 3] = ["The_Ship_2", "Flynn_Island_2", "Door_(1)"];
+
 /// openspec AS.59: level 214's way from its first island to its second, on
 /// the TV's listing (`scripts::PASSAGES`). The hero at the first ship part
 /// takes it; it waits on a press (South, pulsed as a hand would: with none
 /// it never goes), then goes and its shutdown wakes the sail; the TV skips
 /// the sail's cutscene a frame in (`level_end::SKIPPED_CUTSCENES`), which
 /// sets him down on the second island's ship and takes the sail off, so
-/// Setup_003, which waits for it, can start. Nothing stops.
+/// Setup_003, which waits for it, can start. AS.77: what the sail took off
+/// stands again once its SHUTDOWN resets the set holding it, the ship he
+/// stands on among it. Nothing stops.
 #[test]
 #[ignore = "reads the Giants dump"]
 fn level_214s_first_ship_part_sails_to_the_second_island() {
@@ -435,12 +454,17 @@ fn level_214s_first_ship_part_sails_to_the_second_island() {
     let (mut run, mut stops) = joined_214();
     let part = handle(&run, "Ship_part_1(1)");
     let sail = handle(&run, "214_Recover_First_Part_IGC");
+    let off: Vec<Handle> = OFF_FOR_THE_SAIL.iter().map(|n| handle(&run, n)).collect();
     run.put(Vec3::from_array(SHIP_PART_1), 0.0);
     let (mut taken, mut sailed) = (None, None);
+    let mut taken_off = vec![false; off.len()];
     for k in 0..1200u32 {
         step(&mut run, &mut stops, [k % 20 < 2, false, false, false]);
         if taken.is_none() && gone(&run, part) {
             taken = Some(run.steps);
+        }
+        for (seen, h) in taken_off.iter_mut().zip(&off) {
+            *seen |= off_the_world(&run, *h);
         }
         if sailed.is_none() && gone(&run, sail) {
             sailed = Some(run.steps);
@@ -451,12 +475,15 @@ fn level_214s_first_ship_part_sails_to_the_second_island() {
         step(&mut run, &mut stops, [false; 4]);
     }
     let at = run.hero().pivot;
+    let standing: Vec<bool> = off.iter().map(|h| !off_the_world(&run, *h)).collect();
     println!(
-        "the part taken at {taken:?}, the sail done at {sailed:?}; the hero at {at}, the HUD hidden {}; {:.1} s; load at end: {}",
+        "the part taken at {taken:?}, the sail done at {sailed:?}; the hero at {at}, the HUD hidden {}; {OFF_FOR_THE_SAIL:?} taken off {taken_off:?}, standing after {standing:?}; {:.1} s; load at end: {}",
         guacamole::scripts::player_hud_hidden(&run.vm),
         started.elapsed().as_secs_f64(),
         load()
     );
+    assert_eq!(taken_off, [true; 3], "taken off for the sail");
+    assert_eq!(standing, [true; 3], "back once the sail's done");
     assert!(taken.is_some(), "the part taken");
     assert!(sailed.is_some(), "the sail done");
     assert!(
