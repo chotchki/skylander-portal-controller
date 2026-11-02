@@ -636,6 +636,70 @@ mod tests {
         assert_eq!(app.world().resource::<Movies>().report().plays, 2);
     }
 
+    /// The as-ch1-ending review: the skip's press is the movie's alone. With
+    /// Eruptor joined in a level the movie holds, Start skips it and the
+    /// level doesn't pause after it; △ skips it and no step of his scripts
+    /// reads his fourth attack. (The router reads the pads in `PreUpdate`
+    /// under the hold the frame before left, and a press is just pressed for
+    /// that frame alone.)
+    #[test]
+    fn the_skips_press_reaches_nothing_else() {
+        use crate::play::Mode;
+        use crate::test_support::play::{joined_eruptor, log_last, mode};
+        for skip in [GamepadButton::North, GamepadButton::Start] {
+            let tmp = tempfile::tempdir().unwrap();
+            let (mut app, pad) = joined_eruptor(tmp.path());
+            assert_eq!(mode(&app), Mode::Level);
+            // The plugin's systems: the app's plugins are built already.
+            app.insert_resource(Extraction {
+                status: ExtractStatus::Ready {
+                    intros: 0,
+                    ran: false,
+                },
+                ..Default::default()
+            })
+            .init_resource::<ExtractBand>()
+            .init_resource::<OutputLatency>()
+            .insert_resource(Setup(crate::screen::SetupView::default()))
+            .insert_resource(clip(tmp.path(), 250))
+            .insert_resource(Movies::default())
+            .add_systems(Update, (play_movies, show_band).chain());
+            app.world_mut()
+                .resource_mut::<ScriptWorld>()
+                .queue_movie("fmv02");
+            until(&mut app, "the movie playing and the level held", |app| {
+                app.world().resource::<Movies>().report().shown > 0 && mode(app) == Mode::Held
+            });
+            let from = log_last(&app);
+            crate::test_support::test_pad::press(&mut app, pad, skip);
+            assert_eq!(
+                state(&app),
+                Some(MovieState::Over(MovieEnd::Skipped)),
+                "{skip:?}"
+            );
+            for _ in 0..30 {
+                app.update();
+            }
+            assert_eq!(
+                mode(&app),
+                Mode::Level,
+                "{skip:?}: the level on, not paused"
+            );
+            let read: Vec<u64> = app
+                .world()
+                .resource::<crate::hero_scripts::ScriptLog>()
+                .since(from)
+                .into_iter()
+                .filter(|s| s.actions[3])
+                .map(|s| s.step)
+                .collect();
+            assert!(
+                read.is_empty(),
+                "{skip:?}: his fourth attack read at {read:?}"
+            );
+        }
+    }
+
     /// AS.19: one that won't convert is over all the same, with why, so the
     /// level goes on; the header said so while it converted.
     #[test]
