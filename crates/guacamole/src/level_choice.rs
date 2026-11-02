@@ -245,6 +245,21 @@ impl LevelChoice {
             ..Default::default()
         }
     }
+
+    /// `name`'s fetch running, its parts being read, as a started ask
+    /// leaves it (nothing feeds it).
+    #[cfg(test)]
+    pub(crate) fn running_for_tests(name: &str) -> Self {
+        Self {
+            running: Some(Running {
+                name: name.to_owned(),
+                started: Instant::now(),
+                feed: crossbeam_channel::never(),
+                status: Progress::Parts { done: 1, total: 10 },
+            }),
+            ..Default::default()
+        }
+    }
 }
 
 struct Running {
@@ -357,7 +372,13 @@ impl Plugin for LevelChoicePlugin {
             })
             .add_systems(
                 Update,
-                (take_asks, take_script_asks, start_fetch, drain_fetch)
+                (
+                    take_asks,
+                    read_level_end,
+                    take_script_asks,
+                    start_fetch,
+                    drain_fetch,
+                )
                     .chain()
                     .before(crate::level::LevelSystems),
             )
@@ -377,6 +398,62 @@ fn take_asks(asks: Res<LevelAsks>, mut choice: ResMut<LevelChoice>, mut level: R
         ..Default::default()
     });
     choice.waiting = Some(name);
+}
+
+/// How often a level end that can't be read yet is tried again.
+const READ_AGAIN: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The TV's level end the run couldn't read (openspec AS.15's review): its
+/// string read off the interface's part, which a first run's chapter 1 was
+/// loaded without (the part lands after its hand-off, AT.26), and the
+/// disc's level list read again when it didn't read; tried at once, then
+/// every [`READ_AGAIN`] while either fails, so a kid at chapter 1's end
+/// before the part lands goes on once it does. One read that names no
+/// level stays reported in `/api/_test/tv`'s `run.level_end`.
+fn read_level_end(
+    world: Option<ResMut<guacamole::scripts::ScriptWorld>>,
+    source: Option<Res<crate::hero_scripts::ScriptSource>>,
+    mut last: Local<Option<(u64, std::time::Instant, Option<String>)>>,
+) {
+    use guacamole::scripts::Unread;
+    let (Some(mut world), Some(source)) = (world, source) else {
+        return;
+    };
+    let Some(end) = world.level_end() else {
+        return;
+    };
+    let (value, unread) = (end.value, end.unread.clone());
+    if !matches!(unread, Some(Unread::NoText | Unread::NoList)) {
+        return;
+    }
+    let run = world.run();
+    if last
+        .as_ref()
+        .is_some_and(|(r, at, _)| *r == run && at.elapsed() < READ_AGAIN)
+    {
+        return;
+    }
+    let said = last
+        .take()
+        .filter(|(r, ..)| *r == run)
+        .and_then(|(.., why)| why);
+    let (text, why) = match (&unread, value) {
+        (Some(Unread::NoText), guac_script::Value::Object(obj)) => match source.file_text(obj) {
+            Ok(t) => (Some(t), None),
+            Err(why) => {
+                // Said once a run per reason: the part takes some seconds
+                // to land after the hand-off.
+                if said.as_deref() != Some(why.as_str()) {
+                    warn!(reason = %why, "the level end's string didn't read off the interface's part: tried again every 2 s");
+                }
+                (None, Some(why))
+            }
+        },
+        _ => (None, None),
+    };
+    *last = Some((run, std::time::Instant::now(), why));
+    let levels = (!world.has_levels()).then(|| source.disc_levels());
+    world.read_level_end(text, levels);
 }
 
 /// A level change the scripts asked for (openspec AS.15): asked by name
@@ -1063,6 +1140,106 @@ mod tests {
         app.world_mut().resource_mut::<ScriptWorld>().end_step();
         app.update();
         assert_eq!(waiting(&app), None);
+        // A new run (the level entered again, its end reached again) asks
+        // the same level again (AS.15's review).
+        let (mut again, text) =
+            crate::test_support::hero_scripts::world_with_text("Level_214_Tutotial_2");
+        again.set_levels(std::sync::Arc::new(
+            ["level_214_tutotial_2".to_owned()].into(),
+        ));
+        again.ask_level(text);
+        again.end_step();
+        app.insert_resource(again);
+        app.update();
+        assert_eq!(waiting(&app).as_deref(), Some("level_214_tutotial_2"));
+    }
+
+    /// AS.15's review: chapter 1's end on a first run, whose run has no
+    /// interface's model (its part lands after the hand-off, AT.26). The
+    /// level end is held and said, not read as a stream; while the part
+    /// isn't in nothing is asked; once it lands its string is read off it
+    /// (tried again [`READ_AGAIN`] on) and the level asked for by name.
+    #[test]
+    fn a_level_end_the_run_cant_read_is_read_off_the_part_once_its_in() {
+        use guac_script::{Obj, Value};
+        use guacamole::scripts::{Files, ScriptWorld, Unread};
+        use std::sync::Arc;
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let units = ["scripts/bootstrap.igz", "scripts/global.igz"]
+            .map(String::from)
+            .to_vec();
+        let keys = vec![guac_interface::load::Keys {
+            unit: 1,
+            strings: vec![40, 52],
+            ..Default::default()
+        }];
+        let mut program = guac_script::Program::default();
+        program.units = units.clone();
+        let program = Arc::new(program);
+        let source = crate::hero_scripts::ScriptSource::of(program, Files::default(), Vec::new())
+            .with_extract(dir, guac_extract::intros::IrFormat::Ron, keys);
+        let files = Files::default();
+        let handles = guacamole::scripts::headless_handles(&files);
+        let mut world = ScriptWorld::new(
+            &files,
+            &handles,
+            guacamole::scripts::headless_objects(&handles),
+        );
+        world.set_levels(Arc::new(["level_214_tutotial_2".to_owned()].into()));
+        world.ask_level_end(
+            Value::Object(Obj { unit: 1, index: 52 }),
+            Some("Level_214".into()),
+        );
+        world.end_step();
+        assert!(world.streams.is_empty(), "not read as a stream");
+        let mut app = App::new();
+        app.insert_resource(Level::new(false))
+            .insert_resource(LevelChoice::default())
+            .insert_resource(world)
+            .insert_resource(source)
+            .add_systems(Update, (read_level_end, take_script_asks).chain());
+        let unread = |app: &App| {
+            app.world()
+                .resource::<ScriptWorld>()
+                .level_end()
+                .and_then(|e| e.unread.clone())
+        };
+        let waiting = |app: &App| app.world().resource::<LevelChoice>().waiting.clone();
+        app.update();
+        assert_eq!((unread(&app), waiting(&app)), (Some(Unread::NoText), None));
+        // The part lands.
+        std::fs::create_dir_all(dir.join(guac_extract::interface::DIR)).unwrap();
+        let text = |t: &str| guac_ir::interface::Str {
+            text: t.into(),
+            flags: 0,
+            integer_digits: 0,
+            decimal_digits: 0,
+        };
+        let record = guac_ir::interface::Interface {
+            identity: guac_ir::DumpIdentity {
+                title_id: "BLUS30968".into(),
+                app_ver: "01.00".into(),
+                manifest_hash: guac_ir::Sha256([0; 32]),
+            },
+            archive: guac_interface::load::GLOBAL.into(),
+            templates: Vec::new(),
+            fonts: Vec::new(),
+            strings: vec![text("Some_Item"), text("Level_214_Tutotial_2")],
+            refused: Vec::new(),
+        };
+        let rel =
+            guacamole::interface_host::record_path(guac_extract::intros::IrFormat::Ron, &units[1])
+                .unwrap();
+        std::fs::write(dir.join(rel), guac_ir::to_ron(&record).unwrap()).unwrap();
+        app.update();
+        assert_eq!(waiting(&app), None, "not tried again before READ_AGAIN");
+        std::thread::sleep(READ_AGAIN + std::time::Duration::from_millis(100));
+        app.update();
+        assert_eq!(unread(&app), None);
+        assert_eq!(waiting(&app).as_deref(), Some("level_214_tutotial_2"));
+        let asked = app.world().resource::<Level>().asked().cloned().unwrap();
+        assert_eq!(asked.by.as_deref(), Some("scripts"));
     }
 
     /// The header while a level is fetched: the dump's check, then its

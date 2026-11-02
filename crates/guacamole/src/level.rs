@@ -1994,12 +1994,14 @@ fn poll_scripts(level: &mut Level, commands: &mut Commands) {
                 sounds,
                 interface,
                 levels,
+                interface_keys,
                 ..
             } = linked;
             let level_name = level
                 .source
                 .as_ref()
                 .map_or_else(String::new, |s| s.level.clone());
+            let extract = level.source.as_ref().map(|s| (s.dir.clone(), s.ir));
             if let Some(s) = &sounds {
                 log_sounds(s, false);
             }
@@ -2031,6 +2033,8 @@ fn poll_scripts(level: &mut Level, commands: &mut Commands) {
                         interface,
                         level: level_name,
                         levels,
+                        extract,
+                        interface_keys,
                     },
                 );
             });

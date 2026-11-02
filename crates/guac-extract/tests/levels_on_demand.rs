@@ -234,3 +234,28 @@ fn a_part_stopped_before_its_textures_were_recorded_resumes_to_the_same_extract(
         assert!(again.dir.output_done(&f).unwrap(), "{f}");
     }
 }
+
+/// AS.15's review: what a script's level change can name, by its archive's
+/// kind: a level a player is taken into alone, never what a level streams
+/// in (the voice pack, read in English off `global.bld`, a ship part, a mesh
+/// bundle, a pack) or a menu loads (the title, the credits).
+#[test]
+fn a_level_change_names_a_level_a_player_is_taken_into() {
+    for (name, level) in [
+        ("level_214_tutotial_2", true),
+        ("level_hub_2_stage_1", true),
+        ("pvp_level_001_cubedungeon", true),
+        ("challenge_level_000", true),
+        ("arena_challenge_200_000", true),
+        ("challengevo", false),
+        ("ship_part_003", false),
+        ("arena_mesh_200", false),
+        ("challengemesh_ice", false),
+        ("_minions0", false),
+        ("_misc0", false),
+        ("title", false),
+        ("credits_giants", false),
+    ] {
+        assert_eq!(Kind::of(name).is_level(), level, "{name}");
+    }
+}

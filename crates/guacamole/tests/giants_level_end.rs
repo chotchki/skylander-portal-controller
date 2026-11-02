@@ -121,6 +121,80 @@ fn chapter_1s_end_asks_for_the_next_level_by_name() {
     );
 }
 
+/// AS.15's review: chapter 1's end on a first run's run, which has no
+/// interface's model (the part lands after chapter 1's hand-off, AT.26), so
+/// the level string's English text doesn't read. The level end is held as
+/// a level change would be, said by its string's name and why, never read
+/// as a stream; given the text (as the TV reads it off the part once it's
+/// in) it's the change to level 214. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn chapter_1s_end_without_the_interfaces_model_is_held_and_said() {
+    use guacamole::scripts::Unread;
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, _found) = run_on_with(Mode::Play, Setup::default());
+    let mut stops = Vec::new();
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap());
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    for _ in 0..120 {
+        stops.extend(run.step_play().unwrap());
+    }
+    run.put(Vec3::from_array(END.0), END.1);
+    let (ender, _) = run.placed("Temp_Level_Ender");
+    assert!(run.world.wake(ender));
+    let woken_at = run.steps;
+    while run.world.level_end().is_none_or(|e| e.unread.is_none()) {
+        assert!(
+            run.steps < woken_at + 600,
+            "no level end by step {}",
+            run.steps
+        );
+        stops.extend(run.step_play().unwrap());
+    }
+    let end = run.world.level_end().cloned().unwrap();
+    println!(
+        "woken at step {woken_at}; level end held at {}: {end:?}",
+        run.steps
+    );
+    assert_eq!(end.string.as_deref(), Some("Level_214"));
+    assert_eq!(end.unread, Some(Unread::NoText));
+    assert_eq!(run.world.level_change(), None);
+    for _ in 0..30 {
+        stops.extend(run.step_play().unwrap());
+    }
+    let to = level_end::recorded(&run.vm).expect("the level end recorded");
+    assert_eq!(end.value, to);
+    assert_eq!(
+        run.world.requests.iter().filter(|r| **r == to).count(),
+        1,
+        "taken once"
+    );
+    assert!(
+        run.world.streams.iter().all(Option::is_none) && run.world.streams.len() == 1,
+        "only the init chain's own stream, unread: {:?}",
+        run.world.streams
+    );
+    run.world
+        .read_level_end(Some("Level_214_Tutotial_2".into()), None);
+    assert_eq!(
+        run.world.level_change().map(|c| c.name.as_str()),
+        Some(NEXT)
+    );
+    assert!(
+        stops.is_empty(),
+        "{:#?}",
+        stops.iter().map(ToString::to_string).collect::<Vec<_>>()
+    );
+    println!(
+        "{:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
+
 /// Level 214 on the TV's listing for it (`scripts::level_config`: AH.27's,
 /// its definition and its spellings of the listed scripts), its props
 /// standing and the interface's model loaded, Eruptor joined at its start

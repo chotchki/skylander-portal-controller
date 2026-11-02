@@ -488,6 +488,9 @@ pub struct ScriptWorld {
     pub(crate) skipped_cutscene: Option<Value>,
     /// Whether [`crate::level_end`] has asked for the level end's level.
     pub(crate) level_end_asked: bool,
+    /// The level end [`crate::level_end`] wrote, and why it changed no level
+    /// yet if it hasn't.
+    level_end: Option<LevelEnd>,
     /// The achievements the scripts unlocked, by id, in the order written
     /// (`system.game achievement`, openspec AH.220): kept and logged, none
     /// awarded until AM's per-profile achievements read them
@@ -560,6 +563,46 @@ pub struct LevelChange {
     pub name: String,
     pub text: String,
     pub value: Value,
+}
+
+/// The level end the TV wrote to `system.load level` in the Pause
+/// Controller's place (openspec AS.15, [`crate::level_end`]): its string,
+/// by the name its file gives it (`Level_214`), and why it changed no level
+/// yet, if it hasn't. One that can't be read is held as a level change is
+/// and reported by name, never read as a stream (found at the AS.15
+/// review: a first run's chapter 1 has no interface's model, so its end
+/// went nowhere and said nothing).
+#[derive(Debug, Clone, PartialEq)]
+pub struct LevelEnd {
+    pub value: Value,
+    pub string: Option<String>,
+    pub unread: Option<Unread>,
+}
+
+/// Why a level end changed no level.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Unread {
+    /// Its text doesn't read: the run has no interface's model, its part
+    /// landing after the level's load as a first run's does (AT.26). The TV
+    /// reads it off the part once it's in.
+    NoText,
+    /// The disc's level list didn't read; the TV reads it again.
+    NoList,
+    /// Its text names no level on the disc (empty for no text).
+    NotALevel(String),
+}
+
+impl std::fmt::Display for Unread {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Unread::NoText => f.write_str(
+                "its text doesn't read: the run has no interface's model (the part not in at the level's load)",
+            ),
+            Unread::NoList => f.write_str("the disc's level list didn't read"),
+            Unread::NotALevel(n) if n.is_empty() => f.write_str("its text is empty"),
+            Unread::NotALevel(n) => write!(f, "{n} is no level on the disc"),
+        }
+    }
 }
 
 /// How many requests that changed no level a world keeps for its report.
@@ -717,6 +760,7 @@ impl ScriptWorld {
             streams: Default::default(),
             skipped_cutscene: None,
             level_end_asked: false,
+            level_end: None,
             achievements: Vec::new(),
             inert: Default::default(),
             woken: Vec::new(),
@@ -1079,36 +1123,46 @@ impl ScriptWorld {
     /// `system.load level` is taken. One whose text names a level on the
     /// disc ([`level_name`]) is a level change: it's held, so the member
     /// reads it while the level loads, as the original's does, until this
-    /// run gives way to that level's. Any other (a stream: a menu, a
+    /// run gives way to that level's. The TV's level end
+    /// ([`ScriptWorld::ask_level_end`]) is held the same when it can't be
+    /// read as one ([`Unread`]), reported and read again
+    /// ([`ScriptWorld::read_level_end`]). Any other (a stream: a menu, a
     /// character's, the objectives screen; one whose text doesn't read)
     /// isn't loaded and reads none from the next step on, as one loaded at
     /// once (stand-in ledger: `level-request`).
     pub fn end_step(&mut self) {
-        if self.load_level == Value::Null
+        let load = self.load_level;
+        if load == Value::Null
+            || self.level_change.as_ref().is_some_and(|c| c.value == load)
             || self
-                .level_change
+                .level_end
                 .as_ref()
-                .is_some_and(|c| c.value == self.load_level)
+                .is_some_and(|e| e.value == load && e.unread.is_some())
         {
             return;
         }
-        let value = self.load_level;
-        self.requests.push(value);
-        let text = self.text_of(value);
-        let name = text.as_deref().and_then(level_name);
-        let level = name.filter(|n| self.levels.as_ref().is_some_and(|l| l.contains(n)));
-        match level {
-            Some(name) => {
+        self.requests.push(load);
+        let text = self.text_of(load);
+        let ending = self.level_end.as_ref().is_some_and(|e| e.value == load);
+        match self.level_named(text.as_deref()) {
+            Ok(name) => {
                 info!(%name, ?text, "a script asked for a level: it loads, the run holds its request");
                 self.level_change = Some(LevelChange {
                     name,
                     text: text.unwrap_or_default(),
-                    value,
+                    value: load,
                 });
             }
-            None => {
+            Err(why) if ending => {
+                let string = self.level_end.as_ref().and_then(|e| e.string.clone());
+                warn!(?string, reason = %why, "the level end changes no level yet: held, read again");
+                if let Some(e) = &mut self.level_end {
+                    e.unread = Some(why);
+                }
+            }
+            Err(_) => {
                 info!(
-                    ?value,
+                    value = ?load,
                     ?text,
                     "a script asked for a stream (or a level not on the disc): read as loaded, nothing loaded"
                 );
@@ -1117,6 +1171,60 @@ impl ScriptWorld {
                 }
                 self.streams.push_back(text);
                 self.load_level = Value::Null;
+            }
+        }
+    }
+
+    /// The level on the disc a request's `text` names, or why none.
+    fn level_named(&self, text: Option<&str>) -> Result<String, Unread> {
+        let text = text.ok_or(Unread::NoText)?;
+        let name = level_name(text).ok_or_else(|| Unread::NotALevel(String::new()))?;
+        match self.levels.as_deref() {
+            Some(l) if !l.is_empty() => l
+                .contains(&name)
+                .then_some(name.clone())
+                .ok_or(Unread::NotALevel(name)),
+            _ => Err(Unread::NoList),
+        }
+    }
+
+    /// The TV's level end read again (openspec AS.15): `text`, the level end's
+    /// string read off the interface's part once it's in, and `levels`, the
+    /// disc's list read again, each when given. Named a level, it's a held
+    /// level change from here as one the step read; otherwise why stays
+    /// reported. Nothing without an unread level end.
+    pub fn read_level_end(
+        &mut self,
+        text: Option<String>,
+        levels: Option<Arc<std::collections::HashSet<String>>>,
+    ) {
+        if let Some(l) = levels {
+            self.levels = Some(l);
+        }
+        let Some(end) = self.level_end.clone().filter(|e| e.unread.is_some()) else {
+            return;
+        };
+        let text = text.or_else(|| self.text_of(end.value));
+        let read = self.level_named(text.as_deref());
+        match read {
+            Ok(name) => {
+                info!(%name, string = ?end.string, ?text, "the level end read: it loads, the run holds its request");
+                self.level_change = Some(LevelChange {
+                    name,
+                    text: text.unwrap_or_default(),
+                    value: end.value,
+                });
+                if let Some(e) = &mut self.level_end {
+                    e.unread = None;
+                }
+            }
+            Err(why) => {
+                if end.unread.as_ref() != Some(&why) {
+                    warn!(string = ?end.string, reason = %why, "the level end still changes no level");
+                }
+                if let Some(e) = &mut self.level_end {
+                    e.unread = Some(why);
+                }
             }
         }
     }
@@ -1150,6 +1258,29 @@ impl ScriptWorld {
     /// ([`crate::level_end`]).
     pub fn ask_level(&mut self, v: Value) {
         self.load_level = v;
+    }
+
+    /// The TV's level end ([`crate::level_end`]): `v` written to `system.load
+    /// level` as [`ScriptWorld::ask_level`] writes it, kept as the level end
+    /// with `string`, the name its file gives the string (`Level_214`), so
+    /// one that can't be read is held and reported ([`LevelEnd`]).
+    pub fn ask_level_end(&mut self, v: Value, string: Option<String>) {
+        self.level_end = Some(LevelEnd {
+            value: v,
+            string,
+            unread: None,
+        });
+        self.ask_level(v);
+    }
+
+    /// The TV's level end, once written.
+    pub fn level_end(&self) -> Option<&LevelEnd> {
+        self.level_end.as_ref()
+    }
+
+    /// Whether the disc's level list is in (some level on it).
+    pub fn has_levels(&self) -> bool {
+        self.levels.as_deref().is_some_and(|l| !l.is_empty())
     }
 
     /// A string's text as the run's interface reads it (a file's
@@ -2084,7 +2215,7 @@ pub const MUSIC_SCRIPTS: [&str; 8] = [
 pub const LEVEL_END_SCRIPTS: [&str; 2] = ["Temp_Level_Ender.ai", "213_Outro_IGC.ai"];
 
 /// `config` over a level's own file, linked as `level` (openspec AS.51):
-/// each level placement's definition script (`Level_Definition_*.ai`;
+/// each level placement's definition script ([`is_level_definition`];
 /// chapter 1's is on [`EVERY_TICK`] already) listed every tick, and each
 /// script the listing names that the level's file spells in another case
 /// listed under the level's spelling (level 214's camera volumes run
@@ -2112,10 +2243,7 @@ pub fn with_level(mut config: Config, files: &Files, level: u16) -> Config {
             continue;
         };
         let file = file_name(path);
-        let definition = file.len() > DEFINITION.len()
-            && file
-                .get(..DEFINITION.len())
-                .is_some_and(|h| h.eq_ignore_ascii_case(DEFINITION));
+        let definition = is_level_definition(file);
         if exact(scripts, path) || exact(first_tick, path) {
             continue;
         }
@@ -2135,8 +2263,33 @@ pub fn with_level(mut config: Config, files: &Files, level: u16) -> Config {
     config
 }
 
-/// The start of a level definition script's file name.
-const DEFINITION: &str = "Level_Definition_";
+/// Whether a script's file name is a level definition's (openspec AS.51):
+/// its letters and digits, any case, holding `leveldefin` (214's
+/// `Level_Definition_214.ai`, `LevelDefinition_003.ai`, 207's
+/// `level_definition.ai`, PvP arena 4's `_LevelDefintion_PvP_004.ai`, a
+/// challenge's `Challenge_041_Level_Definition_01.ai`) or `leveldef` then
+/// nothing, a digit or `pvp` (`_LevelDef_205.ai`, `Hub2_LevelDef.ai`,
+/// `_levelDef_PvP_202.ai`). The disc spells them 79 ways over 87 levels:
+/// AS.51's review found the first rule, `Level_Definition_` then more,
+/// listing 5 of the 20 story levels' (level_200's among those it missed)
+/// and no hub's, arena's or challenge's; by this one every story level,
+/// hub stage, PvP arena and challenge lists its own, and no arena challenge
+/// has one by name (AS.55).
+pub fn is_level_definition(file: &str) -> bool {
+    let stem = file
+        .rsplit_once('.')
+        .map_or(file, |(stem, _)| stem)
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .map(|c| c.to_ascii_lowercase())
+        .collect::<String>();
+    stem.match_indices("leveldef").any(|(at, m)| {
+        let rest = &stem[at + m.len()..];
+        rest.starts_with("in")
+            || rest.starts_with("pvp")
+            || rest.chars().next().is_none_or(|c| c.is_ascii_digit())
+    })
+}
 
 /// Whether a script's source path names one of [`CAMERA_SCRIPTS`], by its
 /// file name, any case.
@@ -3955,6 +4108,74 @@ mod tests {
         assert_eq!(unlisted.level_change(), None);
     }
 
+    /// AS.15's review: the TV's level end is never read as a stream. Its
+    /// text unread (no interface's model, as a first run's chapter 1 runs)
+    /// or the disc's list missing, it's held (`system.load level` reads it
+    /// on), taken once and said why; read again with its text or the list
+    /// it's a level change; its text naming no level stays said. A script's
+    /// own request unread is a stream as before.
+    #[test]
+    fn a_level_end_that_cant_be_read_is_held_and_said_never_a_stream() {
+        let level = at("system", "load level", None);
+        let list = || Arc::new(["level_214_tutotial_2".to_owned()].into());
+        let end = Value::Object(Obj { unit: 1, index: 77 });
+        let unread = |w: &ScriptWorld| w.level_end().and_then(|e| e.unread.clone());
+        // No model: held, said, then read off the part.
+        let (mut w, ..) = world();
+        w.set_levels(list());
+        w.ask_level_end(end, Some("Level_214".into()));
+        for _ in 0..3 {
+            w.end_step();
+            assert_eq!(w.get(&level, &mut NoEngine), Ok(end), "held");
+        }
+        assert_eq!(unread(&w), Some(Unread::NoText));
+        assert_eq!(
+            (w.level_change(), w.streams.len(), w.requests.len()),
+            (None, 0, 1)
+        );
+        w.read_level_end(None, None);
+        assert_eq!(unread(&w), Some(Unread::NoText), "still no text");
+        w.read_level_end(Some("Level_214_Tutotial_2".into()), None);
+        assert_eq!(unread(&w), None);
+        assert_eq!(
+            w.level_change().map(|c| c.name.as_str()),
+            Some("level_214_tutotial_2")
+        );
+        w.end_step();
+        assert_eq!(w.requests.len(), 1, "taken once");
+        // No list: held, then the list read again.
+        let (mut w, v) = world_with_texts(&["Level_214_Tutotial_2", ""]);
+        w.ask_level_end(v[0], None);
+        w.end_step();
+        assert_eq!(unread(&w), Some(Unread::NoList));
+        w.read_level_end(None, Some(list()));
+        assert_eq!(
+            w.level_change().map(|c| c.name.as_str()),
+            Some("level_214_tutotial_2")
+        );
+        // Its text empty (the replay's branch): said, no change.
+        let (mut w, v) = world_with_texts(&["Level_214_Tutotial_2", ""]);
+        w.set_levels(list());
+        w.ask_level_end(v[1], None);
+        w.end_step();
+        assert_eq!(unread(&w), Some(Unread::NotALevel(String::new())));
+        assert_eq!(w.level_change(), None);
+        assert_eq!(
+            Unread::NotALevel(String::new()).to_string(),
+            "its text is empty"
+        );
+        // A script's own request unread: a stream.
+        let (mut w, ..) = world();
+        w.set_levels(list());
+        w.ask_level(end);
+        w.end_step();
+        assert_eq!(
+            (w.get(&level, &mut NoEngine), w.streams.len()),
+            (Ok(Value::Null), 1)
+        );
+        assert_eq!(w.level_end(), None);
+    }
+
     /// AS.15: a request's text as an archive's name: lower-cased, a level
     /// folder and the extension taken off; nothing for blank text.
     #[test]
@@ -4039,6 +4260,47 @@ mod tests {
         assert!(fight.whitelist.lists(FIRST_FIGHT[0], "C:/x/Any.ai"));
         assert!(!other.whitelist.lists(FIRST_FIGHT[0], "C:/x/Any.ai"));
         assert!(other.whitelist.lists("", "C:/l/Level_Definition_214.ai"));
+    }
+
+    /// AS.51's review: a level definition by its file name, every way the
+    /// disc spells one, and none of the scripts named like one that aren't
+    /// (a surface's definition, a camera's, a default).
+    #[test]
+    fn a_level_definition_is_known_by_every_spelling_the_disc_has() {
+        for f in [
+            "Level_Definition_214.ai",
+            "level_definition_208.ai",
+            "Level_Definition.ai",
+            "LevelDefinition_003.ai",
+            "008_LevelDefinition.ai",
+            "Level_200_Level_Definition.ai",
+            "203_level_definition.ai",
+            "215_Level_Definition_DAVID.ai",
+            "_LevelDef_205.ai",
+            "212_LevelDef.ai",
+            "Hub2_LevelDef.ai",
+            "_LevelDefinition_PVP_Level_001.ai",
+            "_LevelDefintion_PvP_004.ai",
+            "_levelDefinition_PvP-009.ai",
+            "_levelDef_PvP_202.ai",
+            "209_LevelDef.ai",
+            "032_Leveldef.ai",
+            "Challenge_Level_001_LevelDef.ai",
+            "Challenge_041_Level_Definition_01.ai",
+            "_Challenge_Level_Definition.ai",
+            "036_Level_definition.ai",
+        ] {
+            assert!(is_level_definition(f), "{f}");
+        }
+        for f in [
+            "DefineDeathSurface.ai",
+            "Challenge_019_Camera_define.ai",
+            "Level_Default_Camera.ai",
+            "Pop_to_Camera_X.ai",
+            "Definition.ai",
+        ] {
+            assert!(!is_level_definition(f), "{f}");
+        }
     }
 
     /// AS.15's dev entry: a placement woken has no range and no buffer, so

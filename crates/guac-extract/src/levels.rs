@@ -141,6 +141,19 @@ impl Kind {
             Self::Other
         }
     }
+
+    /// Whether the game takes a player into a level of this kind alone (a
+    /// story level, a hub stage, a PvP arena, a challenge or an arena
+    /// challenge), rather than streaming it into one (the mesh bundles, the
+    /// voice pack, the ship parts, the packs) or loading it for a menu (the
+    /// title, the credits): what a script's level change can name
+    /// (openspec AS.15's review).
+    pub fn is_level(self) -> bool {
+        matches!(
+            self,
+            Self::Story | Self::Hub | Self::Pvp | Self::Challenge | Self::ArenaChallenge
+        )
+    }
 }
 
 /// A level file on the disc: its archive's name, kind and size.

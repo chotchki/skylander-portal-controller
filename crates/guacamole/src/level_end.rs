@@ -17,7 +17,11 @@
 //!   once, as the Pause Controller's level switch writes it, in place of the
 //!   end-of-level sequencing between them (the completion screen, the movie
 //!   the outro queues, the switch's clean-up; stand-in ledger: `level-end`).
-//!   The host takes it from there ([`crate::scripts::ScriptWorld::end_step`]).
+//!   The host takes it from there ([`crate::scripts::ScriptWorld::end_step`]),
+//!   holding it and saying why when it can't be read as a level on the disc
+//!   ([`crate::scripts::Unread`]: a first run's chapter 1 has no interface's
+//!   model to read its English text by), and the TV reads it again
+//!   ([`crate::scripts::ScriptWorld::read_level_end`]).
 
 use guac_script::{Halt, Value, Vm};
 use tracing::info;
@@ -95,8 +99,12 @@ pub fn step(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<Option<Ended>, 
         return Ok(None);
     };
     host.world.level_end_asked = true;
-    info!(level = ?host.world.text_of(to), "the level end recorded: its level asked for as the level switch would");
-    host.world.ask_level(to);
+    let string = match to {
+        Value::Object(o) => vm.program().name_of(o).map(str::to_owned),
+        _ => None,
+    };
+    info!(?string, text = ?host.world.text_of(to), "the level end recorded: its level asked for as the level switch would");
+    host.world.ask_level_end(to, string);
     Ok(Some(Ended::Asked(to)))
 }
 

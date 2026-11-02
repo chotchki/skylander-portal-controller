@@ -158,9 +158,44 @@ pub(crate) struct ScriptSource {
     /// The disc's levels by archive name (openspec AS.15): what a script's
     /// request is held against.
     levels: Arc<std::collections::HashSet<String>>,
+    /// The extract the part came from, and each unit's interface keys: what
+    /// a level end whose string the run can't read is read again by, off
+    /// the interface's part once it's in (openspec AS.15's review).
+    extract: Option<(std::path::PathBuf, guac_extract::intros::IrFormat)>,
+    interface_keys: Vec<guac_interface::load::Keys>,
 }
 
 impl ScriptSource {
+    /// The English text of the file string `obj`, off the interface's part
+    /// in the extract the part came from ([`guacamole::interface_host::file_text`]).
+    pub(crate) fn file_text(&self, obj: guac_script::Obj) -> Result<String, String> {
+        let (dir, ir) = self
+            .extract
+            .as_ref()
+            .ok_or("the part's extract isn't known")?;
+        guacamole::interface_host::file_text(
+            dir,
+            *ir,
+            &self.program.units,
+            &self.interface_keys,
+            obj,
+        )
+    }
+
+    /// The disc's levels read again off the extract the part came from
+    /// (openspec AS.15's review); none when that isn't known or the list
+    /// doesn't read.
+    pub(crate) fn disc_levels(&self) -> Arc<std::collections::HashSet<String>> {
+        Arc::new(
+            self.extract
+                .as_ref()
+                .map(|(dir, _)| guacamole::level_scripts::disc_levels(dir))
+                .unwrap_or_default()
+                .into_iter()
+                .collect(),
+        )
+    }
+
     /// The level whose own file the part links last, by archive.
     pub(crate) fn level(&self) -> &str {
         &self.level
@@ -281,7 +316,22 @@ impl ScriptSource {
             interface: None,
             level: guac_extract::levels::LEVELS[0].to_owned(),
             levels: Arc::default(),
+            extract: None,
+            interface_keys: Vec::new(),
         }
+    }
+
+    /// This part as read off the extract at `dir`, its units' interface
+    /// keys `keys`.
+    pub(crate) fn with_extract(
+        mut self,
+        dir: &std::path::Path,
+        ir: guac_extract::intros::IrFormat,
+        keys: Vec<guac_interface::load::Keys>,
+    ) -> Self {
+        self.extract = Some((dir.to_path_buf(), ir));
+        self.interface_keys = keys;
+        self
     }
 }
 
@@ -302,6 +352,10 @@ pub(crate) struct Part {
     /// (openspec AS.15, AS.51).
     pub(crate) level: String,
     pub(crate) levels: Vec<String>,
+    /// The extract it came from and its units' interface keys (AS.15's
+    /// review: a level end read again off the interface's part).
+    pub(crate) extract: Option<(std::path::PathBuf, guac_extract::intros::IrFormat)>,
+    pub(crate) interface_keys: Vec<guac_interface::load::Keys>,
 }
 
 /// Installs the run over a linked part (the level's load), keeping the part
@@ -320,6 +374,8 @@ pub(crate) fn install(world: &mut World, part: Part) {
         interface: part.interface,
         level: part.level,
         levels: Arc::new(part.levels.into_iter().collect()),
+        extract: part.extract,
+        interface_keys: part.interface_keys,
     };
     install_from(world, &source);
     world.insert_resource(source);
@@ -1909,6 +1965,16 @@ pub(crate) struct RunShot {
     pub stopped: Vec<String>,
     pub level_change: Option<LevelChangeShot>,
     pub streams: Vec<Option<String>>,
+    /// The TV's level end, once written: its string's name and, while it
+    /// changes no level, why (AS.15's review).
+    pub level_end: Option<LevelEndShot>,
+}
+
+/// The TV's level end as [`RunShot`] reports it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct LevelEndShot {
+    pub string: Option<String>,
+    pub unread: Option<String>,
 }
 
 /// A level change a script asked for, as [`RunShot`] reports it.
@@ -1951,6 +2017,10 @@ impl RunShots<'_> {
                 text: c.text.clone(),
             }),
             streams: w.streams.iter().cloned().collect(),
+            level_end: w.level_end().map(|e| LevelEndShot {
+                string: e.string.clone(),
+                unread: e.unread.as_ref().map(ToString::to_string),
+            }),
         })
     }
 }
@@ -2596,6 +2666,8 @@ mod tests {
                 interface: None,
                 level: LEVEL.to_owned(),
                 levels: Vec::new(),
+                extract: None,
+                interface_keys: Vec::new(),
             },
         );
         let w = world.resource::<ScriptWorld>();
@@ -2670,6 +2742,8 @@ mod tests {
                     interface,
                     level: LEVEL.to_owned(),
                     levels: Vec::new(),
+                    extract: None,
+                    interface_keys: Vec::new(),
                 },
             );
             world

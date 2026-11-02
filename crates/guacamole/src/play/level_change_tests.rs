@@ -108,9 +108,10 @@ fn a_level_left_with_the_hero_in_it_brings_the_portals_figures_into_the_next() {
     assert_eq!(mode(&app), Mode::Level);
 }
 
-/// AS.49: while the next level is asked and read, the level the hero walks
-/// is held (the pads move no one, no step runs); once it's handed to the
-/// load the hold is the portal's again.
+/// AS.49: while the next level is asked and read (waiting for the fetch,
+/// then its parts read), the level the hero walks is held (the pads move no
+/// one, no step runs); once it's handed to the load the hold is the
+/// portal's again.
 #[test]
 fn the_level_holds_while_the_next_is_read() {
     let tmp = tempfile::tempdir().unwrap();
@@ -119,6 +120,11 @@ fn the_level_holds_while_the_next_is_read() {
     app.insert_resource(crate::level_choice::LevelChoice::waiting_for_tests(OTHER));
     app.update();
     assert_eq!(mode(&app), Mode::Held);
+    // Its fetch running, the parts being read (AS.15's review: the hold
+    // covered the ask's wait alone in the tests).
+    app.insert_resource(crate::level_choice::LevelChoice::running_for_tests(OTHER));
+    app.update();
+    assert_eq!(mode(&app), Mode::Held, "held while its parts are read");
     app.insert_resource(crate::level_choice::LevelChoice::default());
     app.update();
     assert_eq!(mode(&app), Mode::Level);
