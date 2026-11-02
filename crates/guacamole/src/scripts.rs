@@ -3048,7 +3048,40 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
     if let (Some(i), Whitelist::Only { placements, .. }) = (intro(name), &mut config.whitelist) {
         placements.push(i.to_owned());
     }
+    // What takes the way on past its fights (openspec AS.59).
+    if let Whitelist::Only { placements, .. } = &mut config.whitelist {
+        placements.extend(passages(name).iter().map(|s| (*s).to_owned()));
+    }
     with_level(config, files, level)
+}
+
+/// What takes the way on through a level past its fights (openspec AS.59),
+/// by level and placement name, listed and never walked. Level 214's from
+/// its first island to its second: once both Elf Nears are beaten the jump
+/// pad's activator pans to the jump pad (`PvP_JumpPad_NORMAL(2)`) and wakes
+/// it, which launches a hero up to the rise holding the first ship part
+/// (`Ship_part_1(1)`); taken, it shows itself to him and, gone, wakes the
+/// sail
+/// (`214_Recover_First_Part_IGC`), whose cutscene sets him down on the
+/// second island's ship and which the TV skips
+/// ([`crate::level_end::SKIPPED_CUTSCENES`]); Setup_003 waits for it.
+pub const PASSAGES: [(&str, &[&str]); 1] = [(
+    "level_214_tutotial_2",
+    &[
+        "Jumpad_Activator_First_Island",
+        "PvP_JumpPad_NORMAL(2)",
+        "Ship_part_1(1)",
+        "214_Recover_First_Part_IGC",
+    ],
+)];
+
+/// The placements [`PASSAGES`] lists for the level whose archive is
+/// `level`.
+pub fn passages(level: &str) -> &'static [&'static str] {
+    PASSAGES
+        .iter()
+        .find(|(l, _)| *l == level)
+        .map_or(&[], |(_, p)| p)
 }
 
 /// The VM over `program` with every running placement of `files` added
@@ -4835,6 +4868,23 @@ mod tests {
                 .whitelist
                 .lists("Enemy_Chompy2_E(1)", "C:/x/S2_Enemy_Chompy.ai")
         );
+    }
+
+    /// openspec AS.59: level 214's way from its first island to its second
+    /// by name, on 214's listing alone and in no encounter (never walked).
+    #[test]
+    fn level_214s_way_to_its_second_island_is_listed_by_name() {
+        let files = Files::default();
+        let l214 = level_config(Mode::Play, &files, 4, "level_214_tutotial_2");
+        let other = level_config(Mode::Play, &files, 4, "level_212");
+        let e = encounter("level_214_tutotial_2").unwrap();
+        for name in passages("level_214_tutotial_2") {
+            assert!(l214.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+            assert!(!other.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+            assert!(!e.placements.contains(name), "{name} isn't walked");
+        }
+        assert!(passages("level_214_tutotial_2").contains(&"214_Recover_First_Part_IGC"));
+        assert!(passages("level_212").is_empty());
     }
 
     /// openspec AS.54: a level's first encounter walks its placements that

@@ -389,3 +389,60 @@ fn level_214s_second_fight_is_fought_on_the_first_island() {
     assert!(xp > xp_before, "his figure's paid: {xp}");
     assert!(stops.is_empty(), "{stops:#?}");
 }
+
+/// Where level 214's first ship part floats, on the rise the jump pad
+/// reaches (metres, its file's place).
+const SHIP_PART_1: [f32; 3] = [29.45, -6.92, 56.37];
+/// Where the sail's cutscene sets the hero down on the second island's
+/// ship (metres, the run's own read: its second scene's player waypoint).
+const ON_THE_SECOND_ISLAND: [f32; 3] = [-383.178, -12.581, 714.414];
+
+/// openspec AS.59: level 214's way from its first island to its second, on
+/// the TV's listing (`scripts::PASSAGES`). The hero at the first ship part
+/// takes it; it waits on a press (South, pulsed as a hand would: with none
+/// it never goes), then goes and its shutdown wakes the sail; the TV skips
+/// the sail's cutscene a frame in (`level_end::SKIPPED_CUTSCENES`), which
+/// sets him down on the second island's ship and takes the sail off, so
+/// Setup_003, which waits for it, can start. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_first_ship_part_sails_to_the_second_island() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, mut stops) = joined_214();
+    let part = handle(&run, "Ship_part_1(1)");
+    let sail = handle(&run, "214_Recover_First_Part_IGC");
+    run.put(Vec3::from_array(SHIP_PART_1), 0.0);
+    let (mut taken, mut sailed) = (None, None);
+    for k in 0..1200u32 {
+        step(&mut run, &mut stops, [k % 20 < 2, false, false, false]);
+        if taken.is_none() && gone(&run, part) {
+            taken = Some(run.steps);
+        }
+        if sailed.is_none() && gone(&run, sail) {
+            sailed = Some(run.steps);
+            break;
+        }
+    }
+    for _ in 0..120 {
+        step(&mut run, &mut stops, [false; 4]);
+    }
+    let at = run.hero().pivot;
+    println!(
+        "the part taken at {taken:?}, the sail done at {sailed:?}; the hero at {at}, the HUD hidden {}; {:.1} s; load at end: {}",
+        guacamole::scripts::player_hud_hidden(&run.vm),
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    assert!(taken.is_some(), "the part taken");
+    assert!(sailed.is_some(), "the sail done");
+    assert!(
+        at.distance(Vec3::from_array(ON_THE_SECOND_ISLAND)) < 2.0,
+        "on the second island: {at}"
+    );
+    assert!(
+        !guacamole::scripts::player_hud_hidden(&run.vm),
+        "the HUD back"
+    );
+    assert!(stops.is_empty(), "{stops:#?}");
+}
