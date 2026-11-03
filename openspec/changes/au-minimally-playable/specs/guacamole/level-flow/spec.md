@@ -12,6 +12,10 @@ When a level's own end-of-level sequencing runs, the TV SHALL show its completio
 - **WHEN** chapter 1's outro ends
 - **THEN** its completion screen shows over the held level in the disc's own art, and a continue press goes on to FMV02, then level 214
 
+#### Scenario: Moving between the tabs
+- **WHEN** a player presses left or right on the completion screen
+- **THEN** the next tab's objectives show (its story goals, its dares, its collections), and the continue press on any tab goes on
+
 #### Scenario: The screen's art isn't extracted yet
 - **WHEN** a level ends on an extract that doesn't hold the screen's art
 - **THEN** the screen still shows the level's results in the TV's own style, and the TV's report says the art is missing

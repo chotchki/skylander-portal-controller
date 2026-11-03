@@ -6413,6 +6413,27 @@ mod tests {
         assert!(on.distance(at) > 0.1, "he walks on: {at} -> {on}");
     }
 
+    /// AU.5: the level's completion screen holds the level while it waits
+    /// for its continue, him and the clock still under the stick, and lets
+    /// it go once it's closed.
+    #[test]
+    fn the_completion_screen_holds_the_level() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = walking(tmp.path());
+        assert_eq!(mode(&app), Mode::Level);
+        app.insert_resource(crate::completion::CompletionOpen(true));
+        until(&mut app, "the hold", |a| mode(a) == Mode::Held);
+        assert_eq!(alert(&app), None, "no alert: the screen's hold");
+        let at = stands_still(&mut app, 30);
+        app.insert_resource(crate::completion::CompletionOpen(false));
+        until(&mut app, "the walk again", |a| mode(a) == Mode::Level);
+        for _ in 0..10 {
+            app.update();
+        }
+        let on = hero(&app).pivot;
+        assert!(on.distance(at) > 0.1, "he walks on: {at} -> {on}");
+    }
+
     /// AG.63: with a second Eruptor holding the level, the hero taken off
     /// brings the other in where he stood and the way he faced, the camera
     /// the same, and the level carries on.

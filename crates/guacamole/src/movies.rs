@@ -5,14 +5,15 @@
 //! [`guacamole::scripts::LevelEndMovie`]). Here it's converted the first
 //! time it's played, by AS.9's `transcode_movie` into the extract, on a
 //! thread of its own while the level holds (the portal's header saying so,
-//! [`Movies::band`], drawn on the portal view under the held level: AS.88),
-//! then played full screen on AB.10's player with its
+//! [`Movies::band`], drawn over the held level since AS.88:
+//! `crate::held_band`), then played full screen on AB.10's player with its
 //! sound, the level and its sounds held until it's over. The original's
 //! skip ends it: △ or Start pressed on any pad, the two buttons the
 //! original's movie fader reads off a joined player's controller (`action
-//! 4` and `start button`), the fader's skipped branch left to the scripts
-//! once the TV runs the end-of-level sequencing (AS.53).
-//! (Stand-in ledger: `level-end`.)
+//! 4` and `start button`). Since AS.53 the end-of-level sequencing hands it
+//! over in its movie state, the movie's sprite and its fader made by the
+//! scripts, and the fader's own clean-up runs once it's over
+//! (stand-in ledger: `movie-fader`).
 //!
 //! A movie that won't convert or open is over all the same, with why: the
 //! level goes on as if it had played. One whose run is installed again

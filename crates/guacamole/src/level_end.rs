@@ -45,11 +45,12 @@
 //!   ([`crate::scripts::LevelEndMovie`], openspec AS.19), and once it's over
 //!   the fader's own clean-up (`UI - Clean up Movie Fader`), which takes the
 //!   movie's sprite off as the fader's update does at a movie's end, so
-//!   state 5 sees it gone (stand-in ledger: `level-end`: the player and its
-//!   skip in place of the movie sprite and the fader's update).
+//!   state 5 sees it gone (the player and its skip in place of the movie
+//!   sprite and the fader's update; stand-in ledger: `movie-fader`).
 //! - `Change Level` set: its level written to `system.load level` once, as
 //!   the Pause Controller's level switch writes it, the switch's clean-up
-//!   not run (the TV takes the run down at a level change; `level-end`).
+//!   not run (the TV takes the run down at a level change;
+//!   stand-in ledger: `level-switch`).
 //!   The host takes it from there ([`crate::scripts::ScriptWorld::end_step`]),
 //!   holding it and saying why when it can't be read as a level on the disc
 //!   ([`crate::scripts::Unread`]: a first run's chapter 1 has no interface's
@@ -57,8 +58,8 @@
 //!   ([`crate::scripts::ScriptWorld::read_level_end`]).
 //!
 //! A run that can't sequence it ([`sequencing`]: no game systems' placement
-//! running, or its script stopped) takes the level on as AS.15's stand-in
-//! did: the movie the level end queued, then its level written.
+//! running, or its script stopped) takes the level on as AS.15 did before
+//! it: the movie the level end queued, then its level written.
 
 use guac_script::{Halt, PlacementId, Value, Vm};
 use tracing::{info, warn};
@@ -597,7 +598,7 @@ fn continue_now(
     Ok(Some(Ended::Continued))
 }
 
-/// AS.15's stand-in over a run that can't sequence the level's end: the
+/// AS.15's way over a run that can't sequence the level's end: the
 /// movie the level end queued handed to the player, then its level asked.
 fn stand_in(vm: &mut Vm, host: &mut WorldHost<'_, '_>, to: Value) -> Result<Option<Ended>, Halt> {
     if host.world.level_end_movie.is_none()

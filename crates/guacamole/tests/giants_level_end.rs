@@ -10,8 +10,8 @@
 //! outro's player waypoint, as the TV's dev entry's end anchor does; from
 //! there every step is the scripts' (the fade, the outro woken and its
 //! cutscene played to its end since AS.52, its own `Game - Level End`),
-//! then `guacamole::level_end`'s level change.
-//! (Stand-in ledger: `level-end`.)
+//! then the end-of-level sequencing (AS.53) and `guacamole::level_end`'s
+//! level switch (stand-in ledger: `level-switch`).
 
 use guac_motion::seam::Vec3;
 use guac_script::{Halt, Mode, Value};
