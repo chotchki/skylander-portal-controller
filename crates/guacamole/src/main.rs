@@ -22,6 +22,7 @@ mod dev_entry;
 mod driver;
 mod emitters;
 mod extraction;
+mod held_band;
 mod hero;
 mod hero_scripts;
 mod hud;
@@ -541,6 +542,8 @@ fn run_tv(
             // AU.5: the level's completion screen before it.
             movies::MoviesPlugin,
             completion::CompletionPlugin,
+            // AS.88: the header's band over a held level.
+            held_band::HeldBandPlugin,
             slow_frames::SlowFramesPlugin,
             // AG.290: the world's button prompts by the walking pad.
             button_prompt::ButtonPromptPlugin,
