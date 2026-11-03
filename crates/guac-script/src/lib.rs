@@ -494,7 +494,12 @@
 //!   measurement.x`), or a host member's number (`setref r = my.actorinfo.
 //!   movement.actorphysics.ground turn rate`, as the hero's movement data
 //!   keeps his): written through `valuedereferencer`, that part or member
-//!   changes; read, a host member's is asked anew. Two references to one
+//!   changes; read, a host member's is asked anew. A reference set to a
+//!   number instead (a macro's reference parameter its caller left at its
+//!   literal 0) names a value of its own holding the number, made the first
+//!   time it's written or read through: a write stays there and reaches no
+//!   other variable (a reading, openspec AU.2: the original's reference to a
+//!   number reads as the number, and nothing reads the written one back). Two references to one
 //!   host member compare equal. `undefined` reads 0 as a number and as an
 //!   object none.
 //! - An object named by namespace and name (EXNM) holds nothing to write

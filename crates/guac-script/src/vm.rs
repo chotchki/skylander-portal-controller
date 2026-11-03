@@ -4198,6 +4198,25 @@ impl Vm {
                 None => unsupported("value dereferencer on an object that holds no value"),
             },
             Value::Null => Err(Fault::Nothing),
+            // A reference set to a number, not a variable (a macro's
+            // reference parameter its caller left at its literal 0): it
+            // names a value of its own holding that number, made the first
+            // time it's written or read through, so a write stays there and
+            // reaches no one else's (crate docs, Variables, structures and
+            // sets; openspec AU.2).
+            v @ (Value::Int(_) | Value::Float(_)) => match prev {
+                Spot::Cell(r) if self.cells[r as usize].kind == CellKind::Reference => {
+                    self.cells.push(Cell {
+                        kind: CellKind::Value,
+                        value: v,
+                        origin: None,
+                    });
+                    let own = (self.cells.len() - 1) as u32;
+                    self.cells[r as usize].value = Value::Cell(own);
+                    Ok(Spot::Cell(own))
+                }
+                _ => unsupported(format!("value dereferencer on {v:?}")),
+            },
             other => unsupported(format!("value dereferencer on {other:?}")),
         }
     }
