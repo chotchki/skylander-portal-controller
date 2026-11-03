@@ -1665,11 +1665,20 @@ fn a_reset_through_a_reference_puts_back_the_number_it_names() {
     assert!(matches!(s, Value::Object(_)), "the reference kept: {s:?}");
 }
 
+/// `undefined` reads 0 as a number and none as an object; a value check
+/// whose left side starts at it skips whatever it compares (openspec AS.96:
+/// `== 0`, `== 1`, `>= 0` and a member past it alike), while one reading it
+/// on the right compares 0.
 #[test]
 fn undefined_reads_0_as_a_number_and_none_as_an_object() {
     let p = program(|w| {
         let r = w.variable("r", "ScriptReference", None);
-        let (some, zero) = (var(w, "some"), var(w, "zero"));
+        let (some, zero, left, right) = (
+            var(w, "some"),
+            var(w, "zero"),
+            var(w, "left"),
+            var(w, "right"),
+        );
         idle(
             w,
             |_| {},
@@ -1688,21 +1697,49 @@ fn undefined_reads_0_as_a_number_and_none_as_an_object() {
                 let one = w.int(1);
                 w.set(&[El::Local(some)], one);
                 w.end_block(c);
-                let z = w.int(0);
+                // `undefined` written as a number reads 0 into it.
+                let u = w.value(&[El::Member("abstractscriptgroup", "undefined")]);
+                w.set(&[El::Local(zero)], u);
+                // On the left of a value check: skipped, whatever it asks.
+                for (path, code, against) in [
+                    (vec![El::Member("abstractscriptgroup", "undefined")], 1, 0),
+                    (vec![El::Member("abstractscriptgroup", "undefined")], 1, 1),
+                    (vec![El::Member("abstractscriptgroup", "undefined")], 2, 0),
+                    (
+                        vec![
+                            El::Member("abstractscriptgroup", "undefined"),
+                            El::Member("setvariant", "count"),
+                        ],
+                        1,
+                        0,
+                    ),
+                ] {
+                    let l = w.value(&path);
+                    let n = w.int(against);
+                    let (cp, co) = w.open(Class::CheckValue, "if");
+                    w.refer(co, 0x1C, l);
+                    w.word(co, 0x20, code);
+                    w.refer(co, 0x24, n);
+                    w.inc(&[El::Local(left)]);
+                    w.end_block(cp);
+                }
+                // On its right: 0, so `zero == undefined` holds.
+                let l = w.value(&[El::Local(zero)]);
                 let u = w.value(&[El::Member("abstractscriptgroup", "undefined")]);
                 let (cp, co) = w.open(Class::CheckValue, "if");
-                w.refer(co, 0x1C, u);
+                w.refer(co, 0x1C, l);
                 w.word(co, 0x20, 1);
-                w.refer(co, 0x24, z);
-                let one = w.int(1);
-                w.set(&[El::Local(zero)], one);
+                w.refer(co, 0x24, u);
+                w.inc(&[El::Local(right)]);
                 w.end_block(cp);
             },
         );
     });
     let (vm, id) = run(&p, Config::new(Mode::Strict), 1);
     assert_eq!(vm.local(id, "some"), None, "undefined is no object");
-    assert_eq!(vm.local(id, "zero"), Some(Value::Int(1)));
+    assert_eq!(vm.local(id, "zero"), Some(Value::Int(0)), "it reads 0");
+    assert_eq!(vm.local(id, "left"), None, "no check through it held");
+    assert_eq!(vm.local(id, "right"), Some(Value::Int(1)));
 }
 
 #[test]

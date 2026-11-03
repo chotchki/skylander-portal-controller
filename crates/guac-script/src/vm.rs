@@ -641,6 +641,19 @@ fn tag_global(program: &Program, o: OperandId) -> Option<GlobalId> {
     }
 }
 
+/// Whether an operand's path starts at `undefined`: a value check's left
+/// side through it reads nothing (openspec AS.96).
+fn starts_at_undefined(program: &Program, o: OperandId) -> bool {
+    let Some(Operand::Path { elems, .. }) = program.operands.get(o as usize) else {
+        return false;
+    };
+    let first = match elems.first() {
+        Some(Elem::Member(m)) => Builtin::of(*m),
+        _ => None,
+    };
+    matches!(first, Some(Builtin::Undefined))
+}
+
 /// Whether a tag's value is the VM's `null` or `undefined` alone: a tag
 /// naming nothing (openspec AH.28: the spike gate's `close_set`).
 fn tag_names_nothing(program: &Program, o: OperandId) -> bool {
@@ -2664,6 +2677,12 @@ impl Vm {
                 self.reset(spot, host)?;
             }
             Ins::CheckValue { lhs, relation, rhs } => {
+                // A left side through `undefined` leaves the walk no object
+                // to compare, so the check skips as one through nothing does
+                // (crate docs, Checks and flows).
+                if lhs.is_some_and(|o| starts_at_undefined(program, o)) {
+                    return Err(Fault::Nothing);
+                }
                 let l = self
                     .path(program, *lhs, host)
                     .and_then(|s| self.read(s, host));

@@ -104,7 +104,7 @@ On level 214's second island, the hero walking off the ship to Setup_003's trigg
 - **THEN** the Tree Rex eats a Chompy, and the other three and the Tree Rex go down
 
 ### Requirement: A Tree Rex's homing charge
-On level 214 a Tree Rex's ranged attack SHALL make a homing charge 10 ft in front of it, which its script steers at its target at 25 ft/s turning at most 50°/s with no body, so nothing it meets stops it, for 2.5 s at most, laying a trail of dirt mounds; within 4 ft of a creature it SHALL strike it (19-21 to Eruptor unless his armour turns it), a bramble rising, and take itself off 0.4 s on, as it does when its time runs out.
+On level 214 a Tree Rex's ranged attack SHALL make a homing charge 10 ft in front of it, which its script steers at its target at 25 ft/s turning at most 50°/s with no body, so nothing it meets stops it, for 2.5 s at most, laying a trail of dirt mounds; within 4 ft of a creature it SHALL strike it (17-20 to Eruptor as measured, his armour turning some or all), a bramble standing 1 s, and go 1.2 s after its strike, or 0.2 s after its time runs out.
 
 #### Scenario: The hero walking at the Tree Rex
 - **WHEN** the Tree Rex throws its charge as the hero walks at it from Setup_003's trigger

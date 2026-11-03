@@ -1158,8 +1158,9 @@ const SETUP_003_TRIGGER: [f32; 2] = [-357.64, 723.11];
 
 /// A Tree Rex's homing charge (openspec AS.68): the step it was made and
 /// where, how far it went and its top speed across the ground (m/s, a
-/// step's move), the step it struck or ran out and the step it went, and
-/// the hero's health either side of its strike.
+/// step's move), the step it struck or ran out and the step it went, the
+/// hero's health either side of its strike and how far off him across the
+/// ground it ended (m).
 #[derive(Debug, Default)]
 struct Charge {
     handle: Handle,
@@ -1171,6 +1172,7 @@ struct Charge {
     ended: Option<u32>,
     gone: Option<u32>,
     health: Option<(f32, f32)>,
+    off_him: Option<f32>,
 }
 
 /// Each homing charge standing or gone, followed a step: made, moved,
@@ -1208,6 +1210,8 @@ fn watch_charges(run: &Run, charges: &mut Vec<Charge>, health: (f32, f32)) {
         if c.ended.is_none() && behaviour(run, h).as_deref() == Some("tree growing out of ground") {
             c.ended = Some(run.steps);
             c.health = Some(health);
+            let me = run.hero().pivot;
+            c.off_him = Some((a.position.x - me.x).hypot(a.position.z - me.z));
         }
     }
 }
@@ -1353,29 +1357,48 @@ fn level_214s_third_fight_is_fought_on_the_second_island() {
             "struck or ran out, then gone: {c:?}"
         );
     }
+    // Struck him, not a Chompy: it ended before its 2.5 s, within its 4 ft
+    // of him across the ground, with 0.3 m for the step it's seen in (the
+    // two closing at 12-13 m/s).
     assert!(
-        charges
-            .iter()
-            .any(|c| c.flew > 5.0 && c.ended.is_some_and(|e| e - c.made < 150)),
+        charges.iter().any(|c| c.flew > 5.0
+            && c.ended.is_some_and(|e| e - c.made < 150)
+            && c.off_him.is_some_and(|d| d < 4.0 * 0.3048 + 0.3)),
         "one flew at him and struck: {charges:?}"
     );
     assert!(stops.is_empty(), "{stops:#?}");
 }
 
+/// A fight on the stick ([`on_the_stick_at`]): the step each foe was
+/// beaten at, every drop in his health (a bite) with its step, and where
+/// the watched actor last stood before it went, if it did.
+struct OnTheStick {
+    beaten: Vec<Option<u32>>,
+    bites: Vec<(u32, f32)>,
+    last: Option<Vec3>,
+}
+
 /// Up to `steps` steps on the stick at the nearest of `foes` standing (the
 /// first of them while it stands), his first attack mashed once within
-/// 4.5 m of it, as a hand would, until every one is beaten: the step each
-/// was beaten at, and every drop in his health (a bite) with its step.
+/// 4.5 m of it, as a hand would, until every one is beaten, `watch` followed
+/// until it goes.
 fn on_the_stick_at(
     run: &mut Run,
     stops: &mut Vec<String>,
     foes: &[Handle],
     steps: u32,
-) -> (Vec<Option<u32>>, Vec<(u32, f32)>) {
+    watch: Option<Handle>,
+) -> OnTheStick {
     let mut beaten: Vec<Option<u32>> = vec![None; foes.len()];
     let mut bites = Vec::new();
     let mut health = run.health().unwrap_or(0.0);
+    let mut last = None;
     for k in 0..steps {
+        if let Some(w) = watch
+            && !gone(run, w)
+        {
+            last = run.world.actor(w).map(|a| a.position);
+        }
         for (b, h) in beaten.iter_mut().zip(foes) {
             if b.is_none() && gone(run, *h) {
                 *b = Some(run.steps);
@@ -1410,7 +1433,11 @@ fn on_the_stick_at(
         }
         health = now;
     }
-    (beaten, bites)
+    OnTheStick {
+        beaten,
+        bites,
+        last,
+    }
 }
 
 /// Where the key below the gangplank's yard lies (its spawner's place),
@@ -1475,7 +1502,7 @@ fn level_214s_fourth_fight_is_fought_past_the_locked_door() {
     }
     assert!(gone(&run, sail), "the sail done");
     assert_eq!(walk(&mut run, &mut stops, &[SETUP_003_TRIGGER]), Ok(()));
-    let (beaten_003, _) = on_the_stick_at(&mut run, &mut stops, &setup_003, 3600);
+    let beaten_003 = on_the_stick_at(&mut run, &mut stops, &setup_003, 3600, None).beaten;
     assert!(
         beaten_003.iter().all(Option::is_some),
         "Setup_003 beaten: {beaten_003:?}"
@@ -1505,7 +1532,13 @@ fn level_214s_fourth_fight_is_fought_past_the_locked_door() {
         "to Setup_004's triggers"
     );
     let mut mabu_gone = None;
-    let (beaten, bites) = on_the_stick_at(&mut run, &mut stops, &foes, 6000);
+    let mabu_from = run.world.actor(mabu).map(|a| a.position);
+    let OnTheStick {
+        beaten,
+        bites,
+        last: mabu_last,
+    } = on_the_stick_at(&mut run, &mut stops, &foes, 6000, Some(mabu));
+    let house = run.at("Interior_Door(3)");
     for _ in 0..240 {
         step(&mut run, &mut stops, [false; 4]);
     }
@@ -1536,7 +1569,15 @@ fn level_214s_fourth_fight_is_fought_past_the_locked_door() {
         load()
     );
     assert!(beaten.iter().all(Option::is_some), "all beaten: {beaten:?}");
-    assert!(gone(&run, mabu), "the Mabu ran into the house and went");
+    // He ran his waypoints to the house's door and went there.
+    let off_the_door = mabu_last.map(|p| (p.x - house.x).hypot(p.z - house.z));
+    println!(
+        "the Mabu from {mabu_from:?} to {mabu_last:?}, {off_the_door:?} m from the house's door at {house}"
+    );
+    assert!(
+        gone(&run, mabu) && off_the_door.is_some_and(|d| d < 2.0),
+        "the Mabu ran into the house and went: {mabu_last:?}, {off_the_door:?} m off {house}"
+    );
     assert!(gone(&run, controller), "Setup_004's controller done");
     assert!(stops.is_empty(), "{stops:#?}");
 }

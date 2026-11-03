@@ -263,6 +263,14 @@
 //!   check is what its left side read, whether it held or not: a value, a
 //!   reference, or `if member`'s set (openspec AS.57, a reading: level 214's
 //!   tool spawner checks its bomb's clones through the check before).
+//! - An `if value` whose left side starts at `undefined` skips whatever it
+//!   compares: the walk reads 0 there but leaves no object to compare it
+//!   on, as a path through nothing does (openspec AS.96, a reading of the
+//!   check and its walk in code; AH.10's oracle run walked into chapter 1's
+//!   cave interior, whose entry check ends the tick when `undefined == 0`
+//!   holds, and a deleted variable's checks across the disc read as
+//!   switched off, `== 0` and `== 1` alike). On the right side, in an
+//!   expression or as a reference it still reads 0 and none.
 //! - `if member` asks of its left side's set and its right side (a set, or
 //!   one object): code 0 holds when every member of the right side is in
 //!   the left, 1 when none is, 2 when any is, 3 when the left holds each at
@@ -605,8 +613,8 @@
 //!
 //! - `optoplevelbehavior.my`, the running placement; `abstractscriptgroup.null`
 //!   (nothing) and `.undefined` (reads 0, writes go nowhere, a set change
-//!   into it and a write to its count too, and a membership check, a `for
-//!   each` or a `find subset` of it skips;
+//!   into it and a write to its count too, and a value check through it, a
+//!   membership check, a `for each` or a `find subset` of it skips;
 //!   its `setvariant` members read as an empty set's: a count of 0, no
 //!   element; openspec AS.34: challenge 49's trees raise its count, then
 //!   read its last);
