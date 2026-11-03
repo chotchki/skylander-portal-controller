@@ -59,7 +59,9 @@ pub fn posed(
 /// time this step, oldest first (a later one lies over it): every sequence
 /// on him that hasn't played out or been stopped, by its palette slot, but
 /// his locomotion's, which it lays these over (openspec AH.49:
-/// [`crate::script_engine::Sequence::laid_over`]).
+/// [`crate::script_engine::Sequence::laid_over`]). A clip past one Havok
+/// block is the block playing at the time within it (openspec AS.78: an
+/// animator camera's rig, whose node a shot's view hangs on).
 pub fn playing<'p>(
     world: &ScriptWorld,
     actor: Handle,
@@ -71,8 +73,7 @@ pub fn playing<'p>(
         .filter(|s| s.actor == actor && s.plays() && s.laid_over())
         .filter_map(|s| {
             let (_, slot) = world.clip_of(s)?;
-            let clip = palette.clip(u16::try_from(slot).ok()?)?;
-            Some((clip, f64::from(s.time)))
+            palette.clip_at(u16::try_from(slot).ok()?, f64::from(s.time))
         })
         .collect()
 }
@@ -319,5 +320,36 @@ mod tests {
             .map(|(c, _)| c.name.as_str())
             .collect();
         assert_eq!(names, ["clip2.ma", "clip3.ma"]);
+        // AS.78: a clip past one block in slot 3 plays the block its time
+        // is in, at the time within it (two 1 s blocks; 1.5 s in is the
+        // second's half way), and a node rides that block's swing.
+        let mut long = palette.clone();
+        long.entries[3].entry = guac_ir::palette::SlotEntry::Blocks {
+            additive: false,
+            partial: false,
+            layered: false,
+            motion_extraction: 0,
+            clip: guac_ir::clip::Blocks {
+                name: "Long.ma".into(),
+                duration: 2.0,
+                frame_duration: 1.0,
+                frames: 3,
+                blocks: vec![clip("first.ma"), clip("second.ma")],
+            },
+        };
+        world.sequences[3].time = 1.5;
+        let played: Vec<(&str, f64)> = playing(&world, 7, &long)
+            .iter()
+            .map(|(c, t)| (c.name.as_str(), *t))
+            .collect();
+        assert_eq!(played, [("clip2.ma", 0.125), ("second.ma", 0.5)]);
+        let (skeleton, nodes) = rig();
+        let over = playing(&world, 7, &long);
+        let node = posed(&skeleton, &nodes, &[], &over[1..], 1.0);
+        assert!(
+            node[0].at.distance(Vec3::new(0.25, 1.0, 0.6)) < 1e-6,
+            "{:?}",
+            node[0]
+        );
     }
 }

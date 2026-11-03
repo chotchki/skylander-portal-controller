@@ -27,3 +27,10 @@ The disc's 11 cinematic movies (not the figures' intros) SHALL be converted the 
 #### Scenario: No video converter
 - **WHEN** a cinematic movie is due to play on a machine without the video converter
 - **THEN** it doesn't play, the missing-converter message names the cause, and the level carries on
+
+### Requirement: A level's camera rigs are extracted with its palettes
+A level's palettes SHALL hold every slot of each placed cinematic camera rig (a model under `Models/Cameras/`, scripted or not), a clip past one Havok block kept block by block. An extract written under the palettes' rule before SHALL read the palettes again and nothing else: chapter 1's on its next start, another level's on its next entry.
+
+#### Scenario: An extract from before the camera rigs
+- **WHEN** guacamole starts on an extract whose chapter 1 palettes predate the camera rigs
+- **THEN** it reads chapter 1's palettes again, extracts nothing else, and the outro's camera shot lasts its clip

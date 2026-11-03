@@ -245,6 +245,20 @@ fn placed(a: &guacamole::script_engine::Actor) -> Transform {
     }
 }
 
+/// The clips `c`'s scripts play on it out of its palette, each with the time
+/// it poses at, oldest first: a clip past one Havok block the block playing
+/// and the time within it (openspec AS.78: an animator camera's rig, whose
+/// node the shot's view hangs on, rides its clip to its end).
+fn playing_clips<'c>(
+    c: &'c DrawnCreature,
+    world: &ScriptWorld,
+) -> Vec<(&'c guac_ir::clip::Clip, f64)> {
+    match &c.palette {
+        Some(p) => guacamole::hands::playing(world, c.actor, p),
+        None => Vec::new(),
+    }
+}
+
 /// A drawn creature's or skinned clone's attach nodes as [`pose_creatures`]
 /// poses its model (openspec AH.138): its idle at `seconds` with the clips
 /// its scripts play laid over it, each node on its joint, in the frame
@@ -258,13 +272,7 @@ pub(crate) fn creature_nodes(
     seconds: f64,
 ) -> Option<Vec<guacamole::script_engine::NodePose>> {
     let nodes = c.nodes.as_deref()?;
-    let over: Vec<(&guac_ir::clip::Clip, f64)> = match &c.palette {
-        Some(p) => crate::hero_scripts::playing_on(world, c.actor)
-            .into_iter()
-            .filter_map(|(slot, at, _)| Some((p.clip(u16::try_from(slot).ok()?)?, f64::from(at))))
-            .collect(),
-        None => Vec::new(),
-    };
+    let over = playing_clips(c, world);
     let base = [(&c.model.idle, seconds, 1.0)];
     let posed = guacamole::hands::posed(&c.model.skeleton, nodes, &base, &over, 1.0);
     // Drawn turned by `placed`'s rotation; read turned by its facing alone.
@@ -578,15 +586,7 @@ fn pose_creatures(
 ) {
     for c in &creatures {
         let seconds = time.elapsed().saturating_sub(c.since).as_secs_f64();
-        let over: Vec<(&guac_ir::clip::Clip, f64)> = match &c.palette {
-            Some(p) => crate::hero_scripts::playing_on(&world, c.actor)
-                .into_iter()
-                .filter_map(|(slot, at, _)| {
-                    Some((p.clip(u16::try_from(slot).ok()?)?, f64::from(at)))
-                })
-                .collect(),
-            None => Vec::new(),
-        };
+        let over = playing_clips(c, &world);
         let pose = guacamole::character::mesh::blended_over(
             &c.model,
             &[(&c.model.idle, seconds, 1.0)],
