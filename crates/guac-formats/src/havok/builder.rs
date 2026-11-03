@@ -704,10 +704,11 @@ pub fn clip() -> ClipSpec {
     }
 }
 
-/// Two blocks over 9 frames of 5 a block (openspec AS.78, a camera's long
-/// shot in small): track 0's x linear from 0 to 1 over the first block,
-/// then quadratic from 1 through 2 to 3 over the second; track 1's y static
-/// 0.5 in the first (scaled 2) and linear from 0.5 to 1.5 in the second.
+/// Two blocks over 8 frames of 5 a block (openspec AS.78, a camera's long
+/// shot in small): frames 0-4, then 4-7, the last block short as a disc
+/// clip's is. Track 0's x linear from 0 to 1 over the first block, then
+/// quadratic from 1 through 2 to 3 over the second; track 1's y static 0.5
+/// in the first (scaled 2) and linear from 0.5 to 1.5 in the second.
 pub fn blocked_clip() -> ClipSpec {
     let x = |degree: u8, knots: Vec<u8>, min: f32, max: f32, q: Vec<u16>| VecSpec {
         degree,
@@ -729,7 +730,7 @@ pub fn blocked_clip() -> ClipSpec {
         },
         Some((min, max)) => VecSpec {
             degree: 1,
-            knots: vec![0, 0, 4, 4],
+            knots: vec![0, 0, 3, 3],
             channels: [
                 ChanSpec::Identity,
                 ChanSpec::Spline {
@@ -747,7 +748,7 @@ pub fn blocked_clip() -> ClipSpec {
         scale: VecSpec::identity(),
     };
     ClipSpec {
-        frames: 9,
+        frames: 8,
         frame_duration: 1.0 / 30.0,
         tracks: vec![
             track(x(1, vec![0, 0, 4, 4], 0.0, 1.0, vec![0, 65535])),
@@ -760,7 +761,7 @@ pub fn blocked_clip() -> ClipSpec {
         more: vec![vec![
             track(x(
                 2,
-                vec![0, 0, 0, 4, 4, 4],
+                vec![0, 0, 0, 3, 3, 3],
                 1.0,
                 3.0,
                 vec![0, 32768, 65535],

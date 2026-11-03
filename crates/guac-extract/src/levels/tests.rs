@@ -819,9 +819,9 @@ fn a_first_runs_camera_rig_has_its_palette_its_long_shot_in_blocks() {
             clip.blocks.len(),
             clip.blocks.iter().map(|b| b.frames).collect::<Vec<_>>()
         ),
-        (9, 2, vec![5, 5])
+        (8, 2, vec![5, 4])
     );
-    let whole = 8.0 / 30.0;
+    let whole = 7.0 / 30.0;
     assert!((p.duration(3).unwrap() - whole).abs() < 1e-6);
     assert!(p.clip(3).is_none(), "no one-block clip in it");
     // Each block's pose, at the time within it, the decoder's.
@@ -831,7 +831,7 @@ fn a_first_runs_camera_rig_has_its_palette_its_long_shot_in_blocks() {
     });
     let decoded = guac_formats::havok::Container::parse(&built.bytes).unwrap();
     let a = &decoded.clip.as_ref().unwrap().animation;
-    for frame in [0.0, 2.0, 3.9, 4.5, 6.0, 7.9] {
+    for frame in [0.0, 2.0, 3.9, 4.5, 6.0, 6.9] {
         let t = frame / 30.0;
         let (block, local) = p.clip_at(3, t).unwrap();
         let ours = block.sample(local);

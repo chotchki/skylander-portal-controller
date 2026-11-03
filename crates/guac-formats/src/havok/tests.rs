@@ -378,7 +378,7 @@ fn a_clip_past_one_block_reads_each_block_and_samples_across_them() {
     let a = &c.clip.as_ref().unwrap().animation;
     assert_eq!(
         (a.num_frames, a.max_frames_per_block, a.more.len()),
-        (9, 5, 1)
+        (8, 5, 1)
     );
     assert_eq!(a.tracks[1].position.channels[1], Channel::Static);
     assert_eq!(a.more[0][1].position.channels[1], Channel::Spline);
@@ -387,13 +387,16 @@ fn a_clip_past_one_block_reads_each_block_and_samples_across_them() {
         let s = a.sample(frame * fd);
         (s[0].translation[0], s[1].translation[1])
     };
+    // The second block's quadratic two thirds through its 3 frames.
     let q = 1.0 + 2.0 * 32768.0 / 65535.0;
+    let t = 2.0 / 3.0;
+    let quad = (1.0 - t) * (1.0 - t) + 2.0 * t * (1.0 - t) * q + t * t * 3.0;
     for (frame, x, y) in [
         (0.0, 0.0, 0.5),
         (2.0, 0.5, 0.5),
         (4.0, 1.0, 0.5),
-        (6.0, 0.25 + 0.5 * q + 0.75, 1.0),
-        (8.0, 3.0, 1.5),
+        (6.0, quad, 0.5 + t),
+        (7.0, 3.0, 1.5),
     ] {
         let (gx, gy) = at(frame);
         assert!(
@@ -404,7 +407,7 @@ fn a_clip_past_one_block_reads_each_block_and_samples_across_them() {
     // The block's edge agrees from either side to the decoder's precision.
     assert!((at(4.0 - 1e-6).0 - at(4.0).0).abs() < 1e-5);
     assert_eq!(a.block_at(4.0).1, 0.0);
-    assert_eq!(a.block_at(99.0).1, 4.0);
+    assert_eq!(a.block_at(99.0).1, 3.0);
     // Refused: a block count that doesn't cover the frames, a second block
     // starting inside the first or past dirty padding, a float offset that
     // isn't its block's end.
