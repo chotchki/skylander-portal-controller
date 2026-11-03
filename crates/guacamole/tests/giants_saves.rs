@@ -65,8 +65,17 @@ fn step(run: &mut Run, session: &mut Session, store: &mut Store, level: &str) {
         "{:#?}",
         stops.iter().map(ToString::to_string).collect::<Vec<_>>()
     );
-    run.with_host(|vm, host| story_save::serve(vm, host, session, level))
-        .unwrap_or_else(|h| panic!("{h}"));
+    {
+        let mut spawn = guacamole::scripts::headless_spawner(1 << 50);
+        let mut engine = guacamole::script_engine::NoEngine;
+        let mut host = guacamole::scripts::WorldHost {
+            world: &mut run.world,
+            engine: &mut engine,
+            generator: &mut run.generator,
+            spawn: &mut spawn,
+        };
+        story_save::serve(&mut run.vm, &mut host, session, level).unwrap_or_else(|h| panic!("{h}"));
+    }
     store.pump(session, run);
     assert_eq!(run.world.save.monitor_stopped(), None);
 }
@@ -267,8 +276,13 @@ fn chapter_1s_end_saves_it_done_and_a_load_goes_on_to_214() {
         first_saves,
         "the level end saved: the original's doesn't"
     );
-    // Its words carried into the next run, as the original's memory.
-    session.carry(&run.vm);
+    // Its words are what the session carries into the next run, as the
+    // original's memory carries them.
+    assert_eq!(
+        session.live.as_ref().map(|l| &l.slot),
+        Some(&words),
+        "the session carries other words"
+    );
     let chapter_1_steps = run.steps;
 
     let (mut next, _found) = run_on_level(Mode::Play, LEVEL_214, setup);

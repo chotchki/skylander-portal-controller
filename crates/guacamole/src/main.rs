@@ -47,6 +47,7 @@ mod shots;
 mod slow_frames;
 mod sound_player;
 mod starfield;
+mod story;
 mod surfaces;
 mod swap;
 #[cfg(test)]
@@ -162,7 +163,7 @@ fn main() -> Result<()> {
                 None,
                 OutputLatency::default(),
                 (mirror, asked, entry_asks),
-                None,
+                (None, None),
                 log_guard,
             );
         }
@@ -207,6 +208,7 @@ fn main() -> Result<()> {
 
     let mut progress = None;
     let mut level_hero = None;
+    let mut story = None;
     let link = match boot(BootOptions {
         config: cfg.clone(),
         runtime_root: root.clone(),
@@ -226,6 +228,10 @@ fn main() -> Result<()> {
             job.progression = Some(server.progression.clone());
             progress = Some(server.progress.clone());
             level_hero = Some(server.level_hero.clone());
+            story = Some(story::StoryLink {
+                host: server.game_host.clone(),
+                sink: server.story.clone(),
+            });
             if let Some(giants) = scan.offered() {
                 extraction::preload_roster(giants.dir.clone(), job.clone());
             }
@@ -249,7 +255,7 @@ fn main() -> Result<()> {
         Some(job),
         latency,
         (mirror, asked, entry_asks),
-        level_hero,
+        (level_hero, story),
         log_guard,
     )
 }
@@ -453,7 +459,10 @@ fn run_tv(
         (hero_scripts::AskedHealth, hero_scripts::AskedExperience),
         (dev_entry::EntryAsks, level_choice::LevelAsks),
     ),
-    level_hero: Option<guac_server::progress::LevelHero>,
+    (level_hero, story): (
+        Option<guac_server::progress::LevelHero>,
+        Option<story::StoryLink>,
+    ),
     log_guard: WorkerGuard,
 ) -> Result<()> {
     exit_after_farewell(link.status.clone(), progress.clone());
@@ -511,7 +520,9 @@ fn run_tv(
             defeat::DefeatPlugin,
             darkness::DarknessPlugin,
         ),
-        progress::ProgressPlugin,
+        // The figures' progress (AH.1) and, AS.38, AU.3, AU.4: the host's
+        // story save, resumed and kept.
+        (progress::ProgressPlugin, story::StoryPlugin),
         hero_scripts::HeroScriptsPlugin,
         tints::CloneTintsPlugin,
         creatures::CreaturesPlugin,
@@ -538,6 +549,9 @@ fn run_tv(
     }
     if let Some(hero) = level_hero {
         app.insert_resource(play::LevelHeroOut(hero));
+    }
+    if let Some(story) = story {
+        app.insert_resource(story);
     }
     // The TV reads the caps from the same slot the extraction fills.
     if let Some(slot) = job.as_ref().and_then(|j| j.progression.clone()) {
@@ -864,7 +878,7 @@ mod tests {
     /// The TV's plugins that run headless, which both fixed-step guards
     /// build: the hero's, his scripts', the level's, the clones' tints
     /// (AH.67), the test hooks' mirror, the library's script runner, the
-    /// creatures' and the dev entry's (AH.25). A plugin `run_tv` gains goes
+    /// creatures', the story saves' (AS.38) and the dev entry's (AH.25). A plugin `run_tv` gains goes
     /// here too: one left out is never looked at, so a fixed-step system it
     /// adds outside the sets passes both guards (AH.67's tints moved into
     /// `FixedUpdate` with no set did, before they were listed; AH.25's two
@@ -882,6 +896,7 @@ mod tests {
             mirror::Mirror,
             guacamole::scripts::ScriptPlugin,
             creatures::CreaturesPlugin,
+            story::StoryPlugin,
         ));
         app.add_plugins(dev_entry::plugin(true, Default::default()).expect("a dev build's entry"));
         app
@@ -953,7 +968,7 @@ mod tests {
                 }
             }
         }
-        let want: [(TypeId, Frame, &str); 17] = [
+        let want: [(TypeId, Frame, &str); 18] = [
             (
                 mirror::count_pad_steps.system_type_id(),
                 Frame::Pads,
@@ -978,6 +993,11 @@ mod tests {
                 guacamole::scripts::step_scripts.system_type_id(),
                 Frame::Scripts,
                 "the library's script runner",
+            ),
+            (
+                story::serve_saves.system_type_id(),
+                Frame::Scripts,
+                "the save system's requests, after his scripts' step",
             ),
             (
                 level::stand_props.system_type_id(),

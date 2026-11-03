@@ -418,16 +418,6 @@ fn file_set(vm: &Vm, file: File) -> Option<Value> {
     vm.field(csp, name).map(|v| vm.value(v))
 }
 
-/// What a run leaves of the save system, to carry into the next
-/// ([`Session::carry`]): its words, under its layout.
-pub fn live(vm: &Vm) -> Option<Live> {
-    Some(Live {
-        layout: Layout::read(vm)?.id(),
-        slot: words_of(vm, File::Slot)?,
-        header: words_of(vm, File::Header)?,
-    })
-}
-
 /// `words` written into `file`'s set; false when the set isn't there or
 /// holds another number of words.
 fn put_words(vm: &mut Vm, file: File, words: &[i32]) -> bool {
@@ -609,13 +599,6 @@ impl Session {
         Session {
             host,
             ..Session::default()
-        }
-    }
-
-    /// The host's save carried on from `vm`'s run into the next: its words.
-    pub fn carry(&mut self, vm: &Vm) {
-        if let Some(l) = live(vm) {
-            self.live = Some(l);
         }
     }
 
@@ -883,7 +866,8 @@ pub fn start_run(
 /// A step's requests answered (the module docs), after its walk: the
 /// run's start first ([`start_run`]), then a request a script made, taken.
 /// A save waits on [`Session::written`]; a load or a finalize with nothing
-/// written still to come reads done at once.
+/// written still to come reads done at once. Then the words the run holds
+/// now, kept to carry into the next run ([`Session::live`]).
 pub fn serve(
     vm: &mut Vm,
     host: &mut WorldHost<'_, '_>,
@@ -891,6 +875,22 @@ pub fn serve(
     level: &str,
 ) -> Result<(), Halt> {
     start_run(vm, host, session, level)?;
+    let answered = answer(vm, host, session);
+    if session.started == Some(host.world.run())
+        && let Some(layout) = &session.layout
+        && let (Some(slot), Some(header)) = (words_of(vm, File::Slot), words_of(vm, File::Header))
+    {
+        session.live = Some(Live {
+            layout: layout.id(),
+            slot,
+            header,
+        });
+    }
+    answered
+}
+
+/// The request a script made this step, taken and answered ([`serve`]).
+fn answer(vm: &mut Vm, host: &mut WorldHost<'_, '_>, session: &mut Session) -> Result<(), Halt> {
     // A finalize waits for the write before it.
     let state = &mut host.world.save;
     if state.waiting() == Some(Asked::Finalize) && !session.writing() {
