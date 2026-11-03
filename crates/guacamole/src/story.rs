@@ -21,7 +21,7 @@
 //! Stand-in ledger: `story-save`.
 
 use bevy::prelude::*;
-use guac_server::saves::{Done, GameHost, StorySink};
+use guac_server::saves::{Done, GameHost, QuitSaved, StorySink};
 use guacamole::scripts::{ScriptClone, ScriptRuntime, ScriptWorld, WorldHost};
 use guacamole::story_save::{self, Report, Resume, SaveState, Session};
 use serde::Serialize;
@@ -49,6 +49,9 @@ pub(crate) struct Story {
     writing: Option<u64>,
     /// Whether the session's resume was asked (or settled on chapter 1).
     resumed: bool,
+    /// The quit's save being written (openspec AU.15): the server's ticket,
+    /// and whether a write since failed.
+    quit: Option<(u64, bool)>,
 }
 
 /// `/api/_test/tv`'s `story`: the session's report and the state the host
@@ -79,7 +82,7 @@ impl Plugin for StoryPlugin {
     fn build(&self, app: &mut App) {
         guacamole::frame::ensure(app);
         app.init_resource::<Story>()
-            .add_systems(Update, (follow_host, pump).chain())
+            .add_systems(Update, (follow_host, quit_save, pump).chain())
             .add_systems(
                 FixedUpdate,
                 serve_saves
@@ -121,8 +124,66 @@ fn follow_host(link: Option<Res<StoryLink>>, mut story: ResMut<Story>) {
     }
 }
 
+/// The quit's save (openspec AU.15), once the server asks it: the pause
+/// menu's Quit Game's save made off the run whose start was made
+/// ([`story_save::quit_save_run`]), else off the words the last run left
+/// ([`story_save::quit_save_carried`]), handed to the store by [`pump`],
+/// which answers once it's written; nothing to save is answered at once.
+/// An `Update` system, so a paused level (`Time<Virtual>` stopped) saves too.
+fn quit_save(
+    mut commands: Commands,
+    link: Option<Res<StoryLink>>,
+    mut story: ResMut<Story>,
+    runtime: Option<ResMut<ScriptRuntime>>,
+    world: Option<ResMut<ScriptWorld>>,
+) {
+    let Some(link) = link else {
+        return;
+    };
+    let Some(ticket) = link.host.quit_asked() else {
+        return;
+    };
+    if story.quit.is_some_and(|(t, _)| t == ticket) {
+        return;
+    }
+    let mut from = None;
+    if let (Some(mut runtime), Some(mut world)) = (runtime, world) {
+        let ScriptRuntime { vm, generator, .. } = &mut *runtime;
+        let mut spawn = |template: guac_script::Value| -> guac_script::Handle {
+            commands.spawn(ScriptClone(template)).id().to_bits()
+        };
+        let mut engine = guacamole::script_engine::NoEngine;
+        let mut host = WorldHost {
+            world: &mut world,
+            engine: &mut engine,
+            generator,
+            spawn: &mut spawn,
+        };
+        if story_save::quit_save_run(vm, &mut host, &mut story.session) {
+            from = Some("the run");
+        }
+    }
+    if from.is_none() && story_save::quit_save_carried(&mut story.session) {
+        from = Some("the last run's words");
+    }
+    match from {
+        Some(from) => {
+            info!(
+                from,
+                "the quit's save: the slot and the header, as the pause menu's Quit Game saves them"
+            );
+            story.quit = Some((ticket, false));
+        }
+        None => {
+            info!("the quit's save: no level's save system running for a host, nothing to save");
+            link.host.answer_quit(ticket, QuitSaved::Nothing);
+        }
+    }
+}
+
 /// The keeper's answers read back, the resume asked once the rows are in,
-/// and the session's next write handed over.
+/// and the session's next write handed over; the quit's save answered once
+/// the store has it.
 fn pump(
     link: Option<Res<StoryLink>>,
     mut story: ResMut<Story>,
@@ -172,6 +233,9 @@ fn pump(
             }
             Done::Written { ticket, result } if story.writing == Some(ticket) => {
                 story.writing = None;
+                if let (Some((_, failed)), Err(_)) = (story.quit.as_mut(), &result) {
+                    *failed = true;
+                }
                 let save = match world.as_deref_mut() {
                     Some(w) => &mut w.save,
                     None => &mut spare,
@@ -188,6 +252,9 @@ fn pump(
         match link.sink.write(&host, story_save::GAME, &layout, values) {
             Some(ticket) => story.writing = Some(ticket),
             None => {
+                if let Some((_, failed)) = story.quit.as_mut() {
+                    *failed = true;
+                }
                 let save = match world.as_deref_mut() {
                     Some(w) => &mut w.save,
                     None => &mut spare,
@@ -197,6 +264,21 @@ fn pump(
                     .written(save, Err("no store keeper runs".into()));
             }
         }
+    }
+    // The quit's save is in once nothing is left to write: the server takes
+    // the level down then (AU.15).
+    if let Some((ticket, failed)) = story.quit
+        && story.writing.is_none()
+        && !story.session.writing()
+    {
+        let saved = if failed {
+            QuitSaved::Refused
+        } else {
+            QuitSaved::Written
+        };
+        info!(?saved, "the quit's save answered");
+        link.host.answer_quit(ticket, saved);
+        story.quit = None;
     }
 }
 
@@ -259,6 +341,124 @@ pub(crate) fn serve_saves(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// AU.15: the server's quit asks the TV's save; with no run up (the
+    /// level gone, the next not started) the TV saves the last run's words
+    /// to the host's row through the keeper and answers once the store has
+    /// them, chapter 1 done in the row; asked again with nothing to save, it
+    /// answers that at once.
+    #[test]
+    fn a_quits_save_reaches_the_store_before_the_tv_answers() {
+        use guac_server::saves::{Host, spawn_keeper};
+        use guacamole::story_save::{File, Layout, Live, Param};
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let store = rt
+            .block_on(guac_server::profiles::ProfileStore::open_in_memory(
+                &guac_server::setup::MIGRATOR,
+            ))
+            .unwrap();
+        let alice = rt
+            .block_on(store.create("Alice", "1234", "#e63946"))
+            .unwrap();
+        let sink = StorySink::new();
+        {
+            let _in = rt.enter();
+            spawn_keeper(sink.clone(), store.clone());
+        }
+        let layout = Layout {
+            params: vec![
+                Param {
+                    name: "level flags".into(),
+                    header: false,
+                    bit: 0,
+                    bits: 12,
+                    fields: 2,
+                    signed: false,
+                },
+                Param {
+                    name: "header - slot level ids".into(),
+                    header: true,
+                    bit: 0,
+                    bits: 8,
+                    fields: 4,
+                    signed: false,
+                },
+            ],
+            adventures: vec!["Level_213_Tutorial".into(), "Level_214_Tutorial_2".into()],
+            slot_words: 1,
+            header_words: 1,
+        };
+        let host = GameHost::default();
+        host.set(Some(Host {
+            profile_id: alice.clone(),
+            game: story_save::GAME.into(),
+        }));
+        host.listen();
+        let mut story = Story {
+            session: Session::new(Some(alice.clone())),
+            began_for: Some(Some(alice.clone())),
+            resumed: true,
+            ..Story::default()
+        };
+        story.session.layout = Some(layout.clone());
+        // Chapter 1 done, slot level 15, as its level end leaves the words.
+        story.session.live = Some(Live {
+            layout: layout.id(),
+            slot: vec![1],
+            header: vec![15],
+        });
+        let mut app = App::new();
+        app.insert_resource(StoryLink {
+            host: host.clone(),
+            sink,
+        })
+        .insert_resource(story)
+        .add_systems(Update, (follow_host, quit_save, pump).chain());
+
+        let ticket = host.ask_quit_save().unwrap();
+        let answered = |app: &mut App| {
+            for _ in 0..300 {
+                app.update();
+                if host.quit_asked().is_none() {
+                    return rt.block_on(host.quit_saved(ticket, std::time::Duration::ZERO));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            None
+        };
+        assert_eq!(answered(&mut app), Some(QuitSaved::Written));
+        assert_eq!(
+            app.world().resource::<Story>().session.report.written,
+            1,
+            "answered before the store had written"
+        );
+        let rows = rt
+            .block_on(store.saves().all(&alice, story_save::GAME))
+            .unwrap();
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        let values = rows[0].values.clone().unwrap();
+        assert_eq!(rows[0].layout, layout.id());
+        assert!(story_save::done(&values, "Level_213_Tutorial"));
+        assert_eq!(values.params["header - slot level ids"], [15, 0, 0, 0]);
+        assert_eq!(
+            layout.decode(File::Slot, &[1])["level flags"],
+            values.params["level flags"]
+        );
+
+        // Nothing left to save: answered at once, nothing written.
+        let written_at = rows[0].updated_at.clone();
+        app.world_mut().resource_mut::<Story>().session.live = None;
+        let ticket = host.ask_quit_save().unwrap();
+        app.update();
+        assert_eq!(
+            rt.block_on(host.quit_saved(ticket, std::time::Duration::ZERO)),
+            Some(QuitSaved::Nothing)
+        );
+        let rows = rt
+            .block_on(store.saves().all(&alice, story_save::GAME))
+            .unwrap();
+        assert_eq!((rows.len(), &rows[0].updated_at), (1, &written_at));
+    }
 
     /// A save past chapter 1 asks its level by name; chapter 1 asks
     /// nothing (the pick loads it), and nothing is asked over a level or a

@@ -196,8 +196,40 @@ impl Saves<'_> {
 /// saves belong to profiles), with the game's serial, as the launch saw it;
 /// `None` before a launch, after a quit, or for a launch with no profile
 /// unlocked on its phone. Only the host's story save advances.
+///
+/// It also carries the quit's save (openspec AU.15): the phone's quit asks
+/// the TV for the save the pause menu's Quit Game makes
+/// ([`GameHost::ask_quit_save`]) and waits for its answer
+/// ([`GameHost::quit_saved`]) before the level comes down. The TV says it
+/// answers ([`GameHost::listen`]), so a server with no TV never waits.
 #[derive(Clone, Default, Debug)]
-pub struct GameHost(Arc<RwLock<Option<Host>>>);
+pub struct GameHost(Arc<HostShared>);
+
+#[derive(Default, Debug)]
+struct HostShared {
+    host: RwLock<Option<Host>>,
+    quit: Mutex<QuitSaves>,
+}
+
+/// The quit's saves asked and answered, by ticket.
+#[derive(Default, Debug)]
+struct QuitSaves {
+    listening: bool,
+    asked: u64,
+    answered: u64,
+    last: Option<QuitSaved>,
+}
+
+/// The TV's answer once the quit's save is in the store or can't be: the
+/// quit takes the level down after either.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuitSaved {
+    Written,
+    /// The store refused it (the TV logs why).
+    Refused,
+    /// Nothing to save: no level's save system running for a host.
+    Nothing,
+}
 
 /// A host: set at the launch, from the launching phone's unlocked profile.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -207,12 +239,77 @@ pub struct Host {
 }
 
 impl GameHost {
+    /// Whether a launch under `kind` has a host: guacamole's driver alone.
+    /// The product keeps no story saves, so its launch and quit never touch
+    /// one.
+    pub fn kept_under(kind: crate::config::DriverKind) -> bool {
+        matches!(kind, crate::config::DriverKind::Native)
+    }
+
     pub fn get(&self) -> Option<Host> {
-        self.0.read().unwrap_or_else(|e| e.into_inner()).clone()
+        self.0
+            .host
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     pub fn set(&self, host: Option<Host>) {
-        *self.0.write().unwrap_or_else(|e| e.into_inner()) = host;
+        *self.0.host.write().unwrap_or_else(|e| e.into_inner()) = host;
+    }
+
+    fn quit(&self) -> std::sync::MutexGuard<'_, QuitSaves> {
+        self.0.quit.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The TV answers the quit's saves from now on.
+    pub fn listen(&self) {
+        self.quit().listening = true;
+    }
+
+    /// The quit's save asked of the TV, under the returned ticket; `None`
+    /// when no TV listens.
+    pub fn ask_quit_save(&self) -> Option<u64> {
+        let mut q = self.quit();
+        if !q.listening {
+            return None;
+        }
+        q.asked += 1;
+        Some(q.asked)
+    }
+
+    /// The newest quit's save asked and not yet answered: the TV's to make.
+    pub fn quit_asked(&self) -> Option<u64> {
+        let q = self.quit();
+        (q.asked > q.answered).then_some(q.asked)
+    }
+
+    /// The TV's answer to the quit's save under `ticket`, and to any asked
+    /// before it.
+    pub fn answer_quit(&self, ticket: u64, saved: QuitSaved) {
+        let mut q = self.quit();
+        if ticket > q.answered {
+            q.answered = ticket;
+            q.last = Some(saved);
+        }
+    }
+
+    /// Waits up to `timeout` for the TV's answer to `ticket`; `None` when it
+    /// didn't come.
+    pub async fn quit_saved(&self, ticket: u64, timeout: std::time::Duration) -> Option<QuitSaved> {
+        let until = tokio::time::Instant::now() + timeout;
+        loop {
+            {
+                let q = self.quit();
+                if q.answered >= ticket {
+                    return q.last;
+                }
+            }
+            if tokio::time::Instant::now() >= until {
+                return None;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
     }
 }
 
@@ -537,6 +634,84 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(data, "{\"no\": true");
+    }
+
+    /// The never-overwrite check reads the row of the layout written alone:
+    /// an older build's row that doesn't read must not stop this build
+    /// saving, and stays as it was.
+    #[tokio::test]
+    async fn another_layouts_unreadable_row_blocks_no_write() {
+        let s = store().await;
+        let alice = profile(&s, "Alice").await;
+        sqlx::query(
+            "INSERT INTO story_saves (profile_id, game, layout, data, created_at, updated_at) \
+             VALUES (?1, ?2, '0:older', 'not json', 'then', 'then')",
+        )
+        .bind(&alice)
+        .bind(GIANTS)
+        .execute(&s.pool)
+        .await
+        .unwrap();
+        s.saves()
+            .write(&alice, GIANTS, LAYOUT, &chapter_1_done())
+            .await
+            .expect("another layout's row blocked the write");
+        let rows = s.saves().all(&alice, GIANTS).await.unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(
+            rows.iter()
+                .any(|r| r.layout == "0:older" && r.values.is_none())
+        );
+    }
+
+    /// AU.15: the quit's save is asked only of a TV that listens; a ticket
+    /// waits until the TV answers it (or `timeout`), an answer covering
+    /// every ticket before it, and an answered ticket is asked no more.
+    #[tokio::test]
+    async fn a_quits_save_is_asked_of_a_listening_tv_and_waited_for() {
+        use std::time::Duration;
+        let host = GameHost::default();
+        assert_eq!(host.ask_quit_save(), None, "asked with no TV");
+        host.listen();
+        let first = host.ask_quit_save().unwrap();
+        assert_eq!(host.quit_asked(), Some(first));
+        assert_eq!(
+            host.quit_saved(first, Duration::from_millis(30)).await,
+            None
+        );
+        let tv = host.clone();
+        let answered = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            tv.answer_quit(first, QuitSaved::Written);
+        });
+        assert_eq!(
+            host.quit_saved(first, Duration::from_secs(5)).await,
+            Some(QuitSaved::Written)
+        );
+        answered.await.unwrap();
+        assert_eq!(host.quit_asked(), None);
+        let (second, third) = (host.ask_quit_save().unwrap(), host.ask_quit_save().unwrap());
+        assert_eq!(host.quit_asked(), Some(third));
+        host.answer_quit(third, QuitSaved::Nothing);
+        assert_eq!(
+            host.quit_saved(second, Duration::ZERO).await,
+            Some(QuitSaved::Nothing)
+        );
+        host.answer_quit(second, QuitSaved::Refused);
+        assert_eq!(
+            host.quit_saved(third, Duration::ZERO).await,
+            Some(QuitSaved::Nothing)
+        );
+    }
+
+    /// Only guacamole's driver hosts: the product's three never do.
+    #[test]
+    fn only_guacamoles_driver_hosts() {
+        use crate::config::DriverKind;
+        assert!(GameHost::kept_under(DriverKind::Native));
+        for kind in [DriverKind::Mock, DriverKind::Ipc, DriverKind::Uia] {
+            assert!(!GameHost::kept_under(kind), "{kind:?}");
+        }
     }
 
     #[tokio::test]

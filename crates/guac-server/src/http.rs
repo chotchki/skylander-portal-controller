@@ -1389,7 +1389,7 @@ async fn launch_game(
     // started it, whose story save alone advances; none when that phone has
     // none unlocked. Set before the boot, so the TV never sees the game
     // without it, and cleared again if the boot fails. guacamole's alone.
-    let hosts = state.driver_kind == crate::config::DriverKind::Native;
+    let hosts = crate::saves::GameHost::kept_under(state.driver_kind);
     if hosts {
         let session = headers
             .get("x-session-id")
@@ -1676,6 +1676,10 @@ async fn inject_load(
     (StatusCode::ACCEPTED, "queued").into_response()
 }
 
+/// How long a phone's quit waits for guacamole's TV to save the host's story
+/// (openspec AU.15), counted from the ask, the cover's 1.5 s included.
+const QUIT_SAVE_WAIT: Duration = Duration::from_secs(5);
+
 async fn quit_game(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(q): axum::extract::Query<QuitQuery>,
@@ -1695,6 +1699,19 @@ async fn quit_game(
             return (StatusCode::CONFLICT, "no game is running").into_response();
         }
     }
+
+    // The quit's save (openspec AU.15): the pause menu's Quit Game saves the
+    // slot and the header before it leaves the level, so guacamole's TV makes
+    // that save for the host while the cover lands, and the level comes down
+    // once the store has it or QUIT_SAVE_WAIT is up. guacamole's alone: the
+    // product never sets a host, and with no TV listening nothing is asked.
+    let quit_save = match state.game_host.get() {
+        Some(_) if crate::saves::GameHost::kept_under(state.driver_kind) => state
+            .game_host
+            .ask_quit_save()
+            .map(|ticket| (ticket, tokio::time::Instant::now())),
+        _ => None,
+    };
 
     // Phase 1: arm cover. switching=true takes precedence over
     // cover_active in back-face selection (gives SWITCHING badge for
@@ -1717,6 +1734,20 @@ async fn quit_game(
     // (~1.5s — slight overlap with the tail of the ease-out cubic,
     // imperceptible to the user) before killing.
     tokio::time::sleep(Duration::from_millis(1500)).await;
+    if let Some((ticket, asked)) = quit_save {
+        let left = QUIT_SAVE_WAIT.saturating_sub(asked.elapsed());
+        match state.game_host.quit_saved(ticket, left).await {
+            Some(saved) => info!(
+                ?saved,
+                waited_ms = asked.elapsed().as_millis() as u64,
+                "the quit's save"
+            ),
+            None => warn!(
+                waited_ms = asked.elapsed().as_millis() as u64,
+                "the quit's save didn't answer in time: the level comes down without it"
+            ),
+        }
+    }
 
     // Phase 3: kill RPCS3 behind the cover. Now safe — the launcher
     // is rendering opaque (Main with iris animating 0→IRIS_FULL,

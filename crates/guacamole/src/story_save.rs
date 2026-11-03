@@ -538,7 +538,7 @@ pub struct Session {
     /// The run whose start was made, by [`ScriptWorld::run`].
     started: Option<u64>,
     /// The layout of the run whose start was made.
-    layout: Option<Layout>,
+    pub layout: Option<Layout>,
     pub report: Report,
 }
 
@@ -965,7 +965,64 @@ fn save(vm: &Vm, layout: &Layout, session: &mut Session, state: &mut SaveState, 
     );
 }
 
+/// The quit's save off the run (openspec AU.15): what the pause menu's Quit
+/// Game asks `Save - Save Game` for (the slot and the header, the percent
+/// complete worked out first) made at once, without the request queue,
+/// since the level comes down behind it: the slot's percent complete by the
+/// scripts' own `Save - Calculate Percent Complete`, then both files' words
+/// handed to the store whole as the host's save ([`Session::keep_whole`]).
+/// False, nothing asked, with no host or on a run whose start wasn't made.
+pub fn quit_save_run(vm: &mut Vm, host: &mut WorldHost<'_, '_>, session: &mut Session) -> bool {
+    if session.host.is_none() || session.started != Some(host.world.run()) {
+        return false;
+    }
+    let Some(layout) = session.layout.clone() else {
+        return false;
+    };
+    const PCT: &str = "Save - Calculate Percent Complete";
+    if vm.program().macro_named(PCT).is_some() {
+        let slot = global(vm, "Current_SaveGame_Slot").unwrap_or(Value::Int(0));
+        if let Err(h) = vm.call_with(None, PCT, &[("for slot", slot)], &[], host) {
+            warn!(%h, "the quit's percent complete stopped: saved as the header holds it");
+        }
+    }
+    let (Some(slot), Some(header)) = (words_of(vm, File::Slot), words_of(vm, File::Header)) else {
+        return false;
+    };
+    session.keep_whole(&layout, &slot, &header)
+}
+
+/// The quit's save off the words the last run left ([`Session::live`]),
+/// when no run's start holds them: the level gone, the next not started
+/// (between chapter 1's end and level 214's start). False with no host or
+/// no words of the session's layout.
+pub fn quit_save_carried(session: &mut Session) -> bool {
+    if session.host.is_none() {
+        return false;
+    }
+    let (Some(layout), Some(live)) = (session.layout.clone(), session.live.clone()) else {
+        return false;
+    };
+    live.layout == layout.id() && session.keep_whole(&layout, &live.slot, &live.header)
+}
+
 impl Session {
+    /// Both files' words, read as `layout`'s params, kept with every value
+    /// the session holds and handed to the store whole as the host's save.
+    /// False when either holds another number of words than the layout.
+    pub fn keep_whole(&mut self, layout: &Layout, slot: &[i32], header: &[i32]) -> bool {
+        if slot.len() != layout.words(File::Slot) || header.len() != layout.words(File::Header) {
+            return false;
+        }
+        let mut values = self.saving.take().unwrap_or_default();
+        values.params.extend(layout.decode(File::Slot, slot));
+        values.params.extend(layout.decode(File::Header, header));
+        values.adventures = layout.adventures.clone();
+        self.saving = Some(values.clone());
+        self.outbox = Some((layout.id(), values));
+        true
+    }
+
     /// A save of one file, its params read off its words: kept with every
     /// value the session holds and handed to the store as the host's save,
     /// the request read active until [`Session::written`]; with no host,
@@ -1121,6 +1178,91 @@ mod tests {
         assert_ne!(w.id(), id);
     }
 
+    /// The name is what every stored row is keyed by, so it can't drift
+    /// between builds: this layout's is pinned (a change to how it's made
+    /// orphans every profile's save, which takes a [`FORMAT`] bump and a
+    /// decision), and each part of a param's shape, the header's length and
+    /// the adventures' names move it.
+    #[test]
+    fn the_layouts_name_is_pinned_and_every_part_moves_it() {
+        let l = layout();
+        assert_eq!(l.id(), "1:1873610d");
+        let id = l.id();
+        let moved: [fn(&mut Layout); 8] = [
+            |l| l.params[0].name.push('x'),
+            |l| l.params[0].header = true,
+            |l| l.params[0].bit = 1,
+            |l| l.params[0].fields = 2,
+            |l| l.params[0].signed = true,
+            |l| l.header_words = 2,
+            |l| l.adventures[2].push('x'),
+            |l| l.adventures.truncate(2),
+        ];
+        for (i, m) in moved.iter().enumerate() {
+            let mut c = l.clone();
+            m(&mut c);
+            assert_ne!(c.id(), id, "part {i}");
+        }
+    }
+
+    /// AU.15: the quit's save keeps both files' words whole, over every
+    /// value the session saved before, and hands them to the store as the
+    /// host's save; off the last run's words when no run's start holds
+    /// them; nothing with no host, words of another length or of another
+    /// layout.
+    #[test]
+    fn the_quits_save_keeps_both_files_whole_for_the_host() {
+        let l = layout();
+        let mut slot = vec![0; 3];
+        let mut header = vec![0];
+        let flags = BTreeMap::from([("level flags".to_owned(), vec![1, 0, 0])]);
+        l.encode(File::Slot, &flags, &mut slot);
+        let ids = BTreeMap::from([("header - slot level ids".to_owned(), vec![15, 0, 0, 0])]);
+        l.encode(File::Header, &ids, &mut header);
+
+        let mut s = Session::new(Some("alice".into()));
+        s.saving = Some(SaveValues {
+            params: BTreeMap::from([("version".to_owned(), vec![9])]),
+            adventures: Vec::new(),
+        });
+        assert!(s.keep_whole(&l, &slot, &header));
+        let (host, layout, values) = s.take_write().unwrap();
+        assert_eq!((host.as_str(), layout), ("alice", l.id()));
+        assert_eq!(values.params["level flags"], [1, 0, 0]);
+        assert_eq!(values.params["header - slot level ids"], [15, 0, 0, 0]);
+        assert_eq!(
+            values.params["version"],
+            [0],
+            "the words' version over the older value"
+        );
+        assert_eq!(values.params.len(), l.params.len());
+        assert!(done(&values, "Level_213_Tutorial"));
+        assert!(!s.keep_whole(&l, &slot[..2], &header), "a short slot kept");
+
+        // Off the last run's words: only of the session's layout, for a host.
+        let mut carried = Session::new(Some("alice".into()));
+        assert!(!quit_save_carried(&mut carried), "kept with no layout");
+        carried.layout = Some(l.clone());
+        carried.live = Some(Live {
+            layout: "1:other".into(),
+            slot: slot.clone(),
+            header: header.clone(),
+        });
+        assert!(
+            !quit_save_carried(&mut carried),
+            "another layout's words kept"
+        );
+        carried.live.as_mut().unwrap().layout = l.id();
+        assert!(quit_save_carried(&mut carried));
+        let (_, _, values) = carried.take_write().unwrap();
+        assert!(done(&values, "Level_213_Tutorial"));
+        let mut nobody = Session::new(None);
+        nobody.layout = Some(l.clone());
+        nobody.live = carried.live.clone();
+        assert!(!quit_save_carried(&mut nobody), "kept for no host");
+        assert!(nobody.take_write().is_none());
+    }
+
     fn values(done: &[&str]) -> SaveValues {
         let adventures: Vec<String> = [
             "Level_213_Tutorial",
@@ -1173,6 +1315,26 @@ mod tests {
                 "Level_202_Arkeyan_Copters",
             ]))),
             Resume::Hub("level_hub_2_stage_3".into())
+        );
+        // Each of the three counts, the last alone too; all three open the
+        // fourth stage, which the disc holds.
+        assert_eq!(
+            resume(Some(&values(&[
+                "Level_213_Tutorial",
+                "Level_214_Tutorial_2",
+                "Level_211_Final",
+            ]))),
+            Resume::Hub("level_hub_2_stage_2".into())
+        );
+        assert_eq!(
+            resume(Some(&values(&[
+                "Level_213_Tutorial",
+                "Level_214_Tutorial_2",
+                "Level_210_Wilikins",
+                "Level_202_Arkeyan_Copters",
+                "Level_211_Final",
+            ]))),
+            Resume::Hub("level_hub_2_stage_4".into())
         );
         // An adventure the save doesn't list isn't done.
         let mut v = values(&["Level_213_Tutorial"]);

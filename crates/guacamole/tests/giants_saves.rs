@@ -168,6 +168,9 @@ fn a_save_asked_reads_complete_once_the_store_has_written() {
     let (layout, values) = store.rows.last().unwrap().clone();
     let l = Layout::read(&run.vm).unwrap();
     assert_eq!(layout, l.id());
+    // Every profile's row is keyed by it: a reading that moves it orphans
+    // them all, so it's pinned (a change takes a `FORMAT` bump).
+    assert_eq!(layout, "1:50eea71a", "the 01.00 disc's save layout moved");
     assert_eq!(values.adventures, l.adventures);
     assert_eq!(
         values.adventures[..2],
@@ -284,6 +287,45 @@ fn chapter_1s_end_saves_it_done_and_a_load_goes_on_to_214() {
         "the session carries other words"
     );
     let chapter_1_steps = run.steps;
+    // AU.15: a phone's quit here, between the level end and 214's start,
+    // makes the pause menu's save off the run: chapter 1 done in the store,
+    // the next session resuming at 214. On a copy of the session, after the
+    // words to carry were taken.
+    {
+        let mut quitting = session.clone();
+        let mut spawn = guacamole::scripts::headless_spawner(1 << 50);
+        let mut engine = guacamole::script_engine::NoEngine;
+        let mut host = guacamole::scripts::WorldHost {
+            world: &mut run.world,
+            engine: &mut engine,
+            generator: &mut run.generator,
+            spawn: &mut spawn,
+        };
+        assert!(story_save::quit_save_run(
+            &mut run.vm,
+            &mut host,
+            &mut quitting
+        ));
+        let (who, layout, quit) = quitting.take_write().expect("the quit's save");
+        assert_eq!((who.as_str(), layout.as_str()), (HOST, l.id().as_str()));
+        assert!(story_save::done(&quit, "Level_213_Tutorial"));
+        assert_eq!(quit.params.len(), l.params.len(), "every param kept");
+        assert_eq!(
+            story_save::resume(Some(&quit)),
+            Resume::Level(LEVEL_214.into())
+        );
+        // The percent complete worked out as the pause menu's save works it:
+        // chapter 1 done is 2 %, where its start's save held 0.
+        assert_eq!(quit.params["header - slot complete pct"][0], 2);
+        let header = story_save::words_of(&run.vm, File::Header).unwrap();
+        println!(
+            "the quit's save: chapter 1 done, header {:?}",
+            l.decode(File::Header, &header)
+                .into_iter()
+                .filter(|(n, _)| n.starts_with("header - slot"))
+                .collect::<Vec<_>>()
+        );
+    }
 
     let (mut next, _found) = run_on_level(Mode::Play, LEVEL_214, setup);
     for _ in 0..2 {

@@ -228,6 +228,9 @@ fn main() -> Result<()> {
             job.progression = Some(server.progression.clone());
             progress = Some(server.progress.clone());
             level_hero = Some(server.level_hero.clone());
+            // The TV makes a phone quit's save before the level comes down
+            // (AU.15).
+            server.game_host.listen();
             story = Some(story::StoryLink {
                 host: server.game_host.clone(),
                 sink: server.story.clone(),
