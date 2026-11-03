@@ -7,7 +7,7 @@
 //! they do. The mask's own art (a grey square stretched over the screen,
 //! cutting the level's darkness sprite out of it) isn't drawn: the black's
 //! the darkness sprite's colour as a hypothesis, no oracle frame catching
-//! one mid-fade.
+//! one mid-fade (stand-in ledger: `darkness`).
 
 use bevy::prelude::*;
 use guacamole::scripts::{ScriptRuntime, ScriptWorld};
