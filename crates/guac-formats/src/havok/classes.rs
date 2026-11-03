@@ -301,7 +301,11 @@ impl<'a> Skeleton<'a> {
     }
 }
 
-/// `hkaSplineCompressedAnimation` (through `hkaAnimation`), one block.
+/// `hkaSplineCompressedAnimation` (through `hkaAnimation`): its first
+/// block's tracks and every later block's (openspec AS.78). A block holds
+/// `max_frames_per_block` frames, its knots counting from its own first,
+/// and the next starts on its last frame: a clip past 256 frames (the
+/// cinematics' animator cameras) takes two or more.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SplineAnimation {
     pub duration: f32,
@@ -310,9 +314,12 @@ pub struct SplineAnimation {
     pub block_duration: f32,
     pub frame_duration: f32,
     pub data_len: usize,
-    /// Where the transform data ends; zero padding follows.
+    /// Where the last block's transform data ends; zero padding follows.
     pub data_end: usize,
+    /// The first block's tracks.
     pub tracks: Vec<TransformTrack>,
+    /// Each later block's tracks, in order.
+    pub more: Vec<Vec<TransformTrack>>,
 }
 
 impl SplineAnimation {
@@ -371,13 +378,15 @@ impl SplineAnimation {
             return Err(unsupported("extractedMotion", place, 1));
         }
         ctx.empty(at, Self::ANNOTATION_TRACKS, "annotationTracks")?;
-        let frames = int(Self::NUM_FRAMES, "numFrames", &|v| {
-            (1..=MAX_FRAMES as i32).contains(&v)
-        })?;
-        int(Self::NUM_BLOCKS, "numBlocks", &|v| v == 1)?;
+        let frames = int(Self::NUM_FRAMES, "numFrames", &|v| v >= 1)?;
         let mfpb = int(Self::MAX_FRAMES_PER_BLOCK, "maxFramesPerBlock", &|v| {
-            v >= frames
+            (2..=MAX_FRAMES as i32).contains(&v)
         })?;
+        // Blocks share their edge frames: block b holds frames b (mfpb - 1)
+        // to b (mfpb - 1) + mfpb - 1, the last what's left.
+        let stride = mfpb - 1;
+        let blocks_needed = ((frames - 1).max(1) + stride - 1) / stride;
+        int(Self::NUM_BLOCKS, "numBlocks", &|v| v == blocks_needed)?;
         int(
             Self::MASK_AND_QUANTIZATION_SIZE,
             "maskAndQuantizationSize",
@@ -433,28 +442,67 @@ impl SplineAnimation {
             pf.bytes(a.at, 0, a.len, "data")?
         };
         int(Self::ENDIAN, "endian", &|v| v == 0)?;
-        if blocks != [0] {
-            let place = pf.abs(at.plus(Self::BLOCK_OFFSETS));
-            return Err(unsupported("blockOffsets", place, blocks.len() as u64));
-        }
         let base = if a.len == 0 {
             pf.abs(at.plus(Self::DATA))
         } else {
             pf.abs(a.at)
         };
-        let block = spline::decode(data, base, tracks as usize, (frames - 1) as u8)?;
-        if float_blocks != [block.end as u32] {
-            let place = pf.abs(at.plus(Self::FLOAT_BLOCK_OFFSETS));
-            return Err(unsupported("floatBlockOffsets", place, block.end as u64));
-        }
-        let tail = &data[block.end..];
-        if tail.len() >= 16 || tail.iter().any(|b| *b != 0) {
+        let place = |offset| pf.abs(at.plus(offset));
+        if blocks.len() != blocks_needed as usize || blocks.first() != Some(&0) {
             return Err(unsupported(
-                "data padding",
-                base + block.end,
-                tail.len() as u64,
+                "blockOffsets",
+                place(Self::BLOCK_OFFSETS),
+                blocks.len() as u64,
             ));
         }
+        // One float offset a block, as one block had one.
+        if float_blocks.len() != blocks.len() {
+            return Err(unsupported(
+                "floatBlockOffsets",
+                place(Self::FLOAT_BLOCK_OFFSETS),
+                float_blocks.len() as u64,
+            ));
+        }
+        // Each block starts where its offset says, after the last one's data
+        // and the zero padding to it; its float data (none) at its end.
+        let mut decoded = Vec::with_capacity(blocks.len());
+        let mut end = 0usize;
+        for (b, &start) in blocks.iter().enumerate() {
+            let start = start as usize;
+            let gap = data.get(end..start).ok_or_else(|| {
+                unsupported("blockOffsets", place(Self::BLOCK_OFFSETS), start as u64)
+            })?;
+            if let Some(i) = gap.iter().position(|x| *x != 0) {
+                return Err(unsupported(
+                    "block padding",
+                    base + end + i,
+                    u64::from(gap[i]),
+                ));
+            }
+            let first = b as i32 * stride;
+            let last_frame = (frames - 1 - first).min(stride);
+            let block = spline::decode(
+                &data[start..],
+                base + start,
+                tracks as usize,
+                last_frame as u8,
+            )?;
+            if float_blocks.get(b) != Some(&(block.end as u32)) {
+                return Err(unsupported(
+                    "floatBlockOffsets",
+                    place(Self::FLOAT_BLOCK_OFFSETS),
+                    block.end as u64,
+                ));
+            }
+            end = start + block.end;
+            decoded.push(block.tracks);
+        }
+        let tail = &data[end..];
+        if tail.len() >= 16 || tail.iter().any(|b| *b != 0) {
+            return Err(unsupported("data padding", base + end, tail.len() as u64));
+        }
+        let mut decoded = decoded.into_iter();
+        let tracks = decoded.next().unwrap_or_default();
         Ok(Self {
             duration,
             num_frames: frames as u32,
@@ -462,8 +510,9 @@ impl SplineAnimation {
             block_duration,
             frame_duration,
             data_len: data.len(),
-            data_end: block.end,
-            tracks: block.tracks,
+            data_end: end,
+            tracks,
+            more: decoded.collect(),
         })
     }
 
@@ -481,10 +530,24 @@ impl SplineAnimation {
         }
     }
 
+    /// The block holding frame `frame` (clamped to the clip) and the frame
+    /// within it: a block's last frame is the next one's first, which takes
+    /// it.
+    pub fn block_at(&self, frame: f64) -> (&[TransformTrack], f64) {
+        let stride = f64::from(self.max_frames_per_block.saturating_sub(1).max(1));
+        let f = frame.clamp(0.0, self.last_frame());
+        let b = ((f / stride).floor() as usize).min(self.more.len());
+        let tracks = match b {
+            0 => &self.tracks,
+            b => &self.more[b - 1],
+        };
+        (tracks, f - b as f64 * stride)
+    }
+
     /// Every track's transform at `t` seconds.
     pub fn sample(&self, t: f64) -> Vec<QsTransform> {
-        let f = self.frame_at(t);
-        self.tracks.iter().map(|tr| tr.value(f)).collect()
+        let (tracks, f) = self.block_at(self.frame_at(t));
+        tracks.iter().map(|tr| tr.value(f)).collect()
     }
 }
 

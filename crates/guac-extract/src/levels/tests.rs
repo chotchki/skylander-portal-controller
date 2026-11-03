@@ -542,15 +542,21 @@ fn every_level_part_is_named_and_complete_wants_them_all() {
         );
         assert_eq!(
             part_path(ir, LEVELS[0], PALETTES),
-            ir.level_path(LEVELS[0], "palettes.v2")
+            ir.level_path(LEVELS[0], "palettes.v3")
         );
     }
-    // Named for its rule since AS.52 (its outro's actors), so an extract
-    // before it reads it again.
+    // Named for its rule since AS.52 (its outro's actors), v3 since AS.78
+    // (its camera rigs), so an extract before it reads it again.
     assert_eq!(
         part_path(crate::intros::IrFormat::Ron, LEVELS[0], PALETTES),
-        "levels/level_213_tutotial/palettes.v2.ron"
+        "levels/level_213_tutotial/palettes.v3.ron"
     );
+    // A v2 file, the rule before AS.78's, is a part to read again too.
+    m.levels.get_mut(LEVELS[0]).unwrap().parts.insert(
+        PALETTES.to_owned(),
+        vec![crate::intros::IrFormat::Ron.level_path(LEVELS[0], "palettes.v2")],
+    );
+    assert!(!complete(&m), "the palettes under AS.52's name");
     assert_eq!(
         archive_path(Path::new("/u"), LEVELS[0]),
         Path::new("/u/level/level_213_tutotial.bld")
@@ -649,6 +655,7 @@ fn the_palettes_follow_a_whitelisted_script_to_its_creature() {
         .map(|e| {
             let what = match &e.entry {
                 SlotEntry::Network => "network".to_owned(),
+                SlotEntry::Blocks { clip, .. } => format!("blocks {}", clip.name),
                 SlotEntry::Clip {
                     additive,
                     partial,
@@ -765,12 +772,80 @@ fn the_palettes_follow_a_whitelisted_script_to_its_creature() {
             "level_999_elsewhere",
             PALETTES
         ),
-        "levels/level_999_elsewhere/palettes.v2.ron"
+        "levels/level_999_elsewhere/palettes.v3.ron"
     );
     assert_eq!(
         part_path(crate::intros::IrFormat::Postcard, LEVEL, PALETTES),
         format!("levels/{LEVEL}/palettes.v{PALETTES_FIRST_RUN}.postcard")
     );
+}
+
+/// AS.78: on a first run's level a camera rig's palette is read with no
+/// script of its own (the cinematics' animator cameras are unscripted
+/// templates), its clip past one Havok block kept block by block, its
+/// length the whole clip's and its pose each block's at the time within
+/// it, as the decoder samples it.
+#[test]
+fn a_first_runs_camera_rig_has_its_palette_its_long_shot_in_blocks() {
+    use guac_formats::havok::builder::blocked_clip;
+    use guac_formats::model::builder::SlotSpec;
+    use guac_ir::palette::SlotEntry;
+    const CAMERA: &str = "C:/tfb/Content/Models/Cameras/SKY2_cinematics/999_Outro.mdl";
+    assert!(is_camera_model(CAMERA) && is_camera_model("c:\\x\\models\\CAMERAS\\a.mdl"));
+    assert!(!is_camera_model(
+        "C:/tfb/Content/Models/Objects/Treasure_Chest.mdl"
+    ));
+    let mut spec = creature_level(None);
+    let (path, chest) = spec.skinned.as_mut().unwrap();
+    *path = CAMERA;
+    chest.slots.push(SlotSpec {
+        clip: Some(blocked_clip()),
+        ..SlotSpec::new(3, 1.0 / 30.0, "999_Outro_Cam1.ma")
+    });
+    let r = palettes(parsed(&spec), LEVEL, identity()).unwrap();
+    let [p] = &r.ir.palettes[..] else {
+        panic!(
+            "{:?}",
+            r.ir.palettes.iter().map(|p| &p.owner).collect::<Vec<_>>()
+        );
+    };
+    assert_eq!(p.owner, CAMERA);
+    let Some(SlotEntry::Blocks { clip, .. }) = p.get(3).map(|e| &e.entry) else {
+        panic!("{:?}", p.get(3));
+    };
+    assert_eq!(
+        (
+            clip.frames,
+            clip.blocks.len(),
+            clip.blocks.iter().map(|b| b.frames).collect::<Vec<_>>()
+        ),
+        (8, 2, vec![5, 4])
+    );
+    let whole = 7.0 / 30.0;
+    assert!((p.duration(3).unwrap() - whole).abs() < 1e-6);
+    assert!(p.clip(3).is_none(), "no one-block clip in it");
+    // Each block's pose, at the time within it, the decoder's.
+    let built = guac_formats::havok::builder::payload(&guac_formats::havok::builder::PayloadSpec {
+        clip: Some(blocked_clip()),
+        ..Default::default()
+    });
+    let decoded = guac_formats::havok::Container::parse(&built.bytes).unwrap();
+    let a = &decoded.clip.as_ref().unwrap().animation;
+    for frame in [0.0, 2.0, 3.9, 4.5, 6.0, 6.9] {
+        let t = frame / 30.0;
+        let (block, local) = p.clip_at(3, t).unwrap();
+        let ours = block.sample(local);
+        let theirs = a.sample(t);
+        for ((joint, q), d) in ours.iter().zip(&theirs) {
+            let gap = (0..3)
+                .map(|i| (f64::from(q.translation[i]) - d.translation[i]).abs())
+                .fold(0.0, f64::max);
+            assert!(gap < 1e-5, "frame {frame}, joint {joint}: {gap:e}");
+        }
+    }
+    // A chest is no camera: none read with no script.
+    let r = palettes(parsed(&creature_level(None)), LEVEL, identity()).unwrap();
+    assert!(r.ir.palettes.is_empty());
 }
 
 /// AS.52: on a first run's level the outro's actors' palettes are read,

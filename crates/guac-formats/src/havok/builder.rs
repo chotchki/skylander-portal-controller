@@ -397,7 +397,14 @@ pub struct SkeletonSpec {
 pub struct ClipSpec {
     pub frames: u32,
     pub frame_duration: f32,
+    /// The first block's tracks.
     pub tracks: Vec<TrackSpec>,
+    /// Each later block's (openspec AS.78), its knots from its own first
+    /// frame: empty for one block of up to 256 frames.
+    pub more: Vec<Vec<TrackSpec>>,
+    /// Frames a block holds, 256 as the disc's: a block starts on the last
+    /// one's final frame.
+    pub max_frames_per_block: u32,
     pub track_to_bone: Vec<i16>,
     pub blend_hint: u8,
     pub big_endian: bool,
@@ -406,8 +413,24 @@ pub struct ClipSpec {
 }
 
 impl ClipSpec {
+    /// Every block's data, each padded with zeros to 16 bytes before the
+    /// next as the disc's are, and where each starts.
+    pub fn blocks(&self) -> (Vec<u8>, Vec<u32>, Vec<u32>) {
+        let (mut data, mut starts, mut ends) = (Vec::new(), Vec::new(), Vec::new());
+        for tracks in std::iter::once(&self.tracks).chain(&self.more) {
+            if !starts.is_empty() {
+                pad(&mut data, 16, 0);
+            }
+            starts.push(data.len() as u32);
+            let block = spline_data(tracks, self.big_endian);
+            ends.push(block.len() as u32);
+            data.extend(block);
+        }
+        (data, starts, ends)
+    }
+
     pub fn data(&self) -> Vec<u8> {
-        spline_data(&self.tracks, self.big_endian)
+        self.blocks().0
     }
 }
 
@@ -523,23 +546,23 @@ pub fn payload(spec: &PayloadSpec) -> Built {
         let binding = d.object(class(Binding::CLASS), 0x2C);
         built.animation = Some(anim);
         built.binding = Some(binding);
-        let data = c.data();
+        let (data, starts, ends) = c.blocks();
         let nt = c.tracks.len() as u32;
         d.u32(anim + 0x08, 3);
         let fd = c.frame_duration;
+        let mfpb = c.max_frames_per_block;
         d.f32(anim + 0x0C, (c.frames - 1) as f32 * fd);
         d.u32(anim + 0x10, nt);
         d.array(anim + 0x1C, None, 0);
         d.u32(anim + 0x28, c.frames);
-        d.u32(anim + 0x2C, 1);
-        d.u32(anim + 0x30, 256);
+        d.u32(anim + 0x2C, starts.len() as u32);
+        d.u32(anim + 0x30, mfpb);
         d.u32(anim + 0x34, 4 * nt);
-        d.f32(anim + 0x38, 255.0 * fd);
-        d.f32(anim + 0x3C, 1.0 / (255.0 * fd));
+        d.f32(anim + 0x38, (mfpb - 1) as f32 * fd);
+        d.f32(anim + 0x3C, 1.0 / ((mfpb - 1) as f32 * fd));
         d.f32(anim + 0x40, fd);
-        d.array_of(anim + 0x44, 4, 1, |d, e, _| d.u32(e, 0));
-        let end = data.len() as u32;
-        d.array_of(anim + 0x50, 4, 1, |d, e, _| d.u32(e, end));
+        d.array_of(anim + 0x44, 4, starts.len(), |d, e, i| d.u32(e, starts[i]));
+        d.array_of(anim + 0x50, 4, ends.len(), |d, e, i| d.u32(e, ends[i]));
         d.array(anim + 0x5C, None, 0);
         d.array(anim + 0x68, None, 0);
         let mut bytes = data;
@@ -655,6 +678,8 @@ pub fn clip() -> ClipSpec {
     ClipSpec {
         frames: 9,
         frame_duration: 1.0 / 30.0,
+        more: Vec::new(),
+        max_frames_per_block: 256,
         tracks: vec![
             TrackSpec {
                 position,
@@ -673,6 +698,78 @@ pub fn clip() -> ClipSpec {
             },
         ],
         track_to_bone: vec![0, 1, 2],
+        blend_hint: 0,
+        big_endian: false,
+        tail: 0,
+    }
+}
+
+/// Two blocks over 8 frames of 5 a block (openspec AS.78, a camera's long
+/// shot in small): frames 0-4, then 4-7, the last block short as a disc
+/// clip's is. Track 0's x linear from 0 to 1 over the first block, then
+/// quadratic from 1 through 2 to 3 over the second; track 1's y static 0.5
+/// in the first (scaled 2) and linear from 0.5 to 1.5 in the second.
+pub fn blocked_clip() -> ClipSpec {
+    let x = |degree: u8, knots: Vec<u8>, min: f32, max: f32, q: Vec<u16>| VecSpec {
+        degree,
+        knots,
+        channels: [
+            ChanSpec::Spline { min, max, q },
+            ChanSpec::Identity,
+            ChanSpec::Identity,
+        ],
+    };
+    let y = |spline: Option<(f32, f32)>| match spline {
+        None => VecSpec {
+            channels: [
+                ChanSpec::Identity,
+                ChanSpec::Static(0.5),
+                ChanSpec::Identity,
+            ],
+            ..VecSpec::identity()
+        },
+        Some((min, max)) => VecSpec {
+            degree: 1,
+            knots: vec![0, 0, 3, 3],
+            channels: [
+                ChanSpec::Identity,
+                ChanSpec::Spline {
+                    min,
+                    max,
+                    q: vec![0, 65535],
+                },
+                ChanSpec::Identity,
+            ],
+        },
+    };
+    let track = |position: VecSpec| TrackSpec {
+        position,
+        rotation: QuatSpec::Identity,
+        scale: VecSpec::identity(),
+    };
+    ClipSpec {
+        frames: 8,
+        frame_duration: 1.0 / 30.0,
+        tracks: vec![
+            track(x(1, vec![0, 0, 4, 4], 0.0, 1.0, vec![0, 65535])),
+            // A static scale, so the block ends off 16 and pads.
+            TrackSpec {
+                scale: VecSpec::constant([2.0; 3]),
+                ..track(y(None))
+            },
+        ],
+        more: vec![vec![
+            track(x(
+                2,
+                vec![0, 0, 0, 3, 3, 3],
+                1.0,
+                3.0,
+                vec![0, 32768, 65535],
+            )),
+            track(y(Some((0.5, 1.5)))),
+        ]],
+        max_frames_per_block: 5,
+        track_to_bone: vec![0, 1],
         blend_hint: 0,
         big_endian: false,
         tail: 0,
@@ -705,12 +802,17 @@ pub fn seeds() -> Vec<Vec<u8>> {
         c.tracks = vec![identity; 2000];
         c.track_to_bone = vec![0; 2000];
     }
+    let blocked = PayloadSpec {
+        clip: Some(blocked_clip()),
+        ..PayloadSpec::default()
+    };
     [
         skeleton,
         clip_only,
         both,
         padded,
         wide,
+        blocked,
         PayloadSpec::default(),
     ]
     .iter()

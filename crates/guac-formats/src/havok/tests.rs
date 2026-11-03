@@ -366,6 +366,79 @@ fn the_sample_clip_reads_and_evaluates_to_its_values() {
     assert_eq!(pose[1..], skeleton.reference_pose[1..]);
 }
 
+/// openspec AS.78: a clip past one block reads every block, each on its own
+/// knots from its first frame, and samples the block holding the frame (a
+/// block's last frame the next one's first, which agrees with it); its
+/// degree and channels its own block's. The blocks' offsets, padding and
+/// float offsets are checked as one block's are.
+#[test]
+fn a_clip_past_one_block_reads_each_block_and_samples_across_them() {
+    let built = payload(&spec(false, Some(builder::blocked_clip())));
+    let c = Container::parse(&built.bytes).unwrap();
+    let a = &c.clip.as_ref().unwrap().animation;
+    assert_eq!(
+        (a.num_frames, a.max_frames_per_block, a.more.len()),
+        (8, 5, 1)
+    );
+    assert_eq!(a.tracks[1].position.channels[1], Channel::Static);
+    assert_eq!(a.more[0][1].position.channels[1], Channel::Spline);
+    let fd = f64::from(a.frame_duration);
+    let at = |frame: f64| {
+        let s = a.sample(frame * fd);
+        (s[0].translation[0], s[1].translation[1])
+    };
+    // The second block's quadratic two thirds through its 3 frames.
+    let q = 1.0 + 2.0 * 32768.0 / 65535.0;
+    let t = 2.0 / 3.0;
+    let quad = (1.0 - t) * (1.0 - t) + 2.0 * t * (1.0 - t) * q + t * t * 3.0;
+    for (frame, x, y) in [
+        (0.0, 0.0, 0.5),
+        (2.0, 0.5, 0.5),
+        (4.0, 1.0, 0.5),
+        (6.0, quad, 0.5 + t),
+        (7.0, 3.0, 1.5),
+    ] {
+        let (gx, gy) = at(frame);
+        assert!(
+            (gx - x).abs() < 1e-5 && (gy - y).abs() < 1e-5,
+            "frame {frame}: {gx} {gy}"
+        );
+    }
+    // The block's edge agrees from either side to the decoder's precision.
+    assert!((at(4.0 - 1e-6).0 - at(4.0).0).abs() < 1e-5);
+    assert_eq!(a.block_at(4.0).1, 0.0);
+    assert_eq!(a.block_at(99.0).1, 3.0);
+    // Refused: a block count that doesn't cover the frames, a second block
+    // starting inside the first or past dirty padding, a float offset that
+    // isn't its block's end.
+    let anim = built.animation.unwrap();
+    let mut b = built.clone();
+    b.put_u32(anim + 0x2C, 1);
+    assert_eq!(field(&b.bytes), "numBlocks");
+    let spec_of = |f: &dyn Fn(&mut ClipSpec)| {
+        let mut c = builder::blocked_clip();
+        f(&mut c);
+        payload(&spec(false, Some(c)))
+    };
+    let (_, starts, ends) = builder::blocked_clip().blocks();
+    assert!(starts[1] > ends[0], "padded to 16: {starts:?} {ends:?}");
+    let spline = built.at(built.spline.unwrap());
+    let mut dirty = built.bytes.clone();
+    dirty[spline + ends[0] as usize] = 1;
+    assert_eq!(refused(&dirty).0, "block padding");
+    let more_tracks = spec_of(&|c| c.more.push(c.more[0].clone()));
+    assert_eq!(field(&more_tracks.bytes), "numBlocks");
+    // A float offset past one a block (the review): its array's count one
+    // more, the blocks' own offsets right.
+    let mut extra = built.clone();
+    extra.put_u32(anim + 0x50 + 4, 3);
+    extra.put_u32(anim + 0x50 + 8, 3 | 0x8000_0000);
+    assert_eq!(
+        refused(&extra.bytes),
+        ("floatBlockOffsets", ErrorKind::Unsupported { value: 3 })
+    );
+}
+
 #[test]
 fn big_endian_spline_data_is_refused() {
     let mut c = builder::clip();
@@ -388,8 +461,10 @@ fn clip_refusals_name_their_field() {
     assert_eq!(set(anim + 0x18, 0x40), "extractedMotion");
     assert_eq!(set(anim + 0x2C, 2), "numBlocks");
     assert_eq!(set(anim + 0x80, 1), "endian");
-    assert_eq!(set(anim + 0x28, 300), "numFrames");
-    assert_eq!(set(anim + 0x30, 8), "maxFramesPerBlock");
+    assert_eq!(set(anim + 0x28, 0), "numFrames");
+    // Past one block's frames with one block (openspec AS.78).
+    assert_eq!(set(anim + 0x28, 300), "numBlocks");
+    assert_eq!(set(anim + 0x30, 257), "maxFramesPerBlock");
     assert_eq!(set(anim + 0x34, 8), "maskAndQuantizationSize");
     assert_eq!(set(anim + 0x0C, 1.0f32.to_bits()), "duration");
     assert_eq!(set(anim + 0x40, f32::NAN.to_bits()), "frameDuration");

@@ -46,6 +46,8 @@ fn joined_214() -> (Run, Vec<String>) {
         stops.extend(run.step_play().unwrap());
     }
     run.join().unwrap_or_else(|h| panic!("{h}"));
+    // Its intro skipped as a player would (AS.81).
+    stops.extend(skip_214s_intro(&mut run));
     for _ in 0..60 {
         stops.extend(run.step_play().unwrap());
     }
@@ -905,55 +907,284 @@ fn off_the_world(run: &Run, h: Handle) -> bool {
 /// of the island's set and a door of the ship's.
 const OFF_FOR_THE_SAIL: [&str; 3] = ["The_Ship_2", "Flynn_Island_2", "Door_(1)"];
 
-/// openspec AS.59: level 214's way from its first island to its second, on
-/// the TV's listing (`scripts::PASSAGES`). The hero at the first ship part
-/// takes it; it waits on a press (South, pulsed as a hand would: with none
-/// it never goes), then goes and its shutdown wakes the sail; the TV skips
-/// the sail's cutscene a frame in (`level_end::SKIPPED_CUTSCENES`), which
-/// sets him down on the second island's ship and takes the sail off, so
-/// Setup_003, which waits for it, can start. AS.77: what the sail took off
-/// stands again once its SHUTDOWN resets the set holding it, the ship he
-/// stands on among it. Nothing stops.
+/// The sail's lines, in the order its scenes voice them.
+const SAIL_LINES: [&str; 7] = [
+    "vo_flynn_lvl214_igc03_007",
+    "vo_flynn_boom_01",
+    "vo_cali_lvl214_igc03_002",
+    "vo_flynn_lvl214_igc03_008",
+    // Its ninth scene's, an animator camera's shot read since AS.78.
+    "vo_flynn_lvl214_igc03_009",
+    "vo_cali_lvl214_igc03_010",
+    "vo_flynn_lvl214_igc03_011",
+];
+
+/// The sail's run from the first ship part: the part taken after a press
+/// (South, pulsed as a hand would: with none it never goes), then every
+/// step `actions` until the sail goes or `steps` pass. Its scenes (index,
+/// first step), the step the part went and the sail, the objects' actors
+/// named and the objects reading none (step, place), its lines and what
+/// its STARTUP took off seen off.
+struct Sail {
+    scenes: Vec<(usize, u32)>,
+    ended: Option<u32>,
+    taken: Option<u32>,
+    sailed: Option<u32>,
+    actors: std::collections::BTreeSet<String>,
+    unnamed: Vec<(u32, usize)>,
+    lines: Lines,
+    taken_off: Vec<bool>,
+    /// The darkest an interior's darkness got while it ran (AS.96).
+    dark: f32,
+}
+
+fn sail(
+    run: &mut Run,
+    stops: &mut Vec<String>,
+    steps: u32,
+    mut actions: impl FnMut(&Run, u32) -> [bool; 4],
+) -> Sail {
+    let part = handle(run, "Ship_part_1(1)");
+    let sail = handle(run, "214_Recover_First_Part_IGC");
+    let off: Vec<Handle> = OFF_FOR_THE_SAIL.iter().map(|n| handle(run, n)).collect();
+    run.put(Vec3::from_array(SHIP_PART_1), 0.0);
+    let mut out = Sail {
+        scenes: Vec::new(),
+        ended: None,
+        taken: None,
+        sailed: None,
+        actors: Default::default(),
+        unnamed: Vec::new(),
+        lines: Lines::default(),
+        taken_off: vec![false; off.len()],
+        dark: 0.0,
+    };
+    for k in 0..steps {
+        let pressed = actions(run, k);
+        step(run, stops, pressed);
+        out.lines.record(run);
+        out.dark = out
+            .dark
+            .max(guacamole::interiors::darkness(&run.vm, &run.world));
+        if out.taken.is_none() && gone(run, part) {
+            out.taken = Some(run.steps);
+        }
+        for (seen, h) in out.taken_off.iter_mut().zip(&off) {
+            *seen |= off_the_world(run, *h);
+        }
+        match scene_of(run) {
+            Some((k, n)) if cutscene_name(run).as_deref() == Some("214 recover 1st part IGC") => {
+                assert_eq!(n, 11, "the sail's eleven scenes");
+                if out.scenes.last().is_none_or(|(at, _)| *at != k) {
+                    out.scenes.push((k, run.steps));
+                }
+                for (i, a) in scene_actors(run).into_iter().enumerate() {
+                    match a {
+                        Some(a) => {
+                            out.actors.insert(a);
+                        }
+                        None => out.unnamed.push((run.steps, i)),
+                    }
+                }
+            }
+            _ if !out.scenes.is_empty() && out.ended.is_none() => out.ended = Some(run.steps),
+            _ => {}
+        }
+        if out.sailed.is_none() && gone(run, sail) {
+            out.sailed = Some(run.steps);
+            break;
+        }
+    }
+    for _ in 0..120 {
+        step(run, stops, [false; 4]);
+    }
+    out
+}
+
+/// The pads at step `k` of a walk past the first ship part that skips the
+/// sail as a player does: South pulsed for the part's press until a
+/// cutscene plays, then △ pulsed (the original's skip, past the cutscene's
+/// first second), so a test past the sail needn't play its eleven scenes.
+fn skipping_the_sail(run: &Run, k: u32) -> [bool; 4] {
+    match cutscene_name(run) {
+        Some(_) => [false, false, false, k % 20 == 10],
+        None => [k % 20 < 2, false, false, false],
+    }
+}
+
+/// openspec AS.59, AS.82: level 214's way from its first island to its
+/// second, on the TV's listing (`scripts::PASSAGES`). The hero at the first
+/// ship part takes it; it waits on a press, then goes and its shutdown
+/// wakes the sail, whose cutscene now plays to its end
+/// (`level_end::SKIPPED_CUTSCENES` lists it no more): its eleven scenes in
+/// order, every scene object reading its actor (Flynn's and Cali's from
+/// their definitions, `scripts::with_cutscene_objects`: unlisted, the
+/// second scene's walk held on an object reading none), its seven lines
+/// voiced in order and over by its end, its four animator camera shots each
+/// its clip's length (AS.78); its second scene's player waypoint
+/// sets him down on the second island's ship, and the sail takes itself
+/// off, so Setup_003, which waits for it, can start. AS.77: what the sail
+/// took off stands again once its SHUTDOWN resets the set holding it, the
+/// ship he stands on among it. Nothing stops.
 #[test]
 #[ignore = "reads the Giants dump"]
 fn level_214s_first_ship_part_sails_to_the_second_island() {
     let started = std::time::Instant::now();
     println!("load at start: {}", load());
+    assert!(!guacamole::level_end::SKIPPED_CUTSCENES.contains(&"214 recover 1st part IGC"));
     let (mut run, mut stops) = joined_214();
-    let part = handle(&run, "Ship_part_1(1)");
-    let sail = handle(&run, "214_Recover_First_Part_IGC");
     let off: Vec<Handle> = OFF_FOR_THE_SAIL.iter().map(|n| handle(&run, n)).collect();
-    run.put(Vec3::from_array(SHIP_PART_1), 0.0);
-    let (mut taken, mut sailed) = (None, None);
-    let mut taken_off = vec![false; off.len()];
-    for k in 0..1200u32 {
-        step(&mut run, &mut stops, [k % 20 < 2, false, false, false]);
-        if taken.is_none() && gone(&run, part) {
-            taken = Some(run.steps);
-        }
-        for (seen, h) in taken_off.iter_mut().zip(&off) {
-            *seen |= off_the_world(&run, *h);
-        }
-        if sailed.is_none() && gone(&run, sail) {
-            sailed = Some(run.steps);
-            break;
-        }
-    }
-    for _ in 0..120 {
-        step(&mut run, &mut stops, [false; 4]);
-    }
+    let s = sail(&mut run, &mut stops, 6000, |_, k| {
+        [k % 20 < 2, false, false, false]
+    });
     let at = run.hero().pivot;
     let standing: Vec<bool> = off.iter().map(|h| !off_the_world(&run, *h)).collect();
+    let ended = s.ended.expect("the sail's cutscene ends");
+    for (k, (_, from)) in s.scenes.iter().enumerate() {
+        let to = s.scenes.get(k + 1).map_or(ended, |(_, n)| *n);
+        println!(
+            "scene {k}: from {from}, {} steps ({:.2} s)",
+            to - from,
+            f64::from(to - from) / 60.0
+        );
+    }
     println!(
-        "the part taken at {taken:?}, the sail done at {sailed:?}; the hero at {at}, the HUD hidden {}; {OFF_FOR_THE_SAIL:?} taken off {taken_off:?}, standing after {standing:?}; {:.1} s; load at end: {}",
+        "the part taken at {:?}, the sail done at {:?}; the hero at {at}, the HUD hidden {}; actors {:?}; voices {:?}; {OFF_FOR_THE_SAIL:?} taken off {:?}, standing after {standing:?}; {:.1} s; load at end: {}",
+        s.taken,
+        s.sailed,
         guacamole::scripts::player_hud_hidden(&run.vm),
+        s.actors,
+        s.lines
+            .voices
+            .iter()
+            .map(|v| (v.sound.as_str(), v.started, v.ended, v.length))
+            .collect::<Vec<_>>(),
+        s.taken_off,
         started.elapsed().as_secs_f64(),
         load()
     );
-    assert_eq!(taken_off, [true; 3], "taken off for the sail");
+    assert_eq!(s.taken_off, [true; 3], "taken off for the sail");
     assert_eq!(standing, [true; 3], "back once the sail's done");
-    assert!(taken.is_some(), "the part taken");
-    assert!(sailed.is_some(), "the sail done");
+    assert!(s.taken.is_some(), "the part taken");
+    assert!(s.sailed.is_some(), "the sail done");
+    assert_eq!(
+        s.scenes.iter().map(|(k, _)| *k).collect::<Vec<_>>(),
+        (0..11).collect::<Vec<_>>(),
+        "every scene, in order, none skipped"
+    );
+    // AS.78: the fifth to seventh and the ninth scenes are animator camera
+    // shots (`214_Recovered.mdl`'s four: 3.13, 2.93, 2.17 and 4.67 s), each
+    // lasting its clip; until AS.78 a step each.
+    let length = |k: usize| s.scenes.get(k + 1).map_or(ended, |(_, n)| *n) - s.scenes[k].1;
+    for (k, clip) in [
+        (4, 3.133_333_3),
+        (5, 2.933_333_3),
+        (6, 2.166_666_7),
+        (8, 4.666_666_5),
+    ] {
+        let want = clip * 60.0;
+        assert!(
+            (f64::from(length(k)) - want).abs() <= 2.0,
+            "scene {k}: {} steps, its camera's clip {want:.0}",
+            length(k)
+        );
+    }
+    assert!(
+        s.unnamed.is_empty(),
+        "objects reading no actor: {:?}",
+        s.unnamed
+    );
+    assert_eq!(s.dark, 0.0, "an interior's darkness under the sail");
+    for who in ["Flynn_NPC", "Cali_NPC", "214_RFP_MoneyBags", "009_Eruptor"] {
+        assert!(
+            s.actors.contains(who),
+            "{who} in its scenes: {:?}",
+            s.actors
+        );
+    }
+    assert_eq!(
+        s.lines
+            .voices
+            .iter()
+            .map(|v| v.sound.as_str())
+            .collect::<Vec<_>>(),
+        SAIL_LINES
+    );
+    for v in &s.lines.voices {
+        assert!(
+            v.ended.is_some_and(|e| e <= u64::from(ended)),
+            "{} on past the cutscene's end at {ended}: {:?}",
+            v.sound,
+            v.ended
+        );
+    }
+    assert!(
+        at.distance(Vec3::from_array(ON_THE_SECOND_ISLAND)) < 2.0,
+        "on the second island: {at}"
+    );
+    assert!(
+        !guacamole::scripts::player_hud_hidden(&run.vm),
+        "the HUD back"
+    );
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
+/// openspec AS.82, AS.81: the original's own skip still ends the sail once
+/// it plays: △ pressed in its second scene ends it there (the cutscene
+/// system's check), sets him down on the second island's ship where
+/// playing it does, the HUD back within a few steps, and puts back what it
+/// took off; no line plays on past it. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_sail_skips_on_triangle() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, mut stops) = joined_214();
+    let off: Vec<Handle> = OFF_FOR_THE_SAIL.iter().map(|n| handle(&run, n)).collect();
+    let mut pressed = None;
+    let s = sail(&mut run, &mut stops, 6000, |run, k| {
+        let second = scene_of(run).is_some_and(|(k, _)| k >= 1)
+            && cutscene_name(run).as_deref() == Some("214 recover 1st part IGC");
+        let triangle = second && pressed.is_none();
+        if triangle {
+            pressed = Some(run.steps);
+        }
+        [
+            k % 20 < 2 && scene_of(run).is_none(),
+            false,
+            false,
+            triangle,
+        ]
+    });
+    let at = run.hero().pivot;
+    let standing: Vec<bool> = off.iter().map(|h| !off_the_world(&run, *h)).collect();
+    println!(
+        "△ at {pressed:?}; scenes {:?}; the cutscene over at {:?}, the sail done at {:?}; the hero at {at}; voices {:?}; standing after {standing:?}; {:.1} s; load at end: {}",
+        s.scenes,
+        s.ended,
+        s.sailed,
+        s.lines
+            .voices
+            .iter()
+            .map(|v| (v.sound.as_str(), v.started, v.ended))
+            .collect::<Vec<_>>(),
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    let pressed = pressed.expect("△ pressed in its second scene");
+    let skip = s.ended.expect("the cutscene over");
+    assert!(skip <= pressed + 3, "skipped at {skip}, △ at {pressed}");
+    assert!(s.sailed.is_some_and(|d| d <= skip + 2), "{:?}", s.sailed);
+    assert_eq!(s.scenes.last().map(|(k, _)| *k), Some(1), "{:?}", s.scenes);
+    assert!(
+        s.lines
+            .voices
+            .iter()
+            .all(|v| v.ended.is_some_and(|e| e <= u64::from(skip))),
+        "{:?}",
+        s.lines.voices
+    );
+    assert_eq!(standing, [true; 3], "back once the sail's done");
     assert!(
         at.distance(Vec3::from_array(ON_THE_SECOND_ISLAND)) < 2.0,
         "on the second island: {at}"
@@ -1106,7 +1337,8 @@ fn level_214s_jump_pad_carries_him_to_the_first_ship_part() {
         } else if sailed.is_none() && taken.is_none() {
             push_toward(&mut run, &mut stops, target);
         } else {
-            step(&mut run, &mut stops, [false; 4]);
+            let pads = skipping_the_sail(&run, k);
+            step(&mut run, &mut stops, pads);
         }
         let at = run.hero().pivot;
         if launched.is_none() && at.y > pad.y + 0.2 {
@@ -1248,7 +1480,8 @@ fn level_214s_third_fight_is_fought_on_the_second_island() {
     let sail = handle(&run, "214_Recover_First_Part_IGC");
     run.put(Vec3::from_array(SHIP_PART_1), 0.0);
     for k in 0..600u32 {
-        step(&mut run, &mut stops, [k % 20 < 2, false, false, false]);
+        let pads = skipping_the_sail(&run, k);
+        step(&mut run, &mut stops, pads);
         if gone(&run, sail) {
             break;
         }
@@ -1504,7 +1737,8 @@ fn fourth_fight(run: &mut Run, stops: &mut Vec<String>) -> FourthFight {
     .collect();
     run.put(Vec3::from_array(SHIP_PART_1), 0.0);
     for k in 0..600u32 {
-        step(run, stops, [k % 20 < 2, false, false, false]);
+        let pads = skipping_the_sail(run, k);
+        step(run, stops, pads);
         if gone(run, sail) {
             break;
         }

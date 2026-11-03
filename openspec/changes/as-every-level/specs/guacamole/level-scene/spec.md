@@ -54,11 +54,29 @@ On level 214 a hero within 10 ft across and 8 ft up or down of a spawner's bomb 
 - **THEN** the bomb flies, the wall falls in pieces and he walks through to the fight
 
 ### Requirement: Level 214's intro hands the hero over on its ship
-Level 214's intro SHALL hold until a hero's minion is in, be skipped a frame in, and hand him over on the ship's deck at (-9.14, -12.58, 18.10), 4.3 m from the level's start marker, with every placement it took off back as its file has it (248 on the dock and the ship) and the ship's engine, masthead and roof standing once each, nothing stopped.
+Level 214's intro SHALL hold until a hero's minion is in, then play its ten scenes to their end (52.9 s, Flynn and Cali in them, its ten lines whole) or end on a player's △ past its first second, and hand him over on the ship's deck at (-9.14, -12.58, 18.10), 4.3 m from the level's start marker, every placement it took off back as its file has it and the ship's engine, masthead and roof standing once each, nothing stopped.
 
 #### Scenario: Chapter 1's end into level 214
 - **WHEN** chapter 1's end takes the hero into level 214
-- **THEN** he stands on the ship's drawn deck, one engine on it, the dock's props back around him
+- **THEN** the intro plays through, then he stands on the ship's drawn deck, one engine on it, the dock's props back around him
+
+#### Scenario: The intro skipped
+- **WHEN** a player presses △ in the intro's second scene
+- **THEN** it ends within two steps, Flynn's line with it, and he stands on the deck as it hands him over
+
+### Requirement: A cutscene's objects are defined by their placements
+A level placement whose script defines a cutscene object into a file structure (Flynn's and Cali's definitions, awake from the load: 15 on 9 levels) SHALL run on the TV, with the script of the template it names as the object's actor, so every cutscene that adds the object to a scene finds its actor.
+
+#### Scenario: Level 214's sail
+- **WHEN** the hero takes the first ship part
+- **THEN** the sail plays its eleven scenes to their end, Flynn and Cali in them, and sets him down on the second island's ship
+
+### Requirement: A cinematic's camera shot lasts its clip
+An animator camera's shot SHALL last its clip's length as its palette holds it, a clip past one Havok block read block by block: chapter 1's outro's second scene 10.0 s, level 214's intro's camera scenes 3.00, 2.30, 1.97 and 3.97 s, its sail's 3.13, 2.93, 2.17 and 4.67 s.
+
+#### Scenario: Chapter 1's outro
+- **WHEN** the outro reaches its second scene
+- **THEN** it lasts 10.0 s and Norticus' last line is over by the level change
 
 ### Requirement: Level 214's bomb comes back to its spawner
 A level 214 bomb SHALL stand again on the spawner that cloned it within 1.3 s of its burst, waiting to be taken, nothing left at the blast and its burst sounding once, and taken again it SHALL open the next castle wall, so one spawner's bombs open the wall before the pods, the wall past them and the wall before Eon's elemental hint in turn.
@@ -128,7 +146,7 @@ On level 214's second island the hero SHALL take the key in the lobe below the g
 Once level 214's sail is done or skipped, what its cutscene took off SHALL stand again as its file has it: the second island's ship the hero is set down on, the island's NPCs and the ship's doors and hatches, since a reset of a set of placements resets each one and keeps the set.
 
 #### Scenario: The first ship part taken
-- **WHEN** the hero takes the first ship part and the sail is skipped
+- **WHEN** the hero takes the first ship part and the sail plays to its end, or a player skips it with △
 - **THEN** he stands on the second island's ship at (-383.18, -12.58, 714.41), the ship, `Flynn_Island_2` and `Door_(1)` standing again
 
 ### Requirement: A level's own emitters draw where they stand

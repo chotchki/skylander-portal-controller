@@ -40,6 +40,10 @@ fn joined(level: &str) -> (Run, Vec<String>) {
         stops.extend(run.step_play().unwrap());
     }
     run.join().unwrap_or_else(|h| panic!("{h}"));
+    if level == LEVEL_214 {
+        // Its intro skipped as a player would (AS.81: it plays to its end).
+        stops.extend(skip_214s_intro(&mut run));
+    }
     for _ in 0..30 {
         stops.extend(run.step_play().unwrap());
     }

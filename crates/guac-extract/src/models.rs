@@ -44,7 +44,7 @@ use guac_formats::material::{self, Blend as FBlend, Glow as FGlow, Role};
 use guac_formats::model::{self as fmodel, JointMap, PortalModel};
 use guac_formats::texture::Texture;
 use guac_ir::actor::{Movement, Shape, Solid};
-use guac_ir::clip::{Clip, RotationTrack, Track, VecSpline, VecTrack};
+use guac_ir::clip::{Blocks, Clip, RotationTrack, Track, VecSpline, VecTrack};
 use guac_ir::hero::{Gait, Locomotion, SlotClip};
 use guac_ir::model::{
     Attachment, Blend, Filter, Glow, Joint, Mask, Material, MaterialTrack, Params, RenderStates,
@@ -224,6 +224,9 @@ pub fn read(
         .map_err(bad)?;
     let skeleton = skeleton(&havok_skeleton, &inverse).map_err(|e| refused(load_file, e))?;
     let idle = fmodel::idle(&igz, hero, &havok_skeleton).map_err(bad)?;
+    if !idle.clip.animation.more.is_empty() {
+        return Err(refused(load_file, PAST_ONE_BLOCK));
+    }
     let idle = clip(&idle.clip, idle.file.unwrap_or_default());
 
     let mut textures = Textures::default();
@@ -372,6 +375,15 @@ pub fn palette(
                 label: s.label.map(str::to_owned),
                 entry: match s.clip {
                     None => SlotEntry::Network,
+                    // Past one block (openspec AS.78: the cinematics'
+                    // animator cameras), each block a clip of its own.
+                    Some(c) if !c.clip.animation.more.is_empty() => SlotEntry::Blocks {
+                        additive: c.flags.additive_blend(),
+                        partial: c.flags.partial_animation(),
+                        layered: c.flags.layered(),
+                        motion_extraction: c.flags.motion_extraction_flags() as u8,
+                        clip: blocks(&c.clip, c.file.unwrap_or_default()),
+                    },
                     Some(c) => SlotEntry::Clip {
                         additive: c.flags.additive_blend(),
                         partial: c.flags.partial_animation(),
@@ -644,6 +656,13 @@ pub fn hero(
     for (gait, slot) in GAITS {
         let c = fmodel::slot_clip(igz, &portal.hero, skeleton, slot)
             .map_err(|e| unsettled(format!("its {gait:?} clip (slot {slot}): {e}")))?;
+        if c.as_ref()
+            .is_some_and(|c| !c.clip.animation.more.is_empty())
+        {
+            return Err(unsettled(format!(
+                "its {gait:?} clip (slot {slot}): {PAST_ONE_BLOCK}"
+            )));
+        }
         *locomotion.get_mut(gait) = c.map(|c| SlotClip {
             slot: slot as u16,
             label: c.label.map(str::to_owned),
@@ -973,8 +992,13 @@ fn vec_track(t: &HavokVecTrack) -> VecTrack {
     }
 }
 
+/// Why a hero's idle or locomotion clip past one Havok block is refused:
+/// none on the disc is (openspec AS.78 reads them for the palettes alone).
+pub const PAST_ONE_BLOCK: &str = "a clip past one Havok block";
+
 /// A decoded clip as the IR keeps it: each track on the joint its binding
-/// names, control points dequantized to f32.
+/// names, control points dequantized to f32. Its first block's alone: a clip
+/// past one is [`blocks`].
 pub fn clip(c: &havok::Clip<'_>, name: &str) -> Clip {
     let a = &c.animation;
     Clip {
@@ -982,26 +1006,60 @@ pub fn clip(c: &havok::Clip<'_>, name: &str) -> Clip {
         duration: a.duration,
         frame_duration: a.frame_duration,
         frames: a.num_frames,
-        tracks: a
-            .tracks
-            .iter()
-            .zip(&c.binding.track_to_bone)
-            .map(|(t, &joint)| Track {
-                joint,
-                translation: vec_track(&t.position),
-                rotation: match &t.rotation {
-                    QuatTrack::Identity => RotationTrack::Constant([0.0, 0.0, 0.0, 1.0]),
-                    QuatTrack::Static(q) => RotationTrack::Constant(q.map(|c| c as f32)),
-                    QuatTrack::Spline(curve) => RotationTrack::Spline {
-                        degree: curve.degree,
-                        knots: curve.knots.clone(),
-                        points: curve.points.iter().map(|p| p.map(|c| c as f32)).collect(),
-                    },
-                },
-                scale: vec_track(&t.scale),
+        tracks: tracks(&a.tracks, &c.binding.track_to_bone),
+    }
+}
+
+/// A decoded clip past one block as the IR keeps it (openspec AS.78): each
+/// block a [`Clip`] of its own frames, its duration theirs, as [`clip`]
+/// keeps a clip's tracks.
+pub fn blocks(c: &havok::Clip<'_>, name: &str) -> Blocks {
+    let a = &c.animation;
+    let stride = a.max_frames_per_block.saturating_sub(1).max(1);
+    let all = std::iter::once(&a.tracks).chain(&a.more);
+    Blocks {
+        name: name.to_owned(),
+        duration: a.duration,
+        frame_duration: a.frame_duration,
+        frames: a.num_frames,
+        blocks: all
+            .enumerate()
+            .map(|(b, tracks)| {
+                let first = b as u32 * stride;
+                let frames = (a.num_frames - first).min(stride + 1);
+                Clip {
+                    name: name.to_owned(),
+                    duration: (frames - 1) as f32 * a.frame_duration,
+                    frame_duration: a.frame_duration,
+                    frames,
+                    tracks: self::tracks(tracks, &c.binding.track_to_bone),
+                }
             })
             .collect(),
     }
+}
+
+/// Decoded transform tracks as the IR keeps them, each on the joint the
+/// binding names.
+fn tracks(tracks: &[havok::spline::TransformTrack], track_to_bone: &[u16]) -> Vec<Track> {
+    tracks
+        .iter()
+        .zip(track_to_bone)
+        .map(|(t, &joint)| Track {
+            joint,
+            translation: vec_track(&t.position),
+            rotation: match &t.rotation {
+                QuatTrack::Identity => RotationTrack::Constant([0.0, 0.0, 0.0, 1.0]),
+                QuatTrack::Static(q) => RotationTrack::Constant(q.map(|c| c as f32)),
+                QuatTrack::Spline(curve) => RotationTrack::Spline {
+                    degree: curve.degree,
+                    knots: curve.knots.clone(),
+                    points: curve.points.iter().map(|p| p.map(|c| c as f32)).collect(),
+                },
+            },
+            scale: vec_track(&t.scale),
+        })
+        .collect()
 }
 
 /// A decoded segment as the IR keeps it: positions, normals, UV0 and a skin

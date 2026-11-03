@@ -8,12 +8,14 @@
 //! One file per character load file, `palettes/<load file>.<ron|postcard>`,
 //! and per level one for the creatures its whitelisted placements name,
 //! `levels/<archive>/palettes.<ron|postcard>`: new files beside unchanged
-//! ones, so [`crate::IR_VERSION`] holds.
+//! ones, so [`crate::IR_VERSION`] holds. [`SlotEntry::Blocks`] (openspec
+//! AS.78) is a variant after the others: every file written before it reads
+//! unchanged, so it holds that too.
 
 use serde::{Deserialize, Serialize};
 
 use crate::DumpIdentity;
-use crate::clip::Clip;
+use crate::clip::{Blocks, Clip};
 
 /// Every filled slot of one model's animation set: the ones that read and
 /// the ones refused.
@@ -59,6 +61,15 @@ pub enum SlotEntry {
     },
     /// An animation network, or no animation: no clip of the slot's own.
     Network,
+    /// A clip past one Havok block (openspec AS.78), with the same flags as
+    /// [`SlotEntry::Clip`].
+    Blocks {
+        additive: bool,
+        partial: bool,
+        layered: bool,
+        motion_extraction: u8,
+        clip: Blocks,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,10 +96,30 @@ impl Palette {
             .map(|i| &self.entries[i])
     }
 
-    /// The clip in `slot`, if it holds one.
+    /// The clip in `slot`, if it holds one of a single block.
     pub fn clip(&self, slot: u16) -> Option<&Clip> {
         match &self.get(slot)?.entry {
             SlotEntry::Clip { clip, .. } => Some(clip),
+            SlotEntry::Network | SlotEntry::Blocks { .. } => None,
+        }
+    }
+
+    /// What `slot`'s clip poses `t` seconds in: the clip and `t`, or for one
+    /// past a block, the block playing then and the time within it.
+    pub fn clip_at(&self, slot: u16, t: f64) -> Option<(&Clip, f64)> {
+        match &self.get(slot)?.entry {
+            SlotEntry::Clip { clip, .. } => Some((clip, t)),
+            SlotEntry::Blocks { clip, .. } => clip.at(t),
+            SlotEntry::Network => None,
+        }
+    }
+
+    /// `slot`'s clip's length in seconds, of one block or more; none for a
+    /// network or a slot that doesn't read.
+    pub fn duration(&self, slot: u16) -> Option<f32> {
+        match &self.get(slot)?.entry {
+            SlotEntry::Clip { clip, .. } => Some(clip.duration),
+            SlotEntry::Blocks { clip, .. } => Some(clip.duration),
             SlotEntry::Network => None,
         }
     }

@@ -32,6 +32,44 @@ pub struct Clip {
     pub tracks: Vec<Track>,
 }
 
+/// A clip past one Havok block (openspec AS.78: the cinematics' animator
+/// cameras, 301 to 501 frames): its blocks in order, each a [`Clip`] of its
+/// own frames with knots counting from its first, the next starting on the
+/// last one's final frame. Time loops over the whole as a clip's does.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Blocks {
+    /// The clip's file name.
+    pub name: String,
+    /// The whole clip's length, seconds.
+    pub duration: f32,
+    pub frame_duration: f32,
+    /// Its frames in all, the blocks' shared edges counted once.
+    pub frames: u32,
+    pub blocks: Vec<Clip>,
+}
+
+impl Blocks {
+    /// The block playing `t` seconds in and the time within it: `t` looped
+    /// over the duration, counted in frames and clamped to the last, the
+    /// block the one holding that frame (a block's last frame is the next
+    /// one's first, which takes it).
+    pub fn at(&self, t: f64) -> Option<(&Clip, f64)> {
+        let first = self.blocks.first()?;
+        let d = f64::from(self.duration);
+        let fd = f64::from(self.frame_duration);
+        let t = if d > 0.0 { t.rem_euclid(d) } else { 0.0 };
+        let last = f64::from(self.frames.saturating_sub(1));
+        let f = if fd > 0.0 {
+            (t / fd).clamp(0.0, last)
+        } else {
+            0.0
+        };
+        let stride = f64::from(first.frames.saturating_sub(1).max(1));
+        let b = ((f / stride).floor() as usize).min(self.blocks.len() - 1);
+        Some((&self.blocks[b], (f - b as f64 * stride) * fd))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Track {
     /// A [`Skeleton`] joint.
@@ -575,6 +613,42 @@ mod tests {
         assert_eq!(c.frame_at(f64::from(c.duration)), 0.0);
         assert!((c.frame_at(-0.05) - 1.5).abs() < 1e-6);
         assert!((c.frame_at(1.05) - 1.5).abs() < 1e-6);
+    }
+
+    /// openspec AS.78: a clip past one block plays the block holding the
+    /// frame at the time within it: two blocks of 4 frames each (frames
+    /// 0-3 and 3-6, the edge the second's), time looping over the whole.
+    #[test]
+    fn a_clip_of_blocks_plays_the_block_holding_the_frame() {
+        let mut second = clip();
+        second.name = "second".into();
+        let b = Blocks {
+            name: "Test_Cam.ma".into(),
+            duration: 0.2,
+            frame_duration: 1.0 / 30.0,
+            frames: 7,
+            blocks: vec![clip(), second],
+        };
+        let fd = f64::from(1.0f32 / 30.0);
+        let name = |t: f64| {
+            b.at(t)
+                .map(|(c, local)| (c.name.clone(), (local / fd * 2.0).round() / 2.0))
+        };
+        assert_eq!(name(0.0), Some(("Test_Idle.ma".into(), 0.0)));
+        assert_eq!(name(2.0 * fd), Some(("Test_Idle.ma".into(), 2.0)));
+        assert_eq!(name(3.5 * fd), Some(("second".into(), 0.5)));
+        assert_eq!(name(5.0 * fd), Some(("second".into(), 2.0)));
+        // The whole loops: its duration is its start again.
+        assert_eq!(name(f64::from(0.2f32)), name(0.0));
+        assert_eq!(name(f64::from(0.2f32) + 5.0 * fd), name(5.0 * fd));
+        assert!(
+            Blocks {
+                blocks: Vec::new(),
+                ..b.clone()
+            }
+            .at(0.0)
+            .is_none()
+        );
     }
 
     #[test]

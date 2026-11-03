@@ -882,6 +882,7 @@ fn the_palette_keeps_every_slot_the_locomotion_leaves_out() {
                 ));
             }
             SlotEntry::Network => networks.push(s.slot),
+            SlotEntry::Blocks { clip, .. } => panic!("{}: no clip past a block here", clip.name),
         }
     }
     let three = || vec![0, 1, 2];

@@ -231,18 +231,31 @@ pub const PLAYED: [&str; 10] = [
 
 /// The palettes part's rule past the first run's levels (openspec AS.54:
 /// every skinned model a placement names, [`palettes`]), which its file's
-/// name carries, `palettes.v2.<ron|postcard>`, so a level extracted on
-/// demand under the whitelist's rule (which held none of its creatures)
-/// reads its palettes again on its next ask. The first run's levels' rule
-/// has its own ([`PALETTES_FIRST_RUN`]).
-pub const PALETTES_PAST_FIRST_RUN: u32 = 2;
+/// name carries, `palettes.v3.<ron|postcard>`, so a level extracted on
+/// demand under an older rule reads its palettes again on its next ask: v2
+/// held none of its creatures, v3 (AS.78) reads a clip past one Havok block
+/// (level 214's intro's 15 s camera shot) where v2 refused it. The first
+/// run's levels' rule has its own ([`PALETTES_FIRST_RUN`]).
+pub const PALETTES_PAST_FIRST_RUN: u32 = 3;
 
 /// Chapter 1's palettes part's rule (the whitelist's, which holds its
-/// outro's actors' scripts since openspec AS.52), which its file's name
-/// carries, `palettes.v2.<ron|postcard>`, so an extract written under the
-/// rule before reads chapter 1's palettes again, and nothing else, on its
-/// next start.
-pub const PALETTES_FIRST_RUN: u32 = 2;
+/// outro's actors' scripts since openspec AS.52, and the cinematics'
+/// camera rigs since AS.78), which its file's name carries,
+/// `palettes.v3.<ron|postcard>`, so an extract written under an older rule
+/// reads chapter 1's palettes again, and nothing else, on its next start.
+pub const PALETTES_FIRST_RUN: u32 = 3;
+
+/// Where the cinematics' camera rigs' models sit: an animator camera's
+/// `anim owner` places one (openspec AS.78).
+const CAMERA_MODELS: &str = "/models/cameras/";
+
+/// Whether `path` names a cinematic camera rig's model ([`CAMERA_MODELS`],
+/// any case).
+pub fn is_camera_model(path: &str) -> bool {
+    path.replace('\\', "/")
+        .to_ascii_lowercase()
+        .contains(CAMERA_MODELS)
+}
 
 /// The script part's file, `levels/<archive>/script.igz`: raw, so the same
 /// in either IR format.
@@ -288,7 +301,8 @@ pub fn complete(m: &Manifest) -> bool {
 /// either IR format ([`part_path`]), for the palettes, the one part whose
 /// file's name carries its rule: recorded under an older name it's a part
 /// to read again (openspec AS.52: chapter 1's palettes recorded as
-/// `palettes.<ext>` before its rule's `palettes.v2`). Any other part is
+/// `palettes.<ext>` before its rule's `palettes.v2`, AS.78 `palettes.v2`
+/// before `palettes.v3`). Any other part is
 /// held once it's recorded.
 fn holds_current(level: &str, part: &str, files: &[String]) -> bool {
     if part != PALETTES {
@@ -619,9 +633,12 @@ fn skinned_prop(
         .inverse_joints(&hero.bones, &hero.skeleton.inverse_joints)
         .map_err(s)?;
     let skeleton = models::skeleton(&havok, &inverse)?;
+    // A clip past one Havok block (openspec AS.78) idles nothing, as
+    // before the reader read one.
     let idle = fmodel::slot_clip(igz, &hero, &havok, IDLE_SLOT)
         .ok()
         .flatten()
+        .filter(|c| c.clip.animation.more.is_empty())
         .map(|c| models::clip(&c.clip, c.file.unwrap_or_default()));
     let (mut materials, mut segments) = (Vec::new(), Vec::new());
     for mesh in &hero.meshes {
@@ -1025,7 +1042,9 @@ pub fn script(igz: &Igz<'_>) -> Result<usize, String> {
 }
 
 /// The palettes part: every slot of each skinned model a placement running
-/// one of the level's whitelisted scripts or a walker's (AG.162) names, each
+/// one of the level's whitelisted scripts or a walker's (AG.162) names, and
+/// each camera rig's a placement names (openspec AS.78: the cinematics'
+/// animator cameras, unscripted templates whose clips the shots last), each
 /// model once, in object order; past the first run's levels every skinned
 /// model any placement names, scripted or not (openspec AS.54: level 214's
 /// Chompy pods are unscripted templates its spawners clone and play clips
@@ -1050,12 +1069,13 @@ pub fn palettes(
         let Some(model) = a.info.model else {
             continue;
         };
-        if !every && !a.script.is_some_and(|p| crate::scripts::listed(&listed, p)) {
-            continue;
-        }
         let Some(info) = placements.models.get(&model) else {
             continue;
         };
+        let camera = info.info.name.is_some_and(is_camera_model);
+        if !every && !camera && !a.script.is_some_and(|p| crate::scripts::listed(&listed, p)) {
+            continue;
+        }
         creatures.insert(model, info.info.name.unwrap_or_default());
     }
     let mut palettes = Vec::new();

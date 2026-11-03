@@ -423,8 +423,14 @@ pub(crate) struct CameraPlacements(Vec<Handle>);
 fn install_from(world: &mut World, source: &ScriptSource) {
     // The level's own listing (openspec AS.51): chapter 1's names its first
     // fight; any level's definition and its spellings of the listed scripts.
+    // Its cutscene objects' definitions too (AS.82).
     let config = match source.level_unit() {
-        Some(level) => scripts::level_config(Mode::Play, &source.files, level, source.level()),
+        Some(level) => scripts::with_cutscene_objects(
+            scripts::level_config(Mode::Play, &source.files, level, source.level()),
+            &source.program,
+            &source.files,
+            level,
+        ),
         None => scripts::fight_config(Mode::Play),
     };
     #[allow(unused_mut)]
