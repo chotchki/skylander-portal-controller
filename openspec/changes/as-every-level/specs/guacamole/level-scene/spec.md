@@ -170,3 +170,14 @@ A generator at a burst's rate (9999 a second) SHALL make its most alive at once 
 #### Scenario: An eruption's drops
 - **WHEN** Eruptor erupts and the eruption's head stays on past its drops' 1.0 s
 - **THEN** a second round of drops comes as the first dies, and none after the head is taken off
+
+### Requirement: Into an interior and out
+A hero walking into an interior's box on any level SHALL be taken to its room: the screen darkening to black over 0.5 s, the hero set down 0.2 s later 1 ft behind the room's arrival waypoint facing as it does, the screen lifting over 0.5 s as the interior's camera takes the view, the room's exit box made; walking into that box SHALL take him back out the same way, 1 ft past the door's waypoint facing out, his health and what he carries kept.
+
+#### Scenario: Chapter 1's cave
+- **WHEN** the hero, the first fight won, walks into the cave's mouth
+- **THEN** the screen goes black, he stands in the cave 0.7 s after the darkness began, within 1 m of where the original stood him, and the cave waits for his exit 1.35 s after it began
+
+#### Scenario: Level 214's house by the yard
+- **WHEN** the hero walks into the house the Mabu ran into, takes its room's bomb and walks into its exit's box
+- **THEN** he stands outside its door with the bomb still over him, which opens the wall before the second key

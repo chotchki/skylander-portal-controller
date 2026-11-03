@@ -658,7 +658,8 @@ pub(crate) struct CreaturesReport {
     pub spawned: Vec<SpawnShot>,
     /// The orbs out (openspec AH.20's control), for a driver to walk to.
     pub orbs: Vec<OrbShot>,
-    /// How many of them the TV draws (openspec AH.61, `crate::orbs`).
+    /// How many of them the TV keeps (openspec AH.61, `crate::orbs`), each
+    /// drawn by its own emitter's glow since AH.350 took AH.61's star off.
     pub orbs_drawn: usize,
     /// How many creatures and skinned clones the TV draws now (openspec
     /// AS.54: a level's encounter drawn as chapter 1's fight is).
@@ -793,6 +794,7 @@ mod tests {
         Asked {
             plan: Plan::of(Anchor::Start),
             seed: None,
+            interior: None,
         }
     }
 

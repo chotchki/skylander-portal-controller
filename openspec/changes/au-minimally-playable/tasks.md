@@ -6,7 +6,7 @@ AU ranks boxes where they live (design decision 1). The boxes it adds are for wh
 
 - [ ] AU.0 Phase exit:
   - every box below ticked, split or struck through with its reason;
-  - the boxes AU ranks in other changes ticked: AH.29 (the sweep), AS.38 (the save system on the host), AS.46 and AS.47 (the hub), AS.53 (the end-of-level sequencing), and AS.96, AS.97, AS.98 and AS.76 (level 214 to its end);
+  - the boxes AU ranks in other changes ticked: AH.29 (the sweep), AS.38 (the save system on the host), AS.46 and AS.47 (the hub), AS.53 (the end-of-level sequencing), and AS.96, AS.97, AS.98, AS.104 and AS.76 (level 214 to its end);
   - [`.githooks/pre-push`](../../../.githooks/pre-push) green (fmt, check, clippy -D warnings, test --workspace);
   - the guacamole e2e and guacamole's disc suites green on the tip;
   - AU.7's playthrough done by chotchki on a release build.

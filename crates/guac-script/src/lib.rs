@@ -758,6 +758,17 @@
 //! emptied, each of those would do nothing); and slides, with their
 //! sliders (Slides).
 //!
+//! A macro the embedder answers ([`Config::answered`], by display name;
+//! openspec AS.96) is the one place it stands in for a script's own work:
+//! its call binds its INTERFACE as any call does, then [`Host::answer`] is
+//! handed the macro's name and its parameters as bound. Answered, the body
+//! is skipped and the counter goes on into the use block's after-return
+//! code, which reads the frame as the binding left it, before the close
+//! resets it; declined, the body runs as any other's. Ours, not the
+//! original's: the original runs every body. The embedder names what it
+//! answers and why where it lists it (guacamole's warp: a minion warped
+//! where the original's portal manager takes him off and puts him back).
+//!
 //! A static member (one heading its path) is read under what the block
 //! runs on: the running placement, or inside a tell's or a clone's block the
 //! object told. The VM tells the host before each such host read

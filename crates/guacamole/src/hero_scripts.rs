@@ -2067,7 +2067,29 @@ pub(crate) struct RunShot {
     /// The TV's level end, once written: its string's name and, while it
     /// changes no level, why (AS.15's review).
     pub level_end: Option<LevelEndShot>,
+    /// The level's interiors (AS.96): how dark they leave the screen, each
+    /// controller's behaviour, and the warps landed, the last few.
+    pub interiors: InteriorsShot,
 }
+
+/// The interiors as [`RunShot`] reports them.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct InteriorsShot {
+    pub darkness: f32,
+    pub controllers: Vec<(String, Option<String>)>,
+    pub warps: Vec<WarpShot>,
+}
+
+/// A warp landed: where (metres), facing which way and the engine frame.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct WarpShot {
+    pub at: [f32; 3],
+    pub facing: f32,
+    pub frame: u64,
+}
+
+/// How many warps [`InteriorsShot`] lists, the last last.
+const WARPS_SHOWN: usize = 8;
 
 /// The TV's level end as [`RunShot`] reports it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -2120,6 +2142,22 @@ impl RunShots<'_> {
                 string: e.string.clone(),
                 unread: e.unread.as_ref().map(ToString::to_string),
             }),
+            interiors: InteriorsShot {
+                darkness: guacamole::interiors::darkness(&rt.vm, w),
+                controllers: guacamole::interiors::states(&rt.vm, w),
+                warps: w
+                    .landed
+                    .iter()
+                    .rev()
+                    .take(WARPS_SHOWN)
+                    .rev()
+                    .map(|l| WarpShot {
+                        at: l.at.to_array(),
+                        facing: l.facing,
+                        frame: l.frame,
+                    })
+                    .collect(),
+            },
         })
     }
 }

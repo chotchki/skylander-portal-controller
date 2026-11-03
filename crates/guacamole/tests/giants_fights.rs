@@ -1680,6 +1680,114 @@ const TO_SETUP_004: [[f32; 2]; 4] = [
     [-270.91, 727.46],
 ];
 
+/// What Setup_004's fight came to ([`fourth_fight`]): Setup_003's beaten,
+/// the locked door opened, Setup_004's five beaten (the elves A-C, the Tree
+/// Rex, the spawner) and their bites, the Mabu's last place standing and
+/// where he started, health before and after and the experience.
+struct FourthFight {
+    beaten_003: Vec<Option<u32>>,
+    opened: u32,
+    at_the_door: u32,
+    beaten: Vec<Option<u32>>,
+    bites: Vec<(u32, f32)>,
+    mabu: Handle,
+    mabu_from: Option<Vec3>,
+    mabu_last: Option<Vec3>,
+    controller: Handle,
+    health_before: f32,
+    health: f32,
+    xp: u32,
+}
+
+/// Level 214's fourth fight on foot from the sail (AS.84's walk): off the
+/// ship to Setup_003's trigger, Setup_003 fought on the stick, the key in
+/// the lobe, △ by the locked door, past it to Setup_004's triggers and its
+/// five fought on the stick, then 240 steps at rest.
+fn fourth_fight(run: &mut Run, stops: &mut Vec<String>) -> FourthFight {
+    let sail = handle(run, "214_Recover_First_Part_IGC");
+    let setup_003: Vec<Handle> = [
+        "Enemy_TreeRex(2)",
+        "Enemy_Chompy2_E(1)",
+        "Enemy_Chompy2_E(2)",
+        "Enemy_Chompy2_E(3)",
+        "Enemy_Chompy2_E(4)",
+    ]
+    .iter()
+    .map(|n| handle(run, n))
+    .collect();
+    let controller = handle(run, "Setup_004_Controller");
+    let mabu = handle(run, "Setup_004_NPC_Mabu");
+    let door = handle(run, "Door_Template_Skylanders_2(1)");
+    let foes: Vec<Handle> = [
+        "Enemy_Elf_Near_A",
+        "Enemy_Elf_Near_B",
+        "Enemy_Elf_Near_C",
+        "Enemy_TreeRex(1)",
+        "Enemy_Chompy_Spawner(2)",
+    ]
+    .iter()
+    .map(|n| handle(run, n))
+    .collect();
+    run.put(Vec3::from_array(SHIP_PART_1), 0.0);
+    for k in 0..600u32 {
+        let pads = skipping_the_sail(run, k);
+        step(run, stops, pads);
+        if gone(run, sail) {
+            break;
+        }
+    }
+    assert!(gone(run, sail), "the sail done");
+    assert_eq!(walk(run, stops, &[SETUP_003_TRIGGER]), Ok(()));
+    let beaten_003 = on_the_stick_at(run, stops, &setup_003, 3600, None).beaten;
+    assert!(
+        beaten_003.iter().all(Option::is_some),
+        "Setup_003 beaten: {beaten_003:?}"
+    );
+    let health_before = run.health().unwrap();
+    // The key in the lobe, then up to the door and △ by it.
+    assert_eq!(walk(run, stops, &KEY_1), Ok(()), "to the key");
+    assert_eq!(walk(run, stops, &TO_THE_DOOR), Ok(()), "to the door");
+    let mut opened = None;
+    for k in 0..600u32 {
+        step(run, stops, [false, false, false, k % 20 < 2]);
+        if behaviour(run, door).as_deref() == Some("done") {
+            opened = Some(run.steps);
+            break;
+        }
+    }
+    let opened = opened.expect("the door opened to its key");
+    // Past it: the second trigger scares the Mabu, the third wakes the rest.
+    let at_the_door = run.steps;
+    assert_eq!(
+        walk(run, stops, &TO_SETUP_004),
+        Ok(()),
+        "to Setup_004's triggers"
+    );
+    let mabu_from = run.world.actor(mabu).map(|a| a.position);
+    let OnTheStick {
+        beaten,
+        bites,
+        last: mabu_last,
+    } = on_the_stick_at(run, stops, &foes, 6000, Some(mabu));
+    for _ in 0..240 {
+        step(run, stops, [false; 4]);
+    }
+    FourthFight {
+        beaten_003,
+        opened,
+        at_the_door,
+        beaten,
+        bites,
+        mabu,
+        mabu_from,
+        mabu_last,
+        controller,
+        health_before,
+        health: run.health().unwrap(),
+        xp: run.figure_values().map_or(0, |v| v.xp),
+    }
+}
+
 /// openspec AS.84: level 214's fourth fight, Setup_004, fought on foot from
 /// the sail. Off the ship to Setup_003's trigger, which wakes Setup_004 too;
 /// Setup_003 fought on the stick. Down into the lobe below the yard (its
@@ -1695,87 +1803,8 @@ fn level_214s_fourth_fight_is_fought_past_the_locked_door() {
     let started = std::time::Instant::now();
     println!("load at start: {}", load());
     let (mut run, mut stops) = joined_214();
-    let sail = handle(&run, "214_Recover_First_Part_IGC");
-    let setup_003: Vec<Handle> = [
-        "Enemy_TreeRex(2)",
-        "Enemy_Chompy2_E(1)",
-        "Enemy_Chompy2_E(2)",
-        "Enemy_Chompy2_E(3)",
-        "Enemy_Chompy2_E(4)",
-    ]
-    .iter()
-    .map(|n| handle(&run, n))
-    .collect();
-    let controller = handle(&run, "Setup_004_Controller");
-    let mabu = handle(&run, "Setup_004_NPC_Mabu");
-    let door = handle(&run, "Door_Template_Skylanders_2(1)");
-    let foes: Vec<Handle> = [
-        "Enemy_Elf_Near_A",
-        "Enemy_Elf_Near_B",
-        "Enemy_Elf_Near_C",
-        "Enemy_TreeRex(1)",
-        "Enemy_Chompy_Spawner(2)",
-    ]
-    .iter()
-    .map(|n| handle(&run, n))
-    .collect();
-    run.put(Vec3::from_array(SHIP_PART_1), 0.0);
-    for k in 0..600u32 {
-        let pads = skipping_the_sail(&run, k);
-        step(&mut run, &mut stops, pads);
-        if gone(&run, sail) {
-            break;
-        }
-    }
-    assert!(gone(&run, sail), "the sail done");
-    assert_eq!(walk(&mut run, &mut stops, &[SETUP_003_TRIGGER]), Ok(()));
-    let beaten_003 = on_the_stick_at(&mut run, &mut stops, &setup_003, 3600, None).beaten;
-    assert!(
-        beaten_003.iter().all(Option::is_some),
-        "Setup_003 beaten: {beaten_003:?}"
-    );
-    let health_before = run.health().unwrap();
-    // The key in the lobe, then up to the door and △ by it.
-    assert_eq!(walk(&mut run, &mut stops, &KEY_1), Ok(()), "to the key");
-    assert_eq!(
-        walk(&mut run, &mut stops, &TO_THE_DOOR),
-        Ok(()),
-        "to the door"
-    );
-    let mut opened = None;
-    for k in 0..600u32 {
-        step(&mut run, &mut stops, [false, false, false, k % 20 < 2]);
-        if behaviour(&run, door).as_deref() == Some("done") {
-            opened = Some(run.steps);
-            break;
-        }
-    }
-    let opened = opened.expect("the door opened to its key");
-    // Past it: the second trigger scares the Mabu, the third wakes the rest.
-    let at_the_door = run.steps;
-    assert_eq!(
-        walk(&mut run, &mut stops, &TO_SETUP_004),
-        Ok(()),
-        "to Setup_004's triggers"
-    );
-    let mut mabu_gone = None;
-    let mabu_from = run.world.actor(mabu).map(|a| a.position);
-    let OnTheStick {
-        beaten,
-        bites,
-        last: mabu_last,
-    } = on_the_stick_at(&mut run, &mut stops, &foes, 6000, Some(mabu));
+    let f = fourth_fight(&mut run, &mut stops);
     let house = run.at("Interior_Door(3)");
-    for _ in 0..240 {
-        step(&mut run, &mut stops, [false; 4]);
-    }
-    if gone(&run, mabu) {
-        mabu_gone = Some(run.steps);
-    }
-    let (health, xp) = (
-        run.health().unwrap(),
-        run.figure_values().map_or(0, |v| v.xp),
-    );
     let charges = run
         .world
         .clones()
@@ -1788,23 +1817,263 @@ fn level_214s_fourth_fight_is_fought_past_the_locked_door() {
         .into_iter()
         .filter(|h| run.world.name(*h) == "_Template_Undead_Chompy")
         .count();
+    let mabu_gone = gone(&run, f.mabu).then_some(run.steps);
     println!(
-        "Setup_003 beaten at {beaten_003:?}; the door opened at {opened}; from the door at {at_the_door}, Setup_004's beaten at {beaten:?} (the elves A-C, the Tree Rex, the spawner), the Mabu gone {:?}, the controller gone {}; bites {bites:?}; health {health_before} -> {health}, experience {xp}; {charges} homing charges, {chompies} Chompies cloned; {:.1} s; load at end: {}",
+        "Setup_003 beaten at {:?}; the door opened at {}; from the door at {}, Setup_004's beaten at {:?} (the elves A-C, the Tree Rex, the spawner), the Mabu gone {:?}, the controller gone {}; bites {:?}; health {} -> {}, experience {}; {charges} homing charges, {chompies} Chompies cloned; {:.1} s; load at end: {}",
+        f.beaten_003,
+        f.opened,
+        f.at_the_door,
+        f.beaten,
         mabu_gone,
-        gone(&run, controller),
+        gone(&run, f.controller),
+        f.bites,
+        f.health_before,
+        f.health,
+        f.xp,
         started.elapsed().as_secs_f64(),
         load()
     );
-    assert!(beaten.iter().all(Option::is_some), "all beaten: {beaten:?}");
+    assert!(
+        f.beaten.iter().all(Option::is_some),
+        "all beaten: {:?}",
+        f.beaten
+    );
     // He ran his waypoints to the house's door and went there.
-    let off_the_door = mabu_last.map(|p| (p.x - house.x).hypot(p.z - house.z));
+    let off_the_door = f.mabu_last.map(|p| (p.x - house.x).hypot(p.z - house.z));
     println!(
-        "the Mabu from {mabu_from:?} to {mabu_last:?}, {off_the_door:?} m from the house's door at {house}"
+        "the Mabu from {:?} to {:?}, {off_the_door:?} m from the house's door at {house}",
+        f.mabu_from, f.mabu_last
     );
     assert!(
-        gone(&run, mabu) && off_the_door.is_some_and(|d| d < 2.0),
-        "the Mabu ran into the house and went: {mabu_last:?}, {off_the_door:?} m off {house}"
+        gone(&run, f.mabu) && off_the_door.is_some_and(|d| d < 2.0),
+        "the Mabu ran into the house and went: {:?}, {off_the_door:?} m off {house}",
+        f.mabu_last
     );
-    assert!(gone(&run, controller), "Setup_004's controller done");
+    assert!(gone(&run, f.controller), "Setup_004's controller done");
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
+/// From where Setup_004's fight leaves him to the house's door by the yard
+/// (`Interior_Controller_Island_2_1`'s box), across the ground.
+const TO_THE_HOUSE: [[f32; 2]; 2] = [[-262.0, 733.0], [-253.0, 739.0]];
+/// The house's door, and the box past it.
+const HOUSE_DOOR: [f32; 2] = [-249.54, 742.73];
+const HOUSE_BOX: [f32; 2] = [-246.43, 745.75];
+/// In the house's room: by its bomb spawner, before its wall to the
+/// treasure (`Breakable_Stone_Wall(1)`, facing it) and at its way out.
+const BY_THE_HOUSE_BOMBS: [f32; 2] = [387.43, 216.0];
+const BEFORE_THE_HOUSE_WALL: ([f32; 2], [f32; 2]) = ([378.5, 220.3], [370.0, 220.5]);
+const HOUSE_EXIT: [f32; 2] = [409.63, 210.65];
+/// Out of the house: round the hay wagon to short of the wall before the
+/// second key (`Breakable_Stone_Wall(7)`, faced), the key, and back round
+/// the wagon to the second locked door, where △ turns it.
+const ROUND_THE_WAGON: [[f32; 2]; 3] = [[-255.0, 741.0], [-261.0, 740.5], [-263.5, 746.3]];
+const WALL_7: [f32; 2] = [-267.2, 750.7];
+const KEY_2: [f32; 2] = [-264.9, 756.97];
+const TO_THE_SECOND_DOOR: [[f32; 2]; 4] = [
+    [-263.0, 745.0],
+    [-261.0, 740.5],
+    [-250.0, 733.0],
+    [-246.5, 719.0],
+];
+
+/// Steps with the stick toward `to` until `h`'s behaviour reads `want`,
+/// at most `steps`: the step it did.
+fn walk_until(
+    run: &mut Run,
+    stops: &mut Vec<String>,
+    to: [f32; 2],
+    h: Handle,
+    want: &str,
+    steps: u32,
+) -> Option<u32> {
+    for _ in 0..steps {
+        if behaviour(run, h).as_deref() == Some(want) {
+            return Some(run.steps);
+        }
+        push_toward(run, stops, to);
+    }
+    None
+}
+
+/// A few steps with the stick toward `at`, to face it, then △ tapped (down
+/// a step, up the next) every 20 steps, at most `steps`, until `wall` is
+/// gone: the step it went.
+fn throw_at_wall(
+    run: &mut Run,
+    stops: &mut Vec<String>,
+    at: [f32; 2],
+    wall: Handle,
+    steps: u32,
+) -> Option<u32> {
+    for _ in 0..4 {
+        push_toward(run, stops, at);
+    }
+    for k in 0..steps {
+        step(run, stops, [false, false, false, k % 20 < 2]);
+        if run.world.actor(wall).is_some_and(|a| a.removed) {
+            return Some(run.steps);
+        }
+    }
+    None
+}
+
+/// openspec AS.96: level 214's way from Setup_004's yard to the second
+/// locked door on foot, as the level's own scripts and data have it (no
+/// recording of 214 exists). Setup_004 fought as AS.84 fights it, then
+/// into the house by the yard, where the Mabu ran
+/// (`Interior_Controller_Island_2_1`): the darkness, and the hero lands in
+/// its room under the island 0.7 s on. Its bomb spawner's bomb, carried to
+/// its wall and thrown, opens the treasure behind it; back on its spawner
+/// after its burst, it's taken again and carried out by the room's exit
+/// (the warp keeps it over him: stand-in ledger `warp`), round the hay
+/// wagon to the wall before the second key (`Breakable_Stone_Wall(7)`) and
+/// thrown, which opens it; the key taken, the second locked door
+/// (`Door_Template_Skylanders_2(2)`) opens to a tap of △ by it. Nothing
+/// stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_second_door_opens_to_the_key_a_bomb_from_the_house_frees() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, mut stops) = joined_214();
+    let f = fourth_fight(&mut run, &mut stops);
+    assert!(
+        f.beaten.iter().all(Option::is_some),
+        "Setup_004 beaten: {:?}",
+        f.beaten
+    );
+    let fought = run.steps;
+    let house = handle(&run, "Interior_Controller_Island_2_1");
+    let wall_1 = handle(&run, "Breakable_Stone_Wall(1)");
+    let wall_7 = handle(&run, "Breakable_Stone_Wall(7)");
+    let key = handle(&run, "Key Spawner(1)s(3)");
+    let door = handle(&run, "Door_Template_Skylanders_2(2)");
+    let house_door = handle(&run, "Interior_Door(3)");
+    // Into the house: its door, which the Mabu opened and shut, swings
+    // open as he comes near (`Generic_House_door_Script.ai`).
+    assert_eq!(
+        walk(&mut run, &mut stops, &TO_THE_HOUSE),
+        Ok(()),
+        "to the house"
+    );
+    assert_eq!(
+        walk(&mut run, &mut stops, &[HOUSE_DOOR]),
+        Ok(()),
+        "to its door"
+    );
+    assert_eq!(
+        behaviour(&run, house_door).as_deref(),
+        Some("trigger door close"),
+        "the house's door open by him"
+    );
+    let landed0 = run.world.landed.len();
+    let dark = walk_until(
+        &mut run,
+        &mut stops,
+        HOUSE_BOX,
+        house,
+        "2. fade out fade in",
+        300,
+    )
+    .expect("the house takes him");
+    for _ in 0..90 {
+        step(&mut run, &mut stops, [false; 4]);
+    }
+    let inside = run
+        .world
+        .landed
+        .get(landed0)
+        .copied()
+        .expect("he lands inside");
+    // Its wall to the treasure, by its bomb.
+    assert_eq!(walk(&mut run, &mut stops, &[BY_THE_HOUSE_BOMBS]), Ok(()));
+    let taken = |run: &Run| {
+        bombs(run)
+            .into_iter()
+            .find(|b| behaviour(run, *b).as_deref() == Some("following player"))
+    };
+    let first = taken(&run).expect("the house's bomb taken");
+    assert_eq!(
+        walk(&mut run, &mut stops, &[BEFORE_THE_HOUSE_WALL.0]),
+        Ok(())
+    );
+    let opened_1 = throw_at_wall(&mut run, &mut stops, BEFORE_THE_HOUSE_WALL.1, wall_1, 300)
+        .expect("the house's wall opened by its bomb");
+    // Its bomb back on its spawner, taken again and carried out.
+    let mut retaken = None;
+    for _ in 0..1200 {
+        push_toward(&mut run, &mut stops, BY_THE_HOUSE_BOMBS);
+        if let Some(b) = taken(&run) {
+            retaken = Some((b, run.steps));
+            break;
+        }
+    }
+    let (bomb, retaken) = retaken.expect("the bomb taken again");
+    let landed1 = run.world.landed.len();
+    walk_until(
+        &mut run,
+        &mut stops,
+        HOUSE_EXIT,
+        house,
+        "2. fade out fade in",
+        600,
+    )
+    .expect("out by its exit");
+    let mut out = None;
+    for _ in 0..90 {
+        step(&mut run, &mut stops, [false; 4]);
+        if out.is_none() {
+            out = run.world.landed.get(landed1).copied();
+        }
+    }
+    let out = out.expect("he lands outside");
+    assert_eq!(
+        behaviour(&run, bomb).as_deref(),
+        Some("following player"),
+        "the bomb still over him"
+    );
+    // The wall before the second key, the key, the door.
+    assert_eq!(
+        walk(&mut run, &mut stops, &ROUND_THE_WAGON),
+        Ok(()),
+        "round the wagon"
+    );
+    let opened_7 = throw_at_wall(&mut run, &mut stops, WALL_7, wall_7, 300)
+        .expect("the wall before the second key opened by the house's bomb");
+    assert_eq!(walk(&mut run, &mut stops, &[KEY_2]), Ok(()), "to the key");
+    for _ in 0..30 {
+        step(&mut run, &mut stops, [false; 4]);
+    }
+    assert_eq!(
+        walk(&mut run, &mut stops, &TO_THE_SECOND_DOOR),
+        Ok(()),
+        "to the door"
+    );
+    let mut done = None;
+    for k in 0..600u32 {
+        step(&mut run, &mut stops, [false, false, false, k % 20 < 2]);
+        if behaviour(&run, door).as_deref() == Some("done") {
+            done = Some(run.steps);
+            break;
+        }
+    }
+    println!(
+        "Setup_004 done at {fought}; the house's darkness at {dark}, landed at {:?} facing {}; its first bomb {first:#x}, its wall open at {opened_1}, the bomb taken again at {retaken}; out at {:?} facing {}; the wall before the key open at {opened_7}; the door done at {done:?}; health {} -> {:?}; {:.1} s; load at end: {}",
+        inside.at,
+        inside.facing,
+        out.at,
+        out.facing,
+        f.health,
+        run.health(),
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    assert!(done.is_some(), "the second door opened to its key");
+    // The key's spawner goes once its key is in the lock.
+    for _ in 0..60 {
+        step(&mut run, &mut stops, [false; 4]);
+    }
+    assert!(gone(&run, key), "the second key's spawner done");
     assert!(stops.is_empty(), "{stops:#?}");
 }

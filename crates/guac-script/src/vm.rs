@@ -78,6 +78,10 @@ pub struct Config {
     pub precision: Precision,
     /// What each tick adds to a placement's `system.script timer`.
     pub tick_seconds: f32,
+    /// Macros whose calls the embedder may answer in place of their bodies,
+    /// by display name ([`crate::Host::answer`]; crate docs, Left to the
+    /// host): none by default.
+    pub answered: Vec<String>,
 }
 
 impl Config {
@@ -89,6 +93,7 @@ impl Config {
             whitelist: Whitelist::All,
             precision: Precision::Single,
             tick_seconds: TICK_SECONDS,
+            answered: Vec::new(),
         }
     }
 }
@@ -739,6 +744,8 @@ pub struct Vm {
     globals: Vec<Option<u32>>,
     frames: IdMap<DefId, IdMap<Sym, u32>>,
     busy: IdSet<DefId>,
+    /// [`Config::answered`]'s definitions, as the program resolves them.
+    answered: IdSet<DefId>,
     op_state: IdMap<OpId, OpState>,
     value_cells: IdMap<(Recv, MemberId), u32>,
     value_cell_values: Vec<Value>,
@@ -840,6 +847,11 @@ struct Capture {
 impl Vm {
     pub fn new(program: Arc<Program>, config: Config) -> Self {
         let globals = vec![None; program.globals.len()];
+        let answered = config
+            .answered
+            .iter()
+            .filter_map(|name| program.macro_named(name))
+            .collect();
         Self {
             program,
             config,
@@ -858,6 +870,7 @@ impl Vm {
             globals,
             frames: IdMap::default(),
             busy: IdSet::default(),
+            answered,
             op_state: IdMap::default(),
             value_cells: IdMap::default(),
             value_cell_values: Vec::new(),
@@ -2572,6 +2585,23 @@ impl Vm {
         }
     }
 
+    /// Asks the host to answer a call of `def`, one of [`Config::answered`]'s:
+    /// its INTERFACE's parameters in order, each as the call's binding left
+    /// it in the frame (one the call left out reads 0, nothing or an empty
+    /// set, as it would in the body), read as a value is.
+    fn answer_call(&mut self, program: &Program, def: DefId, host: &mut dyn Host) -> bool {
+        let params = interface_params(program, def);
+        let mut args: Vec<(&str, Value)> = Vec::with_capacity(params.len());
+        for p in params {
+            let v = match self.frame_cell(def, p.name, p.decl) {
+                Ok(c) => self.cells[c as usize].value,
+                Err(_) => Value::Null,
+            };
+            args.push((program.sym(p.name), self.deref(v)));
+        }
+        host.answer(&program.defs[def as usize].display, &args)
+    }
+
     /// Enters `def`'s body: its frame current, its INTERFACE skipped.
     fn enter(&mut self, program: &Program, def: DefId) -> Result<(), Fault> {
         let Some(d) = program.defs.get(def as usize) else {
@@ -2640,6 +2670,15 @@ impl Vm {
                 let Some(call) = self.run.calls.last().copied() else {
                     return unsupported("flow macro with no call open");
                 };
+                // A call the embedder answers skips the body: the counter
+                // goes on into the use block's after-return code, as a
+                // return would leave it (crate docs, Left to the host).
+                if self.answered.contains(&call.def) && self.answer_call(program, call.def, host) {
+                    if let Some(c) = self.run.calls.last_mut() {
+                        c.returned = true;
+                    }
+                    return Ok(());
+                }
                 self.enter(program, call.def)?;
             }
             Ins::Interface | Ins::Variable { .. } => {}
@@ -5600,6 +5639,33 @@ fn declares(program: &Program, def: DefId, op: OpId) -> bool {
 }
 
 /// The parameter `def`'s own INTERFACE declares under `name`, any case.
+/// The parameters `def`'s own INTERFACE declares, in order: none for a
+/// definition no list places or one without an INTERFACE.
+fn interface_params(program: &Program, def: DefId) -> Vec<Param> {
+    let Some((sid, pos)) = program.defs.get(def as usize).and_then(|d| d.placed) else {
+        return Vec::new();
+    };
+    let Some(ops) = program.scripts.get(sid as usize).map(|s| &s.ops) else {
+        return Vec::new();
+    };
+    let pos = pos as usize;
+    let Some(&iface) = ops.get(pos + 1) else {
+        return Vec::new();
+    };
+    if program.ops[iface as usize] != Ins::Interface {
+        return Vec::new();
+    }
+    let n = program.branch(iface) as usize;
+    ops.get(pos + 2..=pos + 1 + n)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|&o| match &program.ops[o as usize] {
+            Ins::Parameter(p) => Some(*p),
+            _ => None,
+        })
+        .collect()
+}
+
 fn own_parameter(program: &Program, def: DefId, name: &str) -> Option<Param> {
     let (sid, pos) = program.defs.get(def as usize)?.placed?;
     let ops = &program.scripts.get(sid as usize)?.ops;

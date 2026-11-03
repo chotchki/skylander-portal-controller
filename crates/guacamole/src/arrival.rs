@@ -58,7 +58,7 @@ pub(crate) const SHOWN: Duration = Duration::from_millis(4000);
 pub(crate) const FLASH: Duration = Duration::from_millis(250);
 
 /// Over an alert (940), under the corner's join code (960).
-const ARRIVAL_Z: i32 = 950;
+pub(crate) const ARRIVAL_Z: i32 = 950;
 
 /// The card's bezel over a portal card's.
 const BEZEL_SCALE: f32 = 2.5;

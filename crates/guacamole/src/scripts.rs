@@ -585,6 +585,11 @@ pub struct ScriptWorld {
     /// The original's interface the scripts write (openspec AT.9), when
     /// the run's install loaded it ([`crate::interface_host`]).
     pub(crate) interface: Option<guac_interface::Keeper>,
+    /// The warps owed, each landing once its delay is out (openspec AS.96,
+    /// [`crate::interiors::answer`]; stand-in ledger: `warp`).
+    pub(crate) warps: Vec<crate::interiors::Warp>,
+    /// The warps landed, in order.
+    pub landed: Vec<crate::interiors::Landed>,
     /// This run, unique on the TV: a player holding a play of an earlier
     /// run's stops it.
     run: u64,
@@ -869,6 +874,8 @@ impl ScriptWorld {
             scene_walks: HashMap::new(),
             told: Value::Null,
             interface: None,
+            warps: Vec::new(),
+            landed: Vec::new(),
             run: fresh_serial(),
         }
     }
@@ -1642,6 +1649,7 @@ impl ScriptWorld {
             s.advance(dt);
         }
         self.move_actors(dt, engine);
+        crate::interiors::land(self, dt, engine);
         self.advance_sounds(engine);
     }
 
@@ -2244,6 +2252,9 @@ impl Host for WorldHost<'_, '_> {
     fn wakes(&mut self, asleep: &[Handle]) -> Vec<Handle> {
         self.world.wakes(asleep)
     }
+    fn answer(&mut self, name: &str, args: &[(&str, Value)]) -> bool {
+        crate::interiors::answer(self.world, name, args)
+    }
 }
 
 /// `global.bld`'s running placements' scripts: their first tick only.
@@ -2363,6 +2374,9 @@ pub fn hero_config(mode: Mode) -> Config {
         .copied()
         .collect();
     c.whitelist = Whitelist::with_first_ticks(&[], &every, &first);
+    // A warp lands the minion where it asks, his minion kept (openspec
+    // AS.96; stand-in ledger: `warp`).
+    c.answered.push(crate::interiors::WARP.to_owned());
     c
 }
 
@@ -2703,6 +2717,22 @@ pub const DOOR_SCRIPTS: [&str; 6] = [
     "Door_Key.ai",
     "Door_Lock_Intact_Wood.ai",
     "Door_Lock.ai",
+];
+
+/// The interiors on every level (openspec AS.96), every tick, by script:
+/// each controller (`Interior_Controller.ai`, [`crate::interiors`]) takes a
+/// hero walking into its box through a darkness to the room its waypoints
+/// name and back, by the portal's warp the TV answers; the arrow a
+/// controller with more than three waypoints clones over its last
+/// (`Extra_arrow.ai`, tinting in as a hero comes within 40 ft); and a
+/// house's door swinging open as a hero comes near and shut as he goes
+/// (`Generic_House_door_Script.ai`). By script: 137 controllers run on 21
+/// levels (chapter 1's four, level 214's nine), each level's own copy of
+/// the scripts under its own path.
+pub const INTERIOR_SCRIPTS: [&str; 3] = [
+    "Interior_Controller.ai",
+    "Extra_arrow.ai",
+    "Generic_House_door_Script.ai",
 ];
 
 /// Level 214's bomb hints (openspec AS.57), by placement name: each plays
@@ -3090,6 +3120,8 @@ pub fn smash_config(mode: Mode) -> Config {
         placements.extend(BOMB_HINTS.iter().map(|s| (*s).to_owned()));
         // The locked doors and their keys (openspec AS.84).
         scripts.extend(DOOR_SCRIPTS.iter().map(|s| (*s).to_owned()));
+        // The interiors on every level (openspec AS.96).
+        scripts.extend(INTERIOR_SCRIPTS.iter().map(|s| (*s).to_owned()));
         // Level 214's ship (openspec AS.60).
         placements.extend(SHIP.iter().map(|s| (*s).to_owned()));
         scripts.extend(EFFECT_SCRIPTS.iter().map(|s| (*s).to_owned()));
@@ -5457,6 +5489,37 @@ mod tests {
                 "{script}"
             );
         }
+    }
+
+    /// openspec AS.96: the interiors' scripts on every level's listing,
+    /// chapter 1's and any other's, by script, every tick, and the portal's
+    /// warp answered by the TV in every run its hero joins (stand-in ledger:
+    /// `warp`); the init chain's run, which has no hero, answers none.
+    #[test]
+    fn the_interiors_run_on_every_levels_listing_and_the_warp_is_answered() {
+        let files = Files::default();
+        for level in ["level_213_tutotial", "level_214_tutotial_2", "level_201"] {
+            let c = level_config(Mode::Play, &files, 4, level);
+            for script in INTERIOR_SCRIPTS {
+                let path = format!("C:/tfb/Content/Levels/Includes/Interiors/Scripts/{script}");
+                assert_eq!(
+                    c.whitelist.listing("a placement", &path),
+                    guac_script::Listed::Every,
+                    "{level} {script}"
+                );
+            }
+            assert!(
+                c.answered.iter().any(|m| m == crate::interiors::WARP),
+                "{level}"
+            );
+        }
+        assert!(
+            hero_config(Mode::Play)
+                .answered
+                .iter()
+                .any(|m| m == crate::interiors::WARP)
+        );
+        assert!(config(Mode::Play).answered.is_empty());
     }
 
     /// openspec AS.59: level 214's way from its first island to its second

@@ -577,7 +577,7 @@ impl ScriptWorld {
     }
 
     /// The actor (or hero) a receiver names: `None` for a host object.
-    fn actor_of(&self, v: Option<Value>) -> Option<Handle> {
+    pub(crate) fn actor_of(&self, v: Option<Value>) -> Option<Handle> {
         let h = self.handle(v?)?;
         if self.objs.get(h).is_some() {
             return None;

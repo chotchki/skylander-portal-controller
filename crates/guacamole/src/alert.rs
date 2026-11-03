@@ -28,7 +28,7 @@ use crate::theme::{Role, Step, TvTheme};
 use crate::tv_state::{Current, Pen, Redrawn, TvAssets, UiTree, node_rect};
 
 /// Over the pause overlays (900), under the corner join code.
-const ALERT_Z: i32 = 940;
+pub(crate) const ALERT_Z: i32 = 940;
 
 /// Over an alert, under an intro (1,000).
 const CORNER_Z: i32 = 960;

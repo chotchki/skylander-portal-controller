@@ -435,4 +435,14 @@ pub trait Host {
         let _ = asleep;
         Vec::new()
     }
+
+    /// A call of a macro the embedder answers ([`crate::Config::answered`],
+    /// crate docs, Left to the host): its display name and its parameters as
+    /// the call bound them, by the names its INTERFACE declares, each read as
+    /// a value is (a reference's target, a number). `true` takes the call as
+    /// answered, its body skipped; `false` runs the body. The default runs it.
+    fn answer(&mut self, name: &str, args: &[(&str, Value)]) -> bool {
+        let _ = (name, args);
+        false
+    }
 }
