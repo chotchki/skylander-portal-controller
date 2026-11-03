@@ -40,7 +40,7 @@ See [proposal.md](proposal.md) (Why) for the three gaps. The state each part sta
 4. **Story saves are the original's save system run on the host, against rows of guacamole's own.**
    - **What the host does:** the save scripts run on the VM. The host answers `system.save state` as AS.38 says, and keeps what the scripts save (the story's variables, the chapters done, the collectibles) as named values in one row per profile per game.
    - **The store:** a migration of guac-server's own, so a database from before it gains the table empty. The host's row alone advances.
-   - **Resuming:** loading a save puts a kid where the original's load does.
+   - **Resuming:** loading a save puts a kid where the original's load does: the title's load goes to chapter 1 unless it's done, then level 214 unless it's done, then the hub's stage one past the hub's unlocking adventures done (levels 210, 202 and 211), not straight to the hub (AU.4's reading of the title's scripts).
    - **Versioning:** a row from a build whose save layout differs is kept, logged and ignored, never deleted. That profile starts fresh, so a pre-G1 change to what's saved can't crash a start or lose an older save.
    - **Rejected, a PS3 save file's layout:** guacamole reads no RPCS3 data and keeps one store.
 5. **The order.**
