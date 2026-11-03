@@ -14,7 +14,7 @@
 //! (Stand-in ledger: `level-end`.)
 
 use guac_motion::seam::Vec3;
-use guac_script::{Mode, Value};
+use guac_script::{Halt, Mode, Value};
 use guacamole::level_end;
 
 mod common;
@@ -227,6 +227,8 @@ fn level_214_runs_its_own_scripts_with_eruptor_joined() {
         stops.extend(run.step_play().unwrap());
     }
     run.join().unwrap_or_else(|h| panic!("{h}"));
+    // Its intro skipped as a player would (AS.81).
+    stops.extend(skip_214s_intro(&mut run));
     for k in 0..480u32 {
         if k == 120 {
             // Where his intro handed him over (openspec AS.47).
@@ -388,6 +390,8 @@ fn level_214s_first_encounter_is_fought_with_eruptor() {
         stops.extend(run.step_play().unwrap());
     }
     run.join().unwrap_or_else(|h| panic!("{h}"));
+    // Its intro skipped as a player would (AS.81).
+    stops.extend(skip_214s_intro(&mut run));
     let spawners: Vec<guac_script::Handle> = ["Enemy_Chompy_Spawner(1)", "Enemy_Chompy_Spawner(5)"]
         .iter()
         .map(|n| run.placed(n).0)
@@ -545,6 +549,8 @@ fn level_214s_wall_opens_to_a_bomb() {
         stops.extend(run.step_play().unwrap());
     }
     run.join().unwrap_or_else(|h| panic!("{h}"));
+    // Its intro skipped as a player would (AS.81).
+    stops.extend(skip_214s_intro(&mut run));
     for _ in 0..60 {
         stops.extend(run.step_play().unwrap());
     }
@@ -674,45 +680,25 @@ fn level_214s_wall_opens_to_a_bomb() {
 }
 
 /// Where level 214's intro hands the player over (metres, the run's own
-/// read): its cutscene, skipped a frame in, sets him down on the deck here,
-/// 4.3 m from the level's `InitializeLevel.ai` marker.
+/// read): its cutscene, played to its end or skipped, sets him down on the
+/// deck here, 4.3 m from the level's `InitializeLevel.ai` marker.
 const HANDED_OVER: [f32; 3] = [-9.144, -12.578118, 18.10268];
 
-/// The cutscene in play's macro's name, if any (as `level_end` reads it).
-fn cutscene_name(run: &Run) -> Option<String> {
-    let vm = &run.vm;
-    let data = vm.global_peek(vm.program().global_named("cs control data")?)?;
-    let current = vm
-        .field(data, "current cs")
-        .filter(|v| *v != guac_script::Value::Null)?;
-    let def = vm.field(current, "cutscene definition")?;
-    match vm.field(def, "define macro")? {
-        guac_script::Value::Object(o) => vm.program().name_of(o).map(str::to_owned),
-        _ => None,
-    }
-}
+/// The intro's lines, in the order its scenes voice them.
+const INTRO_LINES: [&str; 7] = [
+    "vo_flynn_lvl214_igc01_002",
+    "vo_cali_lvl214_igc01_003a",
+    "vo_flynn_lvl214_igc01_004",
+    "vo_flynn_lvl214_igc01_006",
+    "vo_flynn_lvl214_igc01_013",
+    "vo_cali_lvl214_igc01_013a",
+    "vo_flynn_lvl214_igc01_014",
+];
 
-/// openspec AS.47, AS.60: level 214's own intro (`214_Intro_IGC`), on the
-/// TV's listing (`scripts::INTROS`), held before its first tick until
-/// Eruptor's minion is in, as the TV's install holds it; then its cutscene
-/// begins with him in it, is skipped a frame in by the original's own skip
-/// (`level_end::SKIPPED_CUTSCENES`), and its hand-over sets him down on the
-/// deck; the intro takes itself off, nothing stops. Its STARTUP takes
-/// `The_Ship_1` off (its parts with it) and the skip both clones its
-/// cutscene made of `214_Intro_Ship`; its SHUTDOWN resets the ship, the gun
-/// deck's hatch and the barrels it took off, and a reset brings a placement
-/// taken off back (AS.60): the ship stands under him again, its script
-/// cloning its engine, masthead and roof onto it (`scripts::SHIP`). Its
-/// first line (Flynn's) ends with the skip, no box held up past it, and the
-/// HUD shows again within a few steps of the hand-over (AS.69: until
-/// AS.52's typed read, the step's dialogue data read nothing at the skip's
-/// completion and the line played on to step 341, its box holding the HUD
-/// hidden to 356).
-#[test]
-#[ignore = "reads the Giants dump"]
-fn level_214s_intro_hands_over_on_the_ship() {
-    let started = std::time::Instant::now();
-    println!("load at start: {}", load());
+/// Level 214 entered with Eruptor joined, its intro held for him as the
+/// TV's install holds it: the run, its stops, the intro's placement and
+/// the ship's parts standing before the join.
+fn joined_at_214s_intro() -> (Run, Vec<Halt>, guac_script::PlacementId, Vec<String>) {
     let setup = Setup {
         interface: true,
         props: true,
@@ -720,7 +706,6 @@ fn level_214s_intro_hands_over_on_the_ship() {
         ..Setup::default()
     };
     let (mut run, _found) = run_on_level(Mode::Play, NEXT, setup);
-    let marker = run.hero().pivot;
     let intro = run.placement("214_Intro_IGC");
     let mut stops = Vec::new();
     for _ in 0..2 {
@@ -729,58 +714,34 @@ fn level_214s_intro_hands_over_on_the_ship() {
     assert!(run.vm.is_suspended(intro), "held until a hero joins");
     assert_eq!(run.vm.behaviour(intro), None);
     assert_eq!(cutscene_name(&run), None);
-    let (ship, _) = run.placed("The_Ship_1");
-    let parts = |run: &Run| -> Vec<String> {
-        let mut p: Vec<String> = run
-            .world
-            .clones()
-            .into_iter()
-            .filter(|h| {
-                run.world
-                    .actor(*h)
-                    .is_some_and(|a| !a.removed && a.attach == guac_script::Value::Entity(ship))
-            })
-            .map(|h| run.world.name(h))
-            .collect();
-        p.sort();
-        p
-    };
-    let parts_before = parts(&run);
+    let parts = ship_parts(&run);
     run.join().unwrap_or_else(|h| panic!("{h}"));
-    let joined_at = run.steps;
-    let (mut began, mut skipped, mut gone, mut shown, mut off) = (None, None, None, None, None);
-    let mut lines = Lines::default();
-    // Flynn's first line as it ended (started, ended, how): started and
-    // stopped within the skip's step, so `lines` never sees it playing.
-    let mut flynn = None;
-    for _ in 0..600 {
-        stops.extend(run.step_play().unwrap());
-        lines.record(&run);
-        if flynn.is_none() {
-            flynn = run
-                .world
-                .sounds_ended()
-                .find(|e| e.name.as_deref() == Some("vo_flynn_lvl214_igc01_002"))
-                .map(|e| (e.started, e.ended, e.how));
-        }
-        let cs = cutscene_name(&run);
-        if began.is_none() && cs.as_deref() == Some("214 Intro IGC") {
-            began = Some(run.steps);
-        }
-        if off.is_none() && run.world.removed(ship) {
-            off = Some(run.steps);
-        }
-        if began.is_some() && skipped.is_none() && cs.is_none() {
-            skipped = Some(run.steps);
-        }
-        if gone.is_none() && run.vm.removed(intro) {
-            gone = Some(run.steps);
-        }
-        if gone.is_some() && shown.is_none() && !guacamole::scripts::player_hud_hidden(&run.vm) {
-            shown = Some(run.steps);
-        }
-    }
-    let at = run.hero().pivot;
+    (run, stops, intro, parts)
+}
+
+/// What stands on `The_Ship_1`, by name.
+fn ship_parts(run: &Run) -> Vec<String> {
+    let (ship, _) = run.placed("The_Ship_1");
+    let mut p: Vec<String> = run
+        .world
+        .clones()
+        .into_iter()
+        .filter(|h| {
+            run.world
+                .actor(*h)
+                .is_some_and(|a| !a.removed && a.attach == Value::Entity(ship))
+        })
+        .map(|h| run.world.name(h))
+        .collect();
+    p.sort();
+    p
+}
+
+/// After 214's intro, played or skipped: the ship and what its STARTUP took
+/// off stand again, its parts once each, the intro's ship clones off
+/// (AS.60 and its review).
+fn the_ship_stands_after_the_intro(run: &Run, parts_before: &[String]) {
+    let (ship, _) = run.placed("The_Ship_1");
     let (template, _) = run.placed("214_Intro_Ship");
     let ship_clones: Vec<(guac_script::Handle, bool)> = run
         .world
@@ -801,29 +762,20 @@ fn level_214s_intro_hands_over_on_the_ship() {
     .iter()
     .map(|n| (*n, !run.world.removed(run.placed(n).0)))
     .collect();
-    let parts_after = parts(&run);
+    let parts_after = ship_parts(run);
     println!(
-        "The_Ship_1 off at {off:?}; standing after: {back:?}; its parts before {parts_before:?}, after {parts_after:?}; the intro ship's clones (taken off): {ship_clones:?}"
+        "standing after: {back:?}; its parts before {parts_before:?}, after {parts_after:?}; the intro ship's clones (taken off): {ship_clones:?}"
     );
-    assert!(off.is_some(), "the intro's STARTUP takes the ship off");
     assert!(back.iter().all(|(_, on)| *on), "back on after it: {back:?}");
     let ship_run = run.vm.placement_of(ship).expect("the ship runs");
     assert!(!run.vm.removed(ship_run), "its script runs again");
-    for part in ["Hub_Engine", "Hub_Masthead", "Hub_Roof"] {
-        assert!(
-            parts_after.iter().any(|p| p == part),
-            "{part} on the ship: {parts_after:?}"
-        );
-    }
     assert_eq!(
         parts_after, parts_before,
         "its parts on it again, once each"
     );
-    // One ship's parts standing in the level, its engine's with them: the
-    // skip takes the cutscene's second ship off the step it's cloned, and a
-    // clone taken off before its script joins the run never starts it (the
-    // as-214-walk review: its STARTUP cloned a second set that stood for
-    // good, two engines rowing out of step on the deck).
+    for part in ["Hub_Engine", "Hub_Masthead", "Hub_Roof"] {
+        assert!(parts_after.iter().any(|p| p == part), "{part}");
+    }
     let standing = |name: &str| {
         run.world
             .clones()
@@ -844,58 +796,146 @@ fn level_214s_intro_hands_over_on_the_ship() {
     }
     assert!(
         !ship_clones.is_empty() && ship_clones.iter().all(|(_, off)| *off),
-        "the skip takes its cutscene's ship clones: {ship_clones:?}"
+        "its cutscene's ship clones off: {ship_clones:?}"
     );
+}
+
+/// openspec AS.47, AS.60, AS.81: level 214's own intro (`214_Intro_IGC`),
+/// on the TV's listing (`scripts::INTROS`), held until Eruptor's minion is
+/// in, then played to its end (`level_end::SKIPPED_CUTSCENES` lists it no
+/// more): its ten scenes in order, every scene object reading its actor
+/// (Flynn's and Cali's, their definitions listed since AS.82: until then
+/// the sixth scene's walk held on an object reading none), its seven lines
+/// voiced in order, each its recording's length and over by the cutscene's
+/// end (Flynn's sixth scene's line within that scene, where the held walk
+/// left it on), the hand-over on the deck, the ship and what
+/// its STARTUP took off standing again (AS.60), the HUD back as the last
+/// line's box fades. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_intro_plays_to_its_end_on_the_ship() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    assert!(!level_end::SKIPPED_CUTSCENES.contains(&"214 Intro IGC"));
+    let (mut run, mut stops, intro, parts_before) = joined_at_214s_intro();
+    let marker = run.hero().pivot;
+    let joined_at = run.steps;
+    let (ship, _) = run.placed("The_Ship_1");
+    let (mut began, mut ended, mut gone, mut shown, mut off) = (None, None, None, None, None);
+    let mut scenes: Vec<(usize, u32)> = Vec::new();
+    let mut unnamed: Vec<(u32, usize)> = Vec::new();
+    let mut actors: std::collections::BTreeSet<String> = Default::default();
+    let mut lines = Lines::default();
+    while gone.is_none() || shown.is_none() {
+        assert!(run.steps < joined_at + 6000, "no end by step {}", run.steps);
+        stops.extend(run.step_play().unwrap());
+        lines.record(&run);
+        if off.is_none() && run.world.removed(ship) {
+            off = Some(run.steps);
+        }
+        match scene_of(&run) {
+            Some((k, n)) => {
+                assert_eq!(n, 10, "the intro's ten scenes");
+                began.get_or_insert(run.steps);
+                if scenes.last().is_none_or(|(at, _)| *at != k) {
+                    scenes.push((k, run.steps));
+                }
+                for (i, a) in scene_actors(&run).into_iter().enumerate() {
+                    match a {
+                        Some(a) => {
+                            actors.insert(a);
+                        }
+                        None => unnamed.push((run.steps, i)),
+                    }
+                }
+            }
+            None if began.is_some() && ended.is_none() => ended = Some(run.steps),
+            None => {}
+        }
+        if gone.is_none() && run.vm.removed(intro) {
+            gone = Some(run.steps);
+        }
+        if gone.is_some() && shown.is_none() && !guacamole::scripts::player_hud_hidden(&run.vm) {
+            shown = Some(run.steps);
+        }
+    }
+    let at = run.hero().pivot;
+    let ended = ended.expect("the cutscene ends");
+    for (k, (_, from)) in scenes.iter().enumerate() {
+        let to = scenes.get(k + 1).map_or(ended, |(_, n)| *n);
+        println!(
+            "scene {k}: from {from}, {} steps ({:.2} s)",
+            to - from,
+            f64::from(to - from) / 60.0
+        );
+    }
+    let voices: Vec<(&str, u64, Option<u64>, f32)> = lines
+        .voices
+        .iter()
+        .map(|v| (v.sound.as_str(), v.started, v.ended, v.length))
+        .collect();
     println!(
-        "the marker {marker:?}; joined at {joined_at}; the intro's cutscene at {began:?}, skipped by {skipped:?}, the intro off at {gone:?}, the HUD shown at {shown:?}; handed over at {at:?} ({:.2} m off the marker)",
-        at.distance(marker)
-    );
-    println!("its lines: {:?}; {:?}", lines.boxes, lines.voices);
-    assert!(began.is_some_and(|b| b <= joined_at + 2), "{began:?}");
-    assert!(skipped.is_some() && gone.is_some() && shown.is_some());
-    // The HUD back once the line its box holds up is over, not before.
-    let last_box = lines.boxes.iter().filter_map(|b| b.gone).max();
-    assert!(
-        last_box.is_none_or(|g| shown.is_some_and(|s| s >= g)),
-        "{shown:?} {:?}",
+        "joined at {joined_at}; the cutscene from {began:?} to {ended}; The_Ship_1 off at {off:?}; the intro off at {gone:?}, the HUD shown at {shown:?}; handed over at {at:?} ({:.2} m off the marker); actors {actors:?}; voices {voices:?}; boxes {:?}",
+        at.distance(marker),
         lines.boxes
     );
-    // AS.69: the skip ends its scene's line with it (the step's dialogue
-    // data found among its actor's, AS.52's typed read): no voice plays on
-    // past the skip, no box, and the HUD is back within a few steps of the
-    // hand-over (before AS.52, Flynn's line played on to step 341 and its
-    // box held the HUD hidden to 356).
-    let skip = skipped.unwrap();
-    assert!(
+    assert!(began.is_some_and(|b| b <= joined_at + 2), "{began:?}");
+    assert_eq!(
+        scenes.iter().map(|(k, _)| *k).collect::<Vec<_>>(),
+        (0..10).collect::<Vec<_>>(),
+        "every scene, in order, none skipped"
+    );
+    assert!(unnamed.is_empty(), "objects reading no actor: {unnamed:?}");
+    for who in ["Flynn_NPC", "Cali_NPC", "009_Eruptor"] {
+        assert!(actors.contains(who), "{who} in its scenes: {actors:?}");
+    }
+    assert!(off.is_some(), "the intro's STARTUP takes the ship off");
+    the_ship_stands_after_the_intro(&run, &parts_before);
+    // Its lines in order, each over within the scene it starts in.
+    assert_eq!(
         lines
             .voices
             .iter()
-            .all(|v| v.ended.is_some_and(|e| e <= u64::from(skip))),
-        "a line playing past the skip at {skip}: {:?}",
-        lines.voices
+            .map(|v| v.sound.as_str())
+            .collect::<Vec<_>>(),
+        INTRO_LINES
     );
+    for v in &lines.voices {
+        assert!(
+            v.ended.is_some_and(|e| e <= u64::from(ended)),
+            "{} on past the cutscene's end at {ended}: {:?}",
+            v.sound,
+            v.ended
+        );
+        // Played whole: none cut short by a scene's end.
+        let played = v.ended.unwrap() - v.started;
+        assert!(
+            (played as f32 - v.length * 60.0).abs() <= 2.0,
+            "{} played {played} steps of {:.2} s",
+            v.sound,
+            v.length
+        );
+    }
+    // The sixth scene's line (Flynn's) over within that scene: the held
+    // walk left it on (AS.81).
+    let sixth = (scenes[6].1, scenes[7].1);
+    let line = lines
+        .voices
+        .iter()
+        .find(|v| v.sound == INTRO_LINES[3])
+        .expect("the sixth scene's line");
     assert!(
-        lines
-            .boxes
-            .iter()
-            .all(|b| b.gone.is_some_and(|g| g <= skip + 1)),
-        "{:?}",
+        line.started >= u64::from(sixth.0) && line.ended.is_some_and(|e| e <= u64::from(sixth.1)),
+        "{line:?} in scene 6 {sixth:?}"
+    );
+    // The HUD back as the last line's box fades, after the hand-over.
+    let last_box = lines.boxes.iter().filter_map(|b| b.gone).max();
+    assert!(
+        last_box.is_some_and(|g| shown.is_some_and(|s| s >= g && s <= g + 3)),
+        "{shown:?} {:?}",
         lines.boxes
     );
-    assert!(
-        shown.unwrap() <= gone.unwrap() + 3,
-        "the HUD back at {shown:?}, handed over at {gone:?}"
-    );
-    // The line did start, and the skip stopped it: a line that never
-    // started would pass the two checks above as well (the as-ch1-ending
-    // review).
-    println!("Flynn's first line (started, ended, how): {flynn:?}");
-    assert!(
-        flynn.is_some_and(|(started, ended, how)| started >= u64::from(began.unwrap())
-            && ended <= u64::from(skip) + 1
-            && how == guacamole::sounds::Ended::Stopped),
-        "{flynn:?}"
-    );
+    assert!(shown.unwrap() >= gone.unwrap(), "{shown:?} {gone:?}");
     let handed = Vec3::from_array(HANDED_OVER);
     assert!(
         Vec3::new(at.x - handed.x, 0.0, at.z - handed.z).length() < 0.05,
@@ -913,17 +953,105 @@ fn level_214s_intro_hands_over_on_the_ship() {
     );
 }
 
-/// The scene of the cutscene in play, as its definition lists them: its
-/// index (none outside a cutscene) and how many there are.
-fn scene_of(run: &Run) -> Option<(usize, usize)> {
-    let vm = &run.vm;
-    let data = vm.global_peek(vm.program().global_named("cs control data")?)?;
-    let current = vm
-        .field(data, "current cs")
-        .filter(|v| *v != guac_script::Value::Null)?;
-    let scenes = vm.set(vm.field(vm.field(current, "cutscene definition")?, "scenes")?)?;
-    let this = vm.field(vm.field(current, "cur scene data")?, "scene definition")?;
-    Some((scenes.iter().position(|s| *s == this)?, scenes.len()))
+/// openspec AS.81, AS.69: the original's own skip still ends 214's intro
+/// once it plays: △ (the cutscene system's check, a joined player's `action
+/// 4` just pressed with the cutscene past its first second) pressed in its
+/// second scene ends it there, Flynn's line with it, and hands over where
+/// playing it does, the ship standing as after it; nothing else takes the
+/// press (no box after the skip, the HUD back within a few steps), and a
+/// press in its first second skips nothing. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_intro_skips_on_triangle() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, mut stops, intro, parts_before) = joined_at_214s_intro();
+    let mut lines = Lines::default();
+    let press = |run: &mut Run, down: bool| {
+        run.bench.pads[0] = guacamole::script_engine::Pad {
+            stick: guac_motion::stick::Stick::new(0.0, 0.0),
+            actions: [false, false, false, down],
+            connected: true,
+        };
+    };
+    // A press in its first second: nothing skipped.
+    for k in 0..30 {
+        press(&mut run, k == 20);
+        stops.extend(run.step_play().unwrap());
+        lines.record(&run);
+    }
+    assert_eq!(cutscene_name(&run).as_deref(), Some("214 Intro IGC"));
+    // Into its second scene, then △.
+    while scene_of(&run).is_none_or(|(k, _)| k < 1) || run.steps < 120 {
+        press(&mut run, false);
+        stops.extend(run.step_play().unwrap());
+        lines.record(&run);
+    }
+    let pressed = run.steps;
+    press(&mut run, true);
+    stops.extend(run.step_play().unwrap());
+    lines.record(&run);
+    let (mut skipped, mut gone, mut shown) = (None, None, None);
+    for _ in 0..60 {
+        press(&mut run, false);
+        stops.extend(run.step_play().unwrap());
+        lines.record(&run);
+        if skipped.is_none() && cutscene_name(&run).is_none() {
+            skipped = Some(run.steps);
+        }
+        if gone.is_none() && run.vm.removed(intro) {
+            gone = Some(run.steps);
+        }
+        if gone.is_some() && shown.is_none() && !guacamole::scripts::player_hud_hidden(&run.vm) {
+            shown = Some(run.steps);
+        }
+    }
+    let at = run.hero().pivot;
+    println!(
+        "△ at {pressed}; the cutscene over at {skipped:?}, the intro off at {gone:?}, the HUD at {shown:?}; handed over at {at:?}; voices {:?}; boxes {:?}",
+        lines
+            .voices
+            .iter()
+            .map(|v| (v.sound.as_str(), v.started, v.ended))
+            .collect::<Vec<_>>(),
+        lines.boxes
+    );
+    let skip = skipped.expect("△ skips it");
+    assert!(skip <= pressed + 2, "{skip} {pressed}");
+    assert!(gone.is_some_and(|g| g <= skip + 2), "{gone:?}");
+    assert!(shown.is_some_and(|s| s <= skip + 3), "{shown:?}");
+    assert!(
+        lines
+            .voices
+            .iter()
+            .all(|v| v.ended.is_some_and(|e| e <= u64::from(skip))),
+        "a line on past the skip: {:?}",
+        lines.voices
+    );
+    assert!(
+        lines
+            .boxes
+            .iter()
+            .all(|b| b.made < skip && b.gone.is_some_and(|g| g <= skip + 1)),
+        "{:?}",
+        lines.boxes
+    );
+    the_ship_stands_after_the_intro(&run, &parts_before);
+    let handed = Vec3::from_array(HANDED_OVER);
+    assert!(
+        Vec3::new(at.x - handed.x, 0.0, at.z - handed.z).length() < 0.05,
+        "set down where the hand-over puts him: {at:?}"
+    );
+    assert!(
+        stops.is_empty(),
+        "{:#?}",
+        stops.iter().map(ToString::to_string).collect::<Vec<_>>()
+    );
+    println!(
+        "{:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
 }
 
 /// The outro's Mabu (`213_Outro_Mabu_A` to `_C`) and the placement whose

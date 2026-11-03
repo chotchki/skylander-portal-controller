@@ -2458,11 +2458,11 @@ pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
 
 /// The intros the TV runs past chapter 1's, by level and placement
 /// (openspec AS.47, AS.60). Level 214's (`214_Intro_IGC`, awake from the
-/// load), held for the hero ([`hold_intro`]) and skipped a frame in
-/// ([`crate::level_end::SKIPPED_CUTSCENES`]), hands him over on the ship's
-/// deck: its STARTUP takes `The_Ship_1` off (its parts with it, its
-/// SHUTDOWN's) and the barrels by the dock, its cutscene draws two clones of
-/// `214_Intro_Ship`, which the skip takes off, and its own SHUTDOWN resets
+/// load), held for the hero ([`hold_intro`]) and played to its end since
+/// AS.81 (or skipped by a player's △), hands him over on the ship's deck:
+/// its STARTUP takes `The_Ship_1` off (its parts with it, its SHUTDOWN's)
+/// and the barrels by the dock, its cutscene draws two clones of
+/// `214_Intro_Ship`, which its end takes off, and its own SHUTDOWN resets
 /// the ship, the gun deck's hatch and the barrels, which a reset brings back
 /// as their files have them, the ship's script cloning its parts again
 /// ([`SHIP`]).
@@ -2839,6 +2839,110 @@ pub fn is_level_definition(file: &str) -> bool {
             || rest.starts_with("pvp")
             || rest.chars().next().is_none_or(|c| c.is_ascii_digit())
     })
+}
+
+/// The macro a cutscene object is defined by: its `object def` and
+/// `actor` are what [`cutscene_objects`] reads.
+const DEFINE_OBJECT: &str = "Cutscene - Define Object";
+
+/// `config` with the cutscene objects a level's own placements define
+/// listed every tick (openspec AS.82): each running placement of the
+/// level's file whose script binds `Cutscene - Define Object`'s `object
+/// def` to a file variable, and the script of each template that call
+/// names as the object's `actor`. Flynn's and Cali's (`Object_Flynn_Def.ai`
+/// and `Object_Cali_Def.ai`, awake from the load: 15 placements on 9
+/// levels, none on chapter 1) define their objects into a file structure
+/// at their STARTUP and take themselves off; the cutscenes add those
+/// structures to their scenes, so unlisted, the object read no actor and
+/// the first walk on it never ended. No file structure on the disc holds
+/// field values of its own (1,565 over every level, hub, `global.bld` and
+/// character file, none with a field list), so what the scripts write is
+/// all an object holds. The templates' scripts are their sizes
+/// (`NPC_Size.ai`, 110 %), which their cutscenes' clones run.
+pub fn with_cutscene_objects(
+    mut config: Config,
+    program: &Program,
+    files: &Files,
+    level: u16,
+) -> Config {
+    let Whitelist::Only { scripts, .. } = &mut config.whitelist else {
+        return config;
+    };
+    for name in cutscene_objects(program, files, level) {
+        if !scripts.contains(&name) {
+            scripts.push(name);
+        }
+    }
+    config
+}
+
+/// The file names [`with_cutscene_objects`] lists for `level`: each
+/// definition's, then its templates', in the program's order.
+pub fn cutscene_objects(program: &Program, files: &Files, level: u16) -> Vec<String> {
+    use guac_script::{Elem, Ins, Operand};
+    let only = |rhs: Option<u32>| -> Option<Elem> {
+        let mut rhs = rhs?;
+        while let Operand::Expr {
+            a: Some(inner),
+            op: None,
+            b: None,
+        } = &program.operands[rhs as usize]
+        {
+            rhs = *inner;
+        }
+        match &program.operands[rhs as usize] {
+            Operand::Path { elems, .. } if elems.len() == 1 => Some(elems[0]),
+            _ => None,
+        }
+    };
+    let mut out: Vec<String> = Vec::new();
+    for s in program.scripts.iter().filter(|s| s.unit == level) {
+        let runs = files.placed.iter().any(|p| {
+            p.obj.unit == level
+                && p.activity_state == RUNNING
+                && p.script.as_deref() == Some(s.name.as_str())
+        });
+        if !runs {
+            continue;
+        }
+        let (mut defines, mut actors) = (false, Vec::new());
+        for op in &s.ops {
+            let Ins::Parameter(p) = &program.ops[*op as usize] else {
+                continue;
+            };
+            let Some(def) = p.def else {
+                continue;
+            };
+            if !program.defs[def as usize]
+                .display
+                .eq_ignore_ascii_case(DEFINE_OBJECT)
+            {
+                continue;
+            }
+            match (program.sym(p.name), only(p.rhs)) {
+                ("object def", Some(Elem::Global(_))) => defines = true,
+                ("actor", Some(Elem::Object(o))) => actors.push(o),
+                _ => {}
+            }
+        }
+        if !defines {
+            continue;
+        }
+        let templates = actors.iter().filter_map(|o| {
+            files
+                .placed
+                .iter()
+                .find(|p| p.obj == *o)
+                .and_then(|p| p.script.as_deref())
+        });
+        for path in std::iter::once(s.name.as_str()).chain(templates) {
+            let file = file_name(path).to_owned();
+            if !out.contains(&file) {
+                out.push(file);
+            }
+        }
+    }
+    out
 }
 
 /// Whether a script's source path names one of [`CAMERA_SCRIPTS`], by its
@@ -3280,9 +3384,9 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
 /// (`Ship_part_1(1)`), or with it let go straight up and back onto it (the
 /// mover update takes the launch's ground speed off: AS.75); taken after
 /// a press, the part goes and wakes the sail (`214_Recover_First_Part_IGC`),
-/// whose cutscene sets him down on the second island's ship and which the
-/// TV skips ([`crate::level_end::SKIPPED_CUTSCENES`]); Setup_003 waits for
-/// it.
+/// whose cutscene, played to its end since AS.82 (or skipped by a
+/// player's △), sets him down on the second island's ship; Setup_003 waits
+/// for it.
 pub const PASSAGES: [(&str, &[&str]); 1] = [(
     "level_214_tutotial_2",
     &[
@@ -5113,6 +5217,139 @@ mod tests {
                 .lists("Enemy_Chompy_Spawner(4)", "C:/x/Any.ai")
         );
         assert!(encounter("level_212").is_none());
+    }
+
+    /// openspec AS.82: a level's cutscene objects' definitions listed every
+    /// tick, with their templates' scripts: a running placement whose
+    /// script binds `Cutscene - Define Object`'s `object def` to a file
+    /// structure (Flynn's `Object_Flynn_Def.ai`), and the script of the
+    /// template it names as the actor (`NPC_Size_130.ai`). A cutscene
+    /// defining its own object into a variable of its own, a definition no
+    /// placement runs, one another file's placement runs, and their
+    /// templates' scripts stay off.
+    #[test]
+    fn a_levels_cutscene_objects_are_listed_with_their_templates() {
+        use guac_formats::igz::builder::IgzBuilder;
+        use guac_formats::script::Graph;
+        use guac_formats::script::builder::{El, Writer};
+        use guac_script::{Listed, Role, Unit};
+
+        const DEF: &str = "C:/l/NPC_IGC/Flynn/Object_Flynn_Def.ai";
+        const SIZE: &str = "C:/l/NPC_IGC/NPC_Size_130.ai";
+        const CUTSCENE: &str = "C:/l/cutscenes/214_Intro_IGC.ai";
+        const MABU: &str = "C:/l/cutscenes/214_Intro_Mabu_IGC.ai";
+        const IDLE: &str = "C:/l/NPC_IGC/Cali/Object_Cali_Def.ai";
+        const CALI: &str = "C:/l/NPC_IGC/NPC_Size.ai";
+        let mut b = IgzBuilder::new();
+        let (flynn, mabu, cali);
+        {
+            let mut w = Writer::new(&mut b);
+            let w = &mut w;
+            flynn = w.b.object(0, "tfbActorInfo", 0xF8);
+            mabu = w.b.object(0, "tfbActorInfo", 0xF8);
+            cali = w.b.object(0, "tfbActorInfo", 0xF8);
+            let ty = w.op(Class::DefineStructure, "Cutscene Object Def");
+            let actor_field = w.variable("actor", "ScriptReference", None);
+            let object = w.b.object(0, "ScriptStructure", 0x20);
+            w.text(object, 0x08, "Object_Flynn_IGC");
+            w.refer(object, 0x1C, ty);
+            let other = w.b.object(0, "ScriptStructure", 0x20);
+            w.text(other, 0x08, "Object_Cali_IGC");
+            w.refer(other, 0x1C, ty);
+            let define = w.op(Class::DefineMacro, DEFINE_OBJECT);
+            let local = w.variable("mabu object", "ScriptReference", None);
+            let script = |w: &mut Writer<'_>, path: &str, actor, into: &[El<'_>], body: bool| {
+                w.script(
+                    path,
+                    |w| {
+                        let a = w.reference(&[El::Local(actor)], None);
+                        let o = w.reference(into, None);
+                        w.call(define, &[("actor", a), ("object def", o)]);
+                    },
+                    |w| {
+                        if body {
+                            let none = w.int(0);
+                            let p = w.open_macro(
+                                define,
+                                &[
+                                    ("actor", "ScriptReference", none),
+                                    ("object def", "ScriptReference", none),
+                                ],
+                            );
+                            w.end_block(p);
+                            let (types, _) = w.open(Class::StructureSection, "STRUCTURES");
+                            let p = w.push(ty);
+                            w.push(actor_field);
+                            w.end_block(p);
+                            w.end_block(types);
+                        }
+                    },
+                    |_| {},
+                );
+            };
+            script(w, DEF, flynn, &[El::Local(object)], true);
+            script(w, CUTSCENE, mabu, &[El::Local(local)], false);
+            script(w, IDLE, cali, &[El::Local(other)], false);
+        }
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = Unit {
+            name: "level",
+            role: Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        let program = Program::link(&[unit]).unwrap();
+        let obj = |l| Obj {
+            unit: 0,
+            index: igz.object_at(l).unwrap().0 as u32,
+        };
+        let at = |i: u32, name: &str, script: &str, state: u32| {
+            Placed::named(
+                Obj {
+                    unit: 0,
+                    index: 900 + i,
+                },
+                name,
+                Some(script),
+                state,
+            )
+        };
+        let files = Files {
+            placed: vec![
+                at(1, "Flynn_NPC_Def", DEF, RUNNING),
+                Placed::named(obj(flynn), "Flynn_NPC", Some(SIZE), 5),
+                at(2, "214_Intro_IGC", CUTSCENE, RUNNING),
+                Placed::named(obj(mabu), "214_Intro_Mabu_Actor_RED", Some(MABU), 5),
+                // Cali's definition is a template here: no placement runs it.
+                at(3, "Cali_NPC_Def", IDLE, 5),
+                Placed::named(obj(cali), "Cali_NPC", Some(CALI), 5),
+            ],
+            ..Files::default()
+        };
+        assert_eq!(
+            cutscene_objects(&program, &files, 0),
+            ["Object_Flynn_Def.ai", "NPC_Size_130.ai"]
+        );
+        // Another file's level: none of this one's.
+        assert!(cutscene_objects(&program, &files, 3).is_empty());
+        let base = smash_config(Mode::Play);
+        let with = with_cutscene_objects(base.clone(), &program, &files, 0);
+        for (script, listed) in [
+            (DEF, Listed::Every),
+            (SIZE, Listed::Every),
+            (CUTSCENE, Listed::Off),
+            (MABU, Listed::Off),
+            (IDLE, Listed::Off),
+            (CALI, Listed::Off),
+        ] {
+            assert_eq!(with.whitelist.listing("", script), listed, "{script}");
+            assert_eq!(base.whitelist.listing("", script), Listed::Off, "{script}");
+        }
+        // Listed once however often it's asked.
+        let twice = with_cutscene_objects(with.clone(), &program, &files, 0);
+        assert_eq!(twice.whitelist, with.whitelist);
     }
 
     /// openspec AS.58: level 214's second fight by name: its controller and

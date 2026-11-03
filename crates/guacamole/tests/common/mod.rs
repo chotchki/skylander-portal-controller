@@ -994,7 +994,14 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     let files = Files::read(&read).unwrap();
     let handles = headless_handles(&files);
     let objects = headless_objects(&handles);
-    let mut config = scripts::level_config(mode, &files, LEVEL, level);
+    // Its cutscene objects' definitions, as the TV's install lists them
+    // (openspec AS.82).
+    let mut config = scripts::with_cutscene_objects(
+        scripts::level_config(mode, &files, LEVEL, level),
+        &program,
+        &files,
+        LEVEL,
+    );
     if setup.no_music {
         config = scripts::without_music(config);
     }
@@ -1355,4 +1362,87 @@ impl Lines {
             }
         }
     }
+}
+
+/// The cutscene in play's macro's name, if any (as `level_end` reads it).
+pub fn cutscene_name(run: &Run) -> Option<String> {
+    let vm = &run.vm;
+    let data = vm.global_peek(vm.program().global_named("cs control data")?)?;
+    let current = vm.field(data, "current cs").filter(|v| *v != Value::Null)?;
+    let def = vm.field(current, "cutscene definition")?;
+    match vm.field(def, "define macro")? {
+        Value::Object(o) => vm.program().name_of(o).map(str::to_owned),
+        _ => None,
+    }
+}
+
+/// The scene of the cutscene in play, as its definition lists them: its
+/// index (none outside a cutscene) and how many there are.
+pub fn scene_of(run: &Run) -> Option<(usize, usize)> {
+    let vm = &run.vm;
+    let data = vm.global_peek(vm.program().global_named("cs control data")?)?;
+    let current = vm.field(data, "current cs").filter(|v| *v != Value::Null)?;
+    let scenes = vm.set(vm.field(vm.field(current, "cutscene definition")?, "scenes")?)?;
+    let this = vm.field(vm.field(current, "cur scene data")?, "scene definition")?;
+    Some((scenes.iter().position(|s| *s == this)?, scenes.len()))
+}
+
+/// The actor each object of the scene in play reads (its `obj data`'s
+/// `actor`), by name: `None` for one reading nothing (openspec AS.82: a
+/// cutscene object no definition has filled).
+pub fn scene_actors(run: &Run) -> Vec<Option<String>> {
+    let vm = &run.vm;
+    let Some(data) = vm
+        .program()
+        .global_named("cs control data")
+        .and_then(|g| vm.global_peek(g))
+    else {
+        return Vec::new();
+    };
+    let objects = vm
+        .field(data, "current cs")
+        .filter(|v| *v != Value::Null)
+        .and_then(|cs| vm.field(cs, "cur scene data"))
+        .and_then(|scene| vm.field(scene, "scene objects"))
+        .and_then(|set| vm.set(set).map(<[Value]>::to_vec))
+        .unwrap_or_default();
+    objects
+        .into_iter()
+        .map(
+            |o| match vm.field(o, "obj data").and_then(|d| vm.field(d, "actor")) {
+                Some(Value::Entity(h)) => Some(run.world.name(h).to_owned()),
+                Some(Value::Object(obj)) => vm.program().name_of(obj).map(str::to_owned),
+                _ => None,
+            },
+        )
+        .collect()
+}
+
+/// Level 214's intro skipped as a player skips it (openspec AS.81): △
+/// pulsed every 10 steps while its cutscene plays (the cutscene system
+/// takes it past the cutscene's first second), until the intro takes
+/// itself off and hands the hero over; what stopped on the way. For the
+/// tests past the intro, which the TV skipped a frame in until AS.81.
+pub fn skip_214s_intro(run: &mut Run) -> Vec<Halt> {
+    let intro = run.placement("214_Intro_IGC");
+    let pad = |down: bool| guacamole::script_engine::Pad {
+        stick: guac_motion::stick::Stick::new(0.0, 0.0),
+        actions: [false, false, false, down],
+        connected: true,
+    };
+    let mut stops = Vec::new();
+    for k in 0..600u32 {
+        if run.vm.removed(intro) {
+            break;
+        }
+        run.bench.pads[0] = pad(cutscene_name(run).is_some() && k % 10 == 0);
+        stops.extend(run.step_play().unwrap());
+    }
+    run.bench.pads[0] = pad(false);
+    assert!(
+        run.vm.removed(intro),
+        "the intro skipped by step {}",
+        run.steps
+    );
+    stops
 }

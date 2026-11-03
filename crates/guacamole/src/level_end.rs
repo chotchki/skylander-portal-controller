@@ -7,13 +7,11 @@
 //! End`, which records the level to load next in `level progression data`;
 //! then, each step after the walk ([`step`]):
 //!
-//! - A cutscene the TV doesn't play to its end ([`SKIPPED_CUTSCENES`]:
-//!   level 214's intro and its first sail, each waiting on our host on a
-//!   walk whose scene object has no actor, AS.81 and AS.82) is skipped once
-//!   it has run a frame, by the original's own skip (`CS Internal - Skip
-//!   Cutscene` on the cutscene in play, as a player's skip press runs it),
-//!   so the scripts after it run as they would after a skip.
-//!   (Stand-in ledger: `cutscene-skip`.)
+//! - A cutscene the TV doesn't play to its end ([`SKIPPED_CUTSCENES`], none
+//!   since AS.81 and AS.82) is skipped once it has run a frame, by the
+//!   original's own skip (`CS Internal - Skip Cutscene` on the cutscene in
+//!   play, as a player's skip press runs it), so the scripts after it run as
+//!   they would after a skip. (Stand-in ledger: `cutscene-skip`, struck.)
 //! - The level end recorded (`level end seq` 1 or more with `level end load
 //!   to level` set), the movie it queued (`Game - Level End - Play Movie`'s
 //!   `level end movie sprite`: chapter 1's FMV02) is handed to the player
@@ -34,18 +32,15 @@ use tracing::info;
 use crate::scripts::{LevelEndMovie, MovieEnd, MovieState, ScriptWorld, WorldHost, running};
 
 /// The cutscenes the TV skips once they've run a frame, by the name of the
-/// macro defining them: level 214's intro (openspec AS.47), which ran on
-/// past 70 s headless and since AS.52's typed read waits at its sixth scene
-/// of ten on a walk whose scene object has no actor (AS.81), and 214's sail
-/// from its first island to its second (AS.59), which the first ship part's
-/// pickup wakes and whose second scene's walker never arrives: its `CS Walk
-/// Obj to Location` holds on an object whose actor reads nothing, one of the
-/// cutscene file's own structures (AS.82), 32 s of it headless.
-/// Chapter 1's outro left the list at AS.52: its first scene's step for
-/// Norticus' animation read the step's dialogue's data as its own, the
-/// scripts' typed reference read unmodelled, and its walks reached `move
-/// to` on actors no creature's body walks.
-pub const SKIPPED_CUTSCENES: [&str; 2] = ["214 Intro IGC", "214 recover 1st part IGC"];
+/// macro defining them: none. Chapter 1's outro left the list at AS.52 (its
+/// animation step read its dialogue's data as its own, its walks reached
+/// `move to` on actors no creature walks); level 214's intro (AS.81) and
+/// its sail from its first island to its second (AS.82) at AS.82, whose
+/// walks each held on Flynn's or Cali's object reading no actor: the
+/// placements whose STARTUP defines those objects weren't on the TV's
+/// listing ([`crate::scripts::with_cutscene_objects`]). Their skip is the
+/// player's now, △ through the cutscene system's own check.
+pub const SKIPPED_CUTSCENES: [&str; 0] = [];
 
 /// The macro the original's skip runs, and the game systems' script whose
 /// tick runs the cutscene system's update.
