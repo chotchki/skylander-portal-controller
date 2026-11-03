@@ -387,6 +387,7 @@ fn route_input(
     hero: Option<ResMut<HeroInput>>,
     actions: Option<ResMut<HeroActions>>,
     modal: Option<Res<ModalOpen>>,
+    completion: Option<Res<crate::completion::CompletionOpen>>,
     mut out: MessageWriter<TvInput>,
 ) {
     let (mut frame, dpad, stick) = read_devices(keys.as_deref(), pads.iter().map(|(_, p)| p));
@@ -406,7 +407,9 @@ fn route_input(
     }
 
     let playing = queue.as_ref().is_some_and(|q| q.playing().is_some());
-    let layer = Layer::top(playing, level.shows()).over(modal.is_some_and(|m| m.0));
+    // AU.5's completion screen takes the pads as a modal's (its tabs).
+    let modal = modal.is_some_and(|m| m.0) || completion.is_some_and(|c| c.0);
+    let layer = Layer::top(playing, level.shows()).over(modal);
     if matches!(layer, Layer::Intro | Layer::Level) {
         repeat.swallow();
     }
@@ -611,6 +614,7 @@ pub(crate) struct InputShots<'w, 's> {
     focus: Option<Res<'w, InputFocus>>,
     choices: Query<'w, 's, &'static FocusId>,
     modal: Option<Res<'w, ModalOpen>>,
+    completion: Option<Res<'w, crate::completion::CompletionOpen>>,
 }
 
 impl InputShots<'_, '_> {
@@ -637,7 +641,10 @@ impl InputShots<'_, '_> {
             .collect();
         InputShot {
             layer: Layer::top(intro_playing, level.shows())
-                .over(self.modal.as_ref().is_some_and(|m| m.0))
+                .over(
+                    self.modal.as_ref().is_some_and(|m| m.0)
+                        || self.completion.as_ref().is_some_and(|c| c.0),
+                )
                 .name()
                 .to_owned(),
             pads,

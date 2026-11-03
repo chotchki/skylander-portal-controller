@@ -1791,9 +1791,10 @@ fn judge_portal(
     (prepare, queue): (Option<Res<Prepare>>, Option<Res<IntroQueue>>),
     mut pads: ResMut<LevelPads>,
     source: Option<Res<ScriptSource>>,
-    (choice, movies): (
+    (choice, movies, completion): (
         Option<Res<crate::level_choice::LevelChoice>>,
         Option<Res<crate::movies::Movies>>,
+        Option<Res<crate::completion::CompletionOpen>>,
     ),
 ) {
     let on_portal = current.is_some_and(|c| matches!(c.screen, TvScreen::Portal { .. }));
@@ -1833,8 +1834,10 @@ fn judge_portal(
     // And while the next level is read, the hero still in this one
     // (openspec AS.49): the level a script's level end or an ask leaves.
     let changing = choice.as_deref().is_some_and(|c| c.changing());
-    // And while the level end's movie converts or plays (openspec AS.19).
-    let movie = movies.as_deref().is_some_and(crate::movies::Movies::holds);
+    // And while the level end's movie converts or plays (openspec AS.19),
+    // and while its completion screen waits for its continue (AU.5).
+    let movie = movies.as_deref().is_some_and(crate::movies::Movies::holds)
+        || completion.is_some_and(|c| c.0);
     let held = play.inside.as_ref().is_some_and(|i| {
         alert.is_some() || i.hero.is_none() || play.arrivals.holding() || changing || movie
     });

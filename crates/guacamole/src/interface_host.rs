@@ -96,7 +96,8 @@ pub fn record_path(ir: IrFormat, unit: &str) -> Option<String> {
         .then(|| guac_extract::interface::level_path(ir, level))
 }
 
-fn read_record(dir: &Path, ir: IrFormat, rel: &str) -> Result<Interface, String> {
+/// One interface record off the extract at `dir`, in `ir`'s format.
+pub fn read_record(dir: &Path, ir: IrFormat, rel: &str) -> Result<Interface, String> {
     let bytes = std::fs::read(dir.join(rel)).map_err(|e| format!("{rel}: {e}"))?;
     match ir {
         IrFormat::Ron => std::str::from_utf8(&bytes)

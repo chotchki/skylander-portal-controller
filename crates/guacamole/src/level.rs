@@ -1971,10 +1971,17 @@ fn log_sounds(s: &guacamole::sounds::SoundPart, again: bool) {
         again,
         "the level's sounds read"
     );
+    // Bootstrap's and init_setup's never have one, nor the screens' the
+    // level's end links (openspec AS.53: their sounds aren't in the part).
+    let screen = |stem: &str| {
+        guac_extract::screens::ARCHIVES
+            .iter()
+            .any(|a| guac_extract::scripts::stem(a).eq_ignore_ascii_case(stem))
+    };
     let missing: Vec<&(String, String)> = s
         .missing
         .iter()
-        .filter(|(stem, _)| !matches!(stem.as_str(), "bootstrap" | "init_setup"))
+        .filter(|(stem, _)| !matches!(stem.as_str(), "bootstrap" | "init_setup") && !screen(stem))
         .collect();
     if s.stems.is_empty() && !missing.is_empty() {
         info!(

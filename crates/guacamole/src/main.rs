@@ -14,6 +14,7 @@ mod card_motion;
 mod card_view;
 mod cards;
 mod cli;
+mod completion;
 mod creatures;
 mod darkness;
 mod defeat;
@@ -536,8 +537,10 @@ fn run_tv(
             emitters::EmittersPlugin,
             // AR.9: the original's sounds, as the scripts play them.
             sound_player::SoundPlayerPlugin,
-            // AS.19: the movie a level end queues, converted and played.
+            // AS.19: the movie a level end queues, converted and played;
+            // AU.5: the level's completion screen before it.
             movies::MoviesPlugin,
+            completion::CompletionPlugin,
             slow_frames::SlowFramesPlugin,
             // AG.290: the world's button prompts by the walking pad.
             button_prompt::ButtonPromptPlugin,

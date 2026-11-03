@@ -157,7 +157,7 @@ fn spawn(commands: &mut Commands, pen: &Pen, overlay: LevelOverlay) -> Entity {
 
 /// A letter in a gold ring, or for a pad whose labels aren't known, four
 /// dots in a diamond with the button's own filled.
-fn glyph(parent: &mut ChildSpawnerCommands, pen: &Pen, prompt: Prompt) {
+pub(crate) fn glyph(parent: &mut ChildSpawnerCommands, pen: &Pen, prompt: Prompt) {
     let theme = &pen.theme;
     let ring = Node {
         width: px(GLYPH),

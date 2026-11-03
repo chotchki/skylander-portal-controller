@@ -182,6 +182,12 @@ impl ScriptSource {
         )
     }
 
+    /// The extract the part came from and its format, when known: what
+    /// the completion screen reads its art off (openspec AU.5).
+    pub(crate) fn extract(&self) -> Option<&(std::path::PathBuf, guac_extract::intros::IrFormat)> {
+        self.extract.as_ref()
+    }
+
     /// The disc's levels read again off the extract the part came from
     /// (openspec AS.15's review); none when that isn't known or the list
     /// doesn't read.

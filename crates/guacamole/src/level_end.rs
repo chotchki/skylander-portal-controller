@@ -145,6 +145,10 @@ pub struct Completion {
 /// and the three stars, each text as the run reads it in English.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct LevelResults {
+    /// The screen's own words: its page's title (`Objectives Menu Title`)
+    /// and its continue prompt (`Objectives Menu Prompt - Continue`).
+    pub title: Option<String>,
+    pub prompt: Option<String>,
     /// The adventure the level is (`Current Adventure Title`).
     pub level: Option<String>,
     /// The three tabs' titles (`Item Titles`): story, dares, collection.
@@ -334,8 +338,7 @@ pub fn collect(
 /// `count of total` as its two screen halves, `time value` for a time) and
 /// its `star status completion set`, with the adventure's title and the
 /// tabs' (each string's English text, as the run's
-/// interface reads it). The screen's own words (its title, its continue
-/// prompt) are the TV's to read off its record.
+/// interface reads it), and the screen's own title and continue prompt.
 pub fn read_results(vm: &mut Vm, world: &ScriptWorld, screen: Value) -> LevelResults {
     // The two file variables the screen reads, made as a script's read
     // makes them.
@@ -391,7 +394,14 @@ pub fn read_results(vm: &mut Vm, world: &ScriptWorld, screen: Value) -> LevelRes
         .into_iter()
         .map(|e| text(Some(vm.value(e))))
         .collect();
+    let own = |name: &str| {
+        vm.program()
+            .object_named(name)
+            .and_then(|o| world.text_of(Value::Object(o)))
+    };
     LevelResults {
+        title: own("Objectives Menu Title"),
+        prompt: own("Objectives Menu Prompt - Continue"),
         level: text(adventure),
         tabs,
         objectives,

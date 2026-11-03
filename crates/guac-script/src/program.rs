@@ -468,6 +468,16 @@ impl Program {
     pub fn name_of(&self, obj: Obj) -> Option<&str> {
         self.names.get(&obj).map(String::as_str)
     }
+
+    /// The object an op reaches by `name`, first unit first: a file's string
+    /// an embedder shows (the objectives screen's title, openspec AU.5).
+    pub fn object_named(&self, name: &str) -> Option<Obj> {
+        self.names
+            .iter()
+            .filter(|(_, n)| n.as_str() == name)
+            .map(|(o, _)| *o)
+            .min()
+    }
 }
 
 /// Whether an object links as an op, a file variable or a plain object.

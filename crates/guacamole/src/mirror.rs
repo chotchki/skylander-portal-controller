@@ -158,6 +158,10 @@ pub struct TvSnapshot {
     /// ended, the saves written, where the save resumed the game and
     /// `system.save state` now.
     pub story: Option<crate::story::StoryShot>,
+    /// The level's completion screen (openspec AU.5): shown, its art and
+    /// results, the tab, each objective as drawn, the stars and the
+    /// continue; none before a level end reached it.
+    pub completion: Option<crate::completion::CompletionReport>,
 }
 
 /// Shared with the routes: the last snapshot, skips asked for over HTTP,
@@ -1312,6 +1316,7 @@ fn mirror_tv(
         (
             Option<Res<crate::story::Story>>,
             Option<Res<guacamole::scripts::ScriptWorld>>,
+            Option<Res<crate::completion::CompletionReport>>,
         ),
     ),
 ) {
@@ -1365,6 +1370,11 @@ fn mirror_tv(
             .filter(|r| r.name.is_some())
             .cloned(),
         story: story.0.as_deref().map(|s| s.shot(story.1.as_deref())),
+        completion: story
+            .2
+            .as_deref()
+            .filter(|c| !c.results.is_empty())
+            .cloned(),
     };
     let mut shared = mirror.0.lock().unwrap_or_else(|e| e.into_inner());
     if *shared != snapshot {
