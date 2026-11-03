@@ -29,10 +29,11 @@
 //!   back to the waypoint after that one (round to the first: outside the
 //!   door), the exterior's zone and camera, the box taken off.
 //!
-//! Chapter 1's cave, as AH.10's oracle run walked into it, lands the hero
-//! 1.35 s after his entry (the controller's behaviour 2 for 79 frames there,
-//! 81 steps here), 0.84 m from the marker his warp aims at (the portal's
-//! re-entry, unread), facing the room's way.
+//! Chapter 1's cave, as AH.10's oracle run walked into it: the hero lands
+//! 0.7 s after the darkness begins (42 frames there, 42 steps here), facing
+//! the room's way, ours on the marker his warp aims at and the original's
+//! 0.84 m from it (its re-entry's place, unread); the controller waits for
+//! his exit 1.35 s after it began (79 frames there, 81 steps here).
 //!
 //! What's ours: the warp. The original's portal manager takes the minion
 //! off the portal (`Portal - Exit Object`) and, 0.2 s on, puts him back at
