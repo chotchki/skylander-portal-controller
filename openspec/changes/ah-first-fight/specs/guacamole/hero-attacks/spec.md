@@ -75,7 +75,7 @@ Each attack SHALL start the frame after its press and take effect where the orig
 - **THEN** the eruption appears 44 frames (0.73 s) after the press
 
 ### Requirement: Which characters attack
-Every modelled character SHALL attack with its own attack scripts, its attack buttons reaching them as Eruptor's do. One whose attack script stops in play SHALL fall back and walk on the stick, its attack buttons doing nothing from then. Eruptor's attacks SHALL match the original's by every check above. Tree Rex's first attack SHALL match the original's from the press to its damage and its wait. Any other character's attacks SHALL strike a target, unchecked against the original beyond that.
+Every modelled character SHALL attack with its own attack scripts, its attack buttons reaching them as Eruptor's do: all 67 strike a Chompy at chapter 1's first fight. One whose attack script stops in play SHALL fall back and walk on the stick at its last movement numbers, its attack buttons doing nothing from then. Eruptor's attacks SHALL match the original's by every check above; any other character's SHALL strike a target, unchecked against the original beyond that.
 
 #### Scenario: Any modelled character
 - **WHEN** a modelled character is the hero and his first attack is pressed with a Chompy in reach
@@ -83,12 +83,13 @@ Every modelled character SHALL attack with its own attack scripts, its attack bu
 
 #### Scenario: A character whose attack script stops
 - **WHEN** an attack reaches what guacamole doesn't model yet and stops the hero's script
-- **THEN** the stick still walks him and his attack buttons do nothing
+- **THEN** the stick still walks him at his own speed and his attack buttons do nothing
+
+#### Scenario: An attack that swapped his movement numbers stops
+- **WHEN** an attack replaces the hero's movement numbers with a set of its own, then stops his script
+- **THEN** he stays in the level and the stick walks him at the speed he had before it
 
 #### Scenario: Eruptor
 - **WHEN** Eruptor is the hero and his first attack is pressed
 - **THEN** he throws a lava ball
 
-#### Scenario: Tree Rex
-- **WHEN** Tree Rex is the hero and his first attack is pressed with a Chompy in reach
-- **THEN** it lands the same game time after the press as the original's, for the original's damage

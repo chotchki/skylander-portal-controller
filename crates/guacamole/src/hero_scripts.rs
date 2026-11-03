@@ -638,6 +638,12 @@ pub(crate) struct HeroRun {
     pub(crate) scale: f32,
     /// His drawn model's root, which that scale sets.
     pub(crate) root: Option<Entity>,
+    /// The last whole `movement parameters` his scripts held while he was
+    /// joined: what a fall-back walks him on when his attack swapped them
+    /// for a set of its own just before it stopped (Sunburn's teleport
+    /// leaves one holding only its knockback resistance; the au-fighters
+    /// review).
+    pub(crate) movement: Option<Movement>,
 }
 
 /// A walker whose scripts didn't run through (AG.27): he keeps his card,
@@ -696,6 +702,7 @@ pub(crate) fn ask_join(
             shape: walk.shape,
             scale: walk.scale,
             root,
+            movement: None,
         },
         ScriptedHero,
     ));
@@ -1424,6 +1431,13 @@ pub(crate) fn step_scripts(
         Join::Joined(m) => Some(m),
         _ => None,
     });
+    // His last whole movement parameters, before this step's scripts run:
+    // a fall-back's numbers if an attack swaps them out and stops.
+    if let (Some(m), Some(r)) = (joined, run.as_deref_mut())
+        && let Some(now) = Movement::read(vm, m)
+    {
+        r.movement = Some(now);
+    }
     // The pads after the join, as the headless runs read them. The attack
     // buttons are his scripts' once they run, a walker's as Eruptor's
     // (hero-attacks' Which characters attack, openspec AU.1): a hero not
@@ -1512,7 +1526,11 @@ pub(crate) fn step_scripts(
         // play on the movement parameters his scripts had written into his
         // description (never his actor's engine numbers, 10,000 ft/s); one
         // whose join never completed keeps his card.
-        let movement = joined.and_then(|m| Movement::read(&runtime.vm, m));
+        // His last whole set when the stop's moment holds none (an attack
+        // that swapped them for its own, then stopped).
+        let movement = joined
+            .and_then(|m| Movement::read(&runtime.vm, m))
+            .or(r.movement);
         let fallback = match (walkers::fallback(r.origin, stage, &why), movement) {
             (Fallback::OnWhatTheySet, None) => Fallback::Card(format!(
                 "{why}; his scripts had set no movement parameters to walk on"

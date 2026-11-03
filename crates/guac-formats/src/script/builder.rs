@@ -3493,6 +3493,11 @@ pub enum WalkerFault {
     /// spawns his shot, his minion reaches a member nothing models, his
     /// setup long done and his mover running.
     OnPress,
+    /// In his attack, a [`walker_described_as`]'s: on action 1 going down
+    /// his minion points his description at nothing, as Sunburn's teleport
+    /// swaps his movement parameters for a set of its own (the au-fighters
+    /// review), then reaches a member nothing models.
+    OnPressForgets,
     /// Never, but his shot's script (openspec AU.2) asks whether its own
     /// point is on screen against the gameplay camera before it takes the
     /// shot off, its answer gating nothing: not read, the TV's listing
@@ -3546,6 +3551,11 @@ pub fn walker(fault: WalkerFault) -> Vec<u8> {
 /// is [`attack_with_creatures`]'.
 pub fn walker_described(spec: &WalkerSpec) -> Vec<u8> {
     walker_with(spec, WalkerFault::None, true)
+}
+
+/// [`walker_described`] stopping where `fault` says.
+pub fn walker_described_as(spec: &WalkerSpec, fault: WalkerFault) -> Vec<u8> {
+    walker_with(spec, fault, true)
 }
 
 /// [`walker`] as `spec` names, numbers and sizes him (openspec AG.170: his
@@ -3907,6 +3917,11 @@ fn walker_with(spec: &WalkerSpec, fault: WalkerFault, described: bool) -> Vec<u8
                 // action 1 going down.
                 let pressed = on_press(w, 1);
                 if fault == WalkerFault::OnPress {
+                    let one = w.int(1);
+                    w.set(&[El::Member("synthetic", "unmodelled")], one);
+                }
+                if fault == WalkerFault::OnPressForgets {
+                    setref(w, &[El::Local(description)], &[El::Local(nothing)]);
                     let one = w.int(1);
                     w.set(&[El::Member("synthetic", "unmodelled")], one);
                 }

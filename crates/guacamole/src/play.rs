@@ -3872,6 +3872,46 @@ mod tests {
         );
     }
 
+    /// The au-fighters review: a walker whose attack swaps out his movement
+    /// parameters and then stops (Sunburn's teleport) falls back on the
+    /// last whole set his scripts held while he was joined, walking on the
+    /// stick at his own speed, never keeping his card for it.
+    #[test]
+    fn a_walker_whose_attack_forgets_his_numbers_falls_back_on_his_last() {
+        use guac_formats::script::builder::{WALKER, WalkerFault};
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = walker_app_writing(
+            tmp.path(),
+            WalkerFault::OnPressForgets,
+            crate::test_support::hero_scripts::write_walker_described,
+        );
+        place(&mut app, 0, WALKER_TOY, "Synthetic");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        for _ in 0..10 {
+            app.update();
+        }
+        test_pad::press(&mut app, pad, GamepadButton::South);
+        until(&mut app, "his attack stopping him", |a| {
+            join(a).as_deref() == Some("off")
+        });
+        assert!(kept(&mut app).is_empty(), "he walks on");
+        let e = app.world().resource::<Play>().hero().expect("still in");
+        let run = app.world().entity(e).get::<HeroRun>().unwrap();
+        assert!(matches!(run.join, Join::Off(_)), "{:?}", run.join);
+        assert!(run.movement.is_some(), "his last whole set kept");
+        test_pad::stick(&mut app, pad, 0.0, 1.0);
+        for _ in 0..60 {
+            app.update();
+        }
+        let speed = WALKER.movement()[0].1;
+        let walk = hero(&app).walk.velocity.length();
+        assert!((walk - speed).abs() < 1e-3, "{walk} ft/s, his {speed}");
+    }
+
     /// AG.221: `GUAC_TEST_UNMODEL` takes a registered member out of the TV's
     /// run, so a walker whose minion reaches it in play stops there and
     /// falls back as the disc's walkers did before AG.160: the same walker

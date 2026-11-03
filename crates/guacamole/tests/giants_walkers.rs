@@ -26,7 +26,7 @@
 
 mod common;
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -6060,8 +6060,22 @@ fn fight_presses(l: &Level, load: &str, actions: &[usize], out: &mut Fought) -> 
     None
 }
 
+/// The positions `AH29_ACTIONS` asks pressed alone (comma-separated, 1-4),
+/// each in a run of its own, so nothing an earlier press left behind (a
+/// fire on the ground, a summoned helper) hits in its window.
+fn presses_alone() -> Option<Vec<usize>> {
+    std::env::var("AH29_ACTIONS").ok().map(|s| {
+        s.split(',')
+            .filter_map(|a| a.trim().parse::<usize>().ok())
+            .filter(|a| (1..=4).contains(a))
+            .map(|a| a - 1)
+            .collect()
+    })
+}
+
 /// AH.29's sweep for `load`: each attack pressed against a Chompy, a fresh
-/// run for the presses after one his minion stopped in.
+/// run for the presses after one his minion stopped in, or each of
+/// [`presses_alone`] in a run of its own.
 fn sweep_one(l: &Level, load: &str) -> Fought {
     let started = Instant::now();
     let walker = l.walkers.iter().find(|w| w.load_file == load);
@@ -6076,6 +6090,14 @@ fn sweep_one(l: &Level, load: &str) -> Fought {
         held: walker.map_or_else(Vec::new, |w| w.held_scripts.clone()),
         ..Fought::default()
     };
+    if let Some(alone) = presses_alone() {
+        for a in alone {
+            out.runs += 1;
+            fight_presses(l, load, &[a], &mut out);
+        }
+        out.took = started.elapsed().as_secs_f32();
+        return out;
+    }
     let mut left: Vec<usize> = (0..4).collect();
     while !left.is_empty() && out.runs < 4 {
         out.runs += 1;
@@ -6090,15 +6112,22 @@ fn sweep_one(l: &Level, load: &str) -> Fought {
 
 /// AH.29's sweep (openspec AU.1's routing, AU.2's measure): every modelled
 /// character joined at chapter 1's start in play mode on the TV's listing,
-/// his attack scripts on it where `WalkerScripts::attacks` lists them, taken
-/// to anchor B along AH.8's route with the first fight's Chompies, each of
+/// his attack scripts on it where `WalkerScripts::attack_scripts` lists
+/// them, taken to anchor B along AH.8's route with the first fight's
+/// Chompies, each of
 /// his four attack positions pressed in turn with a Chompy set in front of
 /// him in reach; each listed as attacking (a hit, its health taken),
 /// stopped on a named member (the member, the op, the script), reading the
 /// press without a hit, or walking only; then the members ranked by how
-/// many characters stop on each. `AH29_ONLY` (comma-separated load files)
-/// runs those alone; `AH29_TABLE` (a path outside the tree) gets the table
-/// as JSON.
+/// many characters stop on each. A hit is a Chompy's health falling in the
+/// press's window, whatever took it. Run whole, it holds AU.2's measure:
+/// every character attacking, every first attack hitting, the second on at
+/// least 45 (AU.10 has the rest), Sunburn's `move to` the one stop of his
+/// (AU.9) and none of the level's (Hot Head's attack stopped the UI's
+/// keyframer before AU.2's reference to a number). `AH29_ONLY` (comma-separated load files) runs those alone,
+/// `AH29_ACTIONS` ([`presses_alone`]) those positions alone, and either
+/// checks only Eruptor; `AH29_TABLE` (a path outside the tree) gets the
+/// table as JSON.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
 fn every_modelled_character_attacks_or_is_listed() {
@@ -6192,6 +6221,48 @@ fn every_modelled_character_attacks_or_is_listed() {
     if let Some(e) = eruptor {
         assert_eq!(e.outcome(), "attacking", "{e:?}");
     }
+    if only.is_some() || presses_alone().is_some() {
+        return;
+    }
+    // AU.2's measure, the whole roster swept.
+    assert_eq!(table.len(), 67, "Eruptor and the 66 walkers");
+    let not: Vec<&str> = table
+        .iter()
+        .filter(|f| f.outcome() != "attacking")
+        .map(|f| f.load.as_str())
+        .collect();
+    assert!(not.is_empty(), "not attacking: {not:?}");
+    let hits_on = |action: usize| {
+        table
+            .iter()
+            .filter(|f| {
+                f.presses
+                    .iter()
+                    .find(|p| p.action == action)
+                    .is_some_and(|p| !p.hits.is_empty())
+            })
+            .count()
+    };
+    assert_eq!(hits_on(1), 67, "every first attack hits");
+    assert!(hits_on(2) >= 45, "{} second attacks hit", hits_on(2));
+    let stops: BTreeSet<(&str, &str, u32)> = table
+        .iter()
+        .flat_map(|f| {
+            f.stops
+                .iter()
+                .map(|s| (f.load.as_str(), s.script.as_str(), s.position))
+        })
+        .collect();
+    assert_eq!(
+        stops,
+        BTreeSet::from([("008_FireDragon", "movementUpdate.ai", 129)]),
+        "Sunburn's `move to` the one stop (AU.9)"
+    );
+    let level: Vec<(&str, &String)> = table
+        .iter()
+        .flat_map(|f| f.level_stops.iter().map(|s| (f.load.as_str(), s)))
+        .collect();
+    assert!(level.is_empty(), "the level's own stops: {level:?}");
 }
 
 fn describe_op(program: &guac_script::Program, op: guac_script::OpId) -> String {
