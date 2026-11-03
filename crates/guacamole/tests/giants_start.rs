@@ -112,8 +112,10 @@ fn the_starts_scripts_run_strict_and_make_what_the_tv_draws() {
 /// blocks, the spike gate's spikes, holes and enemy gate lock, the Chompy
 /// spawners' pods (skinned, scripted by nothing) and the undead Chompies,
 /// and since AS.57 and AS.60 the bombs, the ship's parts and the intro's
-/// actors; the Titan boulders' pebbles by name, a template with no model
-/// drawing nothing. Play mode, Eruptor joined at its start, 600 steps.
+/// actors (Flynn, Cali and the camera rigs since AS.81 and AS.78); the Titan
+/// boulders' pebbles by name, a template with no model drawing nothing.
+/// Play mode, Eruptor joined at its start, his intro played to its end
+/// (AS.81: its camera shots last their clips, AS.78), then 600 steps.
 #[test]
 #[ignore = "disc: GUAC_GIANTS_DUMP (AS.63)"]
 fn level_214s_start_clones_draw_by_the_rule() {
@@ -133,6 +135,11 @@ fn level_214s_start_clones_draw_by_the_rule() {
         stops.extend(run.step_play().unwrap());
     }
     run.join().unwrap_or_else(|h| panic!("{h}"));
+    let intro = run.placement("214_Intro_IGC");
+    while !run.vm.removed(intro) {
+        assert!(run.steps < 6000, "the intro over by step {}", run.steps);
+        stops.extend(run.step_play().unwrap());
+    }
     for _ in 0..600 {
         stops.extend(run.step_play().unwrap());
     }
@@ -180,6 +187,9 @@ fn level_214s_start_clones_draw_by_the_rule() {
         "Lock_EnemyGate",
         "Enemy_ChompySpawner_Pod",
         "_Template_Undead_Chompy",
+        // The intro's (AS.81).
+        "Flynn_NPC",
+        "Cali_NPC",
     ] {
         assert!(drawn.contains(name), "{name} drawn");
     }
