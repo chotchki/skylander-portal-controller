@@ -14,8 +14,9 @@
 //!   saves for the session alone.
 //! - **Each step**: after the scripts' step, the run's start (its save
 //!   loaded, the level's save asked) and the requests the scripts made
-//!   ([`story_save::serve`]); each frame the session's write handed to the
-//!   store's keeper and its answer read back.
+//!   ([`story_save::serve`]), but while another level is on its way; each
+//!   frame the session's write handed to the store's keeper and its answer
+//!   read back.
 //!
 //! Stand-in ledger: `story-save`.
 
@@ -218,10 +219,15 @@ pub(crate) fn serve_saves(
     mut runtime: ResMut<ScriptRuntime>,
     mut world: ResMut<ScriptWorld>,
     source: Res<ScriptSource>,
+    choice: Option<Res<LevelChoice>>,
 ) {
     // Not before the session's resume is settled: a run started on a
-    // profile's save the TV hasn't read yet would save over it fresh.
-    if !story.resumed {
+    // profile's save the TV hasn't read yet would save over it fresh. Nor
+    // while another level is on its way: the pick's chapter 1 behind the
+    // portal, replaced by the level a save resumes at, would make a start
+    // (and a save naming chapter 1 its slot's level) the original never
+    // makes; a level end's own save is the next level's start.
+    if !story.resumed || choice.as_deref().is_some_and(LevelChoice::changing) {
         return;
     }
     let ScriptRuntime { vm, generator, .. } = &mut *runtime;
