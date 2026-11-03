@@ -532,6 +532,9 @@ pub(crate) fn drive(
     let plan = asked.plan.clone();
     let seed = asked.seed;
     let interior = asked.interior.clone();
+    let has_intro = source
+        .as_deref()
+        .is_some_and(|s| scripts::intro(s.level()).is_some());
     let (Some(mut runtime), Some(mut world), Some(level)) = (
         runtime,
         world,
@@ -539,6 +542,11 @@ pub(crate) fn drive(
     ) else {
         return;
     };
+    // Until it's at its anchor, an entry on a level with an intro (level
+    // 214's, played to its end since AS.81) has the intro skipped a frame in
+    // as the TV skipped it before (`level_end`), so the set-down comes after
+    // the intro's hand-over rather than under it.
+    world.skip_cutscenes = skips_intro(has_intro, entry.refused.is_none(), entry.phase);
     if entry.phase == Phase::Anchored {
         return;
     }
@@ -602,6 +610,7 @@ pub(crate) fn drive(
                         entry.refused = Some(why);
                         entry.asked = None;
                         entry.phase = Phase::None;
+                        world.skip_cutscenes = false;
                         return;
                     }
                 }
@@ -663,6 +672,13 @@ pub(crate) fn drive(
     entry.equivalence = Some(list);
     entry.phase = Phase::Anchored;
     info!(f0 = ?entry.f0, "the dev entry is at its anchor");
+}
+
+/// Whether the level's cutscenes are skipped this step for an entry
+/// (openspec AS.81's review): on a level with an intro, while the entry
+/// waits for his join or runs its route, and it hasn't refused.
+pub(crate) fn skips_intro(has_intro: bool, unrefused: bool, phase: Phase) -> bool {
+    has_intro && unrefused && matches!(phase, Phase::Waiting | Phase::Route)
 }
 
 /// The hero set down at `at` (his pivot, dropped onto what's under it)
@@ -1145,6 +1161,27 @@ mod tests {
         assert!(!b.waits(at, true, true, anchors::SCENE_WAIT_LIMIT));
         let start = Plan::of(Anchor::Start);
         assert!(!start.waits(start.settle + 1, true, true, 0));
+    }
+
+    /// AS.81's review: an entry on a level with an intro (level 214's, which
+    /// plays to its end since AS.81) skips it until it's at its anchor, so
+    /// the set-down isn't undone by the intro's hand-over; never on a level
+    /// without one, once at its anchor, or once refused.
+    #[test]
+    fn an_entry_skips_the_levels_intro_until_its_anchor() {
+        assert_eq!(
+            scripts::intro("level_214_tutotial_2"),
+            Some("214_Intro_IGC")
+        );
+        assert_eq!(scripts::intro(guac_extract::levels::FIRST_RUN[0]), None);
+        for phase in [Phase::Waiting, Phase::Route] {
+            assert!(skips_intro(true, true, phase), "{phase:?}");
+            assert!(!skips_intro(false, true, phase), "no intro: {phase:?}");
+            assert!(!skips_intro(true, false, phase), "refused: {phase:?}");
+        }
+        for phase in [Phase::None, Phase::Anchored] {
+            assert!(!skips_intro(true, true, phase), "{phase:?}");
+        }
     }
 
     /// Once he's in the level an ask is refused: nothing is set.

@@ -12,6 +12,9 @@
 //!   original's own skip (`CS Internal - Skip Cutscene` on the cutscene in
 //!   play, as a player's skip press runs it), so the scripts after it run as
 //!   they would after a skip. (Stand-in ledger: `cutscene-skip`, struck.)
+//!   A dev entry's settle on a level with an intro skips any cutscene so
+//!   ([`crate::scripts::ScriptWorld::skip_cutscenes`]), so its anchor's
+//!   set-down comes after the intro's hand-over, not before it.
 //! - The level end recorded (`level end seq` 1 or more with `level end load
 //!   to level` set), the movie it queued (`Game - Level End - Play Movie`'s
 //!   `level end movie sprite`: chapter 1's FMV02) is handed to the player
@@ -126,7 +129,7 @@ pub fn movie_name(path: &str) -> String {
 pub fn step(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<Option<Ended>, Halt> {
     if let Some((current, name, time)) = cutscene(vm)
         && time > 0.0
-        && SKIPPED_CUTSCENES.contains(&name.as_str())
+        && (SKIPPED_CUTSCENES.contains(&name.as_str()) || host.world.skip_cutscenes)
         && host.world.skipped_cutscene != Some(current)
     {
         host.world.skipped_cutscene = Some(current);

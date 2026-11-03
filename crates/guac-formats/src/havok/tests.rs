@@ -428,6 +428,15 @@ fn a_clip_past_one_block_reads_each_block_and_samples_across_them() {
     assert_eq!(refused(&dirty).0, "block padding");
     let more_tracks = spec_of(&|c| c.more.push(c.more[0].clone()));
     assert_eq!(field(&more_tracks.bytes), "numBlocks");
+    // A float offset past one a block (the review): its array's count one
+    // more, the blocks' own offsets right.
+    let mut extra = built.clone();
+    extra.put_u32(anim + 0x50 + 4, 3);
+    extra.put_u32(anim + 0x50 + 8, 3 | 0x8000_0000);
+    assert_eq!(
+        refused(&extra.bytes),
+        ("floatBlockOffsets", ErrorKind::Unsupported { value: 3 })
+    );
 }
 
 #[test]

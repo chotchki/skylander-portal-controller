@@ -496,6 +496,10 @@ pub struct ScriptWorld {
     pub streams: std::collections::VecDeque<Option<String>>,
     /// The cutscene [`crate::level_end`] last skipped, so it skips each once.
     pub(crate) skipped_cutscene: Option<Value>,
+    /// Whether [`crate::level_end`] skips any cutscene in play as it skips a
+    /// listed one: a dev entry's settle on a level with an intro, so its
+    /// anchor sets him down past the intro as before AS.81 played it.
+    pub skip_cutscenes: bool,
     /// Whether [`crate::level_end`] has asked for the level end's level.
     pub(crate) level_end_asked: bool,
     /// The movie the level end queued and how far its play has got
@@ -845,6 +849,7 @@ impl ScriptWorld {
             level_change: None,
             streams: Default::default(),
             skipped_cutscene: None,
+            skip_cutscenes: false,
             level_end_asked: false,
             level_end_movie: None,
             plays_movies: false,

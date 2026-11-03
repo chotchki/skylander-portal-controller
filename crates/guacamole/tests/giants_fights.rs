@@ -934,6 +934,8 @@ struct Sail {
     unnamed: Vec<(u32, usize)>,
     lines: Lines,
     taken_off: Vec<bool>,
+    /// The darkest an interior's darkness got while it ran (AS.96).
+    dark: f32,
 }
 
 fn sail(
@@ -955,11 +957,15 @@ fn sail(
         unnamed: Vec::new(),
         lines: Lines::default(),
         taken_off: vec![false; off.len()],
+        dark: 0.0,
     };
     for k in 0..steps {
         let pressed = actions(run, k);
         step(run, stops, pressed);
         out.lines.record(run);
+        out.dark = out
+            .dark
+            .max(guacamole::interiors::darkness(&run.vm, &run.world));
         if out.taken.is_none() && gone(run, part) {
             out.taken = Some(run.steps);
         }
@@ -1088,6 +1094,7 @@ fn level_214s_first_ship_part_sails_to_the_second_island() {
         "objects reading no actor: {:?}",
         s.unnamed
     );
+    assert_eq!(s.dark, 0.0, "an interior's darkness under the sail");
     for who in ["Flynn_NPC", "Cali_NPC", "214_RFP_MoneyBags", "009_Eruptor"] {
         assert!(
             s.actors.contains(who),

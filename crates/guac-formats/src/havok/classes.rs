@@ -455,6 +455,14 @@ impl SplineAnimation {
                 blocks.len() as u64,
             ));
         }
+        // One float offset a block, as one block had one.
+        if float_blocks.len() != blocks.len() {
+            return Err(unsupported(
+                "floatBlockOffsets",
+                place(Self::FLOAT_BLOCK_OFFSETS),
+                float_blocks.len() as u64,
+            ));
+        }
         // Each block starts where its offset says, after the last one's data
         // and the zero padding to it; its float data (none) at its end.
         let mut decoded = Vec::with_capacity(blocks.len());

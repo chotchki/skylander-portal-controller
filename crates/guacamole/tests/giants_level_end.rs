@@ -832,10 +832,14 @@ fn level_214s_intro_plays_to_its_end_on_the_ship() {
     let mut unnamed: Vec<(u32, usize)> = Vec::new();
     let mut actors: std::collections::BTreeSet<String> = Default::default();
     let mut lines = Lines::default();
+    // The darkest an interior's darkness gets while it plays (AS.96: none
+    // of the level's interiors fades under the intro's scenes).
+    let mut dark = 0.0f32;
     while gone.is_none() || shown.is_none() {
         assert!(run.steps < joined_at + 6000, "no end by step {}", run.steps);
         stops.extend(run.step_play().unwrap());
         lines.record(&run);
+        dark = dark.max(guacamole::interiors::darkness(&run.vm, &run.world));
         if off.is_none() && run.world.removed(ship) {
             off = Some(run.steps);
         }
@@ -904,6 +908,7 @@ fn level_214s_intro_plays_to_its_end_on_the_ship() {
         );
     }
     assert!(unnamed.is_empty(), "objects reading no actor: {unnamed:?}");
+    assert_eq!(dark, 0.0, "an interior's darkness under the intro");
     for who in ["Flynn_NPC", "Cali_NPC", "009_Eruptor"] {
         assert!(actors.contains(who), "{who} in its scenes: {actors:?}");
     }
@@ -971,13 +976,22 @@ fn level_214s_intro_plays_to_its_end_on_the_ship() {
     );
 }
 
+/// The cutscene in play's clock (`cutscene time`, seconds), if one plays.
+fn cutscene_time(run: &Run) -> Option<f32> {
+    let vm = &run.vm;
+    let data = vm.global_peek(vm.program().global_named("cs control data")?)?;
+    let current = vm.field(data, "current cs").filter(|v| *v != Value::Null)?;
+    vm.field(current, "cutscene time")?.as_f32()
+}
+
 /// openspec AS.81, AS.69: the original's own skip still ends 214's intro
 /// once it plays: △ (the cutscene system's check, a joined player's `action
 /// 4` just pressed with the cutscene past its first second) pressed in its
 /// second scene ends it there, Flynn's line with it, and hands over where
 /// playing it does, the ship standing as after it; nothing else takes the
 /// press (no box after the skip, the HUD back within a few steps), and a
-/// press in its first second skips nothing. Nothing stops.
+/// press in its first second skips nothing (one at 0.9 s of its clock
+/// among them). Nothing stops.
 #[test]
 #[ignore = "reads the Giants dump"]
 fn level_214s_intro_skips_on_triangle() {
@@ -992,12 +1006,25 @@ fn level_214s_intro_skips_on_triangle() {
             connected: true,
         };
     };
-    // A press in its first second: nothing skipped.
-    for k in 0..30 {
-        press(&mut run, k == 20);
+    // A press in its first second skips nothing: one 20 steps in, and one
+    // as its clock passes 0.9 s, just short of the check's 1.0 s (the
+    // cutscene system's own, `cutscene time` over 1.0).
+    let mut late = None;
+    for k in 0..90 {
+        let time = cutscene_time(&run);
+        let at_late = late.is_none() && time.is_some_and(|t| t > 0.9);
+        if at_late {
+            late = Some((run.steps, time));
+        }
+        press(&mut run, k == 20 || at_late);
         stops.extend(run.step_play().unwrap());
         lines.record(&run);
     }
+    println!("the late press at (step, cutscene time) {late:?}");
+    assert!(
+        late.is_some_and(|(_, t)| t.is_some_and(|t| t < 1.0)),
+        "{late:?}"
+    );
     assert_eq!(cutscene_name(&run).as_deref(), Some("214 Intro IGC"));
     // Into its second scene, then △.
     while scene_of(&run).is_none_or(|(k, _)| k < 1) || run.steps < 120 {
@@ -1069,6 +1096,52 @@ fn level_214s_intro_skips_on_triangle() {
         "{:.1} s; load at end: {}",
         started.elapsed().as_secs_f64(),
         load()
+    );
+}
+
+/// AS.81's review: a dev entry's settle on level 214 skips its intro a
+/// frame in (`ScriptWorld::skip_cutscenes`, the flag `level_end` reads
+/// beside its list), so the entry's set-down comes after the hand-over as
+/// it did before the intro played through: the cutscene over within a few
+/// steps of its start, the intro off, him on the deck where playing it
+/// leaves him, the ship standing. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_intro_is_skipped_a_frame_in_for_a_dev_entry() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, mut stops, intro, parts_before) = joined_at_214s_intro();
+    run.world.skip_cutscenes = true;
+    let (mut began, mut over) = (None, None);
+    for _ in 0..30 {
+        stops.extend(run.step_play().unwrap());
+        match cutscene_name(&run) {
+            Some(_) => {
+                began.get_or_insert(run.steps);
+            }
+            None if began.is_some() && over.is_none() => over = Some(run.steps),
+            None => {}
+        }
+    }
+    let at = run.hero().pivot;
+    println!(
+        "the intro from {began:?}, over at {over:?}, off {}; handed over at {at:?}; {:.1} s",
+        run.vm.removed(intro),
+        started.elapsed().as_secs_f64()
+    );
+    let (began, over) = (began.expect("the intro begins"), over.expect("skipped"));
+    assert!(over <= began + 3, "{began} {over}");
+    assert!(run.vm.removed(intro), "the intro off");
+    the_ship_stands_after_the_intro(&run, &parts_before);
+    let handed = Vec3::from_array(HANDED_OVER);
+    assert!(
+        Vec3::new(at.x - handed.x, 0.0, at.z - handed.z).length() < 0.05,
+        "set down where the hand-over puts him: {at:?}"
+    );
+    assert!(
+        stops.is_empty(),
+        "{:#?}",
+        stops.iter().map(ToString::to_string).collect::<Vec<_>>()
     );
 }
 

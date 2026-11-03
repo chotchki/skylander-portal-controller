@@ -54,7 +54,7 @@ On level 214 a hero within 10 ft across and 8 ft up or down of a spawner's bomb 
 - **THEN** the bomb flies, the wall falls in pieces and he walks through to the fight
 
 ### Requirement: Level 214's intro hands the hero over on its ship
-Level 214's intro SHALL hold until a hero's minion is in, then play to its end (its ten scenes, Flynn and Cali in them, its ten lines voiced whole) or end at once on a player's △ past its first second, and hand him over on the ship's deck at (-9.14, -12.58, 18.10), 4.3 m from the level's start marker, with every placement it took off back as its file has it and the ship's engine, masthead and roof standing once each, nothing stopped.
+Level 214's intro SHALL hold until a hero's minion is in, then play its ten scenes to their end (52.9 s, Flynn and Cali in them, its ten lines whole) or end on a player's △ past its first second, and hand him over on the ship's deck at (-9.14, -12.58, 18.10), 4.3 m from the level's start marker, every placement it took off back as its file has it and the ship's engine, masthead and roof standing once each, nothing stopped.
 
 #### Scenario: Chapter 1's end into level 214
 - **WHEN** chapter 1's end takes the hero into level 214
