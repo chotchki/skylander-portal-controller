@@ -62,7 +62,7 @@ fn the_screens_entry_lands_beside_the_scripts_and_a_second_run_keeps_it() {
     assert_eq!((st.screens, st.screen_files.written), (1, 1));
     assert!(st.screens_missing.is_empty());
     let rel = path(ARCHIVES[0]);
-    assert_eq!(dir.manifest().parts[PART], [rel.clone()]);
+    assert_eq!(dir.manifest().parts[PART], std::slice::from_ref(&rel));
     assert_eq!(fs::read(dir.path().join(&rel)).unwrap(), entry(), "raw");
     let mut again = ScriptStage::default();
     screen_part(&mut dir, &usr, &mut again).unwrap();
