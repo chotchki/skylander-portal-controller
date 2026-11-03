@@ -75,11 +75,15 @@ Each attack SHALL start the frame after its press and take effect where the orig
 - **THEN** the eruption appears 44 frames (0.73 s) after the press
 
 ### Requirement: Which characters attack
-A character whose own attack scripts guacamole runs SHALL attack with them; any other SHALL be the hero all the same, walking the level with its attack buttons doing nothing. Eruptor's attacks SHALL match the original's by every check above. Tree Rex's first attack SHALL match the original's from the press to its damage and its wait. Any other character's attacks SHALL strike a target, unchecked against the original beyond that.
+Every modelled character SHALL attack with its own attack scripts, its attack buttons reaching them as Eruptor's do. One whose attack script stops in play SHALL fall back and walk on the stick, its attack buttons doing nothing from then. Eruptor's attacks SHALL match the original's by every check above. Tree Rex's first attack SHALL match the original's from the press to its damage and its wait. Any other character's attacks SHALL strike a target, unchecked against the original beyond that.
 
-#### Scenario: A character whose attacks don't run yet
-- **WHEN** such a character is the hero and an attack button is pressed
-- **THEN** nothing happens and the stick still walks it
+#### Scenario: Any modelled character
+- **WHEN** a modelled character is the hero and his first attack is pressed with a Chompy in reach
+- **THEN** it strikes the Chompy
+
+#### Scenario: A character whose attack script stops
+- **WHEN** an attack reaches what guacamole doesn't model yet and stops the hero's script
+- **THEN** the stick still walks him and his attack buttons do nothing
 
 #### Scenario: Eruptor
 - **WHEN** Eruptor is the hero and his first attack is pressed
