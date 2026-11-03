@@ -532,9 +532,9 @@ fn the_fights_parts_extract_whole_and_resume() {
     println!(
         "  RON and postcard agree byte for byte: {agreed} palettes, the creatures', the spawn models'"
     );
-    // Chapter 1's parts but its entry (one file for either format), nine
+    // Chapter 1's parts but its entry (one file for either format): ten
     // since AS.17's emitters.
-    assert_eq!((lp.parts_read, lp.parts_kept), (9, 1));
+    assert_eq!((lp.parts_read, lp.parts_kept), (10, 1));
     assert_eq!((sp.parts_read, sp.parts_kept), (1, 1));
 
     println!(
