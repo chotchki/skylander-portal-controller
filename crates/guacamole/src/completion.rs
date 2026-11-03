@@ -1010,6 +1010,24 @@ mod tests {
         q.iter(app.world()).count()
     }
 
+    /// Every line of text drawn under the screen's root, in tree order.
+    fn drawn_texts(app: &mut App) -> Vec<String> {
+        let mut roots = app
+            .world_mut()
+            .query_filtered::<Entity, With<CompletionScreen>>();
+        let mut stack: Vec<Entity> = roots.iter(app.world()).collect();
+        let mut out = Vec::new();
+        while let Some(e) = stack.pop() {
+            if let Some(t) = app.world().get::<Text>(e) {
+                out.push(t.0.clone());
+            }
+            if let Some(kids) = app.world().get::<Children>(e) {
+                stack.extend(kids.iter().rev());
+            }
+        }
+        out
+    }
+
     fn focused(app: &App) -> Option<&'static str> {
         let e = app.world().resource::<InputFocus>().get()?;
         app.world().get::<FocusId>(e).map(|f| f.0)
@@ -1055,6 +1073,16 @@ mod tests {
             ]
         );
         assert_eq!(r.stars, [true, false, false]);
+        // What's drawn: the title, the tabs' names, the focused tab's
+        // objectives alone, each with its tally.
+        let texts = drawn_texts(&mut app);
+        for want in ["All done", "One", "Two", "Three", "Meet him"] {
+            assert!(texts.iter().any(|t| t == want), "{want} drawn: {texts:?}");
+        }
+        assert!(
+            !texts.iter().any(|t| t == "Under 4:20" || t == "Hats"),
+            "{texts:?}"
+        );
         presses.push(TestPress::Right);
         for _ in 0..3 {
             app.update();
@@ -1062,6 +1090,11 @@ mod tests {
         assert_eq!(report(&app).tab, 1);
         assert_eq!(focused(&app), Some(TABS[1]));
         assert_eq!(drawn(&mut app), 1, "redrawn, not doubled");
+        let texts = drawn_texts(&mut app);
+        for want in ["Under 4:20", "1:15"] {
+            assert!(texts.iter().any(|t| t == want), "{want} drawn: {texts:?}");
+        }
+        assert!(!texts.iter().any(|t| t == "Meet him"), "{texts:?}");
         presses.push(TestPress::South);
         for _ in 0..3 {
             app.update();

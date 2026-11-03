@@ -59,7 +59,10 @@
 //!
 //! A run that can't sequence it ([`sequencing`]: no game systems' placement
 //! running, or its script stopped) takes the level on as AS.15 did before
-//! it: the movie the level end queued, then its level written.
+//! it: the movie the level end queued, then its level written, a completion
+//! screen it had up let go. From the level end recorded until its level is
+//! asked, either way, the run's [`Sequence::ending`] holds the TV's players
+//! as the original's gameplay pause does (openspec AS.125's pads).
 
 use guac_script::{Halt, PlacementId, Value, Vm};
 use tracing::{info, warn};
