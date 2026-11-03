@@ -76,6 +76,9 @@ pub(crate) enum Member {
     /// `system.game achievement`: an unlock's id, kept and logged (openspec
     /// AH.220; stand-in ledger: `achievements`).
     Achievement,
+    /// `system.save state`: the save system's state ([`crate::story_save`],
+    /// openspec AS.38).
+    SaveState,
     Buffer,
     Id,
     Waypoints,
@@ -279,6 +282,7 @@ impl Member {
         add("system", "game time scale", Member::TimeScale);
         add("system", "load level", Member::LoadLevel);
         add("system", "game achievement", Member::Achievement);
+        add("system", "save state", Member::SaveState);
         add("placement", "deactivation buffer", Member::Buffer);
         add("abstractplacement", "id", Member::Id);
         add("spritematrixmeasurement", "id", Member::Id);
