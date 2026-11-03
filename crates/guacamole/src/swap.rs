@@ -113,8 +113,8 @@ mod tests {
     use guac_formats::script::builder::{
         ATTACK_BALL, ATTACK_DEACTIVATIONS, ATTACK_HEALTH, ATTACK_HELPER, ATTACK_KEPT_HEALTH,
         CREATURE_DEFINITION, SWAP_CREATURE, SWAP_HEALTH, SWAP_HEALTH_AWAKE, SWAP_ROCK, SWAP_THROW,
-        WALKER, WALKER_DEF, WALKER_LOAD, WALKER_MINION, WALKER_OTHER, WALKER_SCALE, WALKER_SPEED,
-        WALKER_TURN, WALKER_VIEW_BACK, WalkerFault, WalkerSpec,
+        WALKER, WALKER_DEF, WALKER_LOAD, WALKER_MINION, WALKER_OTHER, WALKER_SCALE, WALKER_SHOT,
+        WALKER_SHOT_SCRIPT, WALKER_SPEED, WALKER_TURN, WALKER_VIEW_BACK, WalkerFault, WalkerSpec,
     };
     use guac_motion::hero::Hero;
     use guac_motion::parry::ParryWorld;
@@ -733,6 +733,86 @@ mod tests {
             "his walk {} ft/s, his setup wrote {WALKER_SPEED}",
             walk_ft(&run)
         );
+    }
+
+    /// AU.1 and AU.2: a script of his file his attack spawns (his shot)
+    /// whose ask of the gameplay viewport isn't read is held back, off the
+    /// listing, his walk's scripts listed and none of his asks holding him;
+    /// pressed, the shot spawns and stays inert. Read (as gating play here),
+    /// it's listed, and the shot his press spawns is taken off by its own
+    /// script the step after.
+    #[test]
+    fn a_shot_whose_ask_isnt_read_is_held_back_until_it_is() {
+        let shot_read = |linked: &level_scripts::Linked| -> Vec<Read> {
+            on_screen::every_ask(&linked.program)
+                .into_iter()
+                .filter(|a| {
+                    linked.program.scripts[a.script as usize]
+                        .name
+                        .ends_with(WALKER_SHOT_SCRIPT)
+                })
+                .map(|a| Read {
+                    file: WALKER_SHOT_SCRIPT,
+                    position: a.position,
+                    def: None,
+                    verdict: Verdict::Gates,
+                    gates: "the synthetic walker's shot's",
+                })
+                .collect()
+        };
+        let pressed = |read: bool| {
+            let tmp = tempfile::tempdir().unwrap();
+            write_walker(tmp.path(), WalkerFault::ShotAsks);
+            let linked = level_scripts::load(tmp.path(), LEVEL).unwrap();
+            let reads = if read { shot_read(&linked) } else { Vec::new() };
+            assert_eq!(reads.len(), usize::from(read));
+            let units: Vec<(String, u16)> = linked
+                .walkers
+                .iter()
+                .map(|w| (w.load_file.clone(), w.unit))
+                .collect();
+            let walkers = scripts::walker_scripts_reading(
+                &linked.program,
+                &linked.placements,
+                &units,
+                &reads,
+            );
+            let him = walkers
+                .iter()
+                .find(|w| w.load_file == WALKER_LOAD)
+                .unwrap()
+                .clone();
+            let config = scripts::with_walkers(scripts::smash_config(Mode::Strict), &walkers);
+            let mut run = Run::over(linked, config, him.unit);
+            run.player_loop = Some(guacamole::player_loop::PlayerLoop::read(run.vm.program()));
+            run.step([false; 4]);
+            run.step([false; 4]);
+            run.join();
+            for _ in 0..3 {
+                run.step([false; 4]);
+            }
+            run.step([true, false, false, false]);
+            run.step([false; 4]);
+            run.step([false; 4]);
+            let shots: Vec<bool> = run
+                .world
+                .clones()
+                .into_iter()
+                .filter(|h| run.world.name(*h) == WALKER_SHOT)
+                .map(|h| run.world.removed(h))
+                .collect();
+            (him, shots)
+        };
+        let (him, shots) = pressed(false);
+        let shot = format!("/{WALKER_SHOT_SCRIPT}");
+        assert_eq!(him.asks, 0, "his walk asks nothing");
+        assert_eq!(him.held_scripts, [(shot.clone(), 1)]);
+        assert!(!him.attack_scripts.contains(&shot));
+        assert_eq!(shots, [false], "spawned, inert: never taken off");
+        let (him, shots) = pressed(true);
+        assert!(him.held_scripts.is_empty());
+        assert!(him.attack_scripts.contains(&shot));
+        assert_eq!(shots, [true], "its own script took it off");
     }
 
     /// AH.150: a walker whose ask gates his walk, read as gating play, is

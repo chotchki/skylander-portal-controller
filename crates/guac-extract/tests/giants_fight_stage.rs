@@ -195,7 +195,9 @@ fn the_fights_parts_extract_whole_and_resume() {
     // AH.87's emitters, after the scripts (`giants_particles` checks them).
     assert!(done.particles.read && done.particles.failed.is_none());
     assert!(done.intros.is_ok(), "ffmpeg is needed for the whole run");
-    assert_eq!((p.palettes, lv.parts_read, sc.parts_read), (67, 9, 2));
+    // Chapter 1's ten parts since AS.17 read its own emitters (the count
+    // stayed at AG's nine until AU.1's run found it).
+    assert_eq!((p.palettes, lv.parts_read, sc.parts_read), (67, 10, 2));
     // The fighter's archive and the three base ones, then AG.27's 66 walkers.
     assert_eq!((sc.entries, sc.walkers), (4 + 66, 66));
     let m = opened.dir.manifest().clone();

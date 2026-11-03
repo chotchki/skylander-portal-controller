@@ -1011,6 +1011,7 @@ fn the_synthetic_walker_reads_back() {
         WalkerFault::InRequest,
         WalkerFault::InActivation,
         WalkerFault::OnPress,
+        WalkerFault::ShotAsks,
     ] {
         let bytes = walker(fault);
         let igz = Igz::parse(&bytes).unwrap();

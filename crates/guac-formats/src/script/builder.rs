@@ -3493,6 +3493,11 @@ pub enum WalkerFault {
     /// spawns his shot, his minion reaches a member nothing models, his
     /// setup long done and his mover running.
     OnPress,
+    /// Never, but his shot's script (openspec AU.2) asks whether its own
+    /// point is on screen against the gameplay camera before it takes the
+    /// shot off, its answer gating nothing: not read, the TV's listing
+    /// holds the shot's script back; read, it runs.
+    ShotAsks,
 }
 
 /// AG.27's synthetic walker (openspec AG.27; design decisions 1, 2 and 8): a
@@ -3567,6 +3572,18 @@ fn walker_with(spec: &WalkerSpec, fault: WalkerFault, described: bool) -> Vec<u8
             |_| {},
             |w| {
                 let p = w.behaviour("default");
+                if fault == WalkerFault::ShotAsks {
+                    let me = El::Member("optoplevelbehavior", "my");
+                    let lhs = w.value(&[me, El::Member("positionmeasurement", "collision")]);
+                    let at = w.reference(&[El::Member("viewportinfo", "default")], None);
+                    w.refer(lhs, 0x18, at);
+                    let zero = w.int(0);
+                    let (c, o) = w.open(Class::CheckValue, "if");
+                    w.refer(o, 0x1C, lhs);
+                    w.word(o, 0x20, 1);
+                    w.refer(o, 0x24, zero);
+                    w.end_block(c);
+                }
                 w.remove(&[El::Member("optoplevelbehavior", "my")]);
                 w.end_block(p);
             },

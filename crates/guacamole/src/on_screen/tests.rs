@@ -266,11 +266,12 @@ fn the_discs_reads_name_each_ask_once() {
         );
         assert!(!r.gates.is_empty(), "{r:?}");
     }
-    assert_eq!(READ.len(), 10);
+    // AH.150's ten and AU.2's seven, a shake's and a puff's cosmetic.
+    assert_eq!(READ.len(), 17);
     assert_eq!(
         READ.iter()
             .filter(|r| r.verdict == Verdict::Cosmetic)
             .count(),
-        1
+        2
     );
 }
