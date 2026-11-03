@@ -409,20 +409,100 @@ pub const LEVEL_PROPS: &[Row] = &[
 
 /// Every key what the fight's scripts spawn draws (AH.24) that [`LEVEL`]
 /// and [`LEVEL_PROPS`] don't hold: the models the extract's spawn part
-/// holds for `global.bld` and each fighter's archive (AH.22; Eruptor's ball,
-/// its splash and his eruption's blobs among them, and since AH.39
-/// `global.bld`'s own: the level-up's, the death stars', the portal
-/// entry's, the prompts'), in the level's scene at AF's fresh state (the
-/// level's shadow on since AG.23), and each opaque one blending as a clone
-/// fading in draws it (AH.67, `props::faded_keys`), each once.
+/// holds for `global.bld` and each modelled character's archive (AH.22;
+/// Eruptor's ball, its splash and his eruption's blobs among them, since
+/// AH.39 `global.bld`'s own: the level-up's, the death stars', the portal
+/// entry's, the prompts', and since openspec AU.1 what every other
+/// character's attacks spawn, 79 more), in the level's scene at AF's fresh
+/// state (the level's shadow on since AG.23), and each opaque one blending
+/// as a clone fading in draws it (AH.67, `props::faded_keys`), each once.
 pub const SPAWNS: &[Row] = &[
+    row(0x0500, 0x0500, A, false, false, false, 1, true, false),
+    row(0x0500, 0x0500, ADD, false, false, false, 1, true, false),
+    row(0x0500, 0x1500, A, false, false, false, 1, true, true),
+    row(0x0500, 0x1500, A, false, true, false, 1, true, true),
+    row(0x0500, 0x1500, ADD, false, false, false, 1, true, true),
+    row(0x0500, 0x1500, ADD, false, true, false, 1, true, true),
+    row(0x0501, 0x1501, A, false, false, false, 2, true, true),
+    row(0x0501, 0x1501, A, false, true, false, 2, true, true),
+    row(0x0501, 0x1501, ADD, false, true, false, 2, true, true),
+    row(0x0504, 0x0504, A, false, false, false, 1, true, false),
+    row(0x0504, 0x0504, A, false, true, false, 1, true, false),
+    row(0x0504, 0x1504, A, false, false, false, 1, true, true),
+    row(0x0504, 0x1504, A, false, true, false, 1, true, true),
+    row(0x0505, 0x1505, ADD, false, true, false, 2, true, true),
+    row(0x051c, 0x051c, O, true, false, false, 1, true, false),
+    row(0x051c, 0x051c, A, true, false, false, 1, true, false),
+    row(0x0524, 0x0524, O, true, true, false, 1, true, false),
+    row(0x0524, 0x0524, A, true, true, false, 1, true, false),
+    row(0x0524, 0x1524, O, true, true, false, 1, true, true),
+    row(0x0524, 0x1524, A, true, true, false, 1, true, true),
+    row(0x052c, 0x052c, O, true, false, false, 1, true, false),
+    row(0x052c, 0x052c, A, true, false, false, 1, true, false),
+    row(0x053c, 0x053c, O, true, false, false, 1, true, false),
+    row(0x053c, 0x053c, A, true, false, false, 1, true, false),
+    row(0x3d00, 0x2500, O, true, true, false, 1, true, false),
     row(0x3d00, 0x2500, ADD, false, false, false, 1, true, false),
     row(0x3d00, 0x2500, ADD, true, false, false, 1, true, false),
+    row(0x3d00, 0x2500, ADD, true, true, false, 1, true, false),
+    row(0x3d00, 0x3500, A, false, true, true, 1, true, true),
     row(0x3d00, 0x3500, ADD, false, false, true, 1, true, true),
+    row(0x3d00, 0x3500, ADD, true, false, false, 1, true, true),
+    row(0x3d00, 0x3500, ADD, true, true, false, 1, true, true),
+    row(0x3d01, 0x2501, A, false, false, false, 2, true, false),
+    row(0x3d01, 0x2501, A, false, true, false, 2, true, false),
+    row(0x3d01, 0x2501, ADD, false, false, false, 2, true, false),
     row(0x3d04, 0x2504, O, true, false, false, 1, true, false),
+    row(0x3d04, 0x2504, A, false, false, false, 1, true, false),
     row(0x3d04, 0x2504, A, true, false, false, 1, true, false),
+    row(0x3d04, 0x3504, A, false, true, false, 1, true, true),
+    row(0x3d04, 0x3504, ADD, false, false, false, 1, true, true),
+    row(0x3d04, 0x3504, ADD, false, true, false, 1, true, true),
+    row(0x3d05, 0x2505, O, true, false, true, 2, true, false),
+    row(0x3d05, 0x2505, A, false, false, false, 2, true, false),
+    row(0x3d05, 0x2505, A, true, false, true, 2, true, false),
+    row(0x3d05, 0x2505, ADD, false, false, false, 2, true, false),
+    row(0x3d05, 0x3505, O, true, false, false, 2, true, true),
+    row(0x3d05, 0x3505, A, true, false, false, 2, true, true),
+    row(0x3d06, 0x2506, O, true, false, false, 2, true, false),
+    row(0x3d06, 0x2506, A, true, false, false, 2, true, false),
+    row(0x3d08, 0x2508, O, true, false, false, 1, true, false),
+    row(0x3d08, 0x2508, A, true, false, false, 1, true, false),
+    row(0x3d0c, 0x250c, O, true, false, false, 1, true, false),
+    row(0x3d0c, 0x250c, O, true, true, false, 1, true, false),
+    row(0x3d0c, 0x250c, A, true, false, false, 1, true, false),
+    row(0x3d0c, 0x250c, A, true, true, false, 1, true, false),
+    row(0x3d1c, 0x251c, O, true, false, false, 1, true, false),
+    row(0x3d1c, 0x251c, A, true, false, false, 1, true, false),
+    row(0x3d20, 0x2520, O, true, true, false, 1, true, false),
+    row(0x3d20, 0x2520, A, true, true, false, 1, true, false),
+    row(0x3d20, 0x2520, A, true, true, true, 1, true, false),
+    row(0x3d20, 0x2520, ADD, false, false, false, 1, true, false),
+    row(0x3d20, 0x3520, A, false, false, false, 1, true, true),
+    row(0x3d20, 0x3520, A, false, true, false, 1, true, true),
+    row(0x3d20, 0x3520, A, true, true, true, 1, true, true),
     row(0x3d20, 0x3520, ADD, true, false, true, 1, true, true),
     row(0x3d21, 0x3521, ADD, true, true, true, 2, true, true),
+    row(0x3d24, 0x2524, O, true, false, true, 1, true, false),
+    row(0x3d24, 0x2524, A, false, false, false, 1, true, false),
+    row(0x3d24, 0x2524, A, true, false, true, 1, true, false),
+    row(0x3d24, 0x2524, ADD, true, false, false, 1, true, false),
+    row(0x3d24, 0x2524, ADD, true, true, false, 1, true, false),
+    row(0x3d24, 0x3524, O, true, true, true, 1, true, true),
+    row(0x3d24, 0x3524, A, false, false, false, 1, true, true),
+    row(0x3d25, 0x2525, A, false, true, false, 2, true, false),
+    row(0x3d28, 0x2528, O, true, false, false, 1, true, false),
+    row(0x3d28, 0x2528, A, true, false, false, 1, true, false),
+    row(0x3d2c, 0x352c, O, true, true, false, 1, true, true),
+    row(0x3d2c, 0x352c, A, true, true, false, 1, true, true),
+    row(0x3d30, 0x2530, O, true, false, false, 1, true, false),
+    row(0x3d30, 0x2530, A, true, false, false, 1, true, false),
+    row(0x3d34, 0x2534, O, true, false, false, 1, true, false),
+    row(0x3d34, 0x2534, A, true, false, false, 1, true, false),
+    row(0x3d38, 0x2538, O, true, true, false, 1, true, false),
+    row(0x3d38, 0x2538, A, true, true, false, 1, true, false),
+    row(0x3d3c, 0x253c, O, true, false, true, 1, true, false),
+    row(0x3d3c, 0x253c, A, true, false, true, 1, true, false),
 ];
 
 /// Every glowing part's level glow mask chapter 1, its props and what its
@@ -432,41 +512,83 @@ pub const SPAWNS: &[Row] = &[
 /// 19 share their key with a part drawn first that doesn't glow (the
 /// waterfall's foam with its glimmer, an emerald with a watermelon's rind,
 /// the ball's splash with the eruption's lava among them); AG.60's props
-/// add one, AH.39's `global.bld` models seven, AS.63's clones' rule eight.
+/// add one, AH.39's `global.bld` models seven, AS.63's clones' rule eight,
+/// every character's attacks' spawn models (openspec AU.1) 41.
 pub const LEVEL_GLOW: &[Row] = &[
     row(0x0000, 0x1000, A, false, false, false, 1, true, true),
     row(0x0000, 0x1000, A, false, false, true, 1, true, true),
     row(0x0001, 0x1001, A, false, true, false, 2, true, true),
     row(0x0001, 0x1001, A, false, true, true, 2, true, true),
     row(0x0001, 0x1001, ADD, false, true, false, 2, true, true),
+    row(0x0400, 0x0400, A, false, false, false, 1, true, false),
+    row(0x0400, 0x0400, ADD, false, false, false, 1, true, false),
+    row(0x0400, 0x1400, A, false, false, false, 1, true, true),
+    row(0x0400, 0x1400, A, false, true, false, 1, true, true),
+    row(0x0400, 0x1400, ADD, false, true, false, 1, true, true),
+    row(0x0401, 0x1401, A, false, false, false, 2, true, true),
+    row(0x0404, 0x0404, A, false, false, false, 1, true, false),
+    row(0x0404, 0x0404, A, false, true, false, 1, true, false),
+    row(0x0404, 0x1404, A, false, false, false, 1, true, true),
+    row(0x0405, 0x1405, ADD, false, true, false, 2, true, true),
+    row(0x041c, 0x041c, O, true, false, false, 1, true, false),
     row(0x3c00, 0x2400, O, true, false, false, 1, true, false),
     row(0x3c00, 0x2400, A, false, false, false, 1, true, false),
     row(0x3c00, 0x2400, A, false, true, false, 1, true, false),
     row(0x3c00, 0x2400, A, true, false, false, 1, true, false),
     row(0x3c00, 0x2400, ADD, false, false, false, 1, true, false),
     row(0x3c00, 0x2400, ADD, false, true, false, 1, true, false),
+    row(0x3c00, 0x2400, ADD, true, false, false, 1, true, false),
     row(0x3c00, 0x3400, O, true, false, false, 1, true, true),
     row(0x3c00, 0x3400, A, false, false, false, 1, true, true),
     row(0x3c00, 0x3400, A, false, true, false, 1, true, true),
+    row(0x3c00, 0x3400, A, true, false, false, 1, true, true),
     row(0x3c00, 0x3400, A, true, true, false, 1, true, true),
     row(0x3c00, 0x3400, ADD, false, false, false, 1, true, true),
     row(0x3c00, 0x3400, ADD, false, false, true, 1, true, true),
     row(0x3c00, 0x3400, ADD, false, true, false, 1, true, true),
+    row(0x3c00, 0x3400, ADD, true, false, false, 1, true, true),
+    row(0x3c00, 0x3400, ADD, true, true, false, 1, true, true),
     row(0x3c01, 0x3401, A, false, false, false, 2, true, true),
+    row(0x3c01, 0x3401, A, false, true, false, 2, true, true),
     row(0x3c01, 0x3401, ADD, false, false, false, 2, true, true),
     row(0x3c01, 0x3401, ADD, false, true, false, 2, true, true),
+    row(0x3c04, 0x2404, O, true, false, false, 1, true, false),
+    row(0x3c04, 0x2404, O, true, true, false, 1, true, false),
+    row(0x3c04, 0x2404, A, false, false, false, 1, true, false),
+    row(0x3c04, 0x2404, A, true, false, false, 1, true, false),
+    row(0x3c04, 0x3404, O, true, false, false, 1, true, true),
     row(0x3c04, 0x3404, O, true, true, false, 1, true, true),
     row(0x3c04, 0x3404, A, false, false, false, 1, true, true),
+    row(0x3c04, 0x3404, A, false, true, false, 1, true, true),
+    row(0x3c04, 0x3404, A, true, false, false, 1, true, true),
     row(0x3c04, 0x3404, A, true, true, false, 1, true, true),
+    row(0x3c04, 0x3404, ADD, false, true, false, 1, true, true),
+    row(0x3c05, 0x2405, A, false, false, false, 2, true, false),
+    row(0x3c05, 0x2405, ADD, false, false, false, 2, true, false),
+    row(0x3c05, 0x3405, O, true, false, false, 2, true, true),
+    row(0x3c05, 0x3405, A, false, false, false, 2, true, true),
     row(0x3c05, 0x3405, A, false, true, false, 2, true, true),
+    row(0x3c05, 0x3405, A, true, false, false, 2, true, true),
     row(0x3c05, 0x3405, ADD, false, true, false, 2, true, true),
+    row(0x3c08, 0x2408, O, true, false, false, 1, true, false),
     row(0x3c1d, 0x241d, O, true, true, false, 2, true, false),
+    row(0x3c20, 0x2420, O, true, false, false, 1, true, false),
+    row(0x3c20, 0x2420, ADD, false, false, false, 1, true, false),
+    row(0x3c20, 0x3420, O, true, false, false, 1, true, true),
+    row(0x3c20, 0x3420, O, true, true, false, 1, true, true),
     row(0x3c20, 0x3420, ADD, true, false, true, 1, true, true),
     row(0x3c21, 0x3421, ADD, true, true, true, 2, true, true),
     row(0x3c24, 0x2424, O, true, false, false, 1, true, false),
+    row(0x3c24, 0x2424, O, true, true, false, 1, true, false),
+    row(0x3c24, 0x2424, A, false, false, false, 1, true, false),
+    row(0x3c24, 0x2424, A, true, false, false, 1, true, false),
     row(0x3c24, 0x3424, O, true, false, false, 1, true, true),
+    row(0x3c24, 0x3424, A, true, false, false, 1, true, true),
     row(0x3c24, 0x3424, A, true, true, false, 1, true, true),
     row(0x3c25, 0x2425, A, false, false, false, 2, true, false),
+    row(0x3c25, 0x2425, A, false, true, false, 2, true, false),
+    row(0x3c28, 0x2428, O, true, false, false, 1, true, false),
+    row(0x3c2c, 0x242c, O, true, false, false, 1, true, false),
     row(0x3c39, 0x3439, O, true, false, false, 2, true, true),
     row(0x3c3c, 0x243c, O, true, false, false, 1, true, false),
     row(0x3c3c, 0x343c, O, true, false, false, 1, true, true),
@@ -564,17 +686,9 @@ pub const HEROES_GLOW: &[Row] = &[
 ];
 
 /// His glowing parts' level glow masks on static meshes past
-/// [`LEVEL_GLOW`]'s.
-pub const HEROES_GLOW_STATIC: &[Row] = &[
-    row(0x041c, 0x041c, O, true, false, false, 1, true, false),
-    row(0x3c04, 0x2404, O, true, false, false, 1, true, false),
-    row(0x3c04, 0x2404, A, false, false, false, 1, true, false),
-    row(0x3c04, 0x2404, A, true, false, false, 1, true, false),
-    row(0x3c04, 0x3404, O, true, false, false, 1, true, true),
-    row(0x3c04, 0x3404, A, true, false, false, 1, true, true),
-    row(0x3c08, 0x2408, O, true, false, false, 1, true, false),
-    row(0x3c24, 0x3424, A, true, false, false, 1, true, true),
-];
+/// [`LEVEL_GLOW`]'s: none since openspec AU.1, whose characters' spawn
+/// models' masks put AG's eight into [`LEVEL_GLOW`].
+pub const HEROES_GLOW_STATIC: &[Row] = &[];
 
 /// Every key the first fight's creatures draw in the level on a skinned
 /// mesh that [`HEROES`] and [`TURNTABLE`] don't hold (openspec AH.25: the four Chompies'
@@ -847,7 +961,7 @@ mod tests {
             (TURNTABLE_STATIC, false, 24),
             (LEVEL, false, 67),
             (LEVEL_PROPS, false, 124),
-            (SPAWNS, false, 7),
+            (SPAWNS, false, 86),
             (HEROES, true, 33),
             (HEROES_STATIC, false, 23),
             (CREATURES, true, 21),
@@ -869,9 +983,9 @@ mod tests {
         // The level glow masks' (AH.65): rows of the colour keys whose
         // parts glow, keyed in the level's glow pass.
         for (rows, skinned, n) in [
-            (LEVEL_GLOW, false, 37),
+            (LEVEL_GLOW, false, 78),
             (HEROES_GLOW, true, 17),
-            (HEROES_GLOW_STATIC, false, 8),
+            (HEROES_GLOW_STATIC, false, 0),
             (CREATURES_GLOW, true, 1),
             (PARTICLES_GLOW, false, 1),
         ] {
@@ -902,7 +1016,7 @@ mod tests {
         // its glow pass and a level's without.
         assert_eq!(
             every.len(),
-            33 + 24 + 67 + 124 + 7 + 33 + 23 + 37 + 17 + 8 + 21 + 1 + 1 + 1 + 1 + 4
+            33 + 24 + 67 + 124 + 86 + 33 + 23 + 78 + 17 + 21 + 1 + 1 + 1 + 1 + 4
         );
         assert_eq!(
             turntable_keys().len(),

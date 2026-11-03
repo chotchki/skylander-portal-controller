@@ -88,9 +88,9 @@ const WALKER_ARCHIVES: [&str; 66] = [
 ];
 
 const WALKER_COUNTS: [usize; 66] = [
-    4, 4, 5, 4, 4, 3, 4, 3, 3, 3, 4, 4, 3, 3, 4, 3, 4, 4, 3, 4, 3, 3, 3, 3, 3, 3, 3, 3, 4, 5, 5, 5,
-    5, 4, 3, 4, 4, 3, 4, 3, 3, 5, 5, 4, 4, 4, 3, 3, 3, 4, 4, 3, 3, 4, 4, 4, 4, 4, 3, 3, 4, 4, 4, 4,
-    4, 4,
+    5, 5, 12, 5, 8, 6, 6, 5, 6, 5, 6, 6, 5, 7, 7, 6, 8, 8, 6, 6, 7, 7, 7, 6, 6, 6, 5, 6, 18, 6, 8,
+    8, 6, 6, 8, 7, 14, 6, 7, 6, 6, 10, 9, 7, 7, 7, 6, 6, 9, 7, 7, 6, 6, 9, 9, 9, 9, 9, 8, 8, 7, 9,
+    9, 7, 7, 6,
 ];
 
 #[test]
@@ -143,9 +143,11 @@ fn the_whitelist_lists_each_archive_once_by_file_name() {
         assert!(!WHITELIST[70].scripts.contains(&s), "{s}");
     }
     // Each walker's: his definition, his tuning actor, his minion's script
-    // and what his file's other running placements run (3 to 5), 244 in all.
+    // and what his file's other running placements run (3 to 5, 244 in
+    // all), and since AU.1 the rest of his file's scripts whose viewport
+    // asks are read (what his attacks spawn), 477 in all.
     assert_eq!(counts[4..70], WALKER_COUNTS);
-    assert_eq!(counts[4..70].iter().sum::<usize>(), 244);
+    assert_eq!(counts[4..70].iter().sum::<usize>(), 477);
     for w in WHITELIST {
         let mut names: Vec<String> = w.scripts.iter().map(|s| s.to_lowercase()).collect();
         names.sort();
@@ -185,7 +187,7 @@ fn the_whitelist_lists_each_archive_once_by_file_name() {
 #[test]
 fn the_whitelisted_walker_scripts_are_the_walkers_archives_alone() {
     let listed = whitelisted_walker_scripts();
-    assert_eq!(listed.len(), 244);
+    assert_eq!(listed.len(), 477);
     // His minion's, his definition's and his portal entry's are in; a
     // fighter's, the globals' and the level's are not.
     for s in [
@@ -425,6 +427,49 @@ fn complete_wants_both_parts_and_the_walkers_list() {
     m.parts
         .insert(SCRIPTS.into(), vec![WALKERS_FILE.to_owned()]);
     assert!(complete(&m));
+    // AU.1: once the scripts part holds a walker, the spawn models part
+    // holds his models too, in either IR, or the start resumes for it: an
+    // extract made before AU.1 read only the base's.
+    m.parts.insert(
+        SCRIPTS.into(),
+        vec![
+            script_path(BOOTSTRAP),
+            script_path(GLOBAL),
+            script_path(&character_archive(FIGHTERS[0])),
+            script_path("character/016_spyro.bld"),
+            WALKERS_FILE.to_owned(),
+        ],
+    );
+    m.parts.insert(
+        SPAWNS.into(),
+        vec!["spawns/global.ron".into(), "spawns/009_eruptor.ron".into()],
+    );
+    assert!(!complete(&m), "the walker's spawn models missing");
+    m.parts
+        .get_mut(SPAWNS)
+        .unwrap()
+        .push("spawns/016_spyro.postcard".into());
+    assert!(complete(&m));
+    m.parts.get_mut(SPAWNS).unwrap()[2] = "spawns/016_spyro_dark.ron".into();
+    assert!(!complete(&m), "another walker's file isn't his");
+}
+
+/// AU.1: the walkers the scripts part holds are read off its files, the
+/// base's (bootstrap, global, init_setup, a fighter's) and the list left
+/// out.
+#[test]
+fn the_walker_stems_are_the_scripts_parts_past_the_base() {
+    let files = vec![
+        script_path(BOOTSTRAP),
+        script_path(GLOBAL),
+        script_path(INIT_SETUP),
+        script_path(&character_archive(FIGHTERS[0])),
+        script_path("character/016_spyro.bld"),
+        script_path("character/112_titanlife.bld"),
+        WALKERS_FILE.to_owned(),
+    ];
+    assert_eq!(walker_stems(&files), ["016_spyro", "112_titanlife"]);
+    assert!(walker_stems(&files[..4]).is_empty());
 }
 
 /// AG.27: the walkers are the roster's modelled characters but a fighter
@@ -445,9 +490,20 @@ fn the_walkers_are_every_modelled_character_but_a_fighter() {
             "character/070_treerex.bld",
         ]
     );
-    // The fighters alone key the spawns part.
+    // The base's spawn archives are global's and the fighters'; since AU.1
+    // every walker's follow, as what his attacks spawn.
     assert_eq!(spawn_archives().len(), 2);
     assert_eq!(archives_with(&[]), archives());
+    assert_eq!(
+        spawn_archives_with(&walkers),
+        [
+            "permanent/global.bld",
+            "character/009_eruptor.bld",
+            "character/016_spyro.bld",
+            "character/070_treerex.bld",
+        ]
+    );
+    assert_eq!(spawn_archives_with(&[]), spawn_archives());
 }
 
 /// AG.27: the list a start reads back is the one the stage wrote; an extract

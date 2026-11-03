@@ -367,8 +367,8 @@ fn the_fights_parts_extract_whole_and_resume() {
         scripts::whitelisted_walker_scripts().len()
     );
     // The level's 57 with AG.177's jumping goats and AH.42's two from AH.8's
-    // route.
-    assert_eq!(held, 1 + 22 + 3 + 8 + 244 + 57);
+    // route; the walkers' 244 and since AU.1 their attacks' 233.
+    assert_eq!(held, 1 + 22 + 3 + 8 + 477 + 57);
     println!(
         "  the script part read back and parsed in {:.2} s",
         parse_started.elapsed().as_secs_f64()

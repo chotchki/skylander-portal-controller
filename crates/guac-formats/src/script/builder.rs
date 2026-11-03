@@ -3247,6 +3247,12 @@ fn attack_fighter_with(walks: bool, stops: bool) -> Vec<u8> {
 /// disc's don't (`015_Yeti_Legendary`'s is `015_Yeti_L` running
 /// `015_Yeti.ai`).
 pub const WALKER_LOAD: &str = "026_Synthetic";
+/// [`walker`]'s attack (openspec AU.1): the template of his file his minion
+/// spawns on action 1 going down, and its script's file name, a script of
+/// his file that no placement of his runs from the start (his attacks' as
+/// the TV's listing tells them).
+pub const WALKER_SHOT: &str = "026_Synthetic_Shot";
+pub const WALKER_SHOT_SCRIPT: &str = "026_Synthetic_Shot.ai";
 /// [`walker`]'s minion's template placement and its script's file name.
 pub const WALKER_TEMPLATE: &str = "026_Synthetic_L";
 pub const WALKER_MINION: &str = "026_Synthetic_Body.ai";
@@ -3319,6 +3325,11 @@ pub struct WalkerSpec {
     /// A scale (percent) his scripts set [`WALKER_REGROW_TICK`] ticks of
     /// his behaviour after his setup set [`WALKER_SCALE`] (AG.170).
     pub regrow: Option<f32>,
+    /// His attack (openspec AU.1): a template of his own file and its
+    /// script's file name, which his minion spawns at his pivot on action 1
+    /// going down; its script takes it off on its first tick.
+    pub shot: &'static str,
+    pub shot_script: &'static str,
 }
 
 /// A solid a synthetic walker's setup writes onto his actor through
@@ -3383,6 +3394,8 @@ pub const WALKER: WalkerSpec = WalkerSpec {
     turn: WALKER_TURN,
     solid: None,
     regrow: None,
+    shot: WALKER_SHOT,
+    shot_script: WALKER_SHOT_SCRIPT,
 };
 
 /// [`WALKER`] with [`WALKER_FILE_SOLID`] in his file and his setup writing
@@ -3412,6 +3425,8 @@ pub const WALKER_OTHER: WalkerSpec = WalkerSpec {
     turn: 360.0,
     solid: None,
     regrow: None,
+    shot: "027_Synthetic_Shot",
+    shot_script: "027_Synthetic_Shot.ai",
 };
 
 /// The macro [`attack_with_creatures`]' `global.bld` defines, in the shape
@@ -3474,12 +3489,16 @@ pub enum WalkerFault {
     /// on a member nothing models (openspec AH.169): his minion never
     /// becomes the activator.
     InActivation,
+    /// In his attack (openspec AU.1): on action 1 going down, before it
+    /// spawns his shot, his minion reaches a member nothing models, his
+    /// setup long done and his mover running.
+    OnPress,
 }
 
 /// AG.27's synthetic walker (openspec AG.27; design decisions 1, 2 and 8): a
 /// character's `level.bld` written with this writer, our numbers throughout,
 /// with a definition that defines its minion as [`attack`]'s fighter's does
-/// and a minion that attacks with nothing:
+/// and a minion with one attack of its own file:
 ///
 /// - at its STARTUP the minion sets its health, then each of
 ///   [`WALKER_MOVEMENT`] into its description's `movement parameters` (each
@@ -3498,7 +3517,10 @@ pub enum WalkerFault {
 /// - with the first pad's stick held his facing turns toward it as
 ///   `Movement - Face and Move` turns a hero, by the ground turn rate his
 ///   description holds, through `system.normalized angle` (openspec AG.172:
-///   a target straight behind turns him the way that angle's +180 does).
+///   a target straight behind turns him the way that angle's +180 does);
+/// - on action 1 going down it spawns its shot ([`WALKER_SHOT`], a template
+///   of its file whose script, [`WALKER_SHOT_SCRIPT`], takes it off on its
+///   first tick) at its pivot (openspec AU.1).
 ///
 /// `fault` makes it stop on a member nothing models, at its setup or in
 /// play, or in a macro of his the portal manager's join or deactivation
@@ -3532,6 +3554,25 @@ fn walker_with(spec: &WalkerSpec, fault: WalkerFault, described: bool) -> Vec<u8
     let movement_numbers = spec.movement();
     let mut b = IgzBuilder::new();
     let root = b.object(0, "igObjectList", 0x18);
+    // His attack's template (openspec AU.1): its script takes it off on its
+    // first tick, so a run that lists it never keeps one.
+    let shot_script = {
+        let mut w = Writer::new(&mut b);
+        w.script(
+            &format!(
+                "C:/tfb/Content/Levels/Includes/Minions/{}/scripts/{}",
+                spec.folder, spec.shot_script
+            ),
+            |_| {},
+            |_| {},
+            |w| {
+                let p = w.behaviour("default");
+                w.remove(&[El::Member("optoplevelbehavior", "my")]);
+                w.end_block(p);
+            },
+        )
+    };
+    let shot = actor_with(&mut b, spec.shot, Some(shot_script), 5);
     let minion_script = {
         let mut w = Writer::new(&mut b);
         let creature_ty = w.op(Class::DefineStructure, "Creature Info");
@@ -3845,6 +3886,21 @@ fn walker_with(spec: &WalkerSpec, fault: WalkerFault, described: bool) -> Vec<u8
                     w.set(&[El::Member(namespace, name)], one);
                     w.end_block(reached);
                 }
+                // His attack (openspec AU.1): the shot at his pivot on
+                // action 1 going down.
+                let pressed = on_press(w, 1);
+                if fault == WalkerFault::OnPress {
+                    let one = w.int(1);
+                    w.set(&[El::Member("synthetic", "unmodelled")], one);
+                }
+                let facing = w.int(0);
+                let s = w.spawn(
+                    &[El::Local(shot)],
+                    &[El::Member("optoplevelbehavior", "my")],
+                    facing,
+                );
+                w.end_block(s);
+                w.end_block(pressed);
                 // His scale set again in play (AG.170), his setup's long
                 // done.
                 if let (Some(regrow), Some(grown)) = (spec.regrow, grown) {
@@ -3907,6 +3963,11 @@ fn walker_with(spec: &WalkerSpec, fault: WalkerFault, described: bool) -> Vec<u8
     };
     let definition = actor_with(&mut b, spec.def, Some(def_script), 4);
     let blocks = b.section(0x10);
-    crate::igz::layouts::builder::list(&mut b, root, blocks, &[Some(definition), Some(minion)]);
+    crate::igz::layouts::builder::list(
+        &mut b,
+        root,
+        blocks,
+        &[Some(definition), Some(minion), Some(shot)],
+    );
     b.build()
 }

@@ -1,6 +1,7 @@
 //! The hero's own scripts on the TV (openspec AH.24, AH design decisions 1,
-//! 5 and 21; hero-attacks, pad-input's The face buttons attack): Eruptor's
-//! attacks from his scripts on the VM, in the level from the spawn.
+//! 5 and 21; hero-attacks, pad-input's The face buttons attack): his walk
+//! and his attacks from his scripts on the VM, in the level from the spawn,
+//! Eruptor's since AH.24 and every other modelled character's since AU.1.
 //!
 //! - The run: once the level's script part links, the VM runs the TV's
 //!   listing ([`guacamole::scripts::fight_config`], openspec AH.27 and
@@ -23,17 +24,18 @@
 //!   level's start before he's in (as the props stand), so a breakable out
 //!   of its range has no ground and sleeps, as AH.21 runs it.
 //! - The join: the hero placed on the TV whose file the part holds, a
-//!   fighter ([`guac_extract::scripts::FIGHTERS`], Eruptor) to attack and
-//!   walk or a walker (AG.27, every other modelled character) to walk
-//!   alone, joins by AH.17's join ([`guacamole::scripts::join_request`],
+//!   fighter ([`guac_extract::scripts::FIGHTERS`], Eruptor) or a walker
+//!   (AG.27, every other modelled character), joins by AH.17's join ([`guacamole::scripts::join_request`],
 //!   then on the next step [`guacamole::scripts::join_enter`], the
 //!   original's entry beam run each step after by
 //!   [`guacamole::scripts::entry_beams`] until it activates his minion as its
 //!   column lands, openspec AH.224; stand-in ledger: `join`), the step the
 //!   TV enters the level, drawn nowhere until then; from then
-//!   on his walk, facing and clips are his scripts' and his step the engine's
-//!   alone ([`ScriptedHero`]), a walker's attack buttons reaching no script
-//!   (hero-attacks' Which characters attack). Eruptor with no run (the part
+//!   on his walk, facing, attacks and clips are his scripts' and his step the
+//!   engine's alone ([`ScriptedHero`]), a walker's attack buttons reaching
+//!   his scripts as Eruptor's do (hero-attacks' Which characters attack,
+//!   openspec AU.1: what his attacks spawn listed where its viewport asks
+//!   are read, [`scripts::WalkerScripts::attack_scripts`]). Eruptor with no run (the part
 //!   lacking his file), a join that fails or his script stopped in play
 //!   walks on AG.16's controller, logged (stand-in ledger: `walker`); a
 //!   walker whose join fails keeps his card ([`KeepsCard`]), one whose
@@ -615,9 +617,6 @@ pub(crate) struct HeroRun {
     /// His figure's tag data once his scripts join holding it (AH.23), and
     /// the generation its words were made under.
     pub(crate) figure: Option<(Value, i64)>,
-    /// Whether the attack buttons are his scripts' (a fighter's, AH.29;
-    /// stand-in ledger: `who-attacks`): a walker's do nothing.
-    pub(crate) attacks: bool,
     /// Where his numbers are from (AG.27): a measured walker's scripts
     /// write the numbers he already carries, a scripted walker's are all he
     /// has.
@@ -649,8 +648,9 @@ pub(crate) struct HandRig {
 }
 
 /// Asks for `hero`'s scripts to join the run, if the part holds his file;
-/// true when they will (he then walks on them, [`ScriptedHero`]). A fighter
-/// (Eruptor) joins to attack and walk, a walker (AG.27) to walk alone.
+/// true when they will (he then walks and attacks on them, [`ScriptedHero`]):
+/// a fighter (Eruptor) or a walker (AG.27), whose attack buttons reach his
+/// scripts as Eruptor's do since openspec AU.1.
 pub(crate) fn ask_join(
     commands: &mut Commands,
     hero: Entity,
@@ -663,14 +663,12 @@ pub(crate) fn ask_join(
 ) -> bool {
     let load_file = walk.load_file.as_str();
     let found = source.and_then(|s| {
-        s.fighter(load_file)
-            .map(|u| (u, true))
-            .or_else(|| match s.walks(load_file) {
-                Ok(Some(_)) => s.walker(load_file).map(|w| (w.unit, false)),
-                _ => None,
-            })
+        s.fighter(load_file).or_else(|| match s.walks(load_file) {
+            Ok(Some(_)) => s.walker(load_file).map(|w| w.unit),
+            _ => None,
+        })
     });
-    let Some((unit, attacks)) = found else {
+    let Some(unit) = found else {
         info!(
             load_file,
             "his scripts aren't in the level's part: he walks on the stand-in, his attack buttons do nothing"
@@ -686,7 +684,6 @@ pub(crate) fn ask_join(
             join: Join::Asked,
             slot,
             figure: None,
-            attacks,
             origin: walk.origin,
             shape: walk.shape,
             scale: walk.scale,
@@ -694,10 +691,7 @@ pub(crate) fn ask_join(
         },
         ScriptedHero,
     ));
-    info!(
-        load_file,
-        unit, attacks, "his scripts join at the next step"
-    );
+    info!(load_file, unit, "his scripts join at the next step");
     true
 }
 
@@ -1423,18 +1417,11 @@ pub(crate) fn step_scripts(
         _ => None,
     });
     // The pads after the join, as the headless runs read them. The attack
-    // buttons are his scripts' only once they run (hero-attacks' Which
-    // characters attack): a hero not joined yet, or whose join failed or
-    // whose script stopped, reads none, so nothing of his file the VM still
-    // ticks throws for him.
-    // A walker's (AG.27) do nothing either way: attacks stay Eruptor's
-    // alone (AH.29; stand-in ledger: `who-attacks`).
-    let attacks = run.as_deref().is_none_or(|r| r.attacks);
-    let held = if joined.is_some() && attacks {
-        held
-    } else {
-        [false; 4]
-    };
+    // buttons are his scripts' once they run, a walker's as Eruptor's
+    // (hero-attacks' Which characters attack, openspec AU.1): a hero not
+    // joined yet, or whose join failed or whose script stopped, reads none,
+    // so nothing of his file the VM still ticks throws for him.
+    let held = if joined.is_some() { held } else { [false; 4] };
     world.read_pads([
         Pad {
             stick: input.0.stick,

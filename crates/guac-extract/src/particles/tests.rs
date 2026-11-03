@@ -222,6 +222,51 @@ fn each_archives_file_is_named_by_its_stem_in_either_format() {
         "particles/global.postcard"
     );
     assert_eq!(archives(), scripts::spawn_archives());
+    let walkers = vec!["016_Spyro".to_owned()];
+    assert_eq!(
+        archives_with(&walkers),
+        scripts::spawn_archives_with(&walkers)
+    );
+}
+
+/// AU.1: the part is complete once it holds every walker's emitters the
+/// scripts part lists, in either IR; an extract made before it read only
+/// the base's resumes for it.
+#[test]
+fn the_part_wants_every_listed_walkers_emitters() {
+    let mut m: crate::extract::Manifest = serde_json::from_value(serde_json::json!({
+        "extractor": "0", "layout": 4, "ir_version": 5,
+        "identity": identity(), "source_dir": "/d", "complete": true,
+        "sources": [], "outputs": []
+    }))
+    .unwrap();
+    assert!(!complete(&m), "no part");
+    m.parts.insert(
+        PART.into(),
+        vec![
+            "particles/global.ron".into(),
+            "particles/009_eruptor.ron".into(),
+        ],
+    );
+    m.parts.insert(
+        scripts::SCRIPTS.into(),
+        vec![
+            scripts::script_path(crate::roster::GLOBAL),
+            scripts::script_path("character/009_eruptor.bld"),
+            scripts::WALKERS_FILE.to_owned(),
+        ],
+    );
+    assert!(complete(&m), "no walker listed");
+    m.parts
+        .get_mut(scripts::SCRIPTS)
+        .unwrap()
+        .push(scripts::script_path("character/112_titanlife.bld"));
+    assert!(!complete(&m), "his emitters missing");
+    m.parts
+        .get_mut(PART)
+        .unwrap()
+        .push("particles/112_titanlife.postcard".into());
+    assert!(complete(&m));
 }
 
 /// AS.17: a level's own emitters land with their generators, each texture

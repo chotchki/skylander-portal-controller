@@ -12,12 +12,15 @@
 //!   `guac-formats` (decision 7's departure from "tfbScript graphs → IR").
 //!   Each is checked to parse and its op graph to read before it's written.
 //! - The spawn models: every model a placement names in `global.bld` and in
-//!   each fighting character's archive (his own body aside, which the model
-//!   stage writes), read as a level's props are,
+//!   each modelled character's archive the scripts part holds (his own body
+//!   aside, which the model stage writes), read as a level's props are,
 //!   `spawns/<archive>.<ron|postcard>`: the lava ball, the level-up's rings,
-//!   the death stars. `global.bld`'s models name its effects as objects of
-//!   their own file, read by the ids its exports give them ([`own_effects`],
-//!   openspec AH.39). A level's own spawn templates draw from its props.
+//!   the death stars, and since openspec AU.1 what every character's
+//!   attacks spawn, not Eruptor's alone ([`spawn_archives_with`]); an
+//!   extract made before that resumes for the part alone ([`complete`]).
+//!   `global.bld`'s models name its effects as objects of their own file,
+//!   read by the ids its exports give them ([`own_effects`], openspec
+//!   AH.39). A level's own spawn templates draw from its props.
 //!
 //! - The walkers' own entries (openspec AG.27): every modelled character's
 //!   archive beside [`FIGHTERS`]', so each runs on his own scripts. A
@@ -59,10 +62,13 @@ pub const SPAWNS: &str = "spawn models";
 pub const SCRIPT_DIR: &str = "scripts";
 pub const SPAWN_DIR: &str = "spawns";
 
-/// The characters whose attack scripts run, by load file (design decision
-/// 15; Open question 3, answered 2026-10-19: Eruptor alone). They key the
-/// spawns part; the walkers ([`walker_loads`]) are a longer list that runs
-/// movement, never attacks (AH.29).
+/// The characters whose archives link with the base, by load file: Eruptor,
+/// whose attacks ran on his scripts first (design decision 15; Open
+/// question 3, answered 2026-10-19) and who walks on his measured numbers
+/// (AG.8). Every other modelled character is a walker ([`walker_loads`]),
+/// linked after; since openspec AU.1 a walker's attack buttons reach his
+/// scripts as a fighter's do and his archive gives the spawns part its
+/// models too ([`spawn_archives_with`]).
 pub const FIGHTERS: [&str; 1] = ["009_Eruptor"];
 
 /// Which walkers the scripts part holds (openspec AG.27), as a file of the
@@ -144,8 +150,12 @@ pub const WHITELIST: [Whitelisted; 71] = [
     // listing runs for him: his file's running placements (his definition,
     // his tuning actor and, where his file runs one, a portal entry, a
     // shockwave, the combo UI or the ghost include) and his minion's, the
-    // template his definition's `Portal - Define Minion` names. Read off the
-    // dump by `giants_walkers`' `a_probe_of_the_part`, in the roster's order;
+    // template his definition's `Portal - Define Minion` names; and since
+    // openspec AU.1 every other script of his file whose asks of the
+    // gameplay viewport are read (what his attacks spawn, his accolades and
+    // portal entries' macros), four of them held back for asks not read
+    // yet (`WalkerScripts::held_scripts`). Read off the dump by
+    // `giants_walkers`' `a_probe_of_the_part`, in the roster's order;
     // `the_whitelist_holds_each_listed_walkers_scripts` there holds them to it.
     Whitelisted {
         archive: "character/000_airdragon.bld",
@@ -153,6 +163,7 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "000_AirDragon.ai",
             "000_AirDragon_Def.ai",
             "000_AirDragon_Tuning.ai",
+            "Accolades_Macros_Air.ai",
             "PortalEntry_Air.ai",
         ],
     },
@@ -162,16 +173,24 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "000_AirDragon.ai",
             "000_AirDragon_Alt_Def.ai",
             "000_AirDragon_Tuning.ai",
+            "Accolades_Macros_Air.ai",
             "PortalEntry_Air.ai",
         ],
     },
     Whitelisted {
         archive: "character/001_gryphon.bld",
         scripts: &[
+            "001_baby_puddle.ai",
+            "001_dummy_actor.ai",
+            "001_echolocation_controller.ai",
             "001_Gryphon.ai",
             "001_Gryphon_Def.ai",
             "001_Gryphon_Tuning.ai",
+            "001_wowpow_baby.ai",
+            "001_wowpow_egg.ai",
+            "Accolades_Macros_Air.ai",
             "FX_Shockwave_Air.ai",
+            "gryphon_dummy_flight.ai",
             "PortalEntry_Air.ai",
         ],
     },
@@ -181,6 +200,7 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "002_Def_SkyTurtle.ai",
             "002_SkyTurtle.ai",
             "002_SkyTurtle_Tuning.ai",
+            "Accolades_Macros_Air.ai",
             "PortalEntry_Air.ai",
         ],
     },
@@ -188,17 +208,24 @@ pub const WHITELIST: [Whitelisted; 71] = [
         archive: "character/003_stormgiant.bld",
         scripts: &[
             "003_Def_StormGiant.ai",
+            "003_LightningBolt_FX.ai",
+            "003_LightningBolt_FX_Upgrade.ai",
+            "003_LightningHarpoon.ai",
             "003_StormGiant.ai",
             "003_StormGiant_Tuning.ai",
+            "Accolades_Macros_Air.ai",
             "PortalEntry_Air.ai",
         ],
     },
     Whitelisted {
         archive: "character/004_rock_dragon.bld",
         scripts: &[
+            "004_EarthSummon.ai",
             "004_RockDragon.ai",
             "004_RockDragon_Tuning.ai",
+            "Accolades_Macros_Earth.ai",
             "Def_RockDragon.ai",
+            "PortalEntry_Earth.ai",
         ],
     },
     Whitelisted {
@@ -207,7 +234,9 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "005_Def_LandShark.ai",
             "005_LandShark.ai",
             "005_LandShark_Tuning.ai",
+            "Accolades_Macros_Earth.ai",
             "FX_Combo_UI.ai",
+            "PortalEntry_Earth.ai",
         ],
     },
     Whitelisted {
@@ -216,6 +245,8 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "006_Def_Dinorang.ai",
             "006_DinoRang.ai",
             "006_DinoRang_Tuning.ai",
+            "Accolades_Macros_Earth.ai",
+            "PortalEntry_Earth.ai",
         ],
     },
     Whitelisted {
@@ -224,6 +255,9 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "007_GemGolem.ai",
             "007_GemGolem_Def.ai",
             "007_GemGolem_Tuning.ai",
+            "Accolades_Macros_Earth.ai",
+            "PortalEntry_Earth.ai",
+            "PortalEntry_LightForce.ai",
         ],
     },
     Whitelisted {
@@ -232,6 +266,8 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "008_Def_FireDragon.ai",
             "008_FireDragon.ai",
             "008_FireDragon_Tuning.ai",
+            "Accolades_Macros_Fire.ai",
+            "PortalEntry_Fire.ai",
         ],
     },
     Whitelisted {
@@ -240,7 +276,9 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "010_Def_FlameKnight.ai",
             "010_FlameKnight.ai",
             "010_FlameKnight_Tuning.ai",
+            "Accolades_Macros_Fire.ai",
             "FX_Combo_UI.ai",
+            "PortalEntry_Fire.ai",
         ],
     },
     Whitelisted {
@@ -249,7 +287,9 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "010_Def_FlameKnight_Legendary.ai",
             "010_FlameKnight.ai",
             "010_FlameKnight_Tuning.ai",
+            "Accolades_Macros_Fire.ai",
             "FX_Combo_UI.ai",
+            "PortalEntry_Fire.ai",
         ],
     },
     Whitelisted {
@@ -258,14 +298,20 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "011_Def_FireElf.ai",
             "011_FireElf.ai",
             "011_FireElf_Tuning.ai",
+            "Accolades_Macros_Fire.ai",
+            "PortalEntry_Fire.ai",
         ],
     },
     Whitelisted {
         archive: "character/012_seadragon.bld",
         scripts: &[
             "012_Def_WaterDragon.ai",
+            "012_ExplosionFX.ai",
+            "012_LightningDragonFX.ai",
             "012_SeaDragon_Tuning.ai",
             "012_WaterDragon2.ai",
+            "Accolades_Macros_Water.ai",
+            "PortalEntry_Water.ai",
         ],
     },
     Whitelisted {
@@ -274,7 +320,10 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "013_Crab.ai",
             "013_Crab_Def.ai",
             "013_Crab_Tuning.ai",
+            "013_has_creature_info.ai",
+            "Accolades_Macros_Water.ai",
             "FX_Combo_UI.ai",
+            "PortalEntry_Water.ai",
         ],
     },
     Whitelisted {
@@ -283,29 +332,47 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "014_GillGrunt.ai",
             "014_GillGrunt_Def.ai",
             "014_GillGrunt_Tuning.ai",
+            "Accolades_Macros_Water.ai",
+            "ChargeMeters.ai",
+            "PortalEntry_Water.ai",
         ],
     },
     Whitelisted {
         archive: "character/015_yeti.bld",
         scripts: &[
+            "015_Ice_Prison.ai",
+            "015_Ice_SmashMark_Control.ai",
             "015_Yeti.ai",
             "015_Yeti_Tuning.ai",
+            "Accolades_Macros_Water.ai",
             "Def_Yeti.ai",
             "FX_Combo_UI.ai",
+            "PortalEntry_Water.ai",
         ],
     },
     Whitelisted {
         archive: "character/015_yeti_legendary.bld",
         scripts: &[
+            "015_Ice_Prison.ai",
+            "015_Ice_SmashMark_Control.ai",
             "015_Yeti.ai",
             "015_Yeti_Tuning.ai",
+            "Accolades_Macros_Water.ai",
             "Def_Yeti_Legendary.ai",
             "FX_Combo_UI.ai",
+            "PortalEntry_Water.ai",
         ],
     },
     Whitelisted {
         archive: "character/016_spyro.bld",
-        scripts: &["016_Def_Spryo.ai", "016_Spyro.ai", "016_Spyro_Tuning.ai"],
+        scripts: &[
+            "016_Def_Spryo.ai",
+            "016_Spyro.ai",
+            "016_Spyro_Tuning.ai",
+            "Accolades_Macros_Magic.ai",
+            "faceCamera.ai",
+            "PortalEntry_Magic.ai",
+        ],
     },
     Whitelisted {
         archive: "character/017_skullorc.bld",
@@ -313,27 +380,45 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "017_SkullOrc.ai",
             "017_SkullOrc_Def.ai",
             "017_SkullOrc_Tuning.ai",
+            "Accolades_Macros_Magic.ai",
             "FX_Combo_UI.ai",
+            "PortalEntry_Magic.ai",
         ],
     },
     Whitelisted {
         archive: "character/018_wizard.bld",
-        scripts: &["018_Def_Wizard.ai", "018_Wizard.ai", "018_Wizard_Tuning.ai"],
+        scripts: &[
+            "018_Def_Wizard.ai",
+            "018_GardenGnome_NEW.ai",
+            "018_Healing_Food.ai",
+            "018_Wizard.ai",
+            "018_Wizard_Tuning.ai",
+            "Accolades_Macros_Magic.ai",
+            "PortalEntry_Magic.ai",
+        ],
     },
     Whitelisted {
         archive: "character/018_wizard_alt.bld",
         scripts: &[
             "018_Def_Wizard_Alt.ai",
+            "018_GardenGnome_NEW.ai",
+            "018_Healing_Food.ai",
             "018_Wizard.ai",
             "018_Wizard_Tuning.ai",
+            "Accolades_Macros_Magic.ai",
+            "PortalEntry_Magic.ai",
         ],
     },
     Whitelisted {
         archive: "character/023_forcefieldgrub.bld",
         scripts: &[
             "023_Def_ForceFieldGrub.ai",
+            "023_ForceField.ai",
+            "023_ForceFieldGrub_ALTSHIELD_WARP.ai",
             "023_ForceFieldGrub_main.ai",
             "023_ForceFieldGrub_Tuning.ai",
+            "Accolades_Macros_Magic.ai",
+            "PortalEntry_Magic.ai",
         ],
     },
     Whitelisted {
@@ -342,6 +427,9 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "016_Def_SpyroDark.ai",
             "016_Spyro.ai",
             "016_Spyro_Tuning.ai",
+            "Accolades_Macros_Magic.ai",
+            "faceCamera.ai",
+            "PortalEntry_Magic.ai",
         ],
     },
     Whitelisted {
@@ -350,26 +438,41 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "020_Def_Metal_Dragon.ai",
             "020_Metal_Dragon.ai",
             "020_MetalDragon_Tuning.ai",
+            "Accolades_Macros_Tech.ai",
+            "PortalEntry_LightForce.ai",
+            "PortalEntry_Tech.ai",
         ],
     },
     Whitelisted {
         archive: "character/021_drillbot.bld",
         scripts: &[
+            "021_Drill.ai",
             "021_DrillBot.ai",
             "021_DrillBot_Tuning.ai",
+            "Accolades_Macros_Tech.ai",
             "Def_DrillBot.ai",
+            "PortalEntry_Tech.ai",
         ],
     },
     Whitelisted {
         archive: "character/022_bomb_troll.bld",
-        scripts: &["022_BombTroll_Tuning.ai", "022_Troll.ai", "Def_Troll.ai"],
+        scripts: &[
+            "022_BombTroll_Tuning.ai",
+            "022_Troll.ai",
+            "Accolades_Macros_Tech.ai",
+            "Def_Troll.ai",
+            "PortalEntry_Tech.ai",
+        ],
     },
     Whitelisted {
         archive: "character/019_goldencheat.bld",
         scripts: &[
+            "019_BigCoin.ai",
             "019_Def_GoldenCheat.ai",
             "019_GoldenCheat.ai",
             "019_GoldenCheat_Tuning.ai",
+            "Accolades_Macros_Tech.ai",
+            "PortalEntry_Tech.ai",
         ],
     },
     Whitelisted {
@@ -378,6 +481,20 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "024_LifeDragon.ai",
             "024_LifeDragon_Def.ai",
             "024_LifeDragon_Tuning.ai",
+            "Accolades_Macros_Life.ai",
+            "LifeDragon_adrian_manualattack.ai",
+            "LifeDragon_adrian_manualcharge.ai",
+            "LifeDragon_adrian_vinecharge.ai",
+            "LifeDragon_Firecracker.ai",
+            "LifeDragon_FirecrackerBase.ai",
+            "LifeDragon_LeafTEMP.ai",
+            "LifeDragon_MelonNew.ai",
+            "LifeDragon_MelonOnVine.ai",
+            "LifeDragon_MelonPlant.ai",
+            "LifeDragon_MelonProjectile.ai",
+            "LifeDragon_SunSphereOrbiting.ai",
+            "LifeDragon_SunSphereProjectile.ai",
+            "Lifedragon_vinerunner.ai",
             "PortalEntry_Life.ai",
         ],
     },
@@ -387,6 +504,7 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "025_BamBazooker.ai",
             "025_BamBazooker_Tuning.ai",
             "025_Def_BamBazooker.ai",
+            "Accolades_Macros_Life.ai",
             "FX_Shockwave.ai",
             "PortalEntry_Life.ai",
         ],
@@ -395,8 +513,11 @@ pub const WHITELIST: [Whitelisted; 71] = [
         archive: "character/026_stealthelf.bld",
         scripts: &[
             "026_Def_StealthElf.ai",
+            "026_Scarecrow.ai",
             "026_StealthElf.ai",
             "026_StealthElf_Tuning.ai",
+            "026_StealthElfClone.ai",
+            "Accolades_Macros_Life.ai",
             "FX_Combo_UI.ai",
             "PortalEntry_Life.ai",
         ],
@@ -405,8 +526,11 @@ pub const WHITELIST: [Whitelisted; 71] = [
         archive: "character/026_stealthelf_legendary.bld",
         scripts: &[
             "026_Def_StealthElf_Legendary.ai",
+            "026_Scarecrow.ai",
             "026_StealthElf.ai",
             "026_StealthElf_Tuning.ai",
+            "026_StealthElfClone.ai",
+            "Accolades_Macros_Life.ai",
             "FX_Combo_UI.ai",
             "PortalEntry_Life.ai",
         ],
@@ -417,6 +541,7 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "027_Ent.ai",
             "027_Ent_Def_Minion.ai",
             "027_Ent_Tuning.ai",
+            "Accolades_Macros_Life.ai",
             "FX_Combo_UI.ai",
             "PortalEntry_Life.ai",
         ],
@@ -427,7 +552,9 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "032_Cynder.ai",
             "032_Cynder_Tuning.ai",
             "032_Def_Cynder.ai",
+            "Accolades_Macros_Undead.ai",
             "Minion_Include_Ghost.ai",
+            "PortalEntry_Undead.ai",
         ],
     },
     Whitelisted {
@@ -436,6 +563,11 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "029_ShadowMaid.ai",
             "029_ShadowMaid_Def.ai",
             "029_ShadowMaid_Tuning.ai",
+            "Accolades_Macros_Undead.ai",
+            "ChargeMeters.ai",
+            "Homing_Projectiles.ai",
+            "PortalEntry_LightForce.ai",
+            "PortalEntry_Undead.ai",
         ],
     },
     Whitelisted {
@@ -444,7 +576,10 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "030_Def_PandoranElite.ai",
             "030_PandoranElite.ai",
             "030_PandoranElite_Tuning.ai",
+            "030_shield_absorb_impact.ai",
+            "Accolades_Macros_Undead.ai",
             "FX_Combo_UI.ai",
+            "PortalEntry_Undead.ai",
         ],
     },
     Whitelisted {
@@ -452,8 +587,18 @@ pub const WHITELIST: [Whitelisted; 71] = [
         scripts: &[
             "031_Def_GhostEater.ai",
             "031_GhostEater.ai",
+            "031_GhostEater_MassHysteria_controller.ai",
             "031_GhostEater_Tuning.ai",
+            "031_GhostEater_WhipHelper.ai",
+            "031_StickyGhost.ai",
+            "Accolades_Macros_Undead.ai",
+            "Attached_Ghosts.ai",
+            "Effect_Ghosts.ai",
+            "Ghost.ai",
+            "Ghost_Explode_Ring.ai",
+            "GhostEater_WhipFXController.ai",
             "Minion_Include_Ghost.ai",
+            "PortalEntry_Undead.ai",
         ],
     },
     Whitelisted {
@@ -462,6 +607,9 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "016_Def_SpryoLegendary.ai",
             "016_Spyro.ai",
             "016_Spyro_Tuning.ai",
+            "Accolades_Macros_Magic.ai",
+            "faceCamera.ai",
+            "PortalEntry_Magic.ai",
         ],
     },
     Whitelisted {
@@ -470,23 +618,32 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "030_Def_PandoranEliteLegendary.ai",
             "030_PandoranElite.ai",
             "030_PandoranElite_Tuning.ai",
+            "030_shield_absorb_impact.ai",
+            "Accolades_Macros_Undead.ai",
             "FX_Combo_UI.ai",
+            "PortalEntry_Undead.ai",
         ],
     },
     Whitelisted {
         archive: "character/004_rock_dragon_legendary.bld",
         scripts: &[
+            "004_EarthSummon.ai",
             "004_RockDragon.ai",
             "004_RockDragon_Tuning.ai",
+            "Accolades_Macros_Earth.ai",
             "Def_RockDragonLegendary.ai",
+            "PortalEntry_Earth.ai",
         ],
     },
     Whitelisted {
         archive: "character/019_goldencheat_legendary.bld",
         scripts: &[
+            "019_BigCoin.ai",
             "019_Def_GoldenCheatLegendary.ai",
             "019_GoldenCheat.ai",
             "019_GoldenCheat_Tuning.ai",
+            "Accolades_Macros_Tech.ai",
+            "PortalEntry_Tech.ai",
         ],
     },
     Whitelisted {
@@ -495,8 +652,13 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "100_Eagle.ai",
             "100_Eagle_Def.ai",
             "100_Eagle_Tuning.ai",
+            "100_warptorus.ai",
+            "Accolades_Macros_Air.ai",
+            "ChargeMeters.ai",
             "FX_Combo_UI.ai",
+            "Macros_suck.ai",
             "PortalEntry_Air.ai",
+            "PortalEntry_LightForce.ai",
         ],
     },
     Whitelisted {
@@ -505,7 +667,11 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "100_Eagle.ai",
             "100_Eagle_L_Def.ai",
             "100_Eagle_Tuning.ai",
+            "100_warptorus.ai",
+            "Accolades_Macros_Air.ai",
+            "ChargeMeters.ai",
             "FX_Combo_UI.ai",
+            "Macros_suck.ai",
             "PortalEntry_Air.ai",
         ],
     },
@@ -515,6 +681,9 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "101_BugmanGiant.ai",
             "101_BugmanGiant_Def.ai",
             "101_BugmanGiant_Tuning.ai",
+            "101_Footprint.ai",
+            "Accolades_Macros_Air.ai",
+            "Macros_Giganticus.ai",
             "PortalEntry_Air.ai",
         ],
     },
@@ -524,7 +693,10 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "102_TitanEarth.ai",
             "102_TitanEarth_Def.ai",
             "102_TitanEarth_Tuning.ai",
+            "Accolades_Macros_Earth.ai",
             "FX_Combo_UI.ai",
+            "Macros_Giganticus.ai",
+            "PortalEntry_Earth.ai",
         ],
     },
     Whitelisted {
@@ -533,7 +705,10 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "102_TitanEarth.ai",
             "102_TitanEarth_Alt_Def.ai",
             "102_TitanEarth_Tuning.ai",
+            "Accolades_Macros_Earth.ai",
             "FX_Combo_UI.ai",
+            "Macros_Giganticus.ai",
+            "PortalEntry_Earth.ai",
         ],
     },
     Whitelisted {
@@ -542,6 +717,9 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "103_EarthDragon.ai",
             "103_EarthDragon_Tuning.ai",
             "103_EarthDragonDef.ai",
+            "103_LaserProjectile.ai",
+            "Accolades_Macros_Earth.ai",
+            "PortalEntry_Earth.ai",
         ],
     },
     Whitelisted {
@@ -550,32 +728,47 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "103_EarthDragon.ai",
             "103_EarthDragon_Alt_Def.ai",
             "103_EarthDragon_Tuning.ai",
+            "103_LaserProjectile.ai",
+            "Accolades_Macros_Earth.ai",
+            "PortalEntry_Earth.ai",
         ],
     },
     Whitelisted {
         archive: "character/104_oilblazer.bld",
         scripts: &[
+            "104_FireRain.ai",
+            "104_Footprint.ai",
             "104_OilBlazer.ai",
             "104_OilBlazer_Def.ai",
             "104_OilBlazer_Tuning.ai",
+            "104_OilHurtHelper.ai",
+            "Accolades_Macros_Fire.ai",
+            "Macros_Giganticus.ai",
+            "PortalEntry_Fire.ai",
         ],
     },
     Whitelisted {
         archive: "character/105_firefeet.bld",
         scripts: &[
+            "105_AxeKick_FX.ai",
             "105_FireFeet.ai",
             "105_FireFeet_Def.ai",
             "105_FireFeet_Tuning.ai",
+            "Accolades_Macros_Fire.ai",
             "FX_Combo_UI.ai",
+            "PortalEntry_Fire.ai",
         ],
     },
     Whitelisted {
         archive: "character/105_firefeet_alt.bld",
         scripts: &[
+            "105_AxeKick_FX.ai",
             "105_FireFeet.ai",
             "105_FireFeet_Alt_Def.ai",
             "105_FireFeet_Tuning.ai",
+            "Accolades_Macros_Fire.ai",
             "FX_Combo_UI.ai",
+            "PortalEntry_Fire.ai",
         ],
     },
     Whitelisted {
@@ -584,6 +777,9 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "106_IceSorc.ai",
             "106_IceSorc_Def.ai",
             "106_IceSorc_Tuning.ai",
+            "Accolades_Macros_Water.ai",
+            "PortalEntry_LightForce.ai",
+            "PortalEntry_Water.ai",
         ],
     },
     Whitelisted {
@@ -592,15 +788,23 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "106_IceSorc.ai",
             "106_IceSorc_Legendary_Def.ai",
             "106_IceSorc_Tuning.ai",
+            "Accolades_Macros_Water.ai",
+            "PortalEntry_LightForce.ai",
+            "PortalEntry_Water.ai",
         ],
     },
     Whitelisted {
         archive: "character/107_whale.bld",
         scripts: &[
+            "107_Footprint.ai",
             "107_Whale.ai",
             "107_Whale_Def.ai",
             "107_Whale_Tuning.ai",
+            "107_Whale_Whirlpool.ai",
+            "Accolades_Macros_Water.ai",
             "FX_Combo_UI.ai",
+            "Macros_Giganticus.ai",
+            "PortalEntry_Water.ai",
         ],
     },
     Whitelisted {
@@ -608,8 +812,13 @@ pub const WHITELIST: [Whitelisted; 71] = [
         scripts: &[
             "108_Alchemist.ai",
             "108_Alchemist_Def.ai",
+            "108_Alchemist_Pet_NEW.ai",
             "108_Alchemist_Tuning.ai",
+            "Accolades_Macros_Magic.ai",
+            "ChargeMeters.ai",
             "FX_Combo_UI.ai",
+            "PortalEntry_LightForce.ai",
+            "PortalEntry_Magic.ai",
         ],
     },
     Whitelisted {
@@ -617,8 +826,13 @@ pub const WHITELIST: [Whitelisted; 71] = [
         scripts: &[
             "108_Alchemist.ai",
             "108_Alchemist_Legendary_Def.ai",
+            "108_Alchemist_Pet_NEW.ai",
             "108_Alchemist_Tuning.ai",
+            "Accolades_Macros_Magic.ai",
+            "ChargeMeters.ai",
             "FX_Combo_UI.ai",
+            "PortalEntry_LightForce.ai",
+            "PortalEntry_Magic.ai",
         ],
     },
     Whitelisted {
@@ -627,7 +841,12 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "109_Djini.ai",
             "109_Djini_Def.ai",
             "109_Djini_Tuning.ai",
+            "109_DjiniDecoy.ai",
+            "Accolades_Macros_Magic.ai",
             "FX_Combo_UI.ai",
+            "Macros_Giganticus.ai",
+            "PortalEntry_Magic.ai",
+            "Torus_Effect.ai",
         ],
     },
     Whitelisted {
@@ -636,23 +855,38 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "109_Djini.ai",
             "109_Djini_Alt_Def.ai",
             "109_Djini_Tuning.ai",
+            "109_DjiniDecoy.ai",
+            "Accolades_Macros_Magic.ai",
             "FX_Combo_UI.ai",
+            "Macros_Giganticus.ai",
+            "PortalEntry_Magic.ai",
+            "Torus_Effect.ai",
         ],
     },
     Whitelisted {
         archive: "character/110_robotgiant.bld",
         scripts: &[
+            "110_FloatingMine.ai",
             "110_RobotGiant.ai",
             "110_RobotGiant_Def.ai",
             "110_RobotGiant_Tuning.ai",
+            "Accolades_Macros_Tech.ai",
+            "Homing_Projectiles.ai",
+            "Macros_Giganticus.ai",
+            "PortalEntry_Tech.ai",
         ],
     },
     Whitelisted {
         archive: "character/110_robotgiant_legendary.bld",
         scripts: &[
+            "110_FloatingMine.ai",
             "110_RobotGiant.ai",
             "110_RobotGiant_Legendary_Def.ai",
             "110_RobotGiant_Tuning.ai",
+            "Accolades_Macros_Tech.ai",
+            "Homing_Projectiles.ai",
+            "Macros_Giganticus.ai",
+            "PortalEntry_Tech.ai",
         ],
     },
     Whitelisted {
@@ -661,34 +895,50 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "111_Def_TurretMaster.ai",
             "111_TurretMaster.ai",
             "111_TurretMaster_Tuning.ai",
+            "Accolades_Macros_Tech.ai",
+            "ChargeMeters.ai",
             "FX_Combo_UI.ai",
+            "PortalEntry_Tech.ai",
         ],
     },
     Whitelisted {
         archive: "character/112_titanlife.bld",
         scripts: &[
+            "112_Footprint.ai",
             "112_TitanLife.ai",
             "112_TitanLife_Def.ai",
             "112_TitanLife_Tuning.ai",
+            "112_TitanLife_warpRing.ai",
+            "Accolades_Macros_Life.ai",
+            "DeathState_Vaporize.ai",
+            "Macros_Giganticus.ai",
             "PortalEntry_Life.ai",
         ],
     },
     Whitelisted {
         archive: "character/112_titanlife_alt.bld",
         scripts: &[
+            "112_Footprint.ai",
             "112_TitanLife.ai",
             "112_TitanLife_Alt_Def.ai",
             "112_TitanLife_Tuning.ai",
+            "112_TitanLife_warpRing.ai",
+            "Accolades_Macros_Life.ai",
+            "DeathState_Vaporize.ai",
+            "Macros_Giganticus.ai",
             "PortalEntry_Life.ai",
         ],
     },
     Whitelisted {
         archive: "character/113_myconman.bld",
         scripts: &[
+            "113_MushroomParatrooper.ai",
             "113_Myconman.ai",
             "113_Myconman_Def.ai",
             "113_Myconman_Tuning.ai",
+            "Accolades_Macros_Life.ai",
             "PortalEntry_Life.ai",
+            "PortalEntry_LightForce.ai",
         ],
     },
     Whitelisted {
@@ -697,7 +947,10 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "114_Mummy.ai",
             "114_Mummy_Def.ai",
             "114_Mummy_Tuning.ai",
+            "Accolades_Macros_Undead.ai",
             "FX_Combo_UI.ai",
+            "Macros_Giganticus.ai",
+            "PortalEntry_Undead.ai",
         ],
     },
     Whitelisted {
@@ -706,7 +959,9 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "115_Def_Ostrich.ai",
             "115_Ostrich.ai",
             "115_Ostrich_Tuning.ai",
+            "Accolades_Macros_Undead.ai",
             "FX_Combo_UI.ai",
+            "PortalEntry_Undead.ai",
         ],
     },
     Whitelisted {
@@ -888,12 +1143,49 @@ pub fn archives_with(walkers: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// The archives the spawn models come from: `global.bld` and each
-/// fighter's.
+/// The archives the spawn models come from with no walker's: `global.bld`
+/// and each fighter's ([`spawn_archives_with`] adds the walkers').
 pub fn spawn_archives() -> Vec<String> {
     std::iter::once(GLOBAL.to_owned())
         .chain(FIGHTERS.iter().map(|f| character_archive(f)))
         .collect()
+}
+
+/// [`spawn_archives`] and then each of `walkers`' (load files, as the
+/// scripts part lists them, [`WalkerList::listed`]): what every modelled
+/// character's attacks spawn is in his own file (openspec AU.1).
+pub fn spawn_archives_with(walkers: &[String]) -> Vec<String> {
+    spawn_archives()
+        .into_iter()
+        .chain(walkers.iter().map(|w| character_archive(w)))
+        .collect()
+}
+
+/// The stems of the walkers whose entries `files` (the scripts part's
+/// recorded files) holds: every `scripts/<stem>.igz` but the base's
+/// ([`archives`]).
+pub fn walker_stems(files: &[String]) -> Vec<&str> {
+    let base: Vec<String> = archives().iter().map(|a| stem(a).to_owned()).collect();
+    files
+        .iter()
+        .filter_map(|f| {
+            f.strip_prefix(&format!("{SCRIPT_DIR}/"))?
+                .strip_suffix(".igz")
+        })
+        .filter(|s| !base.iter().any(|b| b == s))
+        .collect()
+}
+
+/// Whether `part` (a part's recorded files, `dir/<stem>.<ron|postcard>`
+/// each) holds a file for every walker the scripts part `scripts` holds:
+/// an extract made before a part read the walkers' archives is current
+/// only once it has (openspec AU.1).
+pub fn holds_every_walker(scripts: &[String], part: &[String], dir: &str) -> bool {
+    walker_stems(scripts).iter().all(|stem| {
+        ["ron", "postcard"]
+            .iter()
+            .any(|ext| part.iter().any(|f| *f == format!("{dir}/{stem}.{ext}")))
+    })
 }
 
 /// An archive's stem (`permanent/global.bld` → `global`): its files' name
@@ -910,13 +1202,18 @@ pub fn script_path(archive: &str) -> String {
 }
 
 /// Whether `m` holds both parts, the scripts one with its walkers' list
-/// ([`WALKERS_FILE`]): a start is current only then, so an extract made
-/// before the walkers resumes for the scripts part alone.
+/// ([`WALKERS_FILE`]) and the spawn models one with every listed walker's
+/// models (openspec AU.1): a start is current only then, so an extract
+/// made before the walkers resumes for the scripts part, and one made
+/// before AU.1 for the spawn models part, alone.
 pub fn complete(m: &Manifest) -> bool {
-    m.parts
-        .get(SCRIPTS)
-        .is_some_and(|files| files.iter().any(|f| f == WALKERS_FILE))
-        && m.parts.contains_key(SPAWNS)
+    let Some(scripts) = m.parts.get(SCRIPTS) else {
+        return false;
+    };
+    scripts.iter().any(|f| f == WALKERS_FILE)
+        && m.parts
+            .get(SPAWNS)
+            .is_some_and(|spawns| holds_every_walker(scripts, spawns, SPAWN_DIR))
 }
 
 /// The `level.bld` `archive` keeps, decompressed, under `usrdir`. Why it

@@ -1,10 +1,12 @@
 //! The emitters the fight's scripts spawn (openspec AH.87): every
-//! `tfbParticleInfo` in each spawn archive (`global.bld` and each
-//! fighter's, [`scripts::spawn_archives`]) with its generators, through
+//! `tfbParticleInfo` in each spawn archive (`global.bld`, each fighter's
+//! and, since openspec AU.1, each walker's the scripts part holds,
+//! [`scripts::spawn_archives_with`]) with its generators, through
 //! guac-formats' [`particle`] reader, into
 //! `particles/<stem>.<ron|postcard>`, each generator's texture into the
 //! store. An extract-wide part of its own ([`PART`]), so an extract made
-//! before it resumes for it alone.
+//! before it, or before it read the walkers' ([`complete`]), resumes for it
+//! alone.
 //!
 //! A level's own emitters (openspec AS.17) are a part of that level's
 //! ([`level_emitters`], [`crate::levels::PARTICLES`]): every emitter its
@@ -44,9 +46,24 @@ pub fn path(ir: IrFormat, archive: &str) -> String {
     format!("{DIR}/{}.{ext}", scripts::stem(archive))
 }
 
-/// The archives the part reads: the spawn models'.
+/// The archives the part reads with no walker's: the spawn models'.
 pub fn archives() -> Vec<String> {
     scripts::spawn_archives()
+}
+
+/// [`archives`] and each of `walkers`' (openspec AU.1), as the spawn models.
+pub fn archives_with(walkers: &[String]) -> Vec<String> {
+    scripts::spawn_archives_with(walkers)
+}
+
+/// Whether `m`'s part holds every walker's emitters the scripts part
+/// lists (openspec AU.1): an extract made before resumes for it alone.
+pub fn complete(m: &crate::extract::Manifest) -> bool {
+    match (m.parts.get(scripts::SCRIPTS), m.parts.get(PART)) {
+        (Some(s), Some(p)) => scripts::holds_every_walker(s, p, DIR),
+        (None, Some(_)) => true,
+        _ => false,
+    }
 }
 
 /// Each emitter `igz` places, its generators and their textures read; one
@@ -308,7 +325,9 @@ pub fn particle_stage(
     let usrdir = PathBuf::from(&dir.manifest().source_dir).join("PS3_GAME/USRDIR");
     let identity = dir.manifest().identity.clone();
     let mut stage = ParticleStage::default();
-    let archives = archives();
+    // Every walker the scripts part holds (openspec AU.1), off its list.
+    let walkers = scripts::read_walkers(dir.path()).unwrap_or_default().listed;
+    let archives = archives_with(&walkers);
     let total = archives.len();
     send(Event::Particles { done: 0, total });
     let irs: Vec<String> = archives.iter().map(|a| path(ir, a)).collect();
