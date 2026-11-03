@@ -585,7 +585,7 @@ fn panel(
                     .get(i)
                     .cloned()
                     .flatten()
-                    .unwrap_or_else(|| ["Story", "Dares", "Collections"][i].to_owned());
+                    .unwrap_or_else(|| ["Story", "Challenges", "Finds"][i].to_owned());
                 let mut button = row.spawn((
                     Button,
                     FocusId(id),
