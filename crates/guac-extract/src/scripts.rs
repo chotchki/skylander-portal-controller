@@ -153,8 +153,8 @@ pub const WHITELIST: [Whitelisted; 71] = [
     // template his definition's `Portal - Define Minion` names; and since
     // openspec AU.1 every other script of his file whose asks of the
     // gameplay viewport are read (what his attacks spawn, his accolades and
-    // portal entries' macros), four of them held back for asks not read
-    // yet (`WalkerScripts::held_scripts`). Read off the dump by
+    // portal entries' macros), those AU.1 held back for asks not read since
+    // AU.2 read them (`WalkerScripts::held_scripts`). Read off the dump by
     // `giants_walkers`' `a_probe_of_the_part`, in the roster's order;
     // `the_whitelist_holds_each_listed_walkers_scripts` there holds them to it.
     Whitelisted {
@@ -184,6 +184,7 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "001_dummy_actor.ai",
             "001_echolocation_controller.ai",
             "001_Gryphon.ai",
+            "001_Gryphon_BabyEgg.ai",
             "001_Gryphon_Def.ai",
             "001_Gryphon_Tuning.ai",
             "001_wowpow_baby.ai",
@@ -538,6 +539,7 @@ pub const WHITELIST: [Whitelisted; 71] = [
     Whitelisted {
         archive: "character/027_ent.bld",
         scripts: &[
+            "027_Acorn_Invisible_Ball.ai",
             "027_Ent.ai",
             "027_Ent_Def_Minion.ai",
             "027_Ent_Tuning.ai",
@@ -909,6 +911,7 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "112_TitanLife_Def.ai",
             "112_TitanLife_Tuning.ai",
             "112_TitanLife_warpRing.ai",
+            "112_Woodpecker.ai",
             "Accolades_Macros_Life.ai",
             "DeathState_Vaporize.ai",
             "Macros_Giganticus.ai",
@@ -923,6 +926,7 @@ pub const WHITELIST: [Whitelisted; 71] = [
             "112_TitanLife_Alt_Def.ai",
             "112_TitanLife_Tuning.ai",
             "112_TitanLife_warpRing.ai",
+            "112_Woodpecker.ai",
             "Accolades_Macros_Life.ai",
             "DeathState_Vaporize.ai",
             "Macros_Giganticus.ai",

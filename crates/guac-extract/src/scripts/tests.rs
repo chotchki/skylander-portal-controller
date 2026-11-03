@@ -88,9 +88,9 @@ const WALKER_ARCHIVES: [&str; 66] = [
 ];
 
 const WALKER_COUNTS: [usize; 66] = [
-    5, 5, 12, 5, 8, 6, 6, 5, 6, 5, 6, 6, 5, 7, 7, 6, 8, 8, 6, 6, 7, 7, 7, 6, 6, 6, 5, 6, 18, 6, 8,
-    8, 6, 6, 8, 7, 14, 6, 7, 6, 6, 10, 9, 7, 7, 7, 6, 6, 9, 7, 7, 6, 6, 9, 9, 9, 9, 9, 8, 8, 7, 9,
-    9, 7, 7, 6,
+    5, 5, 13, 5, 8, 6, 6, 5, 6, 5, 6, 6, 5, 7, 7, 6, 8, 8, 6, 6, 7, 7, 7, 6, 6, 6, 5, 6, 18, 6, 8,
+    8, 7, 6, 8, 7, 14, 6, 7, 6, 6, 10, 9, 7, 7, 7, 6, 6, 9, 7, 7, 6, 6, 9, 9, 9, 9, 9, 8, 8, 7, 10,
+    10, 7, 7, 6,
 ];
 
 #[test]
@@ -145,9 +145,10 @@ fn the_whitelist_lists_each_archive_once_by_file_name() {
     // Each walker's: his definition, his tuning actor, his minion's script
     // and what his file's other running placements run (3 to 5, 244 in
     // all), and since AU.1 the rest of his file's scripts whose viewport
-    // asks are read (what his attacks spawn), 477 in all.
+    // asks are read (what his attacks spawn), 481 in all since AU.2 read
+    // the four AU.1 held back.
     assert_eq!(counts[4..70], WALKER_COUNTS);
-    assert_eq!(counts[4..70].iter().sum::<usize>(), 477);
+    assert_eq!(counts[4..70].iter().sum::<usize>(), 481);
     for w in WHITELIST {
         let mut names: Vec<String> = w.scripts.iter().map(|s| s.to_lowercase()).collect();
         names.sort();
@@ -187,7 +188,7 @@ fn the_whitelist_lists_each_archive_once_by_file_name() {
 #[test]
 fn the_whitelisted_walker_scripts_are_the_walkers_archives_alone() {
     let listed = whitelisted_walker_scripts();
-    assert_eq!(listed.len(), 477);
+    assert_eq!(listed.len(), 481);
     // His minion's, his definition's and his portal entry's are in; a
     // fighter's, the globals' and the level's are not.
     for s in [
