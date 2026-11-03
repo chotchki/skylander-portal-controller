@@ -210,6 +210,12 @@ fn resume_ask(resume: &Resume, taken: bool) -> Option<&str> {
     }
 }
 
+/// Whether the save system's step runs: once the session's resume is
+/// settled, and while no other level is on its way ([`serve_saves`]).
+fn serves(resumed: bool, changing: bool) -> bool {
+    resumed && !changing
+}
+
 /// The step's save requests, after the scripts' step: the run's start and
 /// each request the scripts made ([`story_save::serve`]), on no engine (the
 /// save macros reach none).
@@ -227,7 +233,10 @@ pub(crate) fn serve_saves(
     // portal, replaced by the level a save resumes at, would make a start
     // (and a save naming chapter 1 its slot's level) the original never
     // makes; a level end's own save is the next level's start.
-    if !story.resumed || choice.as_deref().is_some_and(LevelChoice::changing) {
+    if !serves(
+        story.resumed,
+        choice.as_deref().is_some_and(LevelChoice::changing),
+    ) {
         return;
     }
     let ScriptRuntime { vm, generator, .. } = &mut *runtime;
@@ -263,6 +272,16 @@ mod tests {
         assert_eq!(resume_ask(&Resume::ChapterOne, false), None);
         assert_eq!(resume_ask(&level, true), None);
         assert_eq!(resume_ask(&hub, true), None);
+    }
+
+    /// The save system steps only once the resume is settled and while no
+    /// other level is on its way.
+    #[test]
+    fn the_save_system_waits_for_the_resume_and_a_level_on_its_way() {
+        assert!(serves(true, false));
+        assert!(!serves(false, false), "before the host's save was read");
+        assert!(!serves(true, true), "on a run about to be replaced");
+        assert!(!serves(false, true));
     }
 
     /// A host from the server begins a session for it, once; a host gone
