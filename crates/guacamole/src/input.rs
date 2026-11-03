@@ -153,6 +153,27 @@ pub(crate) struct Frame {
 #[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ModalOpen(pub(crate) bool);
 
+/// Whether a modal holds the pads, the router's one notion of it: Restart
+/// chapter's ([`ModalOpen`]), a dialogue's yes-or-no question (AU.6,
+/// `crate::yes_no::PromptOpen`) or the level's completion screen (AU.5,
+/// `crate::completion::CompletionOpen`). The question and the completion
+/// screen each step aside while the portal holds the level (its alert, an
+/// arrival card), so neither is answered blind under it.
+#[derive(SystemParam)]
+pub(crate) struct Modals<'w> {
+    restart: Option<Res<'w, ModalOpen>>,
+    prompt: Option<Res<'w, crate::yes_no::PromptOpen>>,
+    completion: Option<Res<'w, crate::completion::CompletionOpen>>,
+}
+
+impl Modals<'_> {
+    pub(crate) fn hold(&self) -> bool {
+        self.restart.as_ref().is_some_and(|m| m.0)
+            || self.prompt.as_ref().is_some_and(|p| p.0)
+            || self.completion.as_ref().is_some_and(|c| c.0)
+    }
+}
+
 /// Who takes a frame's input: the top layer, and only it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Layer {
@@ -386,8 +407,7 @@ fn route_input(
     mut level: ResMut<LevelPads>,
     hero: Option<ResMut<HeroInput>>,
     actions: Option<ResMut<HeroActions>>,
-    modal: Option<Res<ModalOpen>>,
-    completion: Option<Res<crate::completion::CompletionOpen>>,
+    modals: Modals,
     ending: Option<Res<crate::completion::LevelEnding>>,
     mut out: MessageWriter<TvInput>,
 ) {
@@ -408,9 +428,7 @@ fn route_input(
     }
 
     let playing = queue.as_ref().is_some_and(|q| q.playing().is_some());
-    // AU.5's completion screen takes the pads as a modal's (its tabs).
-    let modal = modal.is_some_and(|m| m.0) || completion.is_some_and(|c| c.0);
-    let layer = Layer::top(playing, level.shows()).over(modal);
+    let layer = Layer::top(playing, level.shows()).over(modals.hold());
     if matches!(layer, Layer::Intro | Layer::Level) {
         repeat.swallow();
     }
@@ -617,8 +635,7 @@ pub(crate) struct InputShots<'w, 's> {
     actions: Option<Res<'w, HeroActions>>,
     focus: Option<Res<'w, InputFocus>>,
     choices: Query<'w, 's, &'static FocusId>,
-    modal: Option<Res<'w, ModalOpen>>,
-    completion: Option<Res<'w, crate::completion::CompletionOpen>>,
+    modals: Modals<'w>,
 }
 
 impl InputShots<'_, '_> {
@@ -645,10 +662,7 @@ impl InputShots<'_, '_> {
             .collect();
         InputShot {
             layer: Layer::top(intro_playing, level.shows())
-                .over(
-                    self.modal.as_ref().is_some_and(|m| m.0)
-                        || self.completion.as_ref().is_some_and(|c| c.0),
-                )
+                .over(self.modals.hold())
                 .name()
                 .to_owned(),
             pads,

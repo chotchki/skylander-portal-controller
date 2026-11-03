@@ -187,24 +187,34 @@ pub(crate) fn is_open(world: &ScriptWorld) -> bool {
             .is_some_and(|c| !c.continue_asked && !c.continued)
 }
 
+/// The screen up while the run's sequencing holds it open and the portal
+/// doesn't hold the level: under the portal's alert or an arrival card it
+/// steps aside, as AU.6's question does, so the alert reads whole and no
+/// continue goes in blind (found at the au-level-end review: a second
+/// figure under the screen raised Too many Skylanders over it, and a South
+/// there continued the screen unseen); it comes back on the tab it was on.
 fn open_completion(
     world: Option<Res<ScriptWorld>>,
+    pads: Option<Res<crate::pad::LevelPads>>,
     mut open: ResMut<CompletionOpen>,
     mut ending: ResMut<LevelEnding>,
     mut tab: ResMut<CompletionTab>,
+    mut was_open: Local<bool>,
 ) {
     let holds = world.as_deref().is_some_and(|w| w.sequence.ending);
     if ending.0 != holds {
         info!(holds, "the level's end holds the players");
         ending.0 = holds;
     }
-    let now = world.as_deref().is_some_and(is_open);
+    let sequenced = world.as_deref().is_some_and(is_open);
+    if sequenced && !*was_open {
+        tab.0 = 0;
+    }
+    *was_open = sequenced;
+    let now = sequenced && !pads.is_some_and(|p| p.held());
     if open.0 != now {
         info!(open = now, "the completion screen");
         open.0 = now;
-        if now {
-            tab.0 = 0;
-        }
     }
 }
 
@@ -981,7 +991,7 @@ mod tests {
 
     /// The TV's portal app with the completion screen's plugin, a run whose
     /// sequencing reached its completion screen with [`results`], the level
-    /// showing and held; the clock 100 ms a frame.
+    /// showing, its clock running (100 ms a frame).
     fn screen_app() -> (App, PostedPresses) {
         let mut app = portal_app(1920, 1080, WindowMode::Tv, PortalCards::default());
         let presses = PostedPresses::default();
@@ -999,9 +1009,7 @@ mod tests {
             continued: false,
         });
         app.insert_resource(world);
-        let mut pads = app.world_mut().resource_mut::<LevelPads>();
-        pads.show();
-        pads.hold(true);
+        app.world_mut().resource_mut::<LevelPads>().show();
         (app, presses)
     }
 
@@ -1095,6 +1103,28 @@ mod tests {
             assert!(texts.iter().any(|t| t == want), "{want} drawn: {texts:?}");
         }
         assert!(!texts.iter().any(|t| t == "Meet him"), "{texts:?}");
+        // The portal holds the level (its alert): the screen steps aside,
+        // and a South under the alert continues nothing; let go, it's back
+        // on the tab it was on.
+        app.world_mut().resource_mut::<LevelPads>().hold(true);
+        for _ in 0..3 {
+            app.update();
+        }
+        assert!(!app.world().resource::<CompletionOpen>().0, "aside");
+        assert_eq!(drawn(&mut app), 0);
+        presses.push(TestPress::South);
+        for _ in 0..3 {
+            app.update();
+        }
+        let world = app.world().resource::<ScriptWorld>();
+        assert!(!world.sequence.completion.as_ref().unwrap().continue_asked);
+        app.world_mut().resource_mut::<LevelPads>().hold(false);
+        for _ in 0..3 {
+            app.update();
+        }
+        assert!(app.world().resource::<CompletionOpen>().0, "back");
+        assert_eq!((report(&app).tab, drawn(&mut app)), (1, 1));
+        assert_eq!(focused(&app), Some(TABS[1]));
         presses.push(TestPress::South);
         for _ in 0..3 {
             app.update();

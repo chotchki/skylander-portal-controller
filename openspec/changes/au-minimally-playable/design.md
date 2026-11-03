@@ -68,4 +68,4 @@ See [proposal.md](proposal.md) (Why) for the three gaps. The state each part sta
 
 ## Open Questions
 
-- Which chapter the hub offers first after 214, and whether 214's own level end names the hub or a chapter. Read off 214's level end and the hub's scripts when the level-flow lane starts. Either answer leaves the boxes as they are.
+- Which chapter the hub offers first after 214, and whether 214's own level end names the hub or a chapter. Read off 214's level end and the hub's scripts when the level-flow lane starts. Either answer leaves the boxes as they are. Answered at AU.6 (2026-11-03): 214's level end names the hub (`999_Level_Village`, stage 1 after 214), and the hub offers level 201 first (Flynn's, once Cali's intro has run).

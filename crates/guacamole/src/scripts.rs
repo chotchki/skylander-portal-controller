@@ -666,6 +666,9 @@ pub enum MovieEnd {
 pub struct LevelEnd {
     pub value: Value,
     pub string: Option<String>,
+    /// The level it names as the switch resolves it where its text names
+    /// none (the village, openspec AU.27: [`crate::level_switch`]).
+    pub resolved: Option<String>,
     pub unread: Option<Unread>,
 }
 
@@ -1203,6 +1206,26 @@ impl ScriptWorld {
         out
     }
 
+    /// The hub's people ([`HUB_PEOPLE`], openspec AU.28): each placement
+    /// whose script is one of theirs, by its actor, unwalked, in handle
+    /// order; whether its script runs is the caller's to check.
+    pub fn people(&self) -> Vec<Handle> {
+        let mut out: Vec<Handle> = self
+            .actors
+            .iter()
+            .filter(|(_, a)| {
+                a.walker.is_none()
+                    && a.obj
+                        .and_then(|o| self.templates.get(&o))
+                        .and_then(|p| p.script.as_deref())
+                        .is_some_and(is_hub_person)
+            })
+            .map(|(h, _)| *h)
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
     /// Makes each of the first fight's placements in the file linked as
     /// `unit` with movement numbers ([`FIRST_FIGHT`]) a creature the engine
     /// moves ([`ScriptWorld::walk`], openspec AH.18): what the headless
@@ -1344,7 +1367,16 @@ impl ScriptWorld {
         self.requests.push(load);
         let text = self.text_of(load);
         let ending = self.level_end.as_ref().is_some_and(|e| e.value == load);
-        match self.level_named(text.as_deref()) {
+        let resolved = self
+            .level_end
+            .as_ref()
+            .filter(|e| e.value == load)
+            .and_then(|e| e.resolved.clone());
+        let read = match resolved {
+            Some(name) => self.on_disc(name),
+            None => self.level_named(text.as_deref()),
+        };
+        match read {
             Ok(name) => {
                 info!(%name, ?text, "a script asked for a level: it loads, the run holds its request");
                 self.level_change = Some(LevelChange {
@@ -1379,6 +1411,11 @@ impl ScriptWorld {
     fn level_named(&self, text: Option<&str>) -> Result<String, Unread> {
         let text = text.ok_or(Unread::NoText)?;
         let name = level_name(text).ok_or_else(|| Unread::NotALevel(String::new()))?;
+        self.on_disc(name)
+    }
+
+    /// `name`, when the disc's level list holds it, or why not.
+    fn on_disc(&self, name: String) -> Result<String, Unread> {
         match self.levels.as_deref() {
             Some(l) if !l.is_empty() => l
                 .contains(&name)
@@ -1405,7 +1442,10 @@ impl ScriptWorld {
             return;
         };
         let text = text.or_else(|| self.text_of(end.value));
-        let read = self.level_named(text.as_deref());
+        let read = match end.resolved.clone() {
+            Some(name) => self.on_disc(name),
+            None => self.level_named(text.as_deref()),
+        };
         match read {
             Ok(name) => {
                 info!(%name, string = ?end.string, ?text, "the level end read: it loads, the run holds its request");
@@ -1468,9 +1508,20 @@ impl ScriptWorld {
         self.level_end = Some(LevelEnd {
             value: v,
             string,
+            resolved: None,
             unread: None,
         });
         self.ask_level(v);
+    }
+
+    /// The TV's level end resolved to `level`, an archive, as the switch
+    /// resolves one whose text names none (the village, openspec AU.27:
+    /// [`crate::level_switch`]); the step's end asks it by that name.
+    /// Nothing without a level end.
+    pub fn resolve_level_end(&mut self, level: String) {
+        if let Some(e) = &mut self.level_end {
+            e.resolved = Some(level);
+        }
     }
 
     /// The TV's level end, once written.
@@ -2512,8 +2563,87 @@ pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
 /// `214_Intro_Ship`, which its end takes off, and its own SHUTDOWN resets
 /// the ship, the gun deck's hatch and the barrels, which a reset brings back
 /// as their files have them, the ship's script cloning its parts again
-/// ([`SHIP`]).
-pub const INTROS: [(&str, &str); 1] = [("level_214_tutotial_2", "214_Intro_IGC")];
+/// ([`SHIP`]). Each hub stage's (openspec AS.47: its `CS_Hub_Intro` file,
+/// awake from the load) plays the stage's arrival for the adventures done
+/// (on stage 1 after level 214, `CS - (HS 2) Post - Tutorial 2`): the
+/// story's scenes when the last adventure was just finished (`First_Time_Here`,
+/// which the hub's definition sets off its `complete` flags), only the
+/// landing on a load; either way its last scene hands the players over at
+/// `CS_Hub_Intro_Final_Positions`' first two waypoints, which every stage
+/// holds alike ([`crate::level_scene::HUB_START_PLACEMENT`]).
+pub const INTROS: [(&str, &str); 5] = [
+    ("level_214_tutotial_2", "214_Intro_IGC"),
+    ("level_hub_2_stage_1", "CS_Intro_Controller"),
+    ("level_hub_2_stage_2", "CS_Hub_Intro_Stage2"),
+    ("level_hub_2_stage_3", "CS_Hub_Intro_Stage3"),
+    ("level_hub_2_stage_4", "CS_Hub_Intro_Stage4"),
+];
+
+/// The hub stages' own scripts past the listing every level gets (openspec
+/// AS.46, AS.47), by file name, every tick, on a hub stage alone
+/// ([`level_config`]):
+/// - the sky (`SkyDome_Controller.ai`): at its first tick it picks the
+///   skydome for the adventures done (`Levels_Completed`, which the hub's
+///   definition counts and stage 1's controller holds at 2 or more: after
+///   level 214 `Skydome_201`), clones it at its own place at 400 % and
+///   switches the atmospheric zone to that adventure's (201's), then keeps
+///   the clone at its own height (which it moves to the nearest player's
+///   when he's over 350 ft above or below it) and turns it 0.015° a tick
+///   while he stands within 3 ft of its placed height (on the main deck,
+///   not up at the helm), holding through a cutscene played outside an
+///   interior. The scene holds no sky of its own; the clone draws by
+///   AS.63's rule;
+/// - the stage's controller (`Hub2_Stage_<n>_Controller.ai`): which of the
+///   stage's placements stand for the adventures done (after level 214 the
+///   snowmen, the ice and snow, the pirates' lights, the turret and
+///   Dreadbeard off, 23 placements; the snow barrels are the stage's
+///   intro's to take off) and the NPCs' waypoint (`Waypoint Value`);
+/// - the background: its controllers clone the boulders and the islands
+///   that drift past the ship for the adventures done, each moving on its
+///   own script, and the deck's and the crane's zone controllers switch to
+///   the stage's exterior zone;
+/// - the way on (openspec AU.6): Flynn at the helm and Cali on the main
+///   deck, each a dialogue a player within its active range starts with
+///   the talk button (the UI's tick, on every level's listing, shows its
+///   exclamation and button prompt and raises it). After level 214 Flynn's
+///   sends a player to Cali until her intro has run (`Cali_Intro`, which
+///   her intro sets as it starts and the save keeps), her intro asks her
+///   challenge question ([`crate::prompt`]), and then Flynn's asks his
+///   ready question and on a yes plays his outro (`HS2 - Outro`), which changes
+///   level to the chapter he offers, level 201 after 214
+///   ([`crate::level_switch`]).
+pub const HUB_SCRIPTS: [&str; 11] = [
+    "SkyDome_Controller.ai",
+    "Hub2_Stage_1_Controller.ai",
+    "Hub2_Stage_2_Controller.ai",
+    "Hub2_Stage_3_Controller.ai",
+    "Hub2_Stage_4_Controller.ai",
+    "BackgroundController.ai",
+    "Hub2_Background_Island.ai",
+    "Hub2_Background_Actor.ai",
+    "AtmZone_Controller.ai",
+    "/Flynn.ai",
+    "/Cali.ai",
+];
+
+/// The hub's people the TV draws (openspec AU.28), by their scripts:
+/// Flynn at the helm and Cali on the main deck, each drawn on its
+/// placement's model where its scripts stand and turn it, posed by the
+/// clips they play, never walked (walked, a `turn to` is the engine's
+/// steering, which left Cali facing 73° and her intro's turn undone at
+/// AU.6; unwalked, the host turns it at once, as the headless runs do).
+pub const HUB_PEOPLE: [&str; 2] = ["/Flynn.ai", "/Cali.ai"];
+
+/// Whether a placement whose script is `script` is one of the hub's
+/// people ([`HUB_PEOPLE`]).
+pub fn is_hub_person(script: &str) -> bool {
+    HUB_PEOPLE.iter().any(|p| script.ends_with(p))
+}
+
+/// Whether the level whose archive is `level` is a hub stage.
+pub fn is_hub(level: &str) -> bool {
+    guac_extract::levels::Kind::of(level) == guac_extract::levels::Kind::Hub
+}
 
 /// Level 214's ship (openspec AS.60), by placement name, every tick: the
 /// ship the players stand on (`Ships.ai`, cloning its engine, masthead and
@@ -3453,8 +3583,9 @@ pub fn fight_config(mode: Mode) -> Config {
 /// other, whose placements named as chapter 1's fight's are its own (level
 /// 214 holds an `Enemy_Chompy(4)` and a `Setup_001_Controller`), with its
 /// first encounter's placements and clones by name where the TV runs one
-/// ([`encounter`], openspec AS.54) and its intro ([`intro`], AS.47);
-/// either with [`with_level`] (AS.51).
+/// ([`encounter`], openspec AS.54) and its intro ([`intro`], AS.47), a hub
+/// stage's own scripts ([`HUB_SCRIPTS`], AS.46); either with
+/// [`with_level`] (AS.51).
 pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config {
     let mut config = if guac_extract::levels::FIRST_RUN.contains(&name) {
         fight_config(mode)
@@ -3478,6 +3609,15 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
     // What takes the way on past its fights (openspec AS.59).
     if let Whitelist::Only { placements, .. } = &mut config.whitelist {
         placements.extend(passages(name).iter().map(|s| (*s).to_owned()));
+    }
+    // A hub stage's sky, its stage's controller, its background and its
+    // way on (openspec AS.46, AS.47, AU.6); the filter cells Cali's dialogue
+    // reaches (the menus' blurred backdrop) are every level's since AS.53
+    // (`members::LEVELS`), the level end's sequencing reaching them too.
+    if is_hub(name)
+        && let Whitelist::Only { scripts, .. } = &mut config.whitelist
+    {
+        scripts.extend(HUB_SCRIPTS.iter().map(|s| (*s).to_owned()));
     }
     with_level(config, files, level)
 }
@@ -4422,7 +4562,7 @@ fn portal_manager_handle(world: &ScriptWorld) -> Result<Handle, Halt> {
 
 /// The placement running the script whose source path ends with `suffix`,
 /// if one runs.
-pub(crate) fn running(vm: &Vm, world: &ScriptWorld, suffix: &str) -> Option<PlacementId> {
+pub fn running(vm: &Vm, world: &ScriptWorld, suffix: &str) -> Option<PlacementId> {
     world
         .templates
         .values()
@@ -5628,6 +5768,121 @@ mod tests {
         }
         assert!(passages("level_214_tutotial_2").contains(&"214_Recover_First_Part_IGC"));
         assert!(passages("level_212").is_empty());
+    }
+
+    /// openspec AU.28: the hub's people are the placements running Flynn's
+    /// or Cali's own script, by their actors; their cutscene templates' and
+    /// another placement's aren't (a clone has no placement of its own).
+    #[test]
+    fn the_hubs_people_are_flynn_and_cali_by_their_scripts() {
+        let dir = "C:/tfb/Content/Levels/Level_Hub_2";
+        let obj = |index| Obj { unit: 3, index };
+        let files = Files {
+            placed: vec![
+                Placed::named(
+                    obj(10),
+                    "Flynn",
+                    Some(&format!("{dir}/Scripts/Flynn.ai")),
+                    4,
+                ),
+                Placed::named(obj(11), "Cali", Some(&format!("{dir}/Scripts/Cali.ai")), 4),
+                Placed::named(
+                    obj(12),
+                    "CS_Flynn",
+                    Some(&format!("{dir}/Cutscenes/Scripts/CS_Flynn.ai")),
+                    5,
+                ),
+                Placed::named(obj(13), "Mabu", Some(&format!("{dir}/Scripts/Mabu.ai")), 4),
+            ],
+            ..Files::default()
+        };
+        let handles: HashMap<Obj, Handle> =
+            (10..14).map(|i| (obj(i), 0x100 + u64::from(i))).collect();
+        let world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        assert_eq!(world.people(), [0x10A, 0x10B]);
+        assert!(is_hub_person(&format!("{dir}/Scripts/Flynn.ai")));
+        assert!(!is_hub_person(&format!(
+            "{dir}/Cutscenes/Scripts/CS_Flynn.ai"
+        )));
+    }
+
+    /// openspec AS.46, AS.47: a hub stage's sky, its stage's controller and
+    /// its background by script, every tick, on each hub stage's listing
+    /// and no other level's; each stage's intro by its placement, as level
+    /// 214's.
+    #[test]
+    fn a_hub_stages_own_scripts_and_its_intro_are_listed() {
+        let files = Files::default();
+        let listing = |c: &Config, script: &str| {
+            c.whitelist.listing(
+                "a placement",
+                &format!("C:/tfb/Content/Levels/Level_Hub_2/Scripts/{script}"),
+            )
+        };
+        for (stage, placement) in [
+            ("level_hub_2_stage_1", "CS_Intro_Controller"),
+            ("level_hub_2_stage_2", "CS_Hub_Intro_Stage2"),
+            ("level_hub_2_stage_3", "CS_Hub_Intro_Stage3"),
+            ("level_hub_2_stage_4", "CS_Hub_Intro_Stage4"),
+        ] {
+            assert!(is_hub(stage));
+            let c = level_config(Mode::Play, &files, 4, stage);
+            for script in [
+                "SkyDome_Controller.ai",
+                "Hub2_Stage_1_Controller.ai",
+                "Hub2_Stage_4_Controller.ai",
+                "BackgroundController.ai",
+                "Hub2_Background_Island.ai",
+                "Hub2_Background_Actor.ai",
+                "AtmZone_Controller.ai",
+                "Flynn.ai",
+                "Cali.ai",
+            ] {
+                assert_eq!(
+                    listing(&c, script),
+                    guac_script::Listed::Every,
+                    "{stage} {script}"
+                );
+            }
+            // Flynn's and Cali's own scripts, not their cutscene templates'.
+            for template in ["CS_Flynn.ai", "CS_Cali.ai"] {
+                assert_eq!(
+                    listing(&c, template),
+                    guac_script::Listed::Off,
+                    "{stage} {template}"
+                );
+            }
+            // The members Cali's dialogue reaches, as value cells (every
+            // level's, AS.53's table).
+            let filter = guac_script::MemberId::named("viewportinfo", "filter effect");
+            assert_eq!(
+                c.members.get(filter).map(|(_, place)| place),
+                Some(guac_script::Place::ValueCell),
+                "{stage}"
+            );
+            assert_eq!(intro(stage), Some(placement));
+            assert!(c.whitelist.lists(placement, "C:/x/Any.ai"), "{stage}");
+        }
+        for other in ["level_213_tutotial", "level_214_tutotial_2", "level_201"] {
+            assert!(!is_hub(other));
+            let c = level_config(Mode::Play, &files, 4, other);
+            for script in HUB_SCRIPTS {
+                assert_eq!(
+                    listing(&c, script),
+                    guac_script::Listed::Off,
+                    "{other} {script}"
+                );
+            }
+            assert!(!c.whitelist.lists("CS_Intro_Controller", "C:/x/Any.ai"));
+            // The filter cells every level's, the level end's sequencing
+            // reaching them (AS.53).
+            let filter = guac_script::MemberId::named("viewportinfo", "filter effect");
+            assert_eq!(
+                c.members.get(filter).map(|(_, place)| place),
+                Some(guac_script::Place::ValueCell),
+                "{other}"
+            );
+        }
     }
 
     /// openspec AS.54: a level's first encounter walks its placements that

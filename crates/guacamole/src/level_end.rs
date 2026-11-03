@@ -47,10 +47,11 @@
 //!   movie's sprite off as the fader's update does at a movie's end, so
 //!   state 5 sees it gone (the player and its skip in place of the movie
 //!   sprite and the fader's update; stand-in ledger: `movie-fader`).
-//! - `Change Level` set: its level written to `system.load level` once, as
-//!   the Pause Controller's level switch writes it, the switch's clean-up
-//!   not run (the TV takes the run down at a level change;
-//!   stand-in ledger: `level-switch`).
+//! - `Change Level` set: the TV's one switch ([`crate::level_switch`])
+//!   writes its level to `system.load level` once, as the Pause
+//!   Controller's level switch writes it, the switch's clean-up not run
+//!   (the TV takes the run down at a level change; stand-in ledger:
+//!   `level-switch`), the village resolved to its hub stage there.
 //!   The host takes it from there ([`crate::scripts::ScriptWorld::end_step`]),
 //!   holding it and saying why when it can't be read as a level on the disc
 //!   ([`crate::scripts::Unread`]: a first run's chapter 1 has no interface's
@@ -263,12 +264,6 @@ pub fn recorded(vm: &Vm) -> Option<Value> {
 pub fn seq(vm: &Vm) -> Option<i32> {
     vm.field(progression(vm)?, "level end seq")
         .and_then(|v| v.as_i32())
-}
-
-/// `Change Level`, once the sequencing (or anything else) has set it.
-pub fn change_level(vm: &Vm) -> Option<Value> {
-    vm.global_peek(vm.program().global_named("Change Level")?)
-        .filter(|v| *v != Value::Null)
 }
 
 /// The game systems' placement, when it runs and hasn't stopped, and the
@@ -522,17 +517,7 @@ fn sequenced(
     if host.world.sequence.movie.is_none() && (1..=4).contains(&now) {
         host.world.sequence.movie = queued_movie(vm, host.world);
     }
-    if let Some(to) = change_level(vm) {
-        host.world.level_end_asked = true;
-        host.world.sequence.ending = false;
-        let string = match to {
-            Value::Object(o) => vm.program().name_of(o).map(str::to_owned),
-            _ => None,
-        };
-        info!(?string, text = ?host.world.text_of(to), "the sequencing set its level: asked for as the level switch would");
-        host.world.ask_level_end(to, string);
-        return Ok(Some(Ended::Asked(to)));
-    }
+    // `Change Level` set (state 6): the switch's to ask (`level_switch`).
     match now {
         COMPLETION => {
             let shows = host.world.sequence.shows_completion;
@@ -650,15 +635,8 @@ fn stand_in(vm: &mut Vm, host: &mut WorldHost<'_, '_>, to: Value) -> Result<Opti
     {
         return Ok(None);
     }
-    host.world.level_end_asked = true;
-    host.world.sequence.ending = false;
-    let string = match to {
-        Value::Object(o) => vm.program().name_of(o).map(str::to_owned),
-        _ => None,
-    };
-    info!(?string, text = ?host.world.text_of(to), "the level end recorded: its level asked for as the level switch would");
-    host.world.ask_level_end(to, string);
-    Ok(Some(Ended::Asked(to)))
+    info!("the level end recorded and not sequenced: its level asked through the switch");
+    Ok(crate::level_switch::ask(vm, host.world, to).map(Ended::Asked))
 }
 
 #[cfg(test)]
@@ -1013,7 +991,10 @@ mod tests {
                 generator: &mut generator,
                 spawn: &mut spawn,
             };
-            out.push(step(&mut vm, &mut host).unwrap());
+            let ended = step(&mut vm, &mut host).unwrap();
+            // The switch after it, as the TV's step runs them.
+            let switched = crate::level_switch::step(&vm, &mut world);
+            out.push(ended.or(switched.map(Ended::Asked)));
             between(k, &mut vm, &mut world);
         }
         (out, vm, world)

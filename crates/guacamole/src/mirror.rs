@@ -133,6 +133,9 @@ pub struct TvSnapshot {
     /// A defeat (AH.26): the hero dying, the figures beaten in the level
     /// and Restart chapter as drawn; none with nothing to report.
     pub defeat: Option<DefeatShot>,
+    /// A dialogue's yes-or-no question (openspec AU.6): the one up, as the
+    /// modal draws it, and those answered; none before one is asked.
+    pub prompt: Option<crate::yes_no::PromptsShot>,
     /// The particles of what the scripts spawn (openspec AH.87): systems
     /// and particles alive, quads drawn, the emitters drawing; none without
     /// them.
@@ -1304,11 +1307,12 @@ fn mirror_tv(
         WatchShots,
         crate::hero_scripts::RunShots,
     ),
-    (hud, defeat, particles, sounds): (
+    (hud, defeat, particles, sounds, prompt): (
         HudShots,
         DefeatShots,
         Option<Res<crate::emitters::ParticleReport>>,
         Option<Res<crate::sound_player::SoundReport>>,
+        crate::yes_no::PromptShots,
     ),
     (warm, level, prepare, arrival, movies, story): (
         Option<Res<Warm>>,
@@ -1364,6 +1368,7 @@ fn mirror_tv(
         entry: entry.as_deref().filter(|e| e.shown()).map(DevEntry::shot),
         hud: hud.shot(),
         defeat: defeat.shot(),
+        prompt: prompt.shot(),
         particles: particles.map(|p| p.clone()),
         sounds: sounds.map(|s| s.clone()),
         watch: watch.shot(),

@@ -30,3 +30,15 @@ When a level's end names the hub, the TV SHALL take the hero there and draw it w
 #### Scenario: The next chapter
 - **WHEN** the kid takes the way the original's hub offers into the next chapter
 - **THEN** that chapter is read, extracted on its first entry, and shown with the hero in it
+
+#### Scenario: A level's end names the hub later in the story
+- **WHEN** a level's end names the hub after the kid has finished level 210
+- **THEN** the hub's second stage shows, as the original's would, not its first
+
+#### Scenario: The way on after level 214
+- **WHEN** the kid has talked with Cali on the hub after level 214, then talks to Flynn at the helm and answers yes to his question
+- **THEN** level 201 is read, extracted on its first entry, and shown with the hero in it
+
+#### Scenario: A question on the hub
+- **WHEN** a person on the hub asks the kid a yes-or-no question, and a figure goes onto the portal while it's up
+- **THEN** the TV shows the question with Yes and No, the focus where the original's starts, steps aside for the portal's message until it's gone, and the answer takes the branch the original's answer takes

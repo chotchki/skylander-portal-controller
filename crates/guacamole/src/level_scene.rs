@@ -150,7 +150,7 @@ pub enum LevelError {
     #[error("the {world} collision mesh: {error}")]
     Collision { world: String, error: MeshError },
     #[error(
-        "the level has no {START_PLACEMENT} with a waypoint, nor a placement running {INIT_SCRIPT}"
+        "the level has no {START_PLACEMENT} or {HUB_START_PLACEMENT} with a waypoint, nor a placement running {INIT_SCRIPT}"
     )]
     NoStart,
 }
@@ -169,11 +169,21 @@ pub const START_FACING: f32 = 0.0;
 /// name.
 pub const INIT_SCRIPT: &str = "InitializeLevel.ai";
 
+/// Where a hub stage's players are handed over (openspec AS.47): every
+/// stage's intro (`CS_Hub_Intro*.ai`, the scripts' arrival on a load and
+/// after an adventure alike) ends on a scene whose first player starts at
+/// this placement's first waypoint and the second at its second, and all
+/// four stages hold it at the same place. No other level holds it.
+pub const HUB_START_PLACEMENT: &str = "CS_Hub_Intro_Final_Positions";
+
 /// Where the hero starts: [`START_PLACEMENT`]'s first waypoint, before he's
-/// settled onto the ground. A level without one (every level but chapter
-/// 1's) starts at its first placement running [`INIT_SCRIPT`]: its first
-/// waypoint, or its own place when it has no path (on chapter 1 the two are
-/// one point), a reading until that level's scripts set the start (AS.47;
+/// settled onto the ground. A hub stage starts where its intro hands the
+/// first player over, [`HUB_START_PLACEMENT`]'s first waypoint, its
+/// intro's run setting him down there again ([`crate::scripts::INTROS`]).
+/// Any other level (every level but chapter 1's and the hub's) starts at
+/// its first placement running [`INIT_SCRIPT`]: its first waypoint, or its
+/// own place when it has no path (on chapter 1 the two are one point), a
+/// reading until that level's scripts set the start (AS.47;
 /// stand-in ledger: `spawn`).
 pub fn start_point(placements: &Placements) -> Result<Vec3, LevelError> {
     let first_waypoint = |a: &guac_ir::level::Placement| {
@@ -183,7 +193,8 @@ pub fn start_point(placements: &Placements) -> Result<Vec3, LevelError> {
             .first()
             .map(|w| Vec3::from_array(w.position))
     };
-    let start = match placements.actors.iter().find(|a| a.name == START_PLACEMENT) {
+    let named = |name: &str| placements.actors.iter().find(|a| a.name == name);
+    let start = match named(START_PLACEMENT).or_else(|| named(HUB_START_PLACEMENT)) {
         Some(a) => first_waypoint(a),
         None => placements
             .actors
@@ -2476,6 +2487,45 @@ mod tests {
         p.actors.push(init("init", generic, [5.0; 3], None));
         p.actors.push(placement(START_PLACEMENT, None));
         assert_eq!(start_point(&p), Err(LevelError::NoStart));
+    }
+
+    /// AS.47: a hub stage starts where its intro hands the first player
+    /// over, its `CS_Hub_Intro_Final_Positions`' first waypoint (stage 1's
+    /// 11.42, -12.62, 23.18), over any placement running
+    /// `InitializeLevel.ai` (stage 1's `_Level_Init`, a template the
+    /// original never runs) and on a stage with none (stage 2, which AS.50
+    /// found refused for no start); chapter 1's placement still wins, and
+    /// the hub's own rule holds: no waypoint, no start.
+    #[test]
+    fn a_hub_stage_starts_where_its_intro_hands_over() {
+        let generic =
+            "C:/tfb/Content/Levels/Includes/Spyro_GenericStuff/scripts/InitializeLevel.ai";
+        let handed = [11.42, -12.62, 23.18];
+        let mut p = Placements {
+            identity: identity(),
+            level: "level_hub_2_stage_1".into(),
+            actors: vec![
+                guac_ir::level::Placement {
+                    script: Some(generic.into()),
+                    position: [8.188462, -12.614639, 23.147602],
+                    ..placement("_Level_Init", None)
+                },
+                placement(HUB_START_PLACEMENT, Some(1)),
+            ],
+            waypoints: vec![
+                vec![waypoint([1.0, 2.0, 3.0])],
+                vec![waypoint(handed), waypoint([12.43, -12.61, 18.65])],
+            ],
+        };
+        assert_eq!(start_point(&p), Ok(Vec3::from_array(handed)));
+        // Stage 2's shape: no placement runs the script at all.
+        p.actors.remove(0);
+        assert_eq!(start_point(&p), Ok(Vec3::from_array(handed)));
+        p.actors[0].waypoints = None;
+        assert_eq!(start_point(&p), Err(LevelError::NoStart));
+        p.actors[0].waypoints = Some(1);
+        p.actors.push(placement(START_PLACEMENT, Some(0)));
+        assert_eq!(start_point(&p), Ok(Vec3::new(1.0, 2.0, 3.0)));
     }
 
     /// AG.21: each world's collision mesh is a static body in the level's

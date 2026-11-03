@@ -14,10 +14,14 @@
 //!   world at the step's end, as a hero's body does with his entity. The
 //!   hero's own queries pass his body ([`HeroBody::exclude`]).
 //! - Drawing ([`draw_creatures`], [`pose_creatures`]): each awake
-//!   creature whose script runs, on its model off the level's props part
-//!   ([`guacamole::creature_models`]: the Chompies' and Norticus'), in the
-//!   level's lights as the hero is, once every pipeline it draws with is
-//!   compiled (the census's creatures table holds them); at its actor's
+//!   creature whose script runs, and each of a hub's people whose script
+//!   runs, unwalked (openspec AU.28: Flynn and Cali,
+//!   [`guacamole::scripts::HUB_PEOPLE`]), on its model off the level's
+//!   props part ([`guacamole::creature_models`]: the Chompies' and
+//!   Norticus', Flynn's and Cali's), in the level's lights as the hero is,
+//!   once every pipeline it draws with is compiled (the census's creatures
+//!   table holds chapter 1's; another's keys are asked for as it's first
+//!   wanted); at its actor's
 //!   place, facing and scale after each step, eased between steps; posed
 //!   by its idle with the clips its scripts play on it laid over, by the
 //!   level's palettes part's slots (stand-in ledger: `creature-pose`);
@@ -404,6 +408,7 @@ fn draw_creatures(
     let wanted: Vec<(Handle, String)> = world
         .creatures()
         .into_iter()
+        .chain(world.people())
         .filter(|h| vm.placement_of(*h).is_some() && !inert.contains(h))
         .chain(clones)
         .filter_map(|h| {
