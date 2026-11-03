@@ -267,6 +267,7 @@ mod tests {
     const MARKER: Handle = 0x6200_0002;
     const CONTROLLER_AT: [f32; 3] = [10.0, 0.0, 10.0];
     const DOOR: Obj = Obj { unit: 4, index: 90 };
+    const ROOM: Obj = Obj { unit: 4, index: 91 };
 
     /// One hero on nothing: what a warp moves.
     struct One {
@@ -308,8 +309,9 @@ mod tests {
     }
 
     /// A level with one interior controller (its door its first waypoint,
-    /// 2 m south of it) and a template of the same script under another
-    /// name, and a marker actor at (3, 1, -4) facing 90.
+    /// 2 m south of it, its room its second, far off) and a template of the
+    /// same script under another name, and a marker actor at (3, 1, -4)
+    /// facing 90.
     fn world() -> ScriptWorld {
         let controller = |name: &str, index: u32, state: u32| {
             let mut p = Placed::named(
@@ -322,14 +324,17 @@ mod tests {
             p
         };
         let mut house = controller("Interior_Controller_House", 1, 4);
-        house.waypoints = vec![DOOR];
+        house.waypoints = vec![DOOR, ROOM];
         let files = Files {
             placed: vec![
                 house,
                 controller("Interior_controller_Template", 2, 5),
                 Placed::named(Obj { unit: 4, index: 3 }, "Not_An_Interior", None, 4),
             ],
-            points: HashMap::from([(DOOR, Vec3::new(10.0, 0.0, 8.0))]),
+            points: HashMap::from([
+                (DOOR, Vec3::new(10.0, 0.0, 8.0)),
+                (ROOM, Vec3::new(400.0, -300.0, 200.0)),
+            ]),
             ..Files::default()
         };
         let handles = headless_handles(&files);

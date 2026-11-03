@@ -1722,7 +1722,9 @@ fn level_214s_second_door_opens_to_the_key_a_bomb_from_the_house_frees() {
     let wall_7 = handle(&run, "Breakable_Stone_Wall(7)");
     let key = handle(&run, "Key Spawner(1)s(3)");
     let door = handle(&run, "Door_Template_Skylanders_2(2)");
-    // Into the house.
+    let house_door = handle(&run, "Interior_Door(3)");
+    // Into the house: its door, which the Mabu opened and shut, swings
+    // open as he comes near (`Generic_House_door_Script.ai`).
     assert_eq!(
         walk(&mut run, &mut stops, &TO_THE_HOUSE),
         Ok(()),
@@ -1732,6 +1734,11 @@ fn level_214s_second_door_opens_to_the_key_a_bomb_from_the_house_frees() {
         walk(&mut run, &mut stops, &[HOUSE_DOOR]),
         Ok(()),
         "to its door"
+    );
+    assert_eq!(
+        behaviour(&run, house_door).as_deref(),
+        Some("trigger door close"),
+        "the house's door open by him"
     );
     let landed0 = run.world.landed.len();
     let dark = walk_until(
