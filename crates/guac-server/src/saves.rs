@@ -484,7 +484,7 @@ mod tests {
             .unwrap();
         let loaded = s.saves().load(&alice, GIANTS, LAYOUT).await.unwrap();
         assert_eq!(loaded.save, None, "another layout's save read");
-        assert_eq!(loaded.ignored, [old.clone()]);
+        assert_eq!(loaded.ignored, std::slice::from_ref(&old));
 
         let new = s
             .saves()
@@ -493,7 +493,11 @@ mod tests {
             .unwrap();
         let loaded = s.saves().load(&alice, GIANTS, LAYOUT).await.unwrap();
         assert_eq!(loaded.save, Some(new.clone()));
-        assert_eq!(loaded.ignored, [old.clone()], "the old save went");
+        assert_eq!(
+            loaded.ignored,
+            std::slice::from_ref(&old),
+            "the old save went"
+        );
         assert_eq!(
             s.saves().all(&alice, GIANTS).await.unwrap(),
             [old.clone(), new]
