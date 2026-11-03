@@ -1183,6 +1183,61 @@ mod tests {
         );
     }
 
+    fn row(
+        layout: &str,
+        updated: &str,
+        values: Option<SaveValues>,
+    ) -> guac_server::saves::StorySave {
+        guac_server::saves::StorySave {
+            profile_id: "alice".into(),
+            game: GAME.into(),
+            layout: layout.into(),
+            values,
+            created_at: "then".into(),
+            updated_at: updated.into(),
+        }
+    }
+
+    /// The rows at the launch resume the game by the newest of this build's
+    /// format that reads; another format's, however new, and one that
+    /// doesn't read resume nothing; no row is chapter 1. The rows are kept
+    /// for the run's start to pick by layout.
+    #[test]
+    fn the_launch_resumes_by_the_newest_row_of_this_format() {
+        let mut s = Session::new(Some("alice".into()));
+        let chapter_1_done = values(&["Level_213_Tutorial"]);
+        let both_done = values(&["Level_213_Tutorial", "Level_214_Tutorial_2"]);
+        let rows = vec![
+            row(
+                &format!("{FORMAT}:aaaa"),
+                "2026-11-02T10:00",
+                Some(chapter_1_done),
+            ),
+            row(
+                &format!("{FORMAT}:bbbb"),
+                "2026-11-02T09:00",
+                Some(both_done.clone()),
+            ),
+            row("0:old", "2026-11-02T11:00", Some(both_done.clone())),
+            row(&format!("{FORMAT}:cccc"), "2026-11-02T12:00", None),
+        ];
+        assert_eq!(
+            s.fetched(rows.clone()),
+            Resume::Level(LEVEL_214_ARCHIVE.into())
+        );
+        assert_eq!(s.rows.as_deref(), Some(rows.as_slice()));
+        assert_eq!(
+            s.report.resume,
+            Some(Resume::Level(LEVEL_214_ARCHIVE.into()))
+        );
+        let mut fresh = Session::new(Some("alice".into()));
+        assert_eq!(fresh.fetched(Vec::new()), Resume::ChapterOne);
+        assert_eq!(
+            fresh.fetched(vec![row("0:old", "2026-11-02T11:00", Some(both_done))]),
+            Resume::ChapterOne
+        );
+    }
+
     /// The host's save cycle: a script's save asked reads active while its
     /// file's values wait for the store and while the store has them, then
     /// done once the store has written them, the stored save what it wrote
