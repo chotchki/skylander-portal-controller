@@ -2381,13 +2381,17 @@ pub const FIRST_FIGHT: [&str; 11] = [
 /// A level's first encounter past chapter 1 (openspec AS.54): its own
 /// placements the TV's listing names, by name, as chapter 1's
 /// [`FIRST_FIGHT`] does (another of the level's placements running the same
-/// script stays inert), and the templates its scripts clone, whose clones
-/// are listed (a clone runs under its template's name) and walked.
+/// script stays inert), the templates its scripts clone, whose clones
+/// are listed (a clone runs under its template's name) and walked, and the
+/// templates whose clones are listed and never walked (AS.68): what the
+/// engine steers under `move to` with no body ([`ScriptWorld::scene_move`]),
+/// whose solid meets neither actors nor the level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Encounter {
     pub level: &'static str,
     pub placements: &'static [&'static str],
     pub clones: &'static [&'static str],
+    pub steered: &'static [&'static str],
 }
 
 /// The first encounters the TV runs past chapter 1's. Level 214's: the
@@ -2403,9 +2407,19 @@ pub struct Encounter {
 /// their wall, then play their scene and fight); then the second island's
 /// first fight (openspec AS.75), Setup_003's controller (at its trigger off
 /// the ship it wakes its Tree Rex and four undead Chompies; the Tree Rex
-/// eats one). Off: the Tree Rex's homing charge
-/// (`TreeRex_special_homing_actor`), whose clone stops on `move to` on our
-/// host (AS.68): its clones stay inert.
+/// eats one), and the Tree Rex's homing charge (AS.68,
+/// `TreeRex_special_homing_actor`: a clone its ranged attack makes 10 ft in
+/// front of it, whose script steers it at the hero by `move to` at 25 ft/s
+/// turning 50°/s for 2.5 s, laying dirt mounds behind it, and strikes the
+/// first within 4 ft; its box meets neither actors nor the level, so it's
+/// steered with no body, never walked); then its next fight (AS.84),
+/// Setup_004's controller (woken at Setup_003's trigger, it walks its three
+/// Elf Nears to their posts; past the locked door ([`DOOR_SCRIPTS`]) its
+/// first trigger sets them on their rounds, its second scares its Mabu,
+/// who runs his waypoints to the house by the yard and goes in, and sets
+/// the elves on the hero, its third wakes its Tree Rex and Chompy spawner)
+/// and the five it wakes, its Mabu walked as a creature (his capsule meets
+/// the level).
 pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
     level: "level_214_tutotial_2",
     placements: &[
@@ -2429,8 +2443,17 @@ pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
         "Enemy_Chompy2_E(3)",
         "Enemy_Chompy2_E(4)",
         "Enemy_TreeRex(2)",
+        // Setup_004, past the locked door (openspec AS.84).
+        "Setup_004_Controller",
+        "Setup_004_NPC_Mabu",
+        "Enemy_Elf_Near_A",
+        "Enemy_Elf_Near_B",
+        "Enemy_Elf_Near_C",
+        "Enemy_TreeRex(1)",
+        "Enemy_Chompy_Spawner(2)",
     ],
     clones: &["_Template_Undead_Chompy"],
+    steered: &["TreeRex_special_homing_actor"],
 }];
 
 /// The intros the TV runs past chapter 1's, by level and placement
@@ -2642,15 +2665,37 @@ pub const ROUTE_SCRIPTS: [&str; 6] = [
 /// it, and where it bursts it opens every breakable castle wall within 20 ft
 /// (`StoneWall_Game2_Version.ai`), which falls in pieces; the pan to the
 /// first bomb (`Pan_Show_Bomb.ai`) with them, and the bomb hints by name
-/// ([`BOMB_HINTS`]). Off: the countdown's floating numbers (`BombTImer.ai`,
-/// a sprite the TV draws nowhere, whose `move to` its carrier the host
-/// doesn't move yet).
-pub const BOMB_SCRIPTS: [&str; 5] = [
+/// ([`BOMB_HINTS`]); and its countdown's floating numbers (AS.68,
+/// `BombTImer.ai`): each count of a carried bomb past its first clones a
+/// timer at it, its id the count, which follows the bomb by `move to`
+/// (steered with no body: it has no shape) and fades its sprite out over
+/// 2 s, then takes itself off. Its sprite the TV draws nowhere yet.
+pub const BOMB_SCRIPTS: [&str; 6] = [
     "Tools_Spawner.ai",
     "Bomb_Rocket_Template.ai",
     "UI_Controller_Prompt.ai",
     "StoneWall_Game2_Version.ai",
     "Pan_Show_Bomb.ai",
+    "BombTImer.ai",
+];
+
+/// The locked doors and their keys (openspec AS.84), every tick, by script:
+/// a key spawner (`Key_Pickup_Spawner.ai`) lays its key (`Key_pickup.ai`),
+/// which a hero walking into takes; at a door (`Door_Skylanders_2.ai`, its
+/// id the keys it wants) a hero with a key starts the door's prompt, a tap
+/// of his fourth action (△, the gesture manager [`BOMB_SCRIPTS`] lists)
+/// turns it in the lock (`Door_Key.ai`, `Door_Lock_Intact_Wood.ai`, the
+/// lock's pieces `Door_Lock.ai`), and once every lock turns the door opens.
+/// Level 214's second island holds three: the first, at the way out of the
+/// gangplank's yard, opens to the key in the lobe below it. Chapter 1
+/// places none.
+pub const DOOR_SCRIPTS: [&str; 6] = [
+    "Key_Pickup_Spawner.ai",
+    "Key_pickup.ai",
+    "Door_Skylanders_2.ai",
+    "Door_Key.ai",
+    "Door_Lock_Intact_Wood.ai",
+    "Door_Lock.ai",
 ];
 
 /// Level 214's bomb hints (openspec AS.57), by placement name: each plays
@@ -2932,6 +2977,8 @@ pub fn smash_config(mode: Mode) -> Config {
         // Level 214's bombs (openspec AS.57).
         scripts.extend(BOMB_SCRIPTS.iter().map(|s| (*s).to_owned()));
         placements.extend(BOMB_HINTS.iter().map(|s| (*s).to_owned()));
+        // The locked doors and their keys (openspec AS.84).
+        scripts.extend(DOOR_SCRIPTS.iter().map(|s| (*s).to_owned()));
         // Level 214's ship (openspec AS.60).
         placements.extend(SHIP.iter().map(|s| (*s).to_owned()));
         scripts.extend(EFFECT_SCRIPTS.iter().map(|s| (*s).to_owned()));
@@ -3205,7 +3252,13 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
     };
     if let (Some(e), Whitelist::Only { placements, .. }) = (encounter(name), &mut config.whitelist)
     {
-        placements.extend(e.placements.iter().chain(e.clones).map(|s| (*s).to_owned()));
+        placements.extend(
+            e.placements
+                .iter()
+                .chain(e.clones)
+                .chain(e.steered)
+                .map(|s| (*s).to_owned()),
+        );
     }
     // Its intro (openspec AS.47).
     if let (Some(i), Whitelist::Only { placements, .. }) = (intro(name), &mut config.whitelist) {
@@ -5053,10 +5106,11 @@ mod tests {
         // Its intro, 214's alone (openspec AS.47, AS.60).
         assert!(l214.whitelist.lists("214_Intro_IGC", "C:/x/Any.ai"));
         assert!(!other.whitelist.lists("214_Intro_IGC", "C:/x/Any.ai"));
+        // A spawner of a fight past the TV's (the third island's).
         assert!(
             !l214
                 .whitelist
-                .lists("Enemy_Chompy_Spawner(2)", "C:/x/Any.ai")
+                .lists("Enemy_Chompy_Spawner(4)", "C:/x/Any.ai")
         );
         assert!(encounter("level_212").is_none());
     }
@@ -5089,10 +5143,11 @@ mod tests {
         );
     }
 
-    /// openspec AS.75: the second island's first fight by name, its homing
-    /// charge's template left off (AS.68), so its clones stay inert.
+    /// openspec AS.75: the second island's first fight by name; AS.68: its
+    /// homing charge's template listed, so its clones run, and steered,
+    /// never walked.
     #[test]
-    fn level_214s_third_fight_is_listed_by_name_without_its_homing_charge() {
+    fn level_214s_third_fight_is_listed_by_name_with_its_homing_charge_steered() {
         let files = Files::default();
         let l214 = level_config(Mode::Play, &files, 4, "level_214_tutotial_2");
         for name in [
@@ -5106,17 +5161,58 @@ mod tests {
             assert!(l214.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
         }
         assert!(
-            !l214.whitelist.lists(
+            l214.whitelist.lists(
                 "TreeRex_special_homing_actor",
                 "C:/x/Enemy_TreeRex_special_homingcharge_actor.ai"
             ),
-            "the homing charge off"
+            "the homing charge listed"
         );
+        let e = encounter("level_214_tutotial_2").unwrap();
+        assert!(e.steered.contains(&"TreeRex_special_homing_actor"));
+        assert!(
+            !e.placements.contains(&"TreeRex_special_homing_actor")
+                && !e.clones.contains(&"TreeRex_special_homing_actor"),
+            "never walked"
+        );
+        // A Tree Rex of a fight past the TV's (Setup_005's yard).
         assert!(
             !l214
                 .whitelist
-                .lists("Enemy_TreeRex(1)", "C:/x/S2_Enemy_TreeRex.ai")
+                .lists("Enemy_TreeRex(3)", "C:/x/S2_Enemy_TreeRex.ai")
         );
+    }
+
+    /// openspec AS.84: level 214's fourth fight by name, its Mabu among the
+    /// walked (his capsule meets the level), on 214's listing alone; the
+    /// locked doors and their keys by script, every tick.
+    #[test]
+    fn level_214s_fourth_fight_and_its_locked_doors_are_listed() {
+        let files = Files::default();
+        let l214 = level_config(Mode::Play, &files, 4, "level_214_tutotial_2");
+        let other = level_config(Mode::Play, &files, 4, "level_212");
+        let e = encounter("level_214_tutotial_2").unwrap();
+        for name in [
+            "Setup_004_Controller",
+            "Setup_004_NPC_Mabu",
+            "Enemy_Elf_Near_A",
+            "Enemy_Elf_Near_B",
+            "Enemy_Elf_Near_C",
+            "Enemy_TreeRex(1)",
+            "Enemy_Chompy_Spawner(2)",
+        ] {
+            assert!(l214.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+            assert!(!other.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+            assert!(e.placements.contains(&name), "{name} walked");
+        }
+        for script in DOOR_SCRIPTS {
+            let path =
+                format!("C:/tfb/Content/Levels/Includes/GameElement_Door_and_Key/Scripts/{script}");
+            assert_eq!(
+                l214.whitelist.listing("a placement", &path),
+                guac_script::Listed::Every,
+                "{script}"
+            );
+        }
     }
 
     /// openspec AS.59: level 214's way from its first island to its second
@@ -5140,13 +5236,13 @@ mod tests {
     /// have movement numbers (its spawners), in the level's own file alone,
     /// and each clone made later of one of its templates walks as it's
     /// made; a clone of another template doesn't, nor does a placement it
-    /// doesn't name.
+    /// doesn't name. AS.68: nor does a template it steers, or its clone.
     #[test]
     fn a_levels_encounter_walks_its_placements_and_its_templates_clones() {
         const SCRIPT: &str = "C:/tfb/Content/Levels/_Enemies/Chompy/scripts/S2_Enemy_Chompy.ai";
         let o = |unit, index| Obj { unit, index };
-        let (spawner, legs, template, other, elsewhere) =
-            (o(4, 10), o(4, 11), o(4, 12), o(4, 13), o(2, 14));
+        let (spawner, legs, template, other, elsewhere, charge) =
+            (o(4, 10), o(4, 11), o(4, 12), o(4, 13), o(2, 14), o(4, 15));
         let moving = |obj, name: &str, state| Placed {
             physics: Some(Physics::default()),
             ..Placed::named(obj, name, Some(SCRIPT), state)
@@ -5158,6 +5254,7 @@ mod tests {
                 moving(template, "_Template_Undead_Chompy", 5),
                 moving(other, "Enemy_Chompy", 5),
                 moving(elsewhere, "Enemy_Chompy_Spawner(1)", RUNNING),
+                moving(charge, "TreeRex_special_homing_actor", 5),
             ],
             ..Files::default()
         };
@@ -5190,8 +5287,10 @@ mod tests {
         };
         let chompy = clone_of(&mut world, template);
         let plain = clone_of(&mut world, other);
+        let steered = clone_of(&mut world, charge);
         assert!(world.actor(chompy).is_some_and(|a| a.walker.is_some()));
         assert!(world.actor(plain).is_some_and(|a| a.walker.is_none()));
+        assert!(world.actor(steered).is_some_and(|a| a.walker.is_none()));
         assert_eq!(world.creatures(), [handles[&spawner], chompy]);
     }
 
@@ -6116,8 +6215,8 @@ mod tests {
     /// AS.57: level 214's bombs, the castle walls they open, the gesture
     /// manager that reads the throw and the pan to the first bomb run every
     /// tick by script, the bomb hints by name; the hints' script on any
-    /// other placement (chapter 1's fifteen) and the countdown's numbers
-    /// stay off. AS.60: its ship by name.
+    /// other placement (chapter 1's fifteen) stays off. AS.68: the
+    /// countdown's numbers run. AS.60: its ship by name.
     #[test]
     fn level_214s_bombs_and_their_walls_run_on_the_tvs_listing() {
         let c = smash_config(Mode::Play);
@@ -6134,7 +6233,7 @@ mod tests {
             assert!(c.whitelist.lists(name, hints), "{name}");
         }
         assert!(!c.whitelist.lists("Hint_Use_attacks", hints));
-        assert!(!c.whitelist.lists(
+        assert!(c.whitelist.lists(
             "Bomb_Timer",
             "C:/tfb/Content/Levels/Includes/GameElement_Bomb/Scripts/BombTImer.ai"
         ));

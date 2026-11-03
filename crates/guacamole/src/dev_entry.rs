@@ -43,6 +43,13 @@
 //!   every wall stays shut (their yard's too, so no bomb reaches it and
 //!   they spar for good), the earlier fights unfought and Eon's hint
 //!   standing; it's for the sparring alone.
+//! - Part (openspec AS.84): level 214's first ship part: once he's settled,
+//!   set down by it on its ledge ([`BY_THE_PART`]), where the first jump
+//!   pad's flight leaves him (AS.75); a press takes it and its sail sets
+//!   him on the second island's ship. The first island's fights stay
+//!   unfought behind him, and nothing on the second island stands on them,
+//!   so from the ship on the level is as a walk leaves it: Setup_003's
+//!   trigger off the gangplank, Setup_004 past the locked door.
 //! - Norticus' scene, once the four are beaten, ends from his own script as
 //!   the original's does (openspec AH.56: the cutscene system's update in
 //!   the game systems' tick), freeing the hero: the entry sets nothing
@@ -90,6 +97,9 @@ pub(crate) enum Anchor {
     /// Level 214's sparring elves (openspec AS.83): set down at Setup_002's
     /// first trigger, then among them behind their wall.
     Elves,
+    /// Level 214's first ship part (openspec AS.84): set down by it on its
+    /// ledge, for the second island.
+    Part,
 }
 
 impl Anchor {
@@ -101,6 +111,7 @@ impl Anchor {
             "end" => Some(Anchor::End),
             "pods" => Some(Anchor::Pods),
             "elves" => Some(Anchor::Elves),
+            "part" => Some(Anchor::Part),
             _ => None,
         }
     }
@@ -172,6 +183,9 @@ pub(crate) const AMONG_THE_ELVES: ([f32; 3], f32) = ([22.5, -10.8, 77.5], 310.0)
 /// Steps from the trigger's set-down to the elves': their helper's wake
 /// and writes done.
 pub(crate) const ELVES_WOKEN: u32 = 60;
+/// By level 214's first ship part on its ledge (metres), where the jump
+/// pad's flight lands him (openspec AS.75), facing it.
+pub(crate) const BY_THE_PART: ([f32; 3], f32) = ([29.45, -6.92, 56.37], 0.0);
 
 impl Plan {
     pub(crate) fn of(anchor: Anchor) -> Self {
@@ -233,6 +247,18 @@ impl Plan {
                 creatures_at: u32::MAX,
                 creatures: Vec::new(),
                 f0: ELVES_WOKEN + 1,
+                first_alert: None,
+                loot: None,
+                view: None,
+                wake: Vec::new(),
+            },
+            Anchor::Part => Plan {
+                anchor,
+                settle: SETTLE,
+                set_downs: vec![(0, Vec3::from_array(BY_THE_PART.0), BY_THE_PART.1)],
+                creatures_at: u32::MAX,
+                creatures: Vec::new(),
+                f0: 1,
                 first_alert: None,
                 loot: None,
                 view: None,
@@ -411,7 +437,7 @@ impl Plugin for DevEntryPlugin {
         if env.is_some() && at_start.is_none() {
             warn!(
                 value = ?env,
-                "GUAC_DEV_ENTRY isn't `b`, `start`, `end`, `pods` or `elves`: no entry"
+                "GUAC_DEV_ENTRY isn't `b`, `start`, `end`, `pods`, `elves` or `part`: no entry"
             );
         }
         if let Some(a) = &at_start {
@@ -717,6 +743,12 @@ mod tests {
         );
         assert_eq!((elves.settle, elves.f0), (SETTLE, ELVES_WOKEN + 1));
         assert!(elves.creatures.is_empty() && elves.wake.is_empty());
+        // Level 214's first ship part (openspec AS.84): by it on its ledge.
+        assert_eq!(anchor("part"), Some(Anchor::Part));
+        let part = Plan::of(Anchor::Part);
+        assert_eq!(part.set_downs, [(0, Vec3::new(29.45, -6.92, 56.37), 0.0)]);
+        assert_eq!((part.settle, part.f0), (SETTLE, 1));
+        assert!(part.creatures.is_empty() && part.wake.is_empty());
         assert_eq!(asked_at_start(true, None), None);
         // Anchor B's plan is AH.8's route and AH.4's reads: the camera
         // volumes on the way to the strip, then the route from the strip,

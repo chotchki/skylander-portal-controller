@@ -10,7 +10,7 @@
 
 use guac_motion::seam::Vec3;
 use guac_motion::stick::{DEAD_ZONE, Stick};
-use guac_script::{Handle, Mode};
+use guac_script::{Handle, Mode, Value};
 use guacamole::script_engine::Pad;
 
 mod common;
@@ -219,6 +219,133 @@ fn level_214s_bomb_comes_back_for_the_next_wall() {
     );
     assert!(thrown2.is_some(), "thrown again");
     assert!(opened2.is_some(), "the second wall opened");
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
+/// A countdown number of a carried bomb (openspec AS.68): its timer, its
+/// count, the step it was made and went, how far it stood off its bomb at
+/// most across the ground once made, and its sprite.
+#[derive(Debug)]
+struct Timer {
+    handle: Handle,
+    count: i32,
+    made: u32,
+    gone: Option<u32>,
+    off: f32,
+    sprite: Option<Handle>,
+}
+
+/// openspec AS.68: a carried bomb counts down over its carrier. The first
+/// spawner's bomb taken (its count 12), each count past the first clones a
+/// timer at it (`BombTImer.ai`), its id the count: 11 to 1, a count every
+/// 1.1 s, then the bomb bursts in his hands at 0. Each timer follows its
+/// bomb by `move to` (steered with no body, at its own 17 ft/s, so it lags
+/// a walking carrier), fades its sprite out over 2 s, then takes itself
+/// off, its sprite with it. He paces on the stick as he carries it.
+/// Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_carried_bomb_counts_down_over_him() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, mut stops) = joined_214();
+    let (bomb, taken) = take_the_bomb(&mut run, &mut stops, 240).expect("the bomb taken");
+    let ends = [[36.0, 27.9], [50.0, 30.0]];
+    let mut timers: Vec<Timer> = Vec::new();
+    let mut burst = None;
+    for k in 0..1000u32 {
+        push_toward(&mut run, &mut stops, ends[((k / 150) % 2) as usize]);
+        let b = run.world.actor(bomb).map(|a| a.position);
+        if burst.is_none() && behaviour(&run, bomb).as_deref() != Some("following player") {
+            burst = Some(run.steps);
+        }
+        for h in run.world.clones() {
+            if run.world.name(h) != "Bomb_Timer" {
+                continue;
+            }
+            let Some(a) = run.world.actor(h) else {
+                continue;
+            };
+            let t = match timers.iter().position(|t| t.handle == h) {
+                Some(i) => &mut timers[i],
+                None => {
+                    timers.push(Timer {
+                        handle: h,
+                        count: a.id,
+                        made: run.steps,
+                        gone: None,
+                        off: 0.0,
+                        sprite: None,
+                    });
+                    timers.last_mut().unwrap()
+                }
+            };
+            if t.sprite.is_none()
+                && let Some(id) = run.vm.placement_of(h)
+                && let Some(Value::Entity(s)) =
+                    run.vm.local(id, "my sprite").map(|v| run.vm.value(v))
+            {
+                t.sprite = Some(s);
+            }
+            if a.removed {
+                t.gone.get_or_insert(run.steps);
+            } else if let Some(b) = b
+                && run.steps > t.made
+            {
+                t.off = t
+                    .off
+                    .max(Vec3::new(a.position.x - b.x, 0.0, a.position.z - b.z).length());
+            }
+        }
+        // Its last timer gone, before he takes it again off the spawner.
+        if burst.is_some_and(|s| run.steps > s + 60) {
+            break;
+        }
+    }
+    let burst = burst.expect("the bomb burst in his hands");
+    timers.retain(|t| t.made < burst);
+    for t in &timers {
+        println!(
+            "  timer {} made at {}, gone at {:?}, at most {:.2} m off its bomb, its sprite {:?} gone {}",
+            t.count,
+            t.made,
+            t.gone,
+            t.off,
+            t.sprite,
+            t.sprite
+                .is_some_and(|s| run.world.actor(s).is_none_or(|a| a.removed))
+        );
+    }
+    println!(
+        "taken at {taken}, burst at {burst} ({:.2} s); {} timers; {:.1} s; load at end: {}",
+        (burst - taken) as f32 / 60.0,
+        timers.len(),
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    let counts: Vec<i32> = timers.iter().map(|t| t.count).collect();
+    assert_eq!(
+        counts,
+        (1..=11).rev().collect::<Vec<_>>(),
+        "a timer a count"
+    );
+    for (t, next) in timers.iter().zip(timers.iter().skip(1)) {
+        assert_eq!(
+            next.made - t.made,
+            66,
+            "a count every 1.1 s: {t:?} {next:?}"
+        );
+    }
+    for t in &timers {
+        assert_eq!(t.gone.map(|g| g - t.made), Some(120), "gone 2 s on: {t:?}");
+        assert!(t.off < 4.0, "it follows its bomb: {t:?}");
+        let s = t.sprite.expect("its sprite");
+        assert!(
+            run.world.actor(s).is_none_or(|a| a.removed),
+            "its sprite gone with it: {t:?}"
+        );
+    }
+    assert!(burst > timers.last().unwrap().made, "the burst at 0");
     assert!(stops.is_empty(), "{stops:#?}");
 }
 
@@ -1029,14 +1156,77 @@ fn level_214s_jump_pad_carries_him_to_the_first_ship_part() {
 /// gangplank (metres, its file's place).
 const SETUP_003_TRIGGER: [f32; 2] = [-357.64, 723.11];
 
+/// A Tree Rex's homing charge (openspec AS.68): the step it was made and
+/// where, how far it went and its top speed across the ground (m/s, a
+/// step's move), the step it struck or ran out and the step it went, the
+/// hero's health either side of its strike and how far off him across the
+/// ground it ended (m).
+#[derive(Debug, Default)]
+struct Charge {
+    handle: Handle,
+    made: u32,
+    from: Vec3,
+    at: Vec3,
+    flew: f32,
+    top: f32,
+    ended: Option<u32>,
+    gone: Option<u32>,
+    health: Option<(f32, f32)>,
+    off_him: Option<f32>,
+}
+
+/// Each homing charge standing or gone, followed a step: made, moved,
+/// ended (its script's `tree growing out of ground`, its strike or its
+/// lifespan's end), taken off.
+fn watch_charges(run: &Run, charges: &mut Vec<Charge>, health: (f32, f32)) {
+    for h in run.world.clones() {
+        if run.world.name(h) != "TreeRex_special_homing_actor" {
+            continue;
+        }
+        let Some(a) = run.world.actor(h) else {
+            continue;
+        };
+        let c = match charges.iter().position(|c| c.handle == h) {
+            Some(i) => &mut charges[i],
+            None => {
+                charges.push(Charge {
+                    handle: h,
+                    made: run.steps,
+                    from: a.position,
+                    at: a.position,
+                    ..Charge::default()
+                });
+                charges.last_mut().unwrap()
+            }
+        };
+        if a.removed {
+            c.gone.get_or_insert(run.steps);
+            continue;
+        }
+        let across = Vec3::new(a.position.x - c.at.x, 0.0, a.position.z - c.at.z).length();
+        c.flew += across;
+        c.top = c.top.max(across * 60.0);
+        c.at = a.position;
+        if c.ended.is_none() && behaviour(run, h).as_deref() == Some("tree growing out of ground") {
+            c.ended = Some(run.steps);
+            c.health = Some(health);
+            let me = run.hero().pivot;
+            c.off_him = Some((a.position.x - me.x).hypot(a.position.z - me.z));
+        }
+    }
+}
+
 /// openspec AS.75: level 214's second island's first fight, Setup_003, on
 /// the TV's listing (`scripts::ENCOUNTERS`). Set down at the first ship part,
 /// a press takes it and the sail sets him on the second island's ship; off
 /// it on the stick to Setup_003's trigger, its controller wakes its Tree Rex
 /// and four undead Chompies and goes; the Tree Rex eats a Chompy, and the
-/// rest and the Tree Rex are beaten. The Tree Rex's homing charge stays off
-/// the listing (its `move to` is AS.68's): each ranged attack's clone of
-/// `TreeRex_special_homing_actor` stands inert. Nothing stops.
+/// rest and the Tree Rex are beaten. AS.68: the Tree Rex's ranged attack
+/// makes its homing charge, which its script steers at him (25 ft/s,
+/// 50°/s) for 2.5 s at most and which takes itself off once it has struck
+/// or run out: it strikes him as he goes at the Tree Rex on the stick from
+/// the trigger, where he stood a while, mashing his first attack once by
+/// it; then he fights the rest. Nothing stops.
 #[test]
 #[ignore = "reads the Giants dump"]
 fn level_214s_third_fight_is_fought_on_the_second_island() {
@@ -1054,6 +1244,7 @@ fn level_214s_third_fight_is_fought_on_the_second_island() {
     .iter()
     .map(|n| handle(&run, n))
     .collect();
+    let rex = foes[0];
     let sail = handle(&run, "214_Recover_First_Part_IGC");
     run.put(Vec3::from_array(SHIP_PART_1), 0.0);
     for k in 0..600u32 {
@@ -1070,6 +1261,8 @@ fn level_214s_third_fight_is_fought_on_the_second_island() {
     // Off the ship on the stick to the trigger: the controller wakes the
     // fight and goes.
     assert_eq!(walk(&mut run, &mut stops, &[SETUP_003_TRIGGER]), Ok(()));
+    let mut charges: Vec<Charge> = Vec::new();
+    let mut health = run.health().unwrap();
     let mut woke = None;
     for _ in 0..120 {
         step(&mut run, &mut stops, [false; 4]);
@@ -1086,28 +1279,305 @@ fn level_214s_third_fight_is_fought_on_the_second_island() {
         .collect();
     assert_eq!(eaten.len(), 1, "the Tree Rex eats one: {eaten:?}");
     let health_before = run.health().unwrap();
-    let beaten = fight(&mut run, &mut stops, &foes, 3600);
-    let charges: Vec<Handle> = run
-        .world
-        .clones()
-        .into_iter()
-        .filter(|h| run.world.name(*h) == "TreeRex_special_homing_actor")
-        .collect();
-    let inert = run.vm.inert();
-    let running: Vec<Handle> = charges
+    // Where the trigger leaves him, a while: the Tree Rex comes on and
+    // throws its charge from afar, which meets him as he goes at it.
+    for _ in 0..40 {
+        step(&mut run, &mut stops, [false; 4]);
+        let now = run.health().unwrap_or(0.0);
+        watch_charges(&run, &mut charges, (health, now));
+        health = now;
+    }
+    // At the Tree Rex on the stick, South mashed once by it.
+    let mut on_the_stick: Vec<Option<u32>> = vec![None; foes.len()];
+    for k in 0..2400u32 {
+        for (b, h) in on_the_stick.iter_mut().zip(&foes) {
+            if b.is_none() && gone(&run, *h) {
+                *b = Some(run.steps);
+            }
+        }
+        let Some(at) = run
+            .world
+            .actor(rex)
+            .filter(|_| !gone(&run, rex))
+            .map(|a| a.position)
+        else {
+            break;
+        };
+        let me = run.hero().pivot;
+        if (at.x - me.x).hypot(at.z - me.z) > 4.5 {
+            push_toward(&mut run, &mut stops, [at.x, at.z]);
+        } else {
+            step(&mut run, &mut stops, [k % 4 < 2, false, false, false]);
+        }
+        let now = run.health().unwrap_or(0.0);
+        watch_charges(&run, &mut charges, (health, now));
+        health = now;
+    }
+    let rest = fight(&mut run, &mut stops, &foes, 3600);
+    let beaten: Vec<Option<u32>> = on_the_stick
         .iter()
-        .copied()
-        .filter(|h| run.vm.placement_of(*h).is_some() && !inert.contains(h))
+        .zip(&rest)
+        .map(|(a, b)| a.or(*b))
         .collect();
-    let charges = charges.len();
+    for _ in 0..240 {
+        step(&mut run, &mut stops, [false; 4]);
+        let now = run.health().unwrap_or(0.0);
+        watch_charges(&run, &mut charges, (health, now));
+        health = now;
+    }
+    let inert = run.vm.inert();
+    for c in &charges {
+        println!(
+            "  homing charge made at {} at {}, flew {:.2} m (top {:.2} m/s), ended at {:?} ({} s in), gone at {:?}, his health across its end {:?}, ran {}",
+            c.made,
+            c.from,
+            c.flew,
+            c.top,
+            c.ended,
+            c.ended.map_or(0.0, |e| (e - c.made) as f32 / 60.0),
+            c.gone,
+            c.health,
+            !inert.contains(&c.handle)
+        );
+    }
     println!(
-        "off the ship at {on_ship}, the controller gone at {woke}, {eaten:?} eaten; beaten at {beaten:?} (the Tree Rex, then the four); {charges} homing charges made, inert; health {health_before} -> {:?}; {:.1} s; load at end: {}",
+        "off the ship at {on_ship}, the controller gone at {woke}, {eaten:?} eaten; beaten at {beaten:?} (the Tree Rex, then the four); {} homing charges; health {health_before} -> {:?}; {:.1} s; load at end: {}",
+        charges.len(),
         run.health(),
         started.elapsed().as_secs_f64(),
         load()
     );
     assert!(beaten.iter().all(Option::is_some), "all beaten: {beaten:?}");
-    assert!(charges > 0, "its ranged attack made its charge");
-    assert!(running.is_empty(), "no homing charge runs: {running:?}");
+    assert!(!charges.is_empty(), "its ranged attack made its charge");
+    for c in &charges {
+        assert!(!inert.contains(&c.handle), "it runs: {c:?}");
+        assert!(c.top <= 25.0 * 0.3048 + 0.01, "at its speed: {c:?}");
+        assert!(
+            c.ended.is_some_and(|e| e - c.made <= 151) && c.gone.is_some_and(|g| g - c.made <= 180),
+            "struck or ran out, then gone: {c:?}"
+        );
+    }
+    // Struck him, not a Chompy: it ended before its 2.5 s, within its 4 ft
+    // of him across the ground, with 0.3 m for the step it's seen in (the
+    // two closing at 12-13 m/s).
+    assert!(
+        charges.iter().any(|c| c.flew > 5.0
+            && c.ended.is_some_and(|e| e - c.made < 150)
+            && c.off_him.is_some_and(|d| d < 4.0 * 0.3048 + 0.3)),
+        "one flew at him and struck: {charges:?}"
+    );
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
+/// A fight on the stick ([`on_the_stick_at`]): the step each foe was
+/// beaten at, every drop in his health (a bite) with its step, and where
+/// the watched actor last stood before it went, if it did.
+struct OnTheStick {
+    beaten: Vec<Option<u32>>,
+    bites: Vec<(u32, f32)>,
+    last: Option<Vec3>,
+}
+
+/// Up to `steps` steps on the stick at the nearest of `foes` standing (the
+/// first of them while it stands), his first attack mashed once within
+/// 4.5 m of it, as a hand would, until every one is beaten, `watch` followed
+/// until it goes.
+fn on_the_stick_at(
+    run: &mut Run,
+    stops: &mut Vec<String>,
+    foes: &[Handle],
+    steps: u32,
+    watch: Option<Handle>,
+) -> OnTheStick {
+    let mut beaten: Vec<Option<u32>> = vec![None; foes.len()];
+    let mut bites = Vec::new();
+    let mut health = run.health().unwrap_or(0.0);
+    let mut last = None;
+    for k in 0..steps {
+        if let Some(w) = watch
+            && !gone(run, w)
+        {
+            last = run.world.actor(w).map(|a| a.position);
+        }
+        for (b, h) in beaten.iter_mut().zip(foes) {
+            if b.is_none() && gone(run, *h) {
+                *b = Some(run.steps);
+            }
+        }
+        if beaten.iter().all(Option::is_some) {
+            break;
+        }
+        let me = run.hero().pivot;
+        let first = foes.iter().copied().find(|h| !gone(run, *h));
+        let near = first
+            .filter(|_| first == Some(foes[0]))
+            .into_iter()
+            .chain(foes.iter().copied().filter(|h| !gone(run, *h)))
+            .filter_map(|h| run.world.actor(h).map(|a| a.position))
+            .next()
+            .or_else(|| {
+                foes.iter()
+                    .filter(|h| !gone(run, **h))
+                    .filter_map(|h| run.world.actor(*h).map(|a| a.position))
+                    .min_by(|a, b| a.distance(me).total_cmp(&b.distance(me)))
+            });
+        match near {
+            Some(at) if (at.x - me.x).hypot(at.z - me.z) > 4.5 => {
+                push_toward(run, stops, [at.x, at.z]);
+            }
+            _ => step(run, stops, [k % 4 < 2, false, false, false]),
+        }
+        let now = run.health().unwrap_or(0.0);
+        if now < health {
+            bites.push((run.steps, health - now));
+        }
+        health = now;
+    }
+    OnTheStick {
+        beaten,
+        bites,
+        last,
+    }
+}
+
+/// Where the key below the gangplank's yard lies (its spawner's place),
+/// the lobe it's in entered by its trigger, and the way back up to the
+/// locked door, where a press of △ turns the key (metres, across the
+/// ground).
+const KEY_1: [[f32; 2]; 2] = [[-325.76, 744.22], [-329.62, 745.18]];
+const TO_THE_DOOR: [[f32; 2]; 3] = [[-331.0, 740.0], [-331.0, 728.0], [-324.5, 718.5]];
+/// Past the door, Setup_004's second and third triggers.
+const TO_SETUP_004: [[f32; 2]; 4] = [
+    [-318.0, 718.0],
+    [-300.0, 719.0],
+    [-285.49, 721.46],
+    [-270.91, 727.46],
+];
+
+/// openspec AS.84: level 214's fourth fight, Setup_004, fought on foot from
+/// the sail. Off the ship to Setup_003's trigger, which wakes Setup_004 too;
+/// Setup_003 fought on the stick. Down into the lobe below the yard (its
+/// first trigger: the three Elf Nears walk to their posts), its key taken,
+/// back up to the locked door (`Door_Template_Skylanders_2(1)`), which a tap
+/// of △ by it opens; past it to the second trigger (the Mabu runs his
+/// waypoints into the house by the yard and goes, the elves come on) and
+/// the third (the Tree Rex and the Chompy spawner wake). All five fought on
+/// the stick; the controller takes itself off. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_fourth_fight_is_fought_past_the_locked_door() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, mut stops) = joined_214();
+    let sail = handle(&run, "214_Recover_First_Part_IGC");
+    let setup_003: Vec<Handle> = [
+        "Enemy_TreeRex(2)",
+        "Enemy_Chompy2_E(1)",
+        "Enemy_Chompy2_E(2)",
+        "Enemy_Chompy2_E(3)",
+        "Enemy_Chompy2_E(4)",
+    ]
+    .iter()
+    .map(|n| handle(&run, n))
+    .collect();
+    let controller = handle(&run, "Setup_004_Controller");
+    let mabu = handle(&run, "Setup_004_NPC_Mabu");
+    let door = handle(&run, "Door_Template_Skylanders_2(1)");
+    let foes: Vec<Handle> = [
+        "Enemy_Elf_Near_A",
+        "Enemy_Elf_Near_B",
+        "Enemy_Elf_Near_C",
+        "Enemy_TreeRex(1)",
+        "Enemy_Chompy_Spawner(2)",
+    ]
+    .iter()
+    .map(|n| handle(&run, n))
+    .collect();
+    run.put(Vec3::from_array(SHIP_PART_1), 0.0);
+    for k in 0..600u32 {
+        step(&mut run, &mut stops, [k % 20 < 2, false, false, false]);
+        if gone(&run, sail) {
+            break;
+        }
+    }
+    assert!(gone(&run, sail), "the sail done");
+    assert_eq!(walk(&mut run, &mut stops, &[SETUP_003_TRIGGER]), Ok(()));
+    let beaten_003 = on_the_stick_at(&mut run, &mut stops, &setup_003, 3600, None).beaten;
+    assert!(
+        beaten_003.iter().all(Option::is_some),
+        "Setup_003 beaten: {beaten_003:?}"
+    );
+    let health_before = run.health().unwrap();
+    // The key in the lobe, then up to the door and △ by it.
+    assert_eq!(walk(&mut run, &mut stops, &KEY_1), Ok(()), "to the key");
+    assert_eq!(
+        walk(&mut run, &mut stops, &TO_THE_DOOR),
+        Ok(()),
+        "to the door"
+    );
+    let mut opened = None;
+    for k in 0..600u32 {
+        step(&mut run, &mut stops, [false, false, false, k % 20 < 2]);
+        if behaviour(&run, door).as_deref() == Some("done") {
+            opened = Some(run.steps);
+            break;
+        }
+    }
+    let opened = opened.expect("the door opened to its key");
+    // Past it: the second trigger scares the Mabu, the third wakes the rest.
+    let at_the_door = run.steps;
+    assert_eq!(
+        walk(&mut run, &mut stops, &TO_SETUP_004),
+        Ok(()),
+        "to Setup_004's triggers"
+    );
+    let mut mabu_gone = None;
+    let mabu_from = run.world.actor(mabu).map(|a| a.position);
+    let OnTheStick {
+        beaten,
+        bites,
+        last: mabu_last,
+    } = on_the_stick_at(&mut run, &mut stops, &foes, 6000, Some(mabu));
+    let house = run.at("Interior_Door(3)");
+    for _ in 0..240 {
+        step(&mut run, &mut stops, [false; 4]);
+    }
+    if gone(&run, mabu) {
+        mabu_gone = Some(run.steps);
+    }
+    let (health, xp) = (
+        run.health().unwrap(),
+        run.figure_values().map_or(0, |v| v.xp),
+    );
+    let charges = run
+        .world
+        .clones()
+        .into_iter()
+        .filter(|h| run.world.name(*h) == "TreeRex_special_homing_actor")
+        .count();
+    let chompies = run
+        .world
+        .clones()
+        .into_iter()
+        .filter(|h| run.world.name(*h) == "_Template_Undead_Chompy")
+        .count();
+    println!(
+        "Setup_003 beaten at {beaten_003:?}; the door opened at {opened}; from the door at {at_the_door}, Setup_004's beaten at {beaten:?} (the elves A-C, the Tree Rex, the spawner), the Mabu gone {:?}, the controller gone {}; bites {bites:?}; health {health_before} -> {health}, experience {xp}; {charges} homing charges, {chompies} Chompies cloned; {:.1} s; load at end: {}",
+        mabu_gone,
+        gone(&run, controller),
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    assert!(beaten.iter().all(Option::is_some), "all beaten: {beaten:?}");
+    // He ran his waypoints to the house's door and went there.
+    let off_the_door = mabu_last.map(|p| (p.x - house.x).hypot(p.z - house.z));
+    println!(
+        "the Mabu from {mabu_from:?} to {mabu_last:?}, {off_the_door:?} m from the house's door at {house}"
+    );
+    assert!(
+        gone(&run, mabu) && off_the_door.is_some_and(|d| d < 2.0),
+        "the Mabu ran into the house and went: {mabu_last:?}, {off_the_door:?} m off {house}"
+    );
+    assert!(gone(&run, controller), "Setup_004's controller done");
     assert!(stops.is_empty(), "{stops:#?}");
 }
