@@ -12,7 +12,12 @@
 //! negative) and the end, each with its own draw of the key's randomness.
 //! One that moves with its emitter (`inherits_translation`) keeps its place
 //! relative to the generator. A rate of [`BURST_RATE`] or more is a burst:
-//! its most alive at once, born together, once. A ribbon lays a strip along
+//! its most alive at once, born together, and its room filled again at once
+//! as they die while it's on (openspec AS.17: a stream at 999 a second,
+//! `global.bld`'s coin sparkle, holds its one alive that way, and a level's
+//! placed falling dust is 9999 a second for 2-9 alive; AH.87 read a burst
+//! as once, which a clone taken off a step after it comes can't tell
+//! apart). A ribbon lays a strip along
 //! where its emitter has been, its last `segments` places, tapered and
 //! coloured from head to tail.
 //!
@@ -41,7 +46,8 @@
 use bevy::math::{Quat, Vec3};
 use guac_ir::model::{self, Glow, Mask, Params, RenderStates, Segment, TextureRole, TextureSlot};
 use guac_ir::particle::{
-    Blend, Direction, Emitters, Generator, Keyed, Kind, Ribbon, Sprite, Volume,
+    Blend, Direction, Emitters, Generator, Keyed, Kind, LevelEmitters, Placed, Ribbon, Sprite,
+    Volume,
 };
 
 use crate::character::key::bit;
@@ -282,21 +288,23 @@ impl GeneratorState {
             return;
         }
         let most = u32::from(s.max_alive);
-        let owed = if s.spawn_rate >= BURST_RATE {
-            if self.made == 0 { most } else { 0 }
-        } else if on || self.made < most {
+        let room = most.saturating_sub(self.particles.len() as u32);
+        let owed = if !on && self.made >= most {
+            0
+        } else if s.spawn_rate >= BURST_RATE {
+            room
+        } else {
             self.carry += s.spawn_rate * s.next_gen_scale * dt;
             let whole = self.carry.floor();
             self.carry -= whole;
-            let mut n = whole as u32;
-            if !on {
-                n = n.min(most - self.made);
-            }
-            n
-        } else {
-            0
+            whole as u32
         };
-        let room = most.saturating_sub(self.particles.len() as u32);
+        // Taken off, it makes only what it still owed of its most.
+        let owed = if on {
+            owed
+        } else {
+            owed.min(most.saturating_sub(self.made))
+        };
         for _ in 0..owed.min(room) {
             let p = born(s, at, rng);
             self.particles.push(p);
@@ -640,6 +648,64 @@ pub fn drawn(emitters: &[Emitters]) -> (Drawn, Index) {
         index.push((e.name.clone(), generators));
     }
     (out, index)
+}
+
+/// Each of a level's own emitters' generators (openspec AS.17), in the
+/// part's order, with its material in [`drawn_placed`]'s part where it has
+/// one.
+pub type PlacedIndex = Vec<Vec<Option<u16>>>;
+
+/// A level's own emitters' materials as a drawn part, one shape segment a
+/// material, and the index into it. Generators drawing alike (the same
+/// texture and sampler, blend and glow) share one material: a level places
+/// hundreds of emitters off a hundred-odd images (chapter 1 188 off 103).
+pub fn drawn_placed(level: &LevelEmitters) -> (Drawn, PlacedIndex) {
+    let mut out = Drawn::default();
+    let mut index = Vec::with_capacity(level.emitters.len());
+    for p in &level.emitters {
+        let e = &p.emitter;
+        let mut generators = Vec::with_capacity(e.generators.len());
+        for (k, g) in e.generators.iter().enumerate() {
+            let m = material(&e.name, k, g).and_then(|m| {
+                let alike = |o: &model::Material| {
+                    o.textures == m.textures && o.states == m.states && o.params == m.params
+                };
+                if let Some(i) = out.materials.iter().position(alike) {
+                    return u16::try_from(i).ok();
+                }
+                let i = u16::try_from(out.materials.len()).ok()?;
+                out.materials.push(m);
+                out.segments.push(shape(i));
+                out.sources.push(0);
+                Some(i)
+            });
+            generators.push(m);
+        }
+        index.push(generators);
+    }
+    (out, index)
+}
+
+/// Whether a level's emitter stands with the hero `hero` feet away
+/// (openspec AS.17, AG.7's rule as [`crate::scripts::awake`] holds it, its
+/// buffer the original's hysteresis; `was` whether it stood the frame
+/// before): an UNMANAGED one with a range while he's within it, or with
+/// none and no buffer always; a template never, its clones the scripts'.
+pub fn placed_stands(p: &Placed, was: bool, hero: Option<f32>) -> bool {
+    use guac_formats::level::ActivityState;
+    ActivityState::from_raw(p.activity_state) == Some(ActivityState::Unmanaged)
+        && crate::scripts::awake(p.activation_range, p.activation_range_buffer, was, hero)
+}
+
+/// Where a level's emitter stands: its place, its turn by its Euler angles
+/// (AF.9's convention) and its scale (its x, 1 at 100 %; every standing one
+/// on the disc is 100 % on all three).
+pub fn placed_frame(p: &Placed) -> Frame {
+    Frame {
+        at: Vec3::from_array(p.position),
+        turn: guac_motion::solid::euler(p.rotation),
+        scale: p.scale[0] / 100.0,
+    }
 }
 
 #[cfg(test)]

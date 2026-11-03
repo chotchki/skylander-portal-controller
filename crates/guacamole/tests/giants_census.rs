@@ -186,9 +186,11 @@ fn spawn_models(dump: &Path) -> Vec<guacamole::props::PropModel> {
 }
 
 /// The particle part's emitters (AH.87) off the dump through the
-/// extractor's own reader, every spawn archive's, keyed in `view` as the
-/// TV keys them (their materials, `guacamole::particles::drawn`).
-fn particle_keys(dump: &Path, view: &Scene) -> (Vec<WarmKey>, usize) {
+/// extractor's own reader, every spawn archive's, and chapter 1's own
+/// (openspec AS.17, its particles part's reader on `igz`), keyed in `view`
+/// as the TV keys them (their materials, `guacamole::particles::drawn` and
+/// `drawn_placed`).
+fn particle_keys(dump: &Path, igz: &Igz<'_>, view: &Scene) -> (Vec<WarmKey>, usize) {
     let usrdir = dump.join("PS3_GAME/USRDIR");
     let mut emitters = Vec::new();
     for archive in guac_extract::particles::archives() {
@@ -198,12 +200,24 @@ fn particle_keys(dump: &Path, view: &Scene) -> (Vec<WarmKey>, usize) {
         emitters.push(guac_extract::particles::emitters(&igz, &archive, identity()).ir);
     }
     let (drawn, _) = guacamole::particles::drawn(&emitters);
-    let keys = level_scene::keys(&drawn, view)
-        .expect("the particles' keys")
-        .into_iter()
-        .map(|(k, _)| k)
-        .collect();
-    (keys, drawn.materials.len())
+    let own = levels::particles(igz, levels::LEVELS[0], identity())
+        .expect("chapter 1's emitters")
+        .ir;
+    assert!(
+        own.refused.is_empty(),
+        "chapter 1's emitters: {:?}",
+        own.refused
+    );
+    let (placed, _) = guacamole::particles::drawn_placed(&own);
+    let mut keys: Vec<WarmKey> = Vec::new();
+    for d in [&drawn, &placed] {
+        for (k, _) in level_scene::keys(d, view).expect("the particles' keys") {
+            if !keys.contains(&k) {
+                keys.push(k);
+            }
+        }
+    }
+    (keys, drawn.materials.len() + placed.materials.len())
 }
 
 /// Every key chapter 1 draws, as the level loader keys it (through its own
@@ -265,7 +279,7 @@ fn level_keys(dump: &Path) -> Chapter1 {
     );
     let hero = level_scene::hero_scene(&start.lights, &start.fog, level_scene::fresh_state_view());
     let spawned = spawn_models(dump);
-    let (particles, _) = particle_keys(dump, &view);
+    let (particles, _) = particle_keys(dump, &igz, &view);
     Chapter1 {
         keys: start.keys.into_iter().map(|(k, _)| k).collect(),
         props: props.keys(&view).expect("the props' keys"),

@@ -4400,6 +4400,16 @@ impl ScriptWorld {
         let t = a.template.or(a.obj)?;
         self.emitters.get(&t).map(String::as_str)
     }
+
+    /// The emitter placement an actor is a clone of (or is), by file and
+    /// object (openspec AS.17): what finds a clone of a level's own emitter
+    /// in that level's particles part, whose names repeat (chapter 1 places
+    /// two `Wood Plank on Fire`). None for anything but an emitter's.
+    pub fn emitter_placement(&self, h: Handle) -> Option<Obj> {
+        let a = self.actors.get(&h)?;
+        let t = a.template.or(a.obj)?;
+        self.emitters.contains_key(&t).then_some(t)
+    }
 }
 
 /// The VM steps in the TV.
@@ -4705,6 +4715,12 @@ mod tests {
         assert_eq!(world.emitter_of(903), Some("009_LavaBall_Trail"));
         assert_eq!(world.name_of(TRAIL).as_deref(), Some("009_LavaBall_Trail"));
         assert_eq!(world.name_of(GRUNT).as_deref(), Some("Grunt"));
+        // AS.17: the placement it's a clone of (or is), by file and object.
+        assert_eq!(world.emitter_placement(900), Some(TRAIL));
+        assert_eq!(world.emitter_placement(903), Some(TRAIL));
+        assert_eq!(world.emitter_placement(901), None, "a clone of an actor");
+        assert_eq!(world.emitter_placement(handles[&GRUNT]), None);
+        assert_eq!(world.emitter_placement(902), None, "no actor");
     }
 
     /// The emitters a file places are read by name beside its actors.

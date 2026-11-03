@@ -194,6 +194,8 @@ fn a_named_level_extracts_end_to_end_and_resumes() {
             ),
             (levels::PALETTES, ron(levels::palettes(&igz, name, id()))),
             (levels::NODES, ron(levels::nodes(&igz, name, id()))),
+            // AS.17: its own emitters, with the level.
+            (levels::PARTICLES, ron(levels::particles(&igz, name, id()))),
         ];
         let m = dir.manifest().clone();
         let mut checked = 0;

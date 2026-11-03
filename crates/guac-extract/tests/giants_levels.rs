@@ -126,6 +126,7 @@ fn read_level(
             }),
             levels::PALETTES => encoded(levels::palettes(igz, level, id())),
             levels::NODES => encoded(levels::nodes(igz, level, id())),
+            levels::PARTICLES => encoded(levels::particles(igz, level, id())),
             levels::SPRITES => {
                 let name = format!("{}/{level}.bld", levels::LEVEL_FOLDER);
                 encoded(

@@ -559,3 +559,50 @@ pub(crate) fn write_particles_of(dir: &Path, emitter: guac_ir::particle::Emitter
         .unwrap();
     }
 }
+
+/// One of a level's own emitters (openspec AS.17): [`trail`] named `name`
+/// at `object` in the level's file, standing at `at` (metres, no turn, 100 %)
+/// in activity state `state` with a range and a buffer in feet.
+pub(crate) fn placed_emitter(
+    name: &str,
+    object: u32,
+    at: Vec3,
+    state: u32,
+    range: f32,
+    buffer: f32,
+) -> guac_ir::particle::Placed {
+    guac_ir::particle::Placed {
+        emitter: guac_ir::particle::Emitter {
+            name: name.into(),
+            object,
+            ..trail()
+        },
+        position: at.to_array(),
+        rotation: [0.0; 3],
+        scale: [100.0; 3],
+        activity_state: state,
+        activation_range: range,
+        activation_range_buffer: buffer,
+    }
+}
+
+/// The made-up level's particles part (openspec AS.17): `emitters` as its
+/// file places them, with `refused` beside them.
+pub(crate) fn write_level_particles(
+    dir: &Path,
+    emitters: Vec<guac_ir::particle::Placed>,
+    refused: Vec<(String, String)>,
+) {
+    let ir = IrFormat::Ron;
+    let part = guac_ir::particle::LevelEmitters {
+        identity: identity(),
+        level: LEVEL.into(),
+        emitters,
+        refused,
+    };
+    std::fs::write(
+        dir.join(ir.level_path(LEVEL, guac_extract::levels::PARTICLES)),
+        guac_ir::to_ron(&part).unwrap(),
+    )
+    .unwrap();
+}
