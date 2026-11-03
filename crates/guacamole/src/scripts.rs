@@ -662,6 +662,9 @@ pub enum MovieEnd {
 pub struct LevelEnd {
     pub value: Value,
     pub string: Option<String>,
+    /// The level it names as the switch resolves it where its text names
+    /// none (the village, openspec AU.27: [`crate::level_switch`]).
+    pub resolved: Option<String>,
     pub unread: Option<Unread>,
 }
 
@@ -1198,6 +1201,26 @@ impl ScriptWorld {
         out
     }
 
+    /// The hub's people ([`HUB_PEOPLE`], openspec AU.28): each placement
+    /// whose script is one of theirs, by its actor, unwalked, in handle
+    /// order; whether its script runs is the caller's to check.
+    pub fn people(&self) -> Vec<Handle> {
+        let mut out: Vec<Handle> = self
+            .actors
+            .iter()
+            .filter(|(_, a)| {
+                a.walker.is_none()
+                    && a.obj
+                        .and_then(|o| self.templates.get(&o))
+                        .and_then(|p| p.script.as_deref())
+                        .is_some_and(is_hub_person)
+            })
+            .map(|(h, _)| *h)
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
     /// Makes each of the first fight's placements in the file linked as
     /// `unit` with movement numbers ([`FIRST_FIGHT`]) a creature the engine
     /// moves ([`ScriptWorld::walk`], openspec AH.18): what the headless
@@ -1339,7 +1362,16 @@ impl ScriptWorld {
         self.requests.push(load);
         let text = self.text_of(load);
         let ending = self.level_end.as_ref().is_some_and(|e| e.value == load);
-        match self.level_named(text.as_deref()) {
+        let resolved = self
+            .level_end
+            .as_ref()
+            .filter(|e| e.value == load)
+            .and_then(|e| e.resolved.clone());
+        let read = match resolved {
+            Some(name) => self.on_disc(name),
+            None => self.level_named(text.as_deref()),
+        };
+        match read {
             Ok(name) => {
                 info!(%name, ?text, "a script asked for a level: it loads, the run holds its request");
                 self.level_change = Some(LevelChange {
@@ -1374,6 +1406,11 @@ impl ScriptWorld {
     fn level_named(&self, text: Option<&str>) -> Result<String, Unread> {
         let text = text.ok_or(Unread::NoText)?;
         let name = level_name(text).ok_or_else(|| Unread::NotALevel(String::new()))?;
+        self.on_disc(name)
+    }
+
+    /// `name`, when the disc's level list holds it, or why not.
+    fn on_disc(&self, name: String) -> Result<String, Unread> {
         match self.levels.as_deref() {
             Some(l) if !l.is_empty() => l
                 .contains(&name)
@@ -1400,7 +1437,10 @@ impl ScriptWorld {
             return;
         };
         let text = text.or_else(|| self.text_of(end.value));
-        let read = self.level_named(text.as_deref());
+        let read = match end.resolved.clone() {
+            Some(name) => self.on_disc(name),
+            None => self.level_named(text.as_deref()),
+        };
         match read {
             Ok(name) => {
                 info!(%name, string = ?end.string, ?text, "the level end read: it loads, the run holds its request");
@@ -1463,9 +1503,20 @@ impl ScriptWorld {
         self.level_end = Some(LevelEnd {
             value: v,
             string,
+            resolved: None,
             unread: None,
         });
         self.ask_level(v);
+    }
+
+    /// The TV's level end resolved to `level`, an archive, as the switch
+    /// resolves one whose text names none (the village, openspec AU.27:
+    /// [`crate::level_switch`]); the step's end asks it by that name.
+    /// Nothing without a level end.
+    pub fn resolve_level_end(&mut self, level: String) {
+        if let Some(e) = &mut self.level_end {
+            e.resolved = Some(level);
+        }
     }
 
     /// The TV's level end, once written.
@@ -2531,12 +2582,17 @@ pub const INTROS: [(&str, &str); 5] = [
 ///   definition counts and stage 1's controller holds at 2 or more: after
 ///   level 214 `Skydome_201`), clones it at its own place at 400 % and
 ///   switches the atmospheric zone to that adventure's (201's), then keeps
-///   the clone's height on the nearest player's and turns it 0.015° a tick.
-///   The scene holds no sky of its own; the clone draws by AS.63's rule;
+///   the clone at its own height (which it moves to the nearest player's
+///   when he's over 350 ft above or below it) and turns it 0.015° a tick
+///   while he stands within 3 ft of its placed height (on the main deck,
+///   not up at the helm), holding through a cutscene played outside an
+///   interior. The scene holds no sky of its own; the clone draws by
+///   AS.63's rule;
 /// - the stage's controller (`Hub2_Stage_<n>_Controller.ai`): which of the
 ///   stage's placements stand for the adventures done (after level 214 the
-///   snow, the ice, the pirates' lights, the turret and Dreadbeard off) and
-///   the NPCs' waypoint (`Waypoint Value`);
+///   snowmen, the ice and snow, the pirates' lights, the turret and
+///   Dreadbeard off, 23 placements; the snow barrels are the stage's
+///   intro's to take off) and the NPCs' waypoint (`Waypoint Value`);
 /// - the background: its controllers clone the boulders and the islands
 ///   that drift past the ship for the adventures done, each moving on its
 ///   own script, and the deck's and the crane's zone controllers switch to
@@ -2564,6 +2620,20 @@ pub const HUB_SCRIPTS: [&str; 11] = [
     "/Flynn.ai",
     "/Cali.ai",
 ];
+
+/// The hub's people the TV draws (openspec AU.28), by their scripts:
+/// Flynn at the helm and Cali on the main deck, each drawn on its
+/// placement's model where its scripts stand and turn it, posed by the
+/// clips they play, never walked (walked, a `turn to` is the engine's
+/// steering, which left Cali facing 73° and her intro's turn undone at
+/// AU.6; unwalked, the host turns it at once, as the headless runs do).
+pub const HUB_PEOPLE: [&str; 2] = ["/Flynn.ai", "/Cali.ai"];
+
+/// Whether a placement whose script is `script` is one of the hub's
+/// people ([`HUB_PEOPLE`]).
+pub fn is_hub_person(script: &str) -> bool {
+    HUB_PEOPLE.iter().any(|p| script.ends_with(p))
+}
 
 /// What the hub's dialogue cutscenes reach past the tables the TV's run
 /// registers (openspec AU.6): the gameplay viewport's filter effect and its
@@ -4501,7 +4571,7 @@ fn portal_manager_handle(world: &ScriptWorld) -> Result<Handle, Halt> {
 
 /// The placement running the script whose source path ends with `suffix`,
 /// if one runs.
-pub(crate) fn running(vm: &Vm, world: &ScriptWorld, suffix: &str) -> Option<PlacementId> {
+pub fn running(vm: &Vm, world: &ScriptWorld, suffix: &str) -> Option<PlacementId> {
     world
         .templates
         .values()
@@ -5707,6 +5777,42 @@ mod tests {
         }
         assert!(passages("level_214_tutotial_2").contains(&"214_Recover_First_Part_IGC"));
         assert!(passages("level_212").is_empty());
+    }
+
+    /// openspec AU.28: the hub's people are the placements running Flynn's
+    /// or Cali's own script, by their actors; their cutscene templates' and
+    /// another placement's aren't (a clone has no placement of its own).
+    #[test]
+    fn the_hubs_people_are_flynn_and_cali_by_their_scripts() {
+        let dir = "C:/tfb/Content/Levels/Level_Hub_2";
+        let obj = |index| Obj { unit: 3, index };
+        let files = Files {
+            placed: vec![
+                Placed::named(
+                    obj(10),
+                    "Flynn",
+                    Some(&format!("{dir}/Scripts/Flynn.ai")),
+                    4,
+                ),
+                Placed::named(obj(11), "Cali", Some(&format!("{dir}/Scripts/Cali.ai")), 4),
+                Placed::named(
+                    obj(12),
+                    "CS_Flynn",
+                    Some(&format!("{dir}/Cutscenes/Scripts/CS_Flynn.ai")),
+                    5,
+                ),
+                Placed::named(obj(13), "Mabu", Some(&format!("{dir}/Scripts/Mabu.ai")), 4),
+            ],
+            ..Files::default()
+        };
+        let handles: HashMap<Obj, Handle> =
+            (10..14).map(|i| (obj(i), 0x100 + u64::from(i))).collect();
+        let world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        assert_eq!(world.people(), [0x10A, 0x10B]);
+        assert!(is_hub_person(&format!("{dir}/Scripts/Flynn.ai")));
+        assert!(!is_hub_person(&format!(
+            "{dir}/Cutscenes/Scripts/CS_Flynn.ai"
+        )));
     }
 
     /// openspec AS.46, AS.47: a hub stage's sky, its stage's controller and

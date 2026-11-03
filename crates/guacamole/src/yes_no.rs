@@ -45,10 +45,10 @@ pub(crate) const UNREAD_LINE: &str = "Yes or no?";
 #[derive(Resource, Debug, Default, Clone, PartialEq)]
 pub(crate) struct Asked(pub(crate) Option<Prompt>);
 
-/// The answer chosen on the modal, for the next step to run: the dialogue
-/// UI it answers, and yes or no.
-#[derive(Resource, Debug, Default, Clone, Copy, PartialEq)]
-pub(crate) struct Answer(pub(crate) Option<(Value, bool)>);
+/// The answer chosen on the modal, for the next step to run: the question
+/// it answers, and yes or no.
+#[derive(Resource, Debug, Default, Clone, PartialEq)]
+pub(crate) struct Answer(pub(crate) Option<(Prompt, bool)>);
 
 /// The modal is up: the router hands it the pads (as [`crate::input::ModalOpen`]
 /// does Restart chapter).
@@ -87,7 +87,8 @@ impl Plugin for YesNoPlugin {
 }
 
 /// After the scripts' step: an answer chosen for the question still up run
-/// on it ([`prompt::answer`]), then the question the run waits on read.
+/// on it ([`prompt::answer`], which checks the run still asks that very
+/// question), then the question the run waits on read.
 fn ask_and_answer(
     mut commands: Commands,
     mut runtime: ResMut<ScriptRuntime>,
@@ -96,8 +97,8 @@ fn ask_and_answer(
     mut answer: ResMut<Answer>,
     mut answered: ResMut<Answered>,
 ) {
-    if let Some((ui, yes)) = answer.0.take()
-        && let Some(p) = asked.0.clone().filter(|p| p.ui == ui)
+    if let Some((chosen, yes)) = answer.0.take()
+        && let Some(p) = asked.0.clone().filter(|p| prompt::same(p, &chosen))
     {
         let ScriptRuntime { vm, generator, .. } = &mut *runtime;
         let mut spawn = |template: guac_script::Value| -> guac_script::Handle {
@@ -129,21 +130,30 @@ fn ask_and_answer(
 }
 
 /// The modal is up while a question waits, no answer is on its way and the
-/// level shows. With the level gone from the TV (its run taken down, or the
-/// portal view in its place) the question and any answer are forgotten: a
-/// run still asking is read again at its next step.
+/// level shows, unheld: while the portal holds the level (its alert, an
+/// arrival card) the question waits under it, unanswerable, so the alert
+/// reads whole and nothing is answered blind (found at AU.6's review: the
+/// modal over "too many Skylanders" hid it, and its Yes waited out the hold
+/// unseen). With the level gone from the TV (the portal view in its place)
+/// or its run taken down (a level change, Restart chapter) the question and
+/// any answer are forgotten: a run still asking is read again at its next
+/// step.
 fn open(
     mut asked: ResMut<Asked>,
     mut answer: ResMut<Answer>,
     pads: Option<Res<crate::pad::LevelPads>>,
+    runtime: Option<Res<ScriptRuntime>>,
+    mut ran: Local<bool>,
     mut open: ResMut<PromptOpen>,
 ) {
-    let shows = pads.is_some_and(|p| p.shows());
-    if !shows && (asked.0.is_some() || answer.0.is_some()) {
+    let run_gone = std::mem::replace(&mut *ran, runtime.is_some()) && runtime.is_none();
+    let shows = pads.as_ref().is_some_and(|p| p.shows());
+    if (!shows || run_gone) && (asked.0.is_some() || answer.0.is_some()) {
         asked.0 = None;
         answer.0 = None;
     }
-    let up = shows && asked.0.is_some() && answer.0.is_none();
+    let held = pads.is_some_and(|p| p.held());
+    let up = shows && !held && asked.0.is_some() && answer.0.is_none();
     if open.0 != up {
         open.0 = up;
     }
@@ -193,7 +203,7 @@ fn on_choice(
     };
     if let Some(p) = &asked.0 {
         info!(question = ?p.text, yes, "the question's answer chosen");
-        answer.0 = Some((p.ui, yes));
+        answer.0 = Some((p.clone(), yes));
     }
 }
 
@@ -447,7 +457,7 @@ mod tests {
         }
         assert_eq!(
             app.world().resource::<Answer>().0,
-            Some((Value::Entity(0x40), true))
+            Some((question(0x40, true), true))
         );
         assert!(
             !app.world().resource::<PromptOpen>().0,
@@ -494,8 +504,136 @@ mod tests {
             app.update();
         }
         assert_eq!(
-            app.world().resource::<Answer>().0,
+            app.world()
+                .resource::<Answer>()
+                .0
+                .as_ref()
+                .map(|(p, yes)| (p.ui, *yes)),
             Some((Value::Entity(0x50), false))
         );
+    }
+
+    /// A run of no scripts of its own, as the TV installs one: what the
+    /// modal reads to forget a question once its run is taken down.
+    fn a_run() -> ScriptRuntime {
+        use std::sync::Arc;
+
+        use guac_formats::igz::Igz;
+        use guac_formats::script::{Graph, builder};
+        use guac_script::{Config, Generator, Mode, Program, Role, Unit, Vm};
+        let bytes = builder::ui_containers();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = Unit {
+            name: "global",
+            role: Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        let program = Arc::new(Program::link(&[unit]).unwrap());
+        ScriptRuntime {
+            vm: Vm::new(program, Config::new(Mode::Strict)),
+            generator: Generator::seeded(1),
+            player_loop: Default::default(),
+            steps: 0,
+            stopped: Vec::new(),
+            entry_stopped: None,
+        }
+    }
+
+    /// openspec AU.6's review: while the question is up the router gives the
+    /// pads to the modal alone. Start on the walking pad pauses nothing; a
+    /// second pad's moves and South answer it as the first's would (either
+    /// player answers). The portal holding the level hides it, unanswerable,
+    /// until the hold ends. The run taken down under a question (a level
+    /// change, Restart chapter) closes the modal and forgets it, so no
+    /// answer lands on a later run's dialogue.
+    #[test]
+    fn the_question_holds_the_pads_and_goes_with_its_run() {
+        use bevy::input::gamepad::GamepadButton;
+
+        use crate::test_support::tv::{pad, tap};
+        let (mut app, _) = asking_app();
+        let first = pad(&mut app);
+        let second = pad(&mut app);
+        for _ in 0..3 {
+            app.update();
+        }
+        let level = app.world().resource::<crate::pad::LevelPads>();
+        assert!(!level.paused(), "the first pad walks");
+        app.world_mut().resource_mut::<Asked>().0 = Some(question(0x70, true));
+        shows(&mut app, Value::Entity(0x70), PROMPT_YES);
+        tap(&mut app, first, GamepadButton::Start);
+        for _ in 0..3 {
+            app.update();
+        }
+        assert!(
+            !app.world().resource::<crate::pad::LevelPads>().paused(),
+            "Start under the question pauses nothing"
+        );
+        assert!(app.world().resource::<PromptOpen>().0);
+        tap(&mut app, second, GamepadButton::DPadRight);
+        shows(&mut app, Value::Entity(0x70), PROMPT_NO);
+        tap(&mut app, second, GamepadButton::South);
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(
+            app.world()
+                .resource::<Answer>()
+                .0
+                .as_ref()
+                .map(|(p, yes)| (p.ui, *yes)),
+            Some((Value::Entity(0x70), false)),
+            "the second pad answered no"
+        );
+        // The portal holding the level (its alert, an arrival card): the
+        // question waits under it, the modal gone and nothing answerable,
+        // then back with its focus once the hold ends.
+        let (mut app, presses) = asking_app();
+        app.world_mut().resource_mut::<Asked>().0 = Some(question(0x90, true));
+        shows(&mut app, Value::Entity(0x90), PROMPT_YES);
+        app.world_mut()
+            .resource_mut::<crate::pad::LevelPads>()
+            .hold(true);
+        for _ in 0..3 {
+            app.update();
+        }
+        assert!(!app.world().resource::<PromptOpen>().0, "under the hold");
+        assert_eq!(drawn(&mut app), None);
+        presses.push(TestPress::South);
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(
+            app.world().resource::<Answer>().0,
+            None,
+            "nothing answered blind"
+        );
+        assert_eq!(
+            app.world().resource::<Asked>().0,
+            Some(question(0x90, true)),
+            "the question kept"
+        );
+        app.world_mut()
+            .resource_mut::<crate::pad::LevelPads>()
+            .hold(false);
+        shows(&mut app, Value::Entity(0x90), PROMPT_YES);
+        // A question up under a run, then the run taken down.
+        let (mut app, _) = asking_app();
+        app.insert_resource(a_run());
+        app.world_mut().resource_mut::<Asked>().0 = Some(question(0x80, true));
+        shows(&mut app, Value::Entity(0x80), PROMPT_YES);
+        app.world_mut().remove_resource::<ScriptRuntime>();
+        for _ in 0..3 {
+            app.update();
+        }
+        assert!(
+            !app.world().resource::<PromptOpen>().0,
+            "closed with its run"
+        );
+        assert_eq!(drawn(&mut app), None);
+        assert_eq!(app.world().resource::<Asked>().0, None);
+        assert_eq!(app.world().resource::<Answer>().0, None);
     }
 }

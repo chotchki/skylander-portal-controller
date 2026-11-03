@@ -133,11 +133,13 @@ fn every_hub_stage_starts_where_its_intro_hands_him_over() {
     );
 }
 
-/// openspec AS.46: hub stage 1's sky after level 214 (`Levels_Completed`
-/// 2): its controller's clone of `Skydome_201` at the controller's place,
-/// at 400 % on every axis, turning 0.015° a step, its atmospheric zone 201
-/// on the VM, the sky's model off the props part drawn by AS.63's rule;
-/// none of the other three skydomes cloned.
+/// openspec AS.46: hub stage 1 after level 214 (`Levels_Completed` 2): its
+/// stage's controller has taken off what the story moved past, and its sky
+/// is its controller's clone of `Skydome_201` at the controller's place, at
+/// 400 % on every axis, still with no player near its height and turning
+/// 0.015° a step once one stands there, its atmospheric zone 201 on the VM,
+/// the sky's model off the props part drawn by AS.63's rule; none of the
+/// other three skydomes cloned.
 #[test]
 #[ignore = "reads the Giants dump"]
 fn hub_stage_1s_sky_is_its_controllers_skydome() {
@@ -145,6 +147,31 @@ fn hub_stage_1s_sky_is_its_controllers_skydome() {
     let mut stops = Vec::new();
     for _ in 0..2 {
         stops.extend(run.step_play().unwrap());
+    }
+    // The stage's controller at its STARTUP after 214 (`Levels_Completed`
+    // 2): the snowmen and the pirates' lights always, then its loop's
+    // passes 0 and 1 (its index counting from 0), pass 1 the ice and snow,
+    // the turret and Dreadbeard; pass 2's Mabu repairers and the crane's
+    // blocker stand, and the snow barrels are the intro's to take off.
+    let off = |name: &str| run.world.removed(run.placed(name).0);
+    for name in [
+        "Snowman(1)",
+        "Snowman(2)",
+        "PirateLights",
+        "PirateLights2",
+        "Ice",
+        "IcePatch_03(6)",
+        "Turret",
+        "Dreadbeard",
+    ] {
+        assert!(off(name), "{name} off");
+    }
+    for name in [
+        "MabuRepairGuy1",
+        "CraneDoorBlocker",
+        "barrel_snow_intact(1)",
+    ] {
+        assert!(!off(name), "{name} stands");
     }
     let controller = run.at("Skydome_Controller_Stage1");
     let sky = skies(&run);
@@ -323,6 +350,36 @@ fn hub_stage_1s_way_on_is_cali_then_flynn_into_level_201() {
         stops.extend(run.step_play().unwrap());
     }
     assert_eq!(global(&run, "Cali_Intro"), Some(Value::Int(0)));
+    // openspec AU.28: the people the TV draws are Flynn and Cali, their own
+    // scripts running, unwalked, each on a model of the level's creatures.
+    let skinned: Vec<String> = skinned_models_of(HUB_1)
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect();
+    let mut people: Vec<(String, bool, Option<String>)> = run
+        .world
+        .people()
+        .into_iter()
+        .map(|h| {
+            let name = run.world.name(h).to_owned();
+            let model = run
+                .files
+                .placed
+                .iter()
+                .find(|p| p.obj.unit == LEVEL && p.name == name)
+                .and_then(|p| p.model.clone());
+            (name, run.vm.placement_of(h).is_some(), model)
+        })
+        .collect();
+    people.sort();
+    println!("the people: {people:?}; the creature models: {skinned:?}");
+    let names: Vec<&str> = people.iter().map(|p| p.0.as_str()).collect();
+    assert_eq!(names, ["Cali", "Flynn"]);
+    for (name, runs, model) in &people {
+        assert!(runs, "{name}'s script runs");
+        let model = model.as_ref().expect("a model");
+        assert!(skinned.contains(model), "{name}'s {model}");
+    }
     let v = guac_motion::seam::Vec3::from_array;
     let first = talk(&mut run, &mut stops, v(BY_FLYNN), |_| true);
     println!(
@@ -382,6 +439,100 @@ fn hub_stage_1s_way_on_is_cali_then_flynn_into_level_201() {
         "{:#?}",
         stops.iter().map(ToString::to_string).collect::<Vec<_>>()
     );
+    println!(
+        "{:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
+
+/// The object the program names `name`, on any of its units.
+fn object_named(run: &Run, name: &str) -> Option<Value> {
+    (0..8u16)
+        .flat_map(|unit| (0..400_000u32).map(move |index| guac_script::Obj { unit, index }))
+        .find(|o| run.vm.program().name_of(*o) == Some(name))
+        .map(Value::Object)
+}
+
+/// openspec AU.27: level 214's end into the hub, its outro's level end
+/// driven directly (214's end isn't reachable on foot yet): the original's
+/// `Game - Level End` run on the game systems' placement naming the village
+/// (`999_Level_Village`, what `214_Outro_IGC` names) is asked as the
+/// level end asks it and resolved as the Pause Controller's switch resolves
+/// it, to the hub stage one past the village unlocks done: stage 1 after
+/// 214, stage 2 with level 210's adventure marked complete first. Nothing
+/// stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_end_takes_the_hero_to_the_stage_the_village_opens() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    for (done, stage) in [(0, HUB_1), (1, "level_hub_2_stage_2")] {
+        let (mut run, _found) = run_on_level(Mode::Play, "level_214_tutotial_2", setup(&[]));
+        let mut stops = Vec::new();
+        for _ in 0..2 {
+            stops.extend(run.step_play().unwrap());
+        }
+        run.join().unwrap_or_else(|h| panic!("{h}"));
+        stops.extend(skip_214s_intro(&mut run));
+        let village = object_named(&run, "999_Level_Village").expect("the village's string");
+        let unlocks: Vec<Value> = global(&run, "level progression data")
+            .and_then(|d| run.vm.field(d, "village unlocks"))
+            .and_then(|s| run.vm.set(s).map(<[_]>::to_vec))
+            .expect("the village unlocks");
+        assert_eq!(unlocks.len(), 3, "levels 210, 202 and 211");
+        let titles: Vec<Option<String>> = unlocks
+            .iter()
+            .map(|ad| {
+                let t = run.vm.field(*ad, "title").map(|t| run.vm.value(t));
+                match t {
+                    Some(Value::Object(o)) => run.vm.program().name_of(o).map(str::to_owned),
+                    _ => None,
+                }
+            })
+            .collect();
+        println!("the village unlocks: {titles:?}");
+        for ad in unlocks.iter().take(done) {
+            assert!(run.vm.set_field(*ad, "complete", Value::Int(2)));
+        }
+        let gs = run
+            .with_host(|vm, host| guacamole::scripts::running(vm, host.world, "GameSystems.ai"))
+            .expect("the game systems");
+        run.with_host(|vm, host| {
+            vm.call_for(
+                gs,
+                "Game - Level End",
+                &[("load to level", village)],
+                &[],
+                host,
+            )
+        })
+        .unwrap_or_else(|h| panic!("the level end: {h}"));
+        let asked = run.steps;
+        while run.world.level_change().is_none() {
+            assert!(
+                run.steps < asked + 300,
+                "no level change by step {}",
+                run.steps
+            );
+            stops.extend(run.step_play().unwrap());
+        }
+        let change = run.world.level_change().cloned().unwrap();
+        let end = run.world.level_end().cloned();
+        println!(
+            "{done} done: asked at {asked}, changed at {}: {change:?}; the level end {end:?}",
+            run.steps
+        );
+        assert_eq!(change.name, stage, "{done} done");
+        let end = end.expect("the level end");
+        assert_eq!(end.string.as_deref(), Some("999_Level_Village"));
+        assert_eq!(end.value, village);
+        assert!(
+            stops.is_empty(),
+            "{:#?}",
+            stops.iter().map(ToString::to_string).collect::<Vec<_>>()
+        );
+    }
     println!(
         "{:.1} s; load at end: {}",
         started.elapsed().as_secs_f64(),

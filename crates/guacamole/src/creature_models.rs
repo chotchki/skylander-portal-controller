@@ -78,12 +78,14 @@ pub fn creature_model(prop: &guac_ir::level::Prop, identity: DumpIdentity) -> Op
 
 /// Each skinned model the first fight's placements ([`FIRST_FIGHT`]) on
 /// chapter 1, or a later level's first encounter's placements and clones'
-/// templates (openspec AS.54, [`crate::scripts::encounter`]), and the
-/// level's templates whose clones draw ([`clones_draw`], openspec AS.63)
-/// name, once, by its path, the fight's first, each in its list's order
-/// (the templates in the file's), as [`creature_model`] makes it: what the
-/// TV draws its creatures and those templates' clones with. A model the
-/// props part doesn't hold, or holds static, is left out.
+/// templates (openspec AS.54, [`crate::scripts::encounter`]), a hub's
+/// people (openspec AU.28, [`crate::scripts::HUB_PEOPLE`]) and the level's
+/// templates whose clones draw ([`clones_draw`], openspec AS.63) name,
+/// once, by its path, the fight's first, each in its list's order (the
+/// people and the templates in the file's), as [`creature_model`] makes
+/// it: what the TV draws its creatures, the hub's people and those
+/// templates' clones with. A model the props part doesn't hold, or holds
+/// static, is left out.
 pub fn skinned_models(
     placements: &Placements,
     props: &Props,
@@ -118,7 +120,21 @@ pub fn skinned_models(
             .find(|a| a.name == *name)
             .and_then(|a| a.model.clone())
     });
-    for path in named.chain(templates.filter_map(|a| a.model.clone())) {
+    // A hub's people (openspec AU.28), by their placements' scripts.
+    let people = placements
+        .actors
+        .iter()
+        .filter(|a| {
+            crate::scripts::is_hub(&placements.level)
+                && a.script
+                    .as_deref()
+                    .is_some_and(crate::scripts::is_hub_person)
+        })
+        .filter_map(|a| a.model.clone());
+    for path in named
+        .chain(people)
+        .chain(templates.filter_map(|a| a.model.clone()))
+    {
         if out.iter().any(|(p, _)| *p == path) {
             continue;
         }
@@ -298,6 +314,54 @@ mod tests {
             models.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(),
             ["legs.mdl", "chompy_undead.mdl", "tortoise.mdl"]
         );
+    }
+
+    /// openspec AU.28: on a hub stage its people's models (Flynn's and
+    /// Cali's by their placements' scripts) before the skinned templates',
+    /// each once; on any other level a placement running one of their
+    /// scripts' names draws nothing of its own.
+    #[test]
+    fn a_hubs_people_draw_their_own_models() {
+        let hub = "C:/tfb/Content/Levels/Level_Hub_2/Scripts";
+        let person = |name: &str, script: &str, model: &str| Placement {
+            script: Some(format!("{hub}/{script}")),
+            ..placed(name, Some(model))
+        };
+        let actors = vec![
+            person("Flynn", "Flynn.ai", "balloonist.mdl"),
+            person("CS_Flynn", "CS_Flynn.ai", "balloonist.mdl"),
+            person("Cali", "Cali.ai", "adventure_girl.mdl"),
+            person("Mabu", "Hub2_Mabu.ai", "mabu.mdl"),
+            template("2_Push_Block_Art_Sheep", "tortoise.mdl"),
+        ];
+        let props = |level: &str| Props {
+            identity: identity(),
+            level: level.into(),
+            props: vec![
+                prop("balloonist.mdl", true),
+                prop("adventure_girl.mdl", true),
+                prop("mabu.mdl", true),
+                prop("tortoise.mdl", true),
+            ],
+            refused: Vec::new(),
+        };
+        let models = |level: &str| {
+            let placements = Placements {
+                identity: identity(),
+                level: level.into(),
+                actors: actors.clone(),
+                waypoints: Vec::new(),
+            };
+            skinned_models(&placements, &props(level), &identity())
+                .into_iter()
+                .map(|(p, _)| p)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            models("level_hub_2_stage_1"),
+            ["balloonist.mdl", "adventure_girl.mdl", "tortoise.mdl"]
+        );
+        assert_eq!(models("level_201"), ["tortoise.mdl"]);
     }
 
     /// The models the first fight's placements name, each once, in their

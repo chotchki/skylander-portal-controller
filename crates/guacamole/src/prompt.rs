@@ -97,16 +97,23 @@ pub fn up(vm: &Vm, world: &ScriptWorld) -> Option<Prompt> {
     })
 }
 
+/// Whether `a` and `b` are one question: the same dialogue UI asking the
+/// same string on the same page.
+pub fn same(a: &Prompt, b: &Prompt) -> bool {
+    (a.ui, a.question, a.page) == (b.ui, b.question, b.page)
+}
+
 /// `prompt` answered as its page's yes or no button answers it: the
-/// button's action on the page, then the page closed. False when the
-/// question is no longer up or the run has no game systems to answer in.
+/// button's action on the page, then the page closed. False when that
+/// question is no longer up (another on the same dialogue UI included) or
+/// the run has no game systems to answer in.
 pub fn answer(
     vm: &mut Vm,
     host: &mut WorldHost<'_, '_>,
     prompt: &Prompt,
     yes: bool,
 ) -> Result<bool, Halt> {
-    if up(vm, host.world).as_ref().map(|p| p.ui) != Some(prompt.ui) {
+    if !up(vm, host.world).is_some_and(|p| same(&p, prompt)) {
         return Ok(false);
     }
     // The original's menu runs its buttons in the UI's tick; the game
@@ -298,13 +305,24 @@ mod tests {
     }
 
     /// The fixture's STARTUP run on the game systems' placement; the
-    /// prompt [`up`] reads then, answered by `answer` when given, and the
-    /// status and the page's `closed` after.
+    /// prompt [`up`] reads then, answered by `answer` when given (the
+    /// question as `asked` leaves what was read), and the status and the
+    /// page's `closed` after.
     fn run(
         state: i32,
         status: i32,
         held: bool,
         answer_yes: Option<bool>,
+    ) -> (Option<Prompt>, Option<bool>, Option<Prompt>, i32, i32) {
+        run_asking(state, status, held, answer_yes, |p| p.clone())
+    }
+
+    fn run_asking(
+        state: i32,
+        status: i32,
+        held: bool,
+        answer_yes: Option<bool>,
+        asked: impl Fn(&Prompt) -> Prompt,
     ) -> (Option<Prompt>, Option<bool>, Option<Prompt>, i32, i32) {
         let program = asking(state, status, held);
         let files = Files {
@@ -330,7 +348,7 @@ mod tests {
         vm.step(&mut host).unwrap();
         let before = up(&vm, host.world);
         let answered = match (answer_yes, &before) {
-            (Some(yes), Some(p)) => Some(answer(&mut vm, &mut host, p, yes).unwrap()),
+            (Some(yes), Some(p)) => Some(answer(&mut vm, &mut host, &asked(p), yes).unwrap()),
             _ => None,
         };
         let after = up(&vm, host.world);
@@ -377,6 +395,24 @@ mod tests {
         ] {
             let (before, ..) = run(state, status, held, None);
             assert_eq!(before, None, "{state} {status} {held}");
+        }
+        // An answer chosen for another question on the same dialogue UI (its
+        // string or its page another) answers nothing.
+        for other in [
+            (|p: &Prompt| Prompt {
+                question: Value::Int(99),
+                ..p.clone()
+            }) as fn(&Prompt) -> Prompt,
+            |p: &Prompt| Prompt {
+                page: Value::Int(98),
+                ..p.clone()
+            },
+        ] {
+            let (_, answered, after, status, closed) =
+                run_asking(ASKING, WAITING, true, Some(true), other);
+            assert_eq!(answered, Some(false));
+            assert!(after.is_some(), "still asking");
+            assert_eq!((status, closed), (WAITING, 0));
         }
     }
 }

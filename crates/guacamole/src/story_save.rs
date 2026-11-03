@@ -486,9 +486,42 @@ pub fn resume(values: Option<&SaveValues>) -> Resume {
     } else if !done(v, LEVEL_214) {
         Resume::Level(LEVEL_214_ARCHIVE.to_owned())
     } else {
-        let stage = 1 + HUB_UNLOCKS.iter().filter(|a| done(v, a)).count();
-        Resume::Hub(format!("level_hub_2_stage_{stage}"))
+        Resume::Hub(hub_stage(HUB_UNLOCKS.iter().filter(|a| done(v, a)).count()))
     }
+}
+
+/// The hub's stage the village opens with `unlocks_done` of its unlocking
+/// adventures done, as an archive (`Global - Get Village Load`:
+/// `Level_Hub_2_Stage_` and one past the number done). The title's load
+/// ([`resume`]) and the Pause Controller's switch ([`village`]) both go
+/// there by it.
+pub fn hub_stage(unlocks_done: usize) -> String {
+    format!(
+        "level_hub_2_stage_{}",
+        1 + unlocks_done.min(HUB_UNLOCKS.len())
+    )
+}
+
+/// Where a level change naming the village (`999_Level_Village`: 214's
+/// level end, the pause menu's return) takes the run now, as the Pause
+/// Controller's switch resolves it (openspec AU.27): [`hub_stage`] of the
+/// hub's unlocking adventures (`level progression data`'s `village
+/// unlocks`) whose `complete` the run holds set, which the title fills from
+/// the save and a level end's `Game - Level End` sets for its own
+/// adventure. None before the run's init defines them.
+pub fn village(vm: &Vm) -> Option<String> {
+    let unlocks = global(vm, "level progression data")
+        .and_then(|l| vm.field(l, "village unlocks"))
+        .and_then(|s| vm.set(s).map(<[_]>::to_vec))?;
+    let done = unlocks
+        .iter()
+        .filter(|ad| {
+            vm.field(**ad, "complete")
+                .and_then(|c| int_of(vm, c))
+                .is_some_and(|c| c > 0)
+        })
+        .count();
+    Some(hub_stage(done))
 }
 
 /// What the session's save system did, for `/api/_test/tv`'s `story`.
