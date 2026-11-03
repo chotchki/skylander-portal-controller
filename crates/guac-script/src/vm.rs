@@ -4086,10 +4086,22 @@ impl Vm {
                         }
                         let v = self.read(prev, host)?;
                         let Value::Set(s) = self.materialize(v) else {
-                            return if v == Value::Null {
-                                Err(Fault::Nothing)
-                            } else {
-                                unsupported(format!("{} of {v:?}", b.name()))
+                            return match (v, b) {
+                                (Value::Null, _) => Err(Fault::Nothing),
+                                // One object where a set is read (openspec
+                                // AU.2: Cynder's scorch plays the `next` of
+                                // a variable holding one sound): a set of
+                                // one, each element read the object itself
+                                // (crate docs, Variables, structures and
+                                // sets).
+                                (
+                                    Value::Object(_),
+                                    Builtin::First
+                                    | Builtin::Last
+                                    | Builtin::Next
+                                    | Builtin::Random,
+                                ) => Ok(Spot::Const(v)),
+                                _ => unsupported(format!("{} of {v:?}", b.name())),
                             };
                         };
                         let elems = &self.sets[s as usize].elems;

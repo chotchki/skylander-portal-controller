@@ -629,7 +629,10 @@
 //! - `setvariant.count`, `.first`, `.last` and `.random` on a set, and
 //!   `.next`, its elements in turn from the first, round again after the
 //!   last, a cursor per set (a reading: the original's sound sets read it
-//!   so; whether its order is shuffled isn't read);
+//!   so; whether its order is shuffled isn't read); on one of the file's
+//!   objects instead of a set, `.first`, `.last`, `.next` and `.random`
+//!   read the object itself, as a set of one (a reading, openspec AU.2:
+//!   Cynder's scorch plays the next of a variable a sound was set into);
 //! - `optoplevelbehavior.behavior`, the running placement's behaviour as the
 //!   object `set behavior` names (`if reference behavior == <Idle>`);
 //! - `system.cast to integer`, an integer cell: written, it truncates toward
