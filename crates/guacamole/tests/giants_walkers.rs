@@ -3815,7 +3815,10 @@ fn the_fourteen_asking_walkers_join_or_keep_their_cards_for_their_own_reasons() 
         started.elapsed(),
         load1()
     );
-    assert_eq!((gating, cosmetic), (9, 1));
+    // AH.150's nine and one, and AU.2's: Sonic Boom's hatchling's and Stump
+    // Smash's acorn's, and the woodpecker's five in each of Tree Rex's two
+    // files.
+    assert_eq!((gating, cosmetic), (9 + 12, 1));
     // As the TV joins them.
     let mut table = Vec::new();
     for load in ASKING {
@@ -6331,7 +6334,12 @@ fn a_probe_of_ops() {
         }
         return;
     }
-    let asked = std::env::var("AU2_OPS").expect("AU2_OPS=script.ai:from-to,...");
+    // Nothing asked, nothing printed: the plain run of every disc test
+    // passes (AG.182).
+    let Ok(asked) = std::env::var("AU2_OPS") else {
+        println!("AU2_OPS unset (script.ai:from-to,...): nothing to dump");
+        return;
+    };
     for one in asked.split(',') {
         let (file, range) = one.split_once(':').expect("script.ai:from-to");
         let (from, to) = range.split_once('-').expect("from-to");

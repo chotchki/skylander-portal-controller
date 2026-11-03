@@ -304,8 +304,11 @@ fn the_fights_parts_extract_whole_and_resume() {
         "the chest"
     );
     // AH.42's two from AH.8's route (the cannon's pan, the pit's intro) name
-    // no model: the creatures' palettes stay these eight.
-    assert_eq!(owners.len(), 8, "{owners:?}");
+    // no model: the creatures' palettes stayed eight until AS.52's outro
+    // Mabu (three), AS.78's camera rigs (four), all of the level's own
+    // scripts (none a walker's: AU.1's run found no chapter 1 placement
+    // running one), took them to fifteen.
+    assert_eq!(owners.len(), 15, "{owners:?}");
     // AG.177's jumping goats add `Sheep_1` and `Sheep_3`'s, by
     // `Goat_Jumping_Pit.ai`: without it the TV's goats have no clip lengths.
     assert!(
@@ -369,8 +372,9 @@ fn the_fights_parts_extract_whole_and_resume() {
         scripts::whitelisted_walker_scripts().len()
     );
     // The level's 57 with AG.177's jumping goats and AH.42's two from AH.8's
-    // route; the walkers' 244 and since AU.1 their attacks' 237.
-    assert_eq!(held, 1 + 22 + 3 + 8 + 481 + 57);
+    // route and 59 with AS.52's outro actors'; the walkers' 244 and since
+    // AU.1 their attacks' 237.
+    assert_eq!(held, 1 + 22 + 3 + 8 + 481 + 59);
     println!(
         "  the script part read back and parsed in {:.2} s",
         parse_started.elapsed().as_secs_f64()
@@ -518,7 +522,9 @@ fn the_fights_parts_extract_whole_and_resume() {
     )))
     .unwrap();
     assert!(guac_ir::to_postcard(&creatures).unwrap() == post);
-    for archive in scripts::spawn_archives() {
+    // Every spawn archive's, the walkers' since AU.1.
+    let listed = scripts::read_walkers(&dir).unwrap().listed;
+    for archive in scripts::spawn_archives_with(&listed) {
         let ron: SpawnModels = read(&dir, &IrFormat::Ron.spawn_path(&archive));
         let post = std::fs::read(dir.join(IrFormat::Postcard.spawn_path(&archive))).unwrap();
         assert!(guac_ir::to_postcard(&ron).unwrap() == post, "{archive}");
@@ -526,7 +532,9 @@ fn the_fights_parts_extract_whole_and_resume() {
     println!(
         "  RON and postcard agree byte for byte: {agreed} palettes, the creatures', the spawn models'"
     );
-    assert_eq!((lp.parts_read, lp.parts_kept), (8, 1));
+    // Chapter 1's parts but its entry (one file for either format), nine
+    // since AS.17's emitters.
+    assert_eq!((lp.parts_read, lp.parts_kept), (9, 1));
     assert_eq!((sp.parts_read, sp.parts_kept), (1, 1));
 
     println!(

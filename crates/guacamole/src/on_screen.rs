@@ -402,9 +402,9 @@ pub const READ: &[Read] = &[
         file: "112_Woodpecker.ai",
         position: 202,
         def: None,
-        verdict: Verdict::Cosmetic,
+        verdict: Verdict::Gates,
         gates: "the puff he leaves as he lands back on the nest, spawned only while he's on \
-                screen; nothing reads it back",
+                screen: one op with #188's and #378's, so read as they are",
     },
     Read {
         file: "112_Woodpecker.ai",
