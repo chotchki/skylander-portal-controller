@@ -16,6 +16,10 @@ When a level's own end-of-level sequencing runs, the TV SHALL show its completio
 - **WHEN** a player presses left or right on the completion screen
 - **THEN** the next tab's objectives show (its story goals, its dares, its collections), and the continue press on any tab goes on
 
+#### Scenario: The portal holds the level under the screen
+- **WHEN** a figure placed during the completion screen raises the portal's alert
+- **THEN** the screen steps aside under the alert and a continue press there goes nowhere; once the alert clears the screen is back on the tab it was on
+
 #### Scenario: The screen's art isn't extracted yet
 - **WHEN** a level ends on an extract that doesn't hold the screen's art
 - **THEN** the screen still shows the level's results in the TV's own style, and the TV's report says the art is missing
