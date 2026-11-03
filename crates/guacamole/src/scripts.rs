@@ -5247,6 +5247,37 @@ mod tests {
         }
     }
 
+    /// openspec AS.96: the interiors' scripts on every level's listing,
+    /// chapter 1's and any other's, by script, every tick, and the portal's
+    /// warp answered by the TV in every run its hero joins (stand-in ledger:
+    /// `warp`); the init chain's run, which has no hero, answers none.
+    #[test]
+    fn the_interiors_run_on_every_levels_listing_and_the_warp_is_answered() {
+        let files = Files::default();
+        for level in ["level_213_tutotial", "level_214_tutotial_2", "level_201"] {
+            let c = level_config(Mode::Play, &files, 4, level);
+            for script in INTERIOR_SCRIPTS {
+                let path = format!("C:/tfb/Content/Levels/Includes/Interiors/Scripts/{script}");
+                assert_eq!(
+                    c.whitelist.listing("a placement", &path),
+                    guac_script::Listed::Every,
+                    "{level} {script}"
+                );
+            }
+            assert!(
+                c.answered.iter().any(|m| m == crate::interiors::WARP),
+                "{level}"
+            );
+        }
+        assert!(
+            hero_config(Mode::Play)
+                .answered
+                .iter()
+                .any(|m| m == crate::interiors::WARP)
+        );
+        assert!(config(Mode::Play).answered.is_empty());
+    }
+
     /// openspec AS.59: level 214's way from its first island to its second
     /// by name, on 214's listing alone and in no encounter (never walked).
     #[test]

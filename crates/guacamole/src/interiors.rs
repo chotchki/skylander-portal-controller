@@ -183,15 +183,26 @@ pub fn darkness(vm: &Vm, world: &ScriptWorld) -> f32 {
         return 0.0;
     };
     let model = keeper.model();
-    controllers(vm, world)
-        .filter_map(|id| vm.local(id, "darkness alpha mask"))
-        .filter_map(|v| model.sprite_of(vm.value(v)))
-        .map(|s| model.sprite(s))
-        .filter(|s| {
-            s.state != guac_interface::sprite::State::Removed
-                && s.properties & guac_interface::sprite::props::VISIBLE != 0
-        })
-        .map(|s| 1.0 - f32::from(s.color[3]) / 255.0)
+    darkest(
+        controllers(vm, world)
+            .filter_map(|id| vm.local(id, "darkness alpha mask"))
+            .filter_map(|v| model.sprite_of(vm.value(v)))
+            .map(|s| model.sprite(s))
+            .map(|s| {
+                let shows = s.state != guac_interface::sprite::State::Removed
+                    && s.properties & guac_interface::sprite::props::VISIBLE != 0;
+                (shows, s.color[3])
+            }),
+    )
+}
+
+/// The darkest of the masks, each whether it shows (not taken off, visible)
+/// and its alpha: one that shows darkens by 1 - alpha / 255, one that
+/// doesn't by nothing.
+fn darkest(masks: impl Iterator<Item = (bool, u8)>) -> f32 {
+    masks
+        .filter(|(shows, _)| *shows)
+        .map(|(_, alpha)| 1.0 - f32::from(alpha) / 255.0)
         .fold(0.0, f32::max)
 }
 
@@ -204,6 +215,22 @@ fn controllers<'a>(vm: &'a Vm, world: &'a ScriptWorld) -> impl Iterator<Item = P
         .filter(|p| p.script.as_deref().is_some_and(|s| s.ends_with(CONTROLLER)))
         .filter_map(|p| world.objects.get(&p.obj))
         .filter_map(|&h| vm.placement_of(h))
+}
+
+/// Outside the door of the interior whose controller `unit`'s file places
+/// as `name` (the dev entry's interior anchor, openspec AS.96): its first
+/// waypoint, where its way out sets a hero down, and the heading from there
+/// to the controller, the way into its box; none for a name no controller
+/// of that file goes by, or one with no waypoint.
+pub fn door(world: &ScriptWorld, unit: u16, name: &str) -> Option<(Vec3, f32)> {
+    let p = world.templates.values().find(|p| {
+        p.obj.unit == unit
+            && p.name == name
+            && p.script.as_deref().is_some_and(|s| s.ends_with(CONTROLLER))
+    })?;
+    let at = *world.points.get(p.waypoints.first()?)?;
+    let to = Vec3::from_array(p.position) - at;
+    Some((at, to.x.atan2(to.z).to_degrees().rem_euclid(360.0)))
 }
 
 /// The interiors a run's level holds and what each is doing, for
@@ -220,4 +247,201 @@ pub fn states(vm: &Vm, world: &ScriptWorld) -> Vec<(String, Option<String>)> {
         .collect();
     out.sort();
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use guac_motion::hero::Hero;
+    use guac_motion::parry::ParryWorld;
+    use guac_motion::seam::{BodyId, PhysicsSeam};
+    use guac_motion::tuning::{Tuning, eruptor_solid};
+    use guac_script::Obj;
+
+    use super::*;
+    use crate::script_engine::{Actor, Pad};
+    use crate::scripts::{Files, Placed, headless_handles, headless_objects};
+
+    const HERO: Handle = 0x6200_0001;
+    const MARKER: Handle = 0x6200_0002;
+    const CONTROLLER_AT: [f32; 3] = [10.0, 0.0, 10.0];
+    const DOOR: Obj = Obj { unit: 4, index: 90 };
+
+    /// One hero on nothing: what a warp moves.
+    struct One {
+        seam: ParryWorld,
+        hero: Hero,
+    }
+
+    impl Engine for One {
+        fn hero(&mut self, h: Handle) -> Option<&mut Hero> {
+            (h == HERO).then_some(&mut self.hero)
+        }
+        fn heroes(&self) -> Vec<Handle> {
+            vec![HERO]
+        }
+        fn seam(&self) -> &dyn PhysicsSeam {
+            &self.seam
+        }
+        fn view_heading(&self) -> f32 {
+            0.0
+        }
+        fn pad(&self, _: usize) -> Pad {
+            Pad::default()
+        }
+        fn body(&self, _: Handle) -> Option<BodyId> {
+            None
+        }
+        fn actor_of(&self, _: BodyId) -> Option<Handle> {
+            None
+        }
+    }
+
+    fn one() -> One {
+        let mut hero = Hero::new(eruptor_solid(), Tuning::ERUPTOR, Vec3::ZERO, 45.0);
+        hero.walk.velocity = Vec3::new(1.0, 0.0, 0.0);
+        One {
+            seam: ParryWorld::new(&[]).unwrap(),
+            hero,
+        }
+    }
+
+    /// A level with one interior controller (its door its first waypoint,
+    /// 2 m south of it) and a template of the same script under another
+    /// name, and a marker actor at (3, 1, -4) facing 90.
+    fn world() -> ScriptWorld {
+        let controller = |name: &str, index: u32, state: u32| {
+            let mut p = Placed::named(
+                Obj { unit: 4, index },
+                name,
+                Some("C:/tfb/Content/Levels/Includes/Interiors/Scripts/Interior_Controller.ai"),
+                state,
+            );
+            p.position = CONTROLLER_AT;
+            p
+        };
+        let mut house = controller("Interior_Controller_House", 1, 4);
+        house.waypoints = vec![DOOR];
+        let files = Files {
+            placed: vec![
+                house,
+                controller("Interior_controller_Template", 2, 5),
+                Placed::named(Obj { unit: 4, index: 3 }, "Not_An_Interior", None, 4),
+            ],
+            points: HashMap::from([(DOOR, Vec3::new(10.0, 0.0, 8.0))]),
+            ..Files::default()
+        };
+        let handles = headless_handles(&files);
+        let mut w = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let mut marker = Actor::blank();
+        marker.position = Vec3::new(3.0, 1.0, -4.0);
+        marker.angles.facing = 90.0;
+        w.actors.insert(MARKER, marker);
+        w
+    }
+
+    fn warp(minion: Value, target: Value, delay: f32) -> [(&'static str, Value); 3] {
+        [
+            ("delay", Value::Float(delay)),
+            // The macro's own parameter carries a space after its name.
+            ("minion ", minion),
+            ("target location", target),
+        ]
+    }
+
+    /// openspec AS.96 (stand-in ledger: `warp`): a warp asked of the hero
+    /// is answered and owed; it lands once its 0.2 s are out (a shorter
+    /// delay raised to it, as the macro raises one), setting him down at
+    /// its target facing as the target does, at rest, and is gone.
+    #[test]
+    fn a_warp_lands_its_minion_at_its_target_once_its_delay_is_out() {
+        let (mut w, mut e) = (world(), one());
+        assert!(answer(
+            &mut w,
+            WARP,
+            &warp(Value::Entity(HERO), Value::Entity(MARKER), 0.0)
+        ));
+        assert_eq!(w.warps.len(), 1);
+        for _ in 0..11 {
+            land(&mut w, 1.0 / 60.0, &mut e);
+        }
+        assert_eq!(e.hero.pivot, Vec3::ZERO, "not before its 0.2 s");
+        assert!(w.landed.is_empty());
+        land(&mut w, 1.0 / 60.0 + 1e-4, &mut e);
+        assert_eq!(e.hero.pivot, Vec3::new(3.0, 1.0, -4.0));
+        assert_eq!(e.hero.facing, 90.0);
+        assert_eq!(e.hero.walk.velocity, Vec3::ZERO);
+        assert!(w.warps.is_empty());
+        assert_eq!(w.landed.len(), 1);
+        assert_eq!(w.landed[0].at, Vec3::new(3.0, 1.0, -4.0));
+        // A longer delay is its own.
+        let (mut w, mut e) = (world(), one());
+        answer(
+            &mut w,
+            WARP,
+            &warp(Value::Entity(HERO), Value::Entity(MARKER), 0.5),
+        );
+        land(&mut w, 0.4, &mut e);
+        assert_eq!(e.hero.pivot, Vec3::ZERO);
+        land(&mut w, 0.11, &mut e);
+        assert_eq!(e.hero.pivot, Vec3::new(3.0, 1.0, -4.0));
+    }
+
+    /// A warp of no one (the second player's with none) is answered with
+    /// nothing owed; a second warp of the same minion replaces the first;
+    /// one whose target names no place by then lands nowhere and goes; any
+    /// other macro isn't answered.
+    #[test]
+    fn a_warp_of_no_one_owes_nothing_and_a_targetless_one_lands_nowhere() {
+        let (mut w, mut e) = (world(), one());
+        assert!(answer(
+            &mut w,
+            WARP,
+            &warp(Value::Null, Value::Entity(MARKER), 0.0)
+        ));
+        assert!(w.warps.is_empty());
+        assert!(!answer(&mut w, "Portal - Exit Object", &[]));
+        assert!(answer(
+            &mut w,
+            "portal - warp player to location",
+            &warp(Value::Entity(HERO), Value::Entity(MARKER), 0.0)
+        ));
+        assert!(answer(
+            &mut w,
+            WARP,
+            &warp(Value::Entity(HERO), Value::Null, 0.0)
+        ));
+        assert_eq!(w.warps.len(), 1, "the second replaces the first");
+        land(&mut w, 1.0, &mut e);
+        assert!(w.warps.is_empty() && w.landed.is_empty());
+        assert_eq!(e.hero.pivot, Vec3::ZERO);
+    }
+
+    /// The dev entry's interior anchor: outside the named controller's
+    /// door (its first waypoint), facing its box; a template of the same
+    /// script under its own name, a name no controller goes by and a
+    /// placement of another script give none.
+    #[test]
+    fn the_door_of_an_interior_is_its_first_waypoint_facing_its_box() {
+        let w = world();
+        let (at, facing) = door(&w, 4, "Interior_Controller_House").unwrap();
+        assert_eq!(at, Vec3::new(10.0, 0.0, 8.0));
+        assert!(facing.abs() < 1e-4, "{facing}");
+        assert_eq!(door(&w, 4, "Interior_controller_Template"), None);
+        assert_eq!(door(&w, 4, "Not_An_Interior"), None);
+        assert_eq!(door(&w, 3, "Interior_Controller_House"), None);
+    }
+
+    /// The darkness: the darkest mask that shows, 1 - alpha / 255; one
+    /// taken off or hidden darkens nothing, nor does no mask at all.
+    #[test]
+    fn the_darkest_mask_that_shows_darkens_the_screen() {
+        assert_eq!(darkest([].into_iter()), 0.0);
+        assert_eq!(darkest([(true, 255)].into_iter()), 0.0);
+        assert_eq!(darkest([(true, 0)].into_iter()), 1.0);
+        assert_eq!(darkest([(false, 0)].into_iter()), 0.0);
+        let d = darkest([(true, 204), (false, 0), (true, 51)].into_iter());
+        assert!((d - 0.8).abs() < 1e-6, "{d}");
+    }
 }

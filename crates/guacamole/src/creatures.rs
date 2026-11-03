@@ -793,6 +793,7 @@ mod tests {
         Asked {
             plan: Plan::of(Anchor::Start),
             seed: None,
+            interior: None,
         }
     }
 

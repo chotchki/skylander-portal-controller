@@ -50,6 +50,12 @@
 //!   unfought behind him, and nothing on the second island stands on them,
 //!   so from the ship on the level is as a walk leaves it: Setup_003's
 //!   trigger off the gangplank, Setup_004 past the locked door.
+//! - Interior (openspec AS.96): any level's interior by its controller's
+//!   name (`{"anchor": "interior", "interior": "<name>"}`, or
+//!   `GUAC_DEV_ENTRY=interior:<name>`): once he's settled, set down at the
+//!   controller's first waypoint, outside its door, facing its box, from
+//!   where a walk of a step or two takes him in. Nothing else is set: a
+//!   state a walk reaches wherever the level's way to the door is open.
 //! - Norticus' scene, once the four are beaten, ends from his own script as
 //!   the original's does (openspec AH.56: the cutscene system's update in
 //!   the game systems' tick), freeing the hero: the entry sets nothing
@@ -100,6 +106,9 @@ pub(crate) enum Anchor {
     /// Level 214's first ship part (openspec AS.84): set down by it on its
     /// ledge, for the second island.
     Part,
+    /// Any level's interior, by its controller's name (openspec AS.96):
+    /// set down outside its door ([`guacamole::interiors::door`]).
+    Interior,
 }
 
 impl Anchor {
@@ -112,6 +121,7 @@ impl Anchor {
             "pods" => Some(Anchor::Pods),
             "elves" => Some(Anchor::Elves),
             "part" => Some(Anchor::Part),
+            "interior" => Some(Anchor::Interior),
             _ => None,
         }
     }
@@ -252,6 +262,19 @@ impl Plan {
                 view: None,
                 wake: Vec::new(),
             },
+            // Its door's place is the level's, read once he's settled.
+            Anchor::Interior => Plan {
+                anchor,
+                settle: SETTLE,
+                set_downs: vec![(0, Vec3::ZERO, 0.0)],
+                creatures_at: u32::MAX,
+                creatures: Vec::new(),
+                f0: 1,
+                first_alert: None,
+                loot: None,
+                view: None,
+                wake: Vec::new(),
+            },
             Anchor::Part => Plan {
                 anchor,
                 settle: SETTLE,
@@ -308,12 +331,13 @@ impl Plan {
     }
 }
 
-/// An entry asked for: its route, and the seed the session's generator
-/// takes at F0, if one was asked.
+/// An entry asked for: its route, the seed the session's generator takes at
+/// F0, if one was asked, and the interior an [`Anchor::Interior`] names.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Asked {
     pub(crate) plan: Plan,
     pub(crate) seed: Option<u32>,
+    pub(crate) interior: Option<String>,
 }
 
 /// Entries asked over `POST /api/_test/tv/entry`, waiting for a frame.
@@ -412,10 +436,19 @@ pub(crate) fn asked_at_start(dev_build: bool, value: Option<&str>) -> Option<Ask
     if !dev_build {
         return None;
     }
-    let anchor = Anchor::parse(value?)?;
-    Some(Asked {
+    let value = value?;
+    if let Some(name) = value.trim().strip_prefix("interior:") {
+        return Some(Asked {
+            plan: Plan::of(Anchor::Interior),
+            seed: None,
+            interior: Some(name.trim().to_owned()),
+        });
+    }
+    let anchor = Anchor::parse(value)?;
+    (anchor != Anchor::Interior).then(|| Asked {
         plan: Plan::of(anchor),
         seed: None,
+        interior: None,
     })
 }
 
@@ -437,7 +470,7 @@ impl Plugin for DevEntryPlugin {
         if env.is_some() && at_start.is_none() {
             warn!(
                 value = ?env,
-                "GUAC_DEV_ENTRY isn't `b`, `start`, `end`, `pods`, `elves` or `part`: no entry"
+                "GUAC_DEV_ENTRY isn't `b`, `start`, `end`, `pods`, `elves`, `part` or `interior:<name>`: no entry"
             );
         }
         if let Some(a) = &at_start {
@@ -498,6 +531,7 @@ pub(crate) fn drive(
     };
     let plan = asked.plan.clone();
     let seed = asked.seed;
+    let interior = asked.interior.clone();
     let (Some(mut runtime), Some(mut world), Some(level)) = (
         runtime,
         world,
@@ -556,8 +590,25 @@ pub(crate) fn drive(
     let Ok((_, _, mut body)) = heroes.get_mut(hero) else {
         return;
     };
-    if let Some((_, at, facing)) = plan.set_downs.iter().find(|s| s.0 == k) {
-        set_down(&mut body, &seam, *at, *facing);
+    if let Some(&(_, at, facing)) = plan.set_downs.iter().find(|s| s.0 == k) {
+        // An interior's door, read off the level's run (openspec AS.96).
+        let (at, facing) = match (plan.anchor, interior.as_deref()) {
+            (Anchor::Interior, Some(name)) => {
+                match guacamole::interiors::door(&world, level, name) {
+                    Some(door) => door,
+                    None => {
+                        let why = format!("{name} is no interior's controller on this level");
+                        warn!(reason = %why, "the dev entry refused");
+                        entry.refused = Some(why);
+                        entry.asked = None;
+                        entry.phase = Phase::None;
+                        return;
+                    }
+                }
+            }
+            _ => (at, facing),
+        };
+        set_down(&mut body, &seam, at, facing);
         let view = plan
             .view
             .filter(|_| k == plan.set_downs.last().map_or(0, |s| s.0));
@@ -653,12 +704,14 @@ fn rest_camera(
     }
 }
 
-/// `POST /api/_test/tv/entry`'s body.
+/// `POST /api/_test/tv/entry`'s body: `interior` names the controller an
+/// `interior` anchor sets him down by, and only that anchor takes one.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EntryBody {
     anchor: Anchor,
     seed: Option<u32>,
+    interior: Option<String>,
 }
 
 /// `POST /api/_test/tv/entry` (`{"anchor": "b"}` or `"start"`, optionally
@@ -672,14 +725,15 @@ pub(crate) fn routes<S: Clone + Send + Sync + 'static>(asks: &EntryAsks) -> axum
         "/api/_test/tv/entry",
         axum::routing::post(move |body: Result<axum::Json<EntryBody>, JsonRejection>| {
             let kept = match body {
-                Ok(axum::Json(b)) => {
+                Ok(axum::Json(b)) if (b.anchor == Anchor::Interior) == b.interior.is_some() => {
                     *asks.lock().unwrap_or_else(|e| e.into_inner()) = Some(Asked {
                         plan: Plan::of(b.anchor),
                         seed: b.seed,
+                        interior: b.interior,
                     });
                     true
                 }
-                Err(_) => false,
+                _ => false,
             };
             async move {
                 if kept {
@@ -702,6 +756,47 @@ mod tests {
 
     use super::*;
     use crate::test_support::play::{CREATURE_AT, TRIGGERS, fight_app, fight_app_walker, until};
+
+    /// openspec AS.96: `POST /api/_test/tv/entry` takes an interior's name
+    /// with the `interior` anchor alone: kept with the ask, 202; the anchor
+    /// without one, or a name with another anchor, is a 400 and keeps
+    /// nothing.
+    #[tokio::test]
+    async fn the_entry_route_takes_an_interior_by_name_with_its_anchor_alone() {
+        use tower::ServiceExt;
+        let asks = EntryAsks::default();
+        let routes = routes::<()>(&asks);
+        for (body, status) in [
+            (r#"{"anchor":"interior"}"#, 400),
+            (
+                r#"{"anchor":"b","interior":"Interior_controller_Cave"}"#,
+                400,
+            ),
+            (
+                r#"{"anchor":"interior","interior":"Interior_controller_Cave"}"#,
+                202,
+            ),
+        ] {
+            let got = routes
+                .clone()
+                .oneshot(
+                    axum::http::Request::post("/api/_test/tv/entry")
+                        .header("content-type", "application/json")
+                        .body(axum::body::Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status();
+            assert_eq!(got, status, "{body}");
+            let kept = asks.0.lock().unwrap().take();
+            assert_eq!(kept.is_some(), status == 202, "{body}");
+            if let Some(k) = kept {
+                assert_eq!(k.plan.anchor, Anchor::Interior);
+                assert_eq!(k.interior.as_deref(), Some("Interior_controller_Cave"));
+            }
+        }
+    }
 
     /// A build without `dev-tools` (which `test-hooks` turns on) passes
     /// `false`: no plugin, so no [`DevEntry`], and `GUAC_DEV_ENTRY` asks for
@@ -749,6 +844,20 @@ mod tests {
         assert_eq!(part.set_downs, [(0, Vec3::new(29.45, -6.92, 56.37), 0.0)]);
         assert_eq!((part.settle, part.f0), (SETTLE, 1));
         assert!(part.creatures.is_empty() && part.wake.is_empty());
+        // Any level's interior by its controller's name (openspec AS.96):
+        // `interior:<name>` asks it, a bare `interior` names none.
+        let at_door = asked_at_start(true, Some("interior: Interior_controller_Cave")).unwrap();
+        assert_eq!(at_door.plan.anchor, Anchor::Interior);
+        assert_eq!(
+            at_door.interior.as_deref(),
+            Some("Interior_controller_Cave")
+        );
+        assert_eq!(anchor("interior"), None);
+        assert_eq!(asked_at_start(true, Some("b")).unwrap().interior, None);
+        let door = Plan::of(Anchor::Interior);
+        assert_eq!(door.set_downs.len(), 1);
+        assert_eq!((door.settle, door.f0), (SETTLE, 1));
+        assert!(door.creatures.is_empty() && door.wake.is_empty());
         assert_eq!(asked_at_start(true, None), None);
         // Anchor B's plan is AH.8's route and AH.4's reads: the camera
         // volumes on the way to the strip, then the route from the strip,
@@ -793,6 +902,7 @@ mod tests {
                 wake: Vec::new(),
             },
             seed: Some(77),
+            interior: None,
         }
     }
 
@@ -936,6 +1046,7 @@ mod tests {
         let asked = Asked {
             plan: Plan::of(Anchor::Start),
             seed: None,
+            interior: None,
         };
         let (mut app, _) = fight_app(tmp.path(), Some(asked));
         until(&mut app, "the entry at its anchor", |a| {
