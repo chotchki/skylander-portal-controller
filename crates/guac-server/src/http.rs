@@ -1233,7 +1233,11 @@ impl Drop for LoadingGuard<'_> {
     }
 }
 
-async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Signed) -> Response {
+async fn launch_game(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Signed(body_bytes): Signed,
+) -> Response {
     let body: LaunchBody = match serde_json::from_slice(&body_bytes) {
         Ok(b) => b,
         Err(e) => {
@@ -1381,6 +1385,38 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
         }
     };
 
+    // The game's host (openspec AU.3): the profile unlocked on the phone that
+    // started it, whose story save alone advances; none when that phone has
+    // none unlocked. Set before the boot, so the TV never sees the game
+    // without it, and cleared again if the boot fails. guacamole's alone.
+    let hosts = state.driver_kind == crate::config::DriverKind::Native;
+    if hosts {
+        let session = headers
+            .get("x-session-id")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(SessionId);
+        let profile_id = match session {
+            Some(sid) => state.sessions.profile_of(sid).await,
+            None => None,
+        };
+        info!(
+            serial = %body.serial,
+            host = ?profile_id,
+            "the game's host: its story save alone advances"
+        );
+        state
+            .game_host
+            .set(profile_id.map(|profile_id| crate::saves::Host {
+                profile_id,
+                game: body.serial.as_str().to_owned(),
+            }));
+    }
+    let unhost = || {
+        if hosts {
+            state.game_host.set(None);
+        }
+    };
     let (tx, rx) = tokio::sync::oneshot::channel();
     if let Err(e) = state
         .driver_tx
@@ -1395,6 +1431,7 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
         })
         .await
     {
+        unhost();
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("queue BootDirect: {e}"),
@@ -1404,6 +1441,7 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
     match rx.await {
         Ok(Ok(())) => {}
         Ok(Err(e)) => {
+            unhost();
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("direct-boot failed: {e}"),
@@ -1411,6 +1449,7 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
                 .into_response();
         }
         Err(e) => {
+            unhost();
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("BootDirect ack dropped: {e}"),
@@ -1687,6 +1726,8 @@ async fn quit_game(
     guard.current_eboot = None;
     let proc = guard.process.take();
     drop(guard);
+    // No game, no host (openspec AU.3); the product never sets one.
+    state.game_host.set(None);
     if let Some(mut proc) = proc {
         // PLAN 16.6.1.3: under no-GUI + IPC there's no "RPCS3 " main window — pass
         // the IPC-published game-window handle so WM_CLOSE has a real target

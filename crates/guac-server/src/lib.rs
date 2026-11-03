@@ -21,6 +21,7 @@ pub mod paths;
 pub mod profiles;
 pub mod progress;
 pub mod round_qr;
+pub mod saves;
 pub mod setup;
 #[cfg(test)]
 mod setup_tests;

@@ -191,6 +191,7 @@ async fn native_waiting_as(kind: DriverKind) -> Native {
         hooks: Hooks::default(),
         progression: ProgressionSlot::default(),
         level_hero: LevelHero::default(),
+        game_host: crate::saves::GameHost::default(),
         #[cfg(feature = "test-hooks")]
         test_injector: None,
     });
@@ -423,6 +424,43 @@ async fn launch_tracks_no_process_and_marks_the_game_current() {
     assert!(
         !n.driver.ipc_queried.load(Ordering::SeqCst),
         "BootDirect reached a spawn arm"
+    );
+}
+
+/// AU.3: the launch makes the profile unlocked on the launching phone the
+/// game's host, whose story save alone advances; the quit takes it away, and
+/// a launch from a phone with none unlocked hosts nobody.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_launching_phones_profile_hosts_the_game_until_the_quit() {
+    use crate::saves::Host;
+    let n = native().await;
+    let (sid, profile_id) = n.unlocked_session().await;
+    assert_eq!(n.state.game_host.get(), None);
+    let launch = r#"{"serial":"BLUS30968"}"#;
+    assert_eq!(
+        n.send("POST", "/api/launch", launch, Some(sid)).await,
+        StatusCode::ACCEPTED
+    );
+    assert_eq!(
+        n.state.game_host.get(),
+        Some(Host {
+            profile_id,
+            game: "BLUS30968".into()
+        })
+    );
+    assert_eq!(
+        n.send("POST", "/api/quit", "", Some(sid)).await,
+        StatusCode::ACCEPTED
+    );
+    assert_eq!(n.state.game_host.get(), None, "the quit kept the host");
+    assert_eq!(
+        n.send("POST", "/api/launch", launch, None).await,
+        StatusCode::ACCEPTED
+    );
+    assert_eq!(
+        n.state.game_host.get(),
+        None,
+        "a phone with no profile hosted"
     );
 }
 

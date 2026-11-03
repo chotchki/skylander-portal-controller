@@ -22,6 +22,7 @@ use crate::config::{Config, DriverKind};
 use crate::figures::{FigureList, FigureSet, RosterState};
 use crate::hooks::Hooks;
 use crate::progress::{LevelHero, ProgressSink, ProgressionSlot, spawn_drainer};
+use crate::saves::{GameHost, StorySink, spawn_keeper};
 use crate::state::{
     AppState, DriverJob, GameList, LauncherScreen, LauncherStatus, RpcsLifecycle,
     spawn_connectivity_watchdog, spawn_crash_watchdog, spawn_driver_worker, spawn_state_poller,
@@ -128,6 +129,11 @@ pub struct ServerHandles {
     /// Which slot's figure is the hero in a level; guacamole's TV writes it
     /// (AH.36) and the slot reset refuses that slot (AH.3).
     pub level_hero: LevelHero,
+    /// The game's host, as guacamole's launch set it (AU.3).
+    pub game_host: GameHost,
+    /// Where guacamole's TV reads and writes the host's story save (AU.3):
+    /// a keeper takes it only on guacamole's arm.
+    pub story: StorySink,
     /// The driver worker's job queue (PLAN B.2's macOS game-window fit);
     /// closed when the server died before the worker started.
     pub driver_tx: mpsc::Sender<DriverJob>,
@@ -247,6 +253,10 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
     let progression_for_state = progression.clone();
     let level_hero = LevelHero::default();
     let level_hero_for_state = level_hero.clone();
+    let game_host = GameHost::default();
+    let game_host_for_state = game_host.clone();
+    let story = StorySink::new();
+    let story_for_task = story.clone();
 
     let status_for_errors = launcher_status.clone();
     let status_for_ready = launcher_status.clone();
@@ -326,6 +336,8 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
                         events_for_task.clone(),
                         progression_for_task,
                     );
+                    // The story saves too (AU.3).
+                    spawn_keeper(story_for_task, profile_store.clone());
                 }
                 // The IPC STATE poller's copy; the worker takes `driver` by value.
                 let driver_for_poller = driver.clone();
@@ -431,6 +443,7 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
                     hooks,
                     progression: progression_for_state,
                     level_hero: level_hero_for_state,
+                    game_host: game_host_for_state,
                     #[cfg(feature = "test-hooks")]
                     test_injector: built.test_injector,
                 });
@@ -502,6 +515,8 @@ pub fn boot(options: BootOptions) -> Result<ServerHandles> {
         progress,
         progression,
         level_hero,
+        game_host,
+        story,
         driver_tx,
         bind_addr: bind,
         server_thread,
