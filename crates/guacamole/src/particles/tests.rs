@@ -166,6 +166,35 @@ fn a_burst_makes_its_most_at_once_and_refills_only_while_on() {
     assert_eq!(late.made, 3);
 }
 
+/// AS.17's review: a burst that's on fills each place as its particle
+/// dies, not once the last of them is gone, so lives drawn apart still
+/// keep its most alive every frame (the orb's one glow, a level's falling
+/// dust at 3-3.2 s a life).
+#[test]
+fn a_burst_on_refills_each_particle_as_it_dies() {
+    let mut sprite = stream();
+    sprite.spawn_rate = 9999.0;
+    sprite.max_alive = 4;
+    sprite.lifespan = 0.3;
+    sprite.lifespan_random = 0.3;
+    let g = generator(Kind::Sprite(sprite));
+    let mut s = GeneratorState::default();
+    let mut rng = Cosmetic::new(7);
+    s.step(&g, STILL, true, 0.0, &mut rng);
+    let lives: Vec<f32> = s.particles.iter().map(|p| p.life).collect();
+    assert!(
+        lives.iter().any(|l| (l - lives[0]).abs() > 0.02),
+        "the lives drawn apart: {lives:?}"
+    );
+    for frame in 0..60 {
+        s.step(&g, STILL, true, 1.0 / 60.0, &mut rng);
+        assert_eq!(s.particles.len(), 4, "frame {frame}");
+    }
+    // A second's worth at 0.3-0.6 s a life: each place filled again two
+    // or three times.
+    assert!((10..=16).contains(&s.made), "{}", s.made);
+}
+
 #[test]
 fn nothing_comes_before_its_start_delay() {
     let mut g = generator(Kind::Sprite(stream()));

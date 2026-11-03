@@ -111,7 +111,7 @@ Once level 214's sail is done or skipped, what its cutscene took off SHALL stand
 - **THEN** he stands on the second island's ship at (-383.18, -12.58, 714.41), the ship, `Flynn_Island_2` and `Door_(1)` standing again
 
 ### Requirement: A level's own emitters draw where they stand
-Every emitter a level's own file places SHALL draw its particles where the file puts it, as the original does: one with an activation range while the hero is within that range of it (from the level's start before he's in), its particles living out their lives once he leaves; one with neither range nor buffer always; a template never. A clone a script makes of one of the level's own templates SHALL draw that template's generators, and no pipeline SHALL compile for them after a level shows.
+Every emitter a level's own file places SHALL draw where the file puts it: one with an activation range while the hero is within it in feet (from the level's start before he's in), its particles living out their lives once he leaves; one with neither range nor buffer always; a template never (the disc places 15,383: 2,343 ranged, 25 always, 12,986 templates). A clone a script makes of a level's template SHALL draw its generators, no pipeline compiling for them once a level shows.
 
 #### Scenario: Chapter 1's start
 - **WHEN** chapter 1 starts with Eruptor on the portal
@@ -120,3 +120,14 @@ Every emitter a level's own file places SHALL draw its particles where the file 
 #### Scenario: A breakable's dust
 - **WHEN** a script clones one of the level's own templates, a breakable's dust
 - **THEN** the dust draws off that template's generators
+
+### Requirement: A burst refills while its emitter is on
+A generator at a burst's rate (9999 a second) SHALL make its most alive at once and, while its emitter is on, fill each place again as its particle dies, making none past its most once the emitter is off, so an experience orb's one-particle glows (0.3 s a life) stay lit while the orb is out, as the original's still are 10 s after the fight.
+
+#### Scenario: Orbs left on the ground
+- **WHEN** Eruptor beats a Chompy at anchor B and its experience orbs lie on the ground
+- **THEN** each orb's two glows are drawn 10 s later, two particles an orb
+
+#### Scenario: An eruption's drops
+- **WHEN** Eruptor erupts and the eruption's head stays on past its drops' 1.0 s
+- **THEN** a second round of drops comes as the first dies, and none after the head is taken off

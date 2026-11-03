@@ -833,13 +833,23 @@ mod tests {
             ),
             placed_emitter("Waits", 13, start, 4, 0.0, 1.0),
             placed_emitter("Template", 14, start, 5, 0.0, 0.0),
+            // 12 m is 39 ft, past its 30 (AS.17's review: a range read in
+            // metres would stand it).
+            placed_emitter(
+                "Beyond",
+                15,
+                start + Vec3::new(0.0, 0.0, 12.0),
+                4,
+                30.0,
+                0.0,
+            ),
         ];
         let (mut app, _, _, _tmp) = loaded_placing(trail(), placed);
         for _ in 0..30 {
             app.update();
         }
         let r = report(&app).placed;
-        assert_eq!((r.level, r.standing, r.awake), (5, 3, 2), "{r:?}");
+        assert_eq!((r.level, r.standing, r.awake), (6, 4, 2), "{r:?}");
         assert_eq!((r.systems, r.started), (2, 2), "{r:?}");
         let mut names = r.emitters.clone();
         names.sort();
@@ -871,6 +881,10 @@ mod tests {
         assert!(
             placed_system(&mut app, 4).is_none(),
             "a template stands nowhere"
+        );
+        assert!(
+            placed_system(&mut app, 5).is_none(),
+            "Beyond is 39 ft off, its range 30 ft"
         );
 
         // A hero in by Far: it stands, Near stops and its particles live
@@ -967,5 +981,36 @@ mod tests {
             "the level's, not the fighter's"
         );
         assert_eq!(s.emitter.object, 21);
+    }
+
+    /// AS.17's review: a clone of another file's emitter draws off the
+    /// extract-wide part by its name even where the level's file holds an
+    /// emitter at the same object: an object is looked up in the level's
+    /// part only for the level's own unit.
+    #[test]
+    fn a_clone_of_another_files_emitter_draws_off_the_extract_wide_part() {
+        // The level's own one-generator `Trail` at object 1, the index the
+        // fighter's file holds its [`TRAIL`] at.
+        let mut own = placed_emitter("Trail", TRAIL.index, Vec3::ZERO, 5, 0.0, 0.0);
+        own.emitter.generators.truncate(1);
+        let (mut app, clone, _, _tmp) = loaded_placing(trail(), vec![own]);
+        assert_ne!(
+            app.world().resource::<ScriptSource>().level_unit(),
+            Some(TRAIL.unit)
+        );
+        for _ in 0..10 {
+            app.update();
+        }
+        let r = report(&app);
+        assert_eq!(
+            (r.systems, r.level_clones, r.level_clones_started),
+            (1, 0, 0),
+            "{r:?}"
+        );
+        let mut q = app.world_mut().query::<&ParticleSystem>();
+        let s = q.single(app.world()).unwrap();
+        assert_eq!(s.source, Source::Clone(clone));
+        assert!(!s.level_own);
+        assert_eq!(s.emitter.generators.len(), 2, "the fighter's two");
     }
 }
