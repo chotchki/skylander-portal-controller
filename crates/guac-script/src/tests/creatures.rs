@@ -968,3 +968,47 @@ fn a_files_number_set_from_outside_is_read_next() {
     vm.tick(id, &mut Engine::default()).unwrap();
     assert_eq!(vm.local(id, "got"), Some(Value::Int(0)));
 }
+
+/// A file's reference pointed from outside is what scripts read next
+/// (openspec AS.38: the Pause Controller's level switch naming the adventure
+/// it enters, which guacamole's TV makes in its place); a number file
+/// variable takes no reference.
+#[test]
+fn a_files_reference_pointed_from_outside_is_read_next() {
+    let p = program(|w| {
+        let f = w.b.object(0, "ScriptReference", 0x20);
+        w.text(f, 0x08, "Current Adventure Title");
+        let n = w.b.object(0, "ValueInfo", 0x24);
+        w.text(n, 0x08, "Count");
+        w.meta_word(n, 0x1C, INT);
+        w.word(n, 0x20, 1);
+        let got = w.variable("got", "ScriptReference", None);
+        let counted = var(w, "counted");
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let v = w.rhs(INT, &[El::Local(n)]);
+                w.set(&[El::Local(counted)], v);
+                let l = w.value(&[El::Local(got)]);
+                let r = w.reference(&[El::Local(f)], None);
+                let o = w.op(Class::SetReference, "set reference");
+                w.refer(o, 0x1C, l);
+                w.refer(o, 0x20, r);
+                w.push(o);
+            },
+        );
+    });
+    let mut vm = Vm::new(p.clone(), Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "Pause Controller", 0);
+    let title = p.global_named("Current Adventure Title").unwrap();
+    let count = p.global_named("Count").unwrap();
+    vm.tick(id, &mut Engine::default()).unwrap();
+    assert_eq!(vm.local(id, "got"), Some(Value::Null));
+    assert!(vm.set_global_reference(title, Value::Entity(0x77)));
+    vm.tick(id, &mut Engine::default()).unwrap();
+    assert_eq!(vm.local(id, "got"), Some(Value::Entity(0x77)));
+    assert_eq!(vm.global_peek(title), Some(Value::Entity(0x77)));
+    assert!(!vm.set_global_reference(count, Value::Entity(0x77)));
+    assert_eq!(vm.global(count), Some(Value::Int(1)));
+}

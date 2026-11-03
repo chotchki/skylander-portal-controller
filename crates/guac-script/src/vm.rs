@@ -1536,6 +1536,22 @@ impl Vm {
         true
     }
 
+    /// Points a reference file variable at `target`, made from the file
+    /// first if nothing has read it yet, as a script's `setref` would: how an
+    /// embedder makes a link the original's own unrun scripts make (the Pause
+    /// Controller's level switch naming the adventure it enters, openspec
+    /// AS.38). False when it isn't a reference.
+    pub fn set_global_reference(&mut self, g: GlobalId, target: Value) -> bool {
+        let Ok(c) = self.global_cell(g) else {
+            return false;
+        };
+        if self.cells[c as usize].kind != CellKind::Reference {
+            return false;
+        }
+        self.write_cell(c, target, 0);
+        true
+    }
+
     /// The members of the set `v` holds or names; `None` for a non-set.
     pub fn set(&self, v: Value) -> Option<&[Value]> {
         match self.peek(v) {
