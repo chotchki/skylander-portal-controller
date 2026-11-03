@@ -367,7 +367,7 @@ pub(crate) struct DevEntry {
     pub(crate) asked: Option<Asked>,
     phase: Phase,
     /// The hero the route runs on, and the steps run since his join; his
-    /// load file, or the one it refused to run on (AH.167).
+    /// load file.
     hero: Option<Entity>,
     ran: u32,
     /// The steps the route has waited on a scene before its anchor
@@ -386,8 +386,8 @@ pub(crate) struct DevEntry {
 pub(crate) struct EntryShot {
     pub anchor: Option<Anchor>,
     pub phase: Phase,
-    /// Whose route it runs (AH.167: a fighter's, Eruptor's), or the hero
-    /// it refused to run it on.
+    /// Whose route it runs: any joined hero's since openspec AU.1 (AH.167
+    /// held it to a fighter's).
     pub load_file: Option<String>,
     /// The route's last step the entry acted on (from its step 0: F0's once
     /// at the anchor), once it's under way.
@@ -553,25 +553,13 @@ pub(crate) fn drive(
     let joined = heroes
         .iter()
         .find(|(_, r, _)| matches!(r.join, Join::Joined(_)))
-        .map(|(e, r, _)| (e, r.slot, r.attacks, r.load_file.clone()));
-    let Some((hero, slot, attacks, load_file)) = joined else {
+        .map(|(e, r, _)| (e, r.slot, r.load_file.clone()));
+    let Some((hero, slot, load_file)) = joined else {
         return;
     };
     // The route is AH.8's, run with Eruptor, its anchor AH.4's reads of
-    // him, and the fight his attacks': a hero whose attack buttons reach no
-    // script of his (a walker, AG.27) gets none of it (AH.167).
-    if !attacks {
-        if entry.hero != Some(hero) {
-            let why = format!(
-                "{load_file} doesn't fight: the entry's route and anchor are a fighter's (Eruptor's, AH.8)"
-            );
-            warn!(reason = %why, "the dev entry won't run on him");
-            entry.hero = Some(hero);
-            entry.load_file = Some(load_file);
-            entry.refused = Some(why);
-        }
-        return;
-    }
+    // him; since every joined hero's attack buttons reach his scripts
+    // (openspec AU.1) it runs on any, as AH.167 held it to a fighter.
     if entry.hero != Some(hero) {
         // His activation ran in the step before this one.
         entry.hero = Some(hero);
@@ -1019,39 +1007,40 @@ mod tests {
         assert_eq!(shot.refused, None);
     }
 
-    /// AH.167 (found at the AG.27 merge check): the route and the anchor
-    /// are Eruptor's (AH.8's route, AH.4's reads) and the fight his
-    /// attacks', so a walker who joins (AG.27: his attack buttons reach no
-    /// script of his) gets none of it: refused, naming him, never set down,
-    /// no F0 and no list read, the entry waiting for a fighter.
+    /// AH.167 held the route and the anchor to a fighter (Eruptor, AH.8's
+    /// route and AH.4's reads) since a walker's attack buttons reached no
+    /// script of his; since openspec AU.1 every joined hero's do, so a walker
+    /// who joins takes the route as Eruptor does: set down at each trigger
+    /// in turn, the synthetic Setup_001 reaching its end, anchored, the
+    /// list read at F0 naming him, nothing refused.
     #[test]
-    fn a_walker_who_joins_gets_no_route() {
-        use guac_formats::script::builder::WALKER_LOAD;
+    fn a_walker_who_joins_takes_the_route() {
+        use guac_formats::script::builder::{WALKER_LOAD, WALKER_SPEED};
         let tmp = tempfile::tempdir().unwrap();
         let (mut app, _) = fight_app_walker(tmp.path(), Some(route(TRIGGERS[0], TRIGGERS[1])));
-        for _ in 0..80 {
-            app.update();
-        }
+        until(&mut app, "the entry at its anchor", |a| {
+            entry(a).phase == Phase::Anchored
+        });
         let shot = entry(&app);
-        assert_eq!(shot.phase, Phase::Waiting);
         assert_eq!(shot.load_file.as_deref(), Some(WALKER_LOAD));
-        assert!(
-            shot.refused
-                .as_deref()
-                .is_some_and(|r| r.contains(WALKER_LOAD) && r.contains("doesn't fight")),
-            "{:?}",
-            shot.refused
+        assert_eq!(shot.refused, None);
+        assert_eq!(shot.route_step, Some(40));
+        assert!(shot.f0_step.is_some());
+        // The synthetic walker walks along his facing every tick (his
+        // minion plays the mover's part): at F0 he's walked on from B, where
+        // the entry set him down, under half a second's walk (1.88 m here).
+        let list = shot.equivalence.expect("read at F0");
+        let (at, _) = list.hero.expect("his pose");
+        let b = Vec3::from_array(TRIGGERS[1]);
+        let off = Vec3::from_array(at).with_y(0.0).distance(b.with_y(0.0));
+        let half_a_second = WALKER_SPEED * guac_motion::tuning::FOOT * 0.5;
+        assert!(off < half_a_second, "{at:?}, {off} m from B");
+        let w = app.world();
+        let level = w.resource::<ScriptSource>().level_unit().unwrap();
+        assert_eq!(
+            w.resource::<ScriptWorld>().fired_triggers(level),
+            [FIGHT_TRIGGER_A, FIGHT_TRIGGER_B]
         );
-        assert_eq!((shot.route_step, shot.f0_step), (None, None));
-        assert!(shot.equivalence.is_none());
-        let at = crate::test_support::play::hero(&app).pivot;
-        for t in TRIGGERS {
-            let t = Vec3::from_array(t);
-            assert!(
-                at.with_y(0.0).distance(t.with_y(0.0)) > 1.0,
-                "never set down: {at:?}"
-            );
-        }
     }
 
     /// The level's start: nothing set, at its anchor the step after his

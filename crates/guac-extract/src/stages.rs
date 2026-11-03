@@ -874,7 +874,10 @@ pub fn script_stage(
     }
     send(Event::Scripts { done: 1, total });
 
-    let archives = scripts::spawn_archives();
+    // Every walker the scripts part holds (openspec AU.1): what his attacks
+    // spawn is in his own file.
+    let listed = scripts::read_walkers(dir.path()).unwrap_or_default().listed;
+    let archives = scripts::spawn_archives_with(&listed);
     let irs: Vec<String> = archives.iter().map(|a| ir.spawn_path(a)).collect();
     if dir.part_holds(scripts::SPAWNS, &irs)? {
         let recorded = dir.manifest().parts[scripts::SPAWNS].clone();

@@ -2271,6 +2271,24 @@ pub const WALKERS: &[Registered] = &[
     ),
 ];
 
+/// What every modelled character's attacks reach past the tables above
+/// (openspec AU.2, AH.29's sweep): the members a play-mode run of each
+/// character pressing each attack at chapter 1's first fight stopped on, as
+/// aj-vm's live table registers them. Whether the level's fog reaches a
+/// placement (Sonic Boom's, Wrecking Ball's and Boomer's attacks turn it
+/// off on what they spawn, a warp ring among them): a cell, nothing reading
+/// it back drawn yet, as the clone's draw takes the level's fog (a
+/// hypothesis: a clone with it off would draw unfogged in the original).
+pub const ATTACKS: &[Registered] = &[m(
+    "placement",
+    "fog enabled",
+    "EnumMeasurement",
+    "false|true",
+    0.0,
+    1.0,
+    Cell,
+)];
+
 /// What AH.8's route reaches past every table above (openspec AH.28): the
 /// members a play-mode run of the route from the level's start stopped on,
 /// as aj-vm's live table registers them. A sound's mix category, cosmetic
@@ -3743,6 +3761,15 @@ mod tests {
                 assert!(find(t, r.namespace, r.name).is_none(), "{}", r.path());
             }
         }
+        // The attacks' are none of the earlier tables' (AU.2).
+        for r in ATTACKS {
+            for t in [
+                INIT_CHAIN, HERO, CREATURES, COMBAT, LOOP, FIGURE, CAMERA, WALKERS, ROUTE,
+                LEVEL_UP, LEVELS, SOUNDS, MUSIC, INTERFACE,
+            ] {
+                assert!(find(t, r.namespace, r.name).is_none(), "{}", r.path());
+            }
+        }
         // AS.11's every-level run's are none of the earlier tables' either.
         for r in LEVELS {
             for t in [
@@ -3954,6 +3981,28 @@ mod tests {
             let (_, place) = members.get(MemberId::named(r.namespace, r.name)).unwrap();
             assert_eq!(place, Place::Host, "{}", r.path());
         }
+    }
+
+    /// AU.2's rows by aj-vm's live table: whether the fog reaches a
+    /// placement an enum by its labels, held to its range, a cell reading
+    /// its first label until written.
+    #[test]
+    fn the_attacks_members_register_by_their_class_and_labels() {
+        let fog = find(ATTACKS, "placement", "fog enabled").unwrap();
+        assert_eq!(
+            (fog.class, fog.kind(), fog.keeper),
+            ("EnumMeasurement", Kind::Int, Keeper::Cell)
+        );
+        assert_eq!(label(&fog, "true"), Some(Value::Int(1)));
+        assert_eq!(label(&fog, "false"), Some(Value::Int(0)));
+        assert_eq!(convert(&fog.spec(), Value::Int(3)), Some(Value::Int(1)));
+        assert_eq!(fog.spec().default, Value::Int(0));
+        let mut members = Members::new();
+        register(&mut members, ATTACKS);
+        let (_, place) = members
+            .get(MemberId::named("placement", "fog enabled"))
+            .unwrap();
+        assert_eq!(place, Place::ValueCell);
     }
 
     /// AG.160's rows by aj-vm's live table: what a Giant's footstep reads

@@ -986,19 +986,21 @@ fn a_placements_tags_read_back_field_for_field() {
     }
 }
 
-/// AG.27's synthetic walker reads back for every fault: two scripts (his
-/// definition's and the minion's, which isn't named for his load file) and
-/// two placements, the minion's template not named for his load file
-/// either; the minion's tick displaces him. Only the walker whose
-/// deactivation stops defines the shutdown the portal manager's
-/// deactivation calls (openspec AH.165), and only those whose request or
-/// activation stops the macros those call (AH.169), which `global.bld`
-/// calls through stubs, one each.
+/// AG.27's synthetic walker reads back for every fault: three scripts (his
+/// definition's, the minion's, which isn't named for his load file, and
+/// since openspec AU.1 his shot's) and three placements, the minion's
+/// template not named for his load file either, the shot a template too;
+/// the minion's tick displaces him and spawns his shot on action 1 going
+/// down, reaching a member nothing models first only when the fault is
+/// `OnPress`. Only the walker whose deactivation stops defines the
+/// shutdown the portal manager's deactivation calls (openspec AH.165), and
+/// only those whose request or activation stops the macros those call
+/// (AH.169), which `global.bld` calls through stubs, one each.
 #[test]
 fn the_synthetic_walker_reads_back() {
     use super::builder::{
-        WALKER_ACTIVATED, WALKER_LOADED, WALKER_MINION, WALKER_SHUTDOWN, WALKER_TEMPLATE,
-        WalkerFault, walker,
+        WALKER_ACTIVATED, WALKER_LOADED, WALKER_MINION, WALKER_SHOT, WALKER_SHOT_SCRIPT,
+        WALKER_SHUTDOWN, WALKER_TEMPLATE, WalkerFault, walker,
     };
     use crate::level::Placements;
     for fault in [
@@ -1008,6 +1010,8 @@ fn the_synthetic_walker_reads_back() {
         WalkerFault::InDeactivation,
         WalkerFault::InRequest,
         WalkerFault::InActivation,
+        WalkerFault::OnPress,
+        WalkerFault::ShotAsks,
     ] {
         let bytes = walker(fault);
         let igz = Igz::parse(&bytes).unwrap();
@@ -1018,7 +1022,10 @@ fn the_synthetic_walker_reads_back() {
             .map(|s| s.name.unwrap_or_default().rsplit('/').next().unwrap())
             .collect();
         names.sort();
-        assert_eq!(names, ["026_Def_Synthetic.ai", WALKER_MINION]);
+        assert_eq!(
+            names,
+            ["026_Def_Synthetic.ai", WALKER_MINION, WALKER_SHOT_SCRIPT]
+        );
         let placed = Placements::read(&igz).unwrap();
         let actors: Vec<(&str, u32)> = placed
             .actors
@@ -1032,7 +1039,11 @@ fn the_synthetic_walker_reads_back() {
             .collect();
         assert_eq!(
             actors,
-            [(WALKER_TEMPLATE, 5), ("026_Synthetic_Def", 4)],
+            [
+                (WALKER_SHOT, 5),
+                (WALKER_TEMPLATE, 5),
+                ("026_Synthetic_Def", 4)
+            ],
             "{fault:?}"
         );
         let minion = graph
@@ -1042,6 +1053,14 @@ fn the_synthetic_walker_reads_back() {
             .unwrap();
         let ops = positions(&graph, minion).join("\n");
         assert!(ops.contains("Displace"), "{fault:?}: {ops}");
+        assert!(ops.contains("Spawn"), "{fault:?}: his shot: {ops}");
+        let shot = graph
+            .scripts
+            .iter()
+            .find(|s| s.name.is_some_and(|n| n.ends_with(WALKER_SHOT_SCRIPT)))
+            .unwrap();
+        let shot_ops = positions(&graph, shot).join("\n");
+        assert!(shot_ops.contains("Remove"), "{fault:?}: {shot_ops}");
         for (name, stops) in [
             (WALKER_SHUTDOWN, WalkerFault::InDeactivation),
             (WALKER_LOADED, WalkerFault::InRequest),
@@ -1094,7 +1113,7 @@ fn the_described_walkers_read_back() {
             .map(|s| s.name.unwrap_or_default().rsplit('/').next().unwrap())
             .collect();
         names.sort();
-        let mut want = [spec.def_script, spec.minion];
+        let mut want = [spec.def_script, spec.minion, spec.shot_script];
         want.sort();
         assert_eq!(names, want);
         let placed = Placements::read(&igz).unwrap();
@@ -1103,7 +1122,7 @@ fn the_described_walkers_read_back() {
             .iter()
             .map(|a| a.name().unwrap_or(""))
             .collect();
-        assert_eq!(actors, [spec.template, spec.def]);
+        assert_eq!(actors, [spec.shot, spec.template, spec.def]);
         let ops = ops_of(&bytes, spec.minion);
         assert_eq!(
             count(&ops, "UseMacro"),

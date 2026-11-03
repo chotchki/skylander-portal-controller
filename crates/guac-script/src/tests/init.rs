@@ -1431,6 +1431,119 @@ fn a_set_reference_the_host_copies_is_the_vms_with_the_hosts_copy() {
     assert_eq!(host.resets, 1);
 }
 
+/// A reference set to a number rather than a variable (openspec AU.2: Double
+/// Trouble's beam orb keeps a reference parameter its caller leaves at its
+/// literal 0, then writes 1 through it): written through `valuedereferencer`
+/// it holds a value of its own, which reads back as written and reaches no
+/// other variable; read through, one set to 5 reads 5; and one naming a
+/// number variable still writes that variable.
+#[test]
+fn a_reference_set_to_a_number_names_a_value_of_its_own() {
+    let p = program(|w| {
+        let (back, five, kept, other) = (
+            var(w, "back"),
+            var(w, "five"),
+            var(w, "kept"),
+            var(w, "other"),
+        );
+        let (r, s, t) = (
+            w.variable("r", "ScriptReference", None),
+            w.variable("s", "ScriptReference", None),
+            w.variable("t", "ScriptReference", None),
+        );
+        let setref = |w: &mut Writer<'_>, to: Location, rhs: Location| {
+            let o = w.op(Class::SetReference, "set *reference||to");
+            let lhs = w.stack(StackClass::Reference, &[El::Local(to)]);
+            w.refer(o, 0x1C, lhs);
+            w.refer(o, 0x20, rhs);
+            w.push(o);
+        };
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let deref = El::Member("abstractscriptgroup", "valuedereferencer");
+                let zero = w.int(0);
+                setref(w, r, zero);
+                let one = w.int(1);
+                w.set(&[El::Local(r), deref], one);
+                let v = w.rhs(INT, &[El::Local(r), deref]);
+                w.set(&[El::Local(back)], v);
+                let n = w.int(5);
+                setref(w, s, n);
+                let v = w.rhs(INT, &[El::Local(s), deref]);
+                w.set(&[El::Local(five)], v);
+                let seven = w.int(7);
+                w.set(&[El::Local(kept)], seven);
+                let to_kept = w.reference(&[El::Local(kept)], None);
+                setref(w, t, to_kept);
+                let nine = w.int(9);
+                w.set(&[El::Local(t), deref], nine);
+                let v = w.rhs(INT, &[El::Local(kept)]);
+                w.set(&[El::Local(other)], v);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "Writer", 0);
+    vm.tick(id, &mut Engine::default()).unwrap();
+    assert_eq!(
+        vm.local(id, "back"),
+        Some(Value::Int(1)),
+        "written, read back"
+    );
+    assert_eq!(vm.local(id, "five"), Some(Value::Int(5)), "read through");
+    assert_eq!(
+        vm.local(id, "other"),
+        Some(Value::Int(9)),
+        "a reference naming a variable writes it"
+    );
+    assert_eq!(vm.local(id, "kept"), Some(Value::Int(9)));
+}
+
+/// One of the file's objects read where a set is (openspec AU.2: Cynder's
+/// scorch plays `next` of a variable a sound was set into): `first`, `last`,
+/// `next` and `random` each read the object itself, a set of one, and a
+/// reference set to it so names it.
+#[test]
+fn a_set_member_of_one_object_reads_the_object() {
+    let p = program(|w| {
+        let obj = actor(w);
+        let r = w.variable("r", "ScriptReference", None);
+        let names: Vec<(&str, Location)> = ["first", "last", "next", "random"]
+            .into_iter()
+            .map(|n| (n, w.variable(n, "ScriptReference", None)))
+            .collect();
+        let setref = |w: &mut Writer<'_>, to: Location, rhs: Location| {
+            let o = w.op(Class::SetReference, "set *reference||to");
+            let lhs = w.stack(StackClass::Reference, &[El::Local(to)]);
+            w.refer(o, 0x1C, lhs);
+            w.refer(o, 0x20, rhs);
+            w.push(o);
+        };
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let to = w.reference(&[El::Local(obj)], None);
+                setref(w, r, to);
+                for (member, into) in &names {
+                    let rhs = w.reference(&[El::Local(r), El::Member("setvariant", member)], None);
+                    setref(w, *into, rhs);
+                }
+            },
+        );
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "Writer", 0);
+    vm.tick(id, &mut Engine::default()).unwrap();
+    let obj = vm.local(id, "r").unwrap();
+    assert!(matches!(obj, Value::Object(_)), "{obj:?}");
+    for n in ["first", "last", "next", "random"] {
+        assert_eq!(vm.local(id, n), Some(obj), "{n}");
+    }
+}
+
 /// A set the host changed grows as a script's set of numbers grows (the
 /// review of AT.9: `Text - String Concatenate` grows `value set` after a
 /// `text` write hands its characters back): each element added a number

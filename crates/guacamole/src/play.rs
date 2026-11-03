@@ -3076,11 +3076,7 @@ mod tests {
         }
         let e = app.world().resource::<Play>().hero().unwrap();
         let run = app.world().entity(e).get::<HeroRun>().unwrap().clone();
-        assert_eq!(
-            (run.origin, run.attacks),
-            (Origin::Scripts, false),
-            "his numbers are his scripts', his attack buttons do nothing"
-        );
+        assert_eq!(run.origin, Origin::Scripts, "his numbers are his scripts'");
         // What the setup wrote: his movement parameters into his
         // description, his scale onto his actor.
         let Join::Joined(minion) = run.join else {
@@ -3668,12 +3664,16 @@ mod tests {
         }
     }
 
-    /// AG.27: attacks stay Eruptor's alone. The walker's attack buttons do
-    /// nothing though his scripts run (stand-in ledger: `who-attacks`): no
-    /// action reaches the VM's pad.
+    /// AU.1: a walker's attack buttons reach his scripts as Eruptor's do.
+    /// The bottom button pressed once he's joined is held into a step his
+    /// scripts read (the log's actions), his minion's press spawns his shot,
+    /// a template of his own file, and the shot's own script runs (it takes
+    /// the shot off on its first tick), so the script his attack spawns is on
+    /// the TV's listing; the left button, which his scripts don't read,
+    /// spawns nothing.
     #[test]
-    fn a_walkers_attack_buttons_do_nothing() {
-        use guac_formats::script::builder::WalkerFault;
+    fn a_walkers_press_reaches_his_scripts_attack_read() {
+        use guac_formats::script::builder::{WALKER_SHOT, WalkerFault};
         let tmp = tempfile::tempdir().unwrap();
         let (mut app, pad) = walker_app(tmp.path(), WalkerFault::None);
         place(&mut app, 0, WALKER_TOY, "Synthetic");
@@ -3682,19 +3682,39 @@ mod tests {
         until(&mut app, "his scripts", |a| {
             join(a).as_deref() == Some("joined")
         });
-        for button in [GamepadButton::South, GamepadButton::West] {
-            test_pad::press(&mut app, pad, button);
-            for _ in 0..5 {
-                app.update();
-            }
+        let log = |app: &App| {
+            app.world()
+                .resource::<crate::hero_scripts::ScriptLog>()
+                .since(0)
+        };
+        let shots = |app: &App, gone: bool| {
+            log(app)
+                .iter()
+                .flat_map(|s| if gone { &s.gone } else { &s.spawned })
+                .filter(|c| c.name == WALKER_SHOT)
+                .count()
+        };
+        test_pad::press(&mut app, pad, GamepadButton::West);
+        for _ in 0..5 {
+            app.update();
         }
-        let held = app
-            .world()
-            .resource::<crate::hero_scripts::ScriptLog>()
-            .since(0)
+        assert_eq!(shots(&app, false), 0, "the left button: no shot");
+        test_pad::press(&mut app, pad, GamepadButton::South);
+        until(&mut app, "his shot taken off by its own script", |a| {
+            shots(a, true) == 1
+        });
+        let steps = log(&app);
+        let read = steps
             .iter()
-            .any(|s| s.actions != [false; 4]);
-        assert!(!held, "no attack reached his scripts");
+            .position(|s| s.actions[0] && s.join == Some("joined"))
+            .expect("the press reached a step of his scripts");
+        let spawned = steps
+            .iter()
+            .position(|s| s.spawned.iter().any(|c| c.name == WALKER_SHOT))
+            .expect("his shot spawned");
+        assert_eq!(spawned, read, "spawned in the step that read the press");
+        assert_eq!(shots(&app, false), 1, "one press, one shot");
+        assert!(kept(&mut app).is_empty());
     }
 
     /// AG.27: a walker whose script stops in play (after his setup ran
@@ -3774,6 +3794,125 @@ mod tests {
                 .is_some_and(|&n| n >= 60),
             "the update's writes to his walk dropped: {dropped:?}"
         );
+    }
+
+    /// AU.1: a walker whose attack stops in play (his minion's press
+    /// reaching a member nothing models before it spawns his shot) falls
+    /// back as AH.151 has it: off his scripts, his card not kept, walking on
+    /// the stick to the top speed his scripts wrote, the mover update's
+    /// writes to his walk dropped; a second press reaches no script of his
+    /// (no shot, no action in the log after his fall-back).
+    #[test]
+    fn a_walker_whose_attack_stops_walks_on_the_stick() {
+        use guac_formats::script::builder::{
+            MOVER_PLACEMENT, WALKER_MOVEMENT, WALKER_SHOT, WalkerFault,
+        };
+        use guacamole::scripts::{HeroWrite, ScriptWorld};
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = walker_app_with(tmp.path(), WalkerFault::OnPress, true);
+        place(&mut app, 0, WALKER_TOY, "Synthetic");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        for _ in 0..10 {
+            app.update();
+        }
+        assert_eq!(join(&app).as_deref(), Some("joined"), "nothing pressed yet");
+        test_pad::press(&mut app, pad, GamepadButton::South);
+        until(&mut app, "his attack stopping him", |a| {
+            join(a).as_deref() == Some("off")
+        });
+        let e = app.world().resource::<Play>().hero().expect("still in");
+        let reason = match &app.world().entity(e).get::<HeroRun>().unwrap().join {
+            Join::Off(why) => why.clone(),
+            other => panic!("{other:?}"),
+        };
+        assert!(reason.contains("unmodelled member"), "{reason}");
+        assert!(kept(&mut app).is_empty(), "he walks on");
+        let log = app
+            .world()
+            .resource::<crate::hero_scripts::ScriptLog>()
+            .since(0);
+        let off_at = log
+            .iter()
+            .find(|s| s.join == Some("off"))
+            .map(|s| s.step)
+            .expect("his fall-back logged");
+        test_pad::press(&mut app, pad, GamepadButton::South);
+        test_pad::stick(&mut app, pad, 0.0, 1.0);
+        for _ in 0..60 {
+            app.update();
+        }
+        let speed = WALKER_MOVEMENT[0].1;
+        let walk = hero(&app).walk.velocity.length();
+        assert!((walk - speed).abs() < 1e-3, "{walk} ft/s, his {speed}");
+        let log = app
+            .world()
+            .resource::<crate::hero_scripts::ScriptLog>()
+            .since(0);
+        assert!(
+            log.iter()
+                .filter(|s| s.step > off_at)
+                .all(|s| s.actions == [false; 4]),
+            "no press reaches his scripts once he's off them"
+        );
+        assert!(
+            log.iter()
+                .flat_map(|s| &s.spawned)
+                .all(|c| c.name != WALKER_SHOT),
+            "no shot: the press stopped him before it, the next reached nothing"
+        );
+        let world = app.world().resource::<ScriptWorld>();
+        assert!(world.walks_alone(e.to_bits()));
+        let (_, mover) = placement_named(&app, MOVER_PLACEMENT);
+        assert!(
+            world
+                .hero_writes()
+                .get(&(mover, HeroWrite::Walk))
+                .is_some_and(|&n| n >= 60)
+        );
+    }
+
+    /// The au-fighters review: a walker whose attack swaps out his movement
+    /// parameters and then stops (Sunburn's teleport) falls back on the
+    /// last whole set his scripts held while he was joined, walking on the
+    /// stick at his own speed, never keeping his card for it.
+    #[test]
+    fn a_walker_whose_attack_forgets_his_numbers_falls_back_on_his_last() {
+        use guac_formats::script::builder::{WALKER, WalkerFault};
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = walker_app_writing(
+            tmp.path(),
+            WalkerFault::OnPressForgets,
+            crate::test_support::hero_scripts::write_walker_described,
+        );
+        place(&mut app, 0, WALKER_TOY, "Synthetic");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        for _ in 0..10 {
+            app.update();
+        }
+        test_pad::press(&mut app, pad, GamepadButton::South);
+        until(&mut app, "his attack stopping him", |a| {
+            join(a).as_deref() == Some("off")
+        });
+        assert!(kept(&mut app).is_empty(), "he walks on");
+        let e = app.world().resource::<Play>().hero().expect("still in");
+        let run = app.world().entity(e).get::<HeroRun>().unwrap();
+        assert!(matches!(run.join, Join::Off(_)), "{:?}", run.join);
+        assert!(run.movement.is_some(), "his last whole set kept");
+        test_pad::stick(&mut app, pad, 0.0, 1.0);
+        for _ in 0..60 {
+            app.update();
+        }
+        let speed = WALKER.movement()[0].1;
+        let walk = hero(&app).walk.velocity.length();
+        assert!((walk - speed).abs() < 1e-3, "{walk} ft/s, his {speed}");
     }
 
     /// AG.221: `GUAC_TEST_UNMODEL` takes a registered member out of the TV's

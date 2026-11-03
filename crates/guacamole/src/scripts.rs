@@ -2383,8 +2383,10 @@ pub fn hero_config(mode: Mode) -> Config {
     members::register(&mut c.members, members::FIGURE);
     // The gameplay camera's (openspec AG.28), over the cells it takes over.
     members::register(&mut c.members, members::CAMERA);
-    // What the walkers' scripts reach past those (openspec AG.160).
+    // What the walkers' scripts reach past those (openspec AG.160), and
+    // every character's attacks (openspec AU.2).
     members::register(&mut c.members, members::WALKERS);
+    members::register(&mut c.members, members::ATTACKS);
     music_members(&mut c);
     let first: Vec<&str> = GLOBAL_FIRST_TICKS
         .iter()
@@ -3200,11 +3202,21 @@ pub struct WalkerScripts {
     pub load_file: String,
     /// The unit his file links as.
     pub unit: u16,
-    /// `/` and the file name of each of his scripts the run lists: the
-    /// scripts of his file's placements running at his join (his
+    /// `/` and the file name of each of his scripts the run lists to walk:
+    /// the scripts of his file's placements running at his join (his
     /// definition, his tuning actor) and his minion's ([`Self::minion`]).
-    /// His attacks' and his spawns' stay off (AH.29).
     pub scripts: Vec<String>,
+    /// `/` and the file name of every other script his file holds whose
+    /// asks of the gameplay viewport are all read: what his attacks spawn
+    /// (a projectile, a shockwave, a summoned helper), listed beside
+    /// [`Self::scripts`], since his attack buttons reach his scripts as
+    /// Eruptor's do (openspec AU.1; Eruptor's are [`ERUPTOR_SCRIPTS`]).
+    pub attack_scripts: Vec<String>,
+    /// The rest of his file's scripts, each with the points it asks against
+    /// the gameplay viewport past the TV's run and his walk's that no one
+    /// has read yet (AH.150's [`crate::on_screen::READ`]): each stays off
+    /// the listing, so what spawns it stays inert, until they're read.
+    pub held_scripts: Vec<(String, usize)>,
     /// His minion's script (`/` and its file name): the template his
     /// definition's `Portal - Define Minion` names, which the join's
     /// activation spawns as him. Its file is his own, named as the disc
@@ -3253,7 +3265,7 @@ pub fn walker_scripts_reading(
     reads: &[crate::on_screen::Read],
 ) -> Vec<WalkerScripts> {
     use crate::on_screen::{Verdict, read_of};
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
     // What the TV's own run reaches, AH.107's count: not a walker's to add.
     let base = smash_config(Mode::Play).whitelist;
     let mut known: BTreeSet<crate::on_screen::Ask> = BTreeSet::new();
@@ -3277,7 +3289,15 @@ pub fn walker_scripts_reading(
                 .and_then(|t| t.script.as_deref())
                 .map(|path| format!("/{}", file_name(path)));
             names.extend(minion.clone());
+            let walks = |file: &str| {
+                names
+                    .iter()
+                    .any(|n| n.eq_ignore_ascii_case(&format!("/{file}")))
+            };
+            // His walk's asks hold his card; each of his other scripts'
+            // (what his attacks spawn, openspec AU.1) holds that script.
             let mut asks: BTreeSet<crate::on_screen::Ask> = BTreeSet::new();
+            let mut others: BTreeMap<String, BTreeSet<crate::on_screen::Ask>> = BTreeMap::new();
             for (id, s) in program
                 .scripts
                 .iter()
@@ -3285,11 +3305,14 @@ pub fn walker_scripts_reading(
                 .filter(|(_, s)| s.unit == *unit)
             {
                 let file = file_name(&s.name);
-                if names
-                    .iter()
-                    .any(|n| n.eq_ignore_ascii_case(&format!("/{file}")))
-                {
-                    asks.extend(crate::on_screen::reached(program, id as ScriptId).0);
+                let reached = crate::on_screen::reached(program, id as ScriptId).0;
+                if walks(file) {
+                    asks.extend(reached);
+                } else {
+                    others
+                        .entry(format!("/{file}"))
+                        .or_default()
+                        .extend(reached);
                 }
             }
             names.sort_by_key(|n| n.to_ascii_lowercase());
@@ -3299,15 +3322,31 @@ pub fn walker_scripts_reading(
                 .map(|a| read_of(program, a, reads).map(|r| r.verdict))
                 .collect();
             let count = |v: Option<Verdict>| new.iter().filter(|x| **x == v).count();
+            let (mut attack_scripts, mut held_scripts) = (Vec::new(), Vec::new());
+            for (name, reached) in others {
+                let unread = reached
+                    .iter()
+                    .filter(|a| !known.contains(a) && !asks.contains(a))
+                    .filter(|a| read_of(program, a, reads).is_none())
+                    .count();
+                match unread {
+                    0 => attack_scripts.push(name),
+                    n => held_scripts.push((name, n)),
+                }
+            }
+            attack_scripts.sort_by_key(|n| n.to_ascii_lowercase());
+            held_scripts.sort_by_key(|(n, _)| n.to_ascii_lowercase());
             WalkerScripts {
                 load_file: load.clone(),
                 unit: *unit,
                 scripts: names,
+                attack_scripts,
                 minion,
                 template: template.map(|t| t.obj),
                 asks: count(None),
                 cosmetic: count(Some(Verdict::Cosmetic)),
                 answered: count(Some(Verdict::Gates)),
+                held_scripts,
             }
         })
         .collect()
@@ -3370,13 +3409,18 @@ fn defined_minion<'f>(
 }
 
 /// `config` with the scripts of every walker whose new asks of the gameplay
-/// viewport are all read (AG.27, AH.150) listed to run every tick; a walker
-/// with one not read yet, or whose definition names no minion, stays off
-/// the whitelist, so what it would wake stays inert.
+/// viewport are all read (AG.27, AH.150) listed to run every tick, with
+/// those of his attacks' whose own are (openspec AU.1,
+/// [`WalkerScripts::attack_scripts`]); a walker with one not read yet, or
+/// whose definition names no minion, stays off the whitelist, so what it
+/// would wake stays inert.
 pub fn with_walkers(mut config: Config, walkers: &[WalkerScripts]) -> Config {
     if let Whitelist::Only { scripts, .. } = &mut config.whitelist {
         for w in walkers.iter().filter(|w| w.asks == 0 && w.minion.is_some()) {
             scripts.extend(w.scripts.iter().cloned());
+            // What his attacks spawn, each whose asks are read (openspec
+            // AU.1).
+            scripts.extend(w.attack_scripts.iter().cloned());
         }
     }
     config
@@ -6669,6 +6713,14 @@ mod tests {
                 "{}",
                 r.path()
             );
+        }
+        // What the characters' attacks reach (openspec AU.2): a cell each.
+        for r in members::ATTACKS {
+            let (_, place) = c
+                .members
+                .get(MemberId::named(r.namespace, r.name))
+                .unwrap_or_else(|| panic!("{}", r.path()));
+            assert_eq!(place, guac_script::Place::ValueCell, "{}", r.path());
         }
         // The sounds' members on the host (openspec AR.10), over the cells
         // the earlier tables registered for some of them.

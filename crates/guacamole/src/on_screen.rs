@@ -19,7 +19,8 @@
 //! while the camera's scripts drive it ([`crate::viewport::Viewport::shows`],
 //! its hypotheses there), one that gates nothing in play (a shake) keeps
 //! the every-point answer, and either way it holds no one. An ask not read
-//! yet still holds the walker on his card.
+//! yet still holds the walker on his card, or, in a script his attacks
+//! spawn, holds that script off the listing (openspec AU.1).
 
 use std::collections::{BTreeSet, HashSet};
 
@@ -274,7 +275,8 @@ pub struct Read {
 
 /// The asks the fourteen walkers' scripts reach past the TV's own run on
 /// the 1.00 disc (openspec AH.150; AH.107's reader, `giants_walkers`' probe
-/// of the asks), each read off its own ops. AH.107's five, which the TV's
+/// of the asks), and the seven what three characters' attacks spawn reach
+/// past those (openspec AU.2), each read off its own ops. AH.107's five, which the TV's
 /// own run reaches, keep the every-point answer and aren't listed. The host
 /// knows an ask by its op, so two places holding one op (`101_BugmanGiant.ai`
 /// #2059 and #2103) must read alike.
@@ -357,6 +359,59 @@ pub const READ: &[Read] = &[
         verdict: Verdict::Gates,
         gates: "his first attack's lock-on from the throwing hand: the autoaim's target taken \
                 only while it's on screen",
+    },
+    // What the characters' attacks spawn (openspec AU.2): the three scripts
+    // AU.1 held back for these asks.
+    Read {
+        file: "001_Gryphon_BabyEgg.ai",
+        position: 1196,
+        def: None,
+        verdict: Verdict::Gates,
+        gates: "a hatchling's target: the foes within 80 ft of Sonic Boom that are on screen",
+    },
+    Read {
+        file: "027_Acorn_Invisible_Ball.ai",
+        position: 762,
+        def: None,
+        verdict: Verdict::Gates,
+        gates: "a rolling acorn leaving the screen: taken off",
+    },
+    Read {
+        file: "112_Woodpecker.ai",
+        position: 62,
+        def: Some("112 - Acquire Target"),
+        verdict: Verdict::Gates,
+        gates: "the woodpecker's target: the foes on screen",
+    },
+    Read {
+        file: "112_Woodpecker.ai",
+        position: 188,
+        def: None,
+        verdict: Verdict::Gates,
+        gates: "the woodpecker off screen with his target: after a while he gives it up and \
+                flies back to Tree Rex",
+    },
+    Read {
+        file: "112_Woodpecker.ai",
+        position: 189,
+        def: None,
+        verdict: Verdict::Gates,
+        gates: "the woodpecker's target off screen: after a while he gives it up and flies back",
+    },
+    Read {
+        file: "112_Woodpecker.ai",
+        position: 202,
+        def: None,
+        verdict: Verdict::Gates,
+        gates: "the puff he leaves as he lands back on the nest, spawned only while he's on \
+                screen: one op with #188's and #378's, so read as they are",
+    },
+    Read {
+        file: "112_Woodpecker.ai",
+        position: 378,
+        def: None,
+        verdict: Verdict::Gates,
+        gates: "the woodpecker off screen mid-attack: the attack ends and he heads back",
     },
 ];
 

@@ -266,7 +266,9 @@ fn the_discs_reads_name_each_ask_once() {
         );
         assert!(!r.gates.is_empty(), "{r:?}");
     }
-    assert_eq!(READ.len(), 10);
+    // AH.150's ten and AU.2's seven, a shake's alone cosmetic (the
+    // woodpecker's landing puff shares its op with two gating asks).
+    assert_eq!(READ.len(), 17);
     assert_eq!(
         READ.iter()
             .filter(|r| r.verdict == Verdict::Cosmetic)

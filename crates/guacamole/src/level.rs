@@ -731,32 +731,70 @@ fn merged(refused: impl IntoIterator<Item = arithmetic::Refused>) -> Vec<arithme
     out
 }
 
-/// The extract's spawn part (AH.22): every model each spawn archive's
-/// placements name, as props draw them.
-fn read_spawns(source: &LevelSource) -> Result<Vec<guacamole::props::PropModel>, String> {
-    let mut out = Vec::new();
-    for archive in guac_extract::scripts::spawn_archives() {
-        let rel = source.ir.spawn_path(&archive);
-        let spawns: guac_ir::spawn::SpawnModels = read_ir(source.ir, &source.dir.join(&rel))?;
-        if spawns.identity != source.identity {
-            return Err(format!("{rel} is another dump's"));
+/// The walkers the extract's scripts part holds (AG.27), whose archives
+/// give the spawn and particle parts what their attacks spawn (openspec
+/// AU.1); none for an extract made before them.
+fn listed_walkers(source: &LevelSource) -> Vec<String> {
+    guac_extract::scripts::read_walkers(&source.dir)
+        .map(|w| w.listed)
+        .unwrap_or_default()
+}
+
+/// One spawn archive's file of a part: `None`, logged, for a walker's that
+/// doesn't read (his clones draw nothing; the rest still do), the error for
+/// the base's (`global.bld`'s and a fighter's), which fail the part.
+fn walker_tolerant<T>(
+    archive: &str,
+    base: &[String],
+    rel: &str,
+    read: Result<T, String>,
+) -> Result<Option<T>, String> {
+    match read {
+        Ok(t) => Ok(Some(t)),
+        Err(why) if !base.iter().any(|b| b == archive) => {
+            warn!(file = rel, reason = %why, "a walker's spawn file didn't read: what his attacks spawn draws nothing");
+            Ok(None)
         }
+        Err(why) => Err(why),
+    }
+}
+
+/// The extract's spawn part (AH.22): every model each spawn archive's
+/// placements name, as props draw them, every walker's archive's among
+/// them (openspec AU.1).
+fn read_spawns(source: &LevelSource) -> Result<Vec<guacamole::props::PropModel>, String> {
+    let base = guac_extract::scripts::spawn_archives();
+    let mut out = Vec::new();
+    for archive in guac_extract::scripts::spawn_archives_with(&listed_walkers(source)) {
+        let rel = source.ir.spawn_path(&archive);
+        let read = read_ir::<guac_ir::spawn::SpawnModels>(source.ir, &source.dir.join(&rel))
+            .and_then(|spawns| match spawns.identity == source.identity {
+                true => Ok(spawns),
+                false => Err(format!("{rel} is another dump's")),
+            });
+        let Some(spawns) = walker_tolerant(&archive, &base, &rel, read)? else {
+            continue;
+        };
         out.extend(guacamole::props::spawn_models(&spawns).map_err(|e| format!("{rel}: {e}"))?);
     }
     Ok(out)
 }
 
 /// The extract's particle part (AH.87): every emitter each spawn archive
-/// places, with its generators.
+/// places, with its generators, every walker's among them (openspec AU.1).
 fn read_particles(source: &LevelSource) -> Result<Vec<guac_ir::particle::Emitters>, String> {
+    let base = guac_extract::particles::archives();
     let mut out = Vec::new();
-    for archive in guac_extract::particles::archives() {
+    for archive in guac_extract::particles::archives_with(&listed_walkers(source)) {
         let rel = guac_extract::particles::path(source.ir, &archive);
-        let e: guac_ir::particle::Emitters = read_ir(source.ir, &source.dir.join(&rel))?;
-        if e.identity != source.identity {
-            return Err(format!("{rel} is another dump's"));
+        let read = read_ir::<guac_ir::particle::Emitters>(source.ir, &source.dir.join(&rel))
+            .and_then(|e| match e.identity == source.identity {
+                true => Ok(e),
+                false => Err(format!("{rel} is another dump's")),
+            });
+        if let Some(e) = walker_tolerant(&archive, &base, &rel, read)? {
+            out.push(e);
         }
-        out.push(e);
     }
     Ok(out)
 }
@@ -2965,6 +3003,112 @@ mod tests {
     use guacamole::character::warm::MeshShape;
     use guacamole::level_scene::level_lights;
     use std::path::Path;
+
+    /// AU.1: the spawn and particle parts read every walker's file the
+    /// scripts part lists beside the base's; a walker's that doesn't read
+    /// leaves his alone out (what his attacks spawn draws nothing), the
+    /// base's still read, where a base file missing fails the part.
+    #[test]
+    fn a_walkers_spawn_files_read_beside_the_bases_and_a_missing_one_alone_is_left_out() {
+        use guac_ir::particle::Emitters;
+        use guac_ir::spawn::SpawnModels;
+        let tmp = tempfile::tempdir().unwrap();
+        let identity = guac_ir::DumpIdentity {
+            title_id: "BLUS30968".into(),
+            app_ver: "01.00".into(),
+            manifest_hash: Sha256([7; 32]),
+        };
+        let source = LevelSource::chapter_1(tmp.path().into(), IrFormat::Ron, identity.clone());
+        let write = |rel: String, archive: &str, prop: Option<&str>, emitters: bool| {
+            let path = tmp.path().join(&rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let text = if emitters {
+                guac_ir::to_ron(&Emitters {
+                    identity: identity.clone(),
+                    archive: archive.into(),
+                    emitters: Vec::new(),
+                    refused: Vec::new(),
+                })
+            } else {
+                guac_ir::to_ron(&SpawnModels {
+                    identity: identity.clone(),
+                    archive: archive.into(),
+                    props: prop
+                        .map(|p| guac_ir::level::Prop {
+                            path: p.into(),
+                            skeleton: None,
+                            materials: Vec::new(),
+                            segments: Vec::new(),
+                            idle: None,
+                        })
+                        .into_iter()
+                        .collect(),
+                    refused: Vec::new(),
+                })
+            };
+            std::fs::write(path, text.unwrap()).unwrap();
+        };
+        for (i, archive) in guac_extract::scripts::spawn_archives().iter().enumerate() {
+            write(
+                IrFormat::Ron.spawn_path(archive),
+                archive,
+                Some(&format!("base_{i}.mdl")),
+                false,
+            );
+            write(
+                guac_extract::particles::path(IrFormat::Ron, archive),
+                archive,
+                None,
+                true,
+            );
+        }
+        let list = guac_extract::scripts::WalkerList {
+            listed: vec!["016_Spyro".into(), "112_TitanLife".into()],
+            left_out: Vec::new(),
+        };
+        let rel = tmp.path().join(guac_extract::scripts::WALKERS_FILE);
+        std::fs::create_dir_all(rel.parent().unwrap()).unwrap();
+        std::fs::write(rel, serde_json::to_vec(&list).unwrap()).unwrap();
+        let spyro = guac_extract::scripts::character_archive("016_Spyro");
+        write(
+            IrFormat::Ron.spawn_path(&spyro),
+            &spyro,
+            Some("spyro_fireball.mdl"),
+            false,
+        );
+        write(
+            guac_extract::particles::path(IrFormat::Ron, &spyro),
+            &spyro,
+            None,
+            true,
+        );
+        // Tree Rex's two files missing: his alone are left out.
+        let paths: Vec<String> = read_spawns(&source)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.path)
+            .collect();
+        assert_eq!(paths, ["base_0.mdl", "base_1.mdl", "spyro_fireball.mdl"]);
+        let emitters = read_particles(&source).unwrap();
+        assert_eq!(
+            emitters
+                .iter()
+                .map(|e| e.archive.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "permanent/global.bld",
+                "character/009_eruptor.bld",
+                spyro.as_str()
+            ]
+        );
+        // A base file missing fails the part.
+        std::fs::remove_file(
+            tmp.path()
+                .join(IrFormat::Ron.spawn_path(&guac_extract::scripts::spawn_archives()[0])),
+        )
+        .unwrap();
+        assert!(read_spawns(&source).is_err());
+    }
 
     /// The turntables' test app with the level loader, fed `source`.
     pub(crate) fn level_app(dir: &Path, source: LevelSource, gpu: bool) -> App {

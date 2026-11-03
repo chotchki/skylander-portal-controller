@@ -159,15 +159,23 @@ struct Chapter1 {
     hero: Scene,
 }
 
+/// The walkers the extract's scripts part lists (AG.27): the roster's
+/// modelled characters but a fighter, whose archives the spawn and particle
+/// parts read since openspec AU.1.
+fn walkers(dump: &Path) -> Vec<String> {
+    let roster = roster::read(dump, identity()).expect("the roster");
+    guac_extract::scripts::walker_loads(&models::character_loads(&roster))
+}
+
 /// The spawn part's models (AH.22) off the dump through the extractor's own
-/// reader, every spawn archive's, a character's body left out, as the TV
-/// draws them (AH.24).
+/// reader, every spawn archive's (every modelled character's since AU.1),
+/// a character's body left out, as the TV draws them (AH.24).
 fn spawn_models(dump: &Path) -> Vec<guacamole::props::PropModel> {
     let usrdir = dump.join("PS3_GAME/USRDIR");
     let boot = guac_extract::scripts::entry(&usrdir, guac_extract::roster::BOOTSTRAP)
         .expect("bootstrap.bld's entry");
     let mut out = Vec::new();
-    for archive in guac_extract::scripts::spawn_archives() {
+    for archive in guac_extract::scripts::spawn_archives_with(&walkers(dump)) {
         let entry = guac_extract::scripts::entry(&usrdir, &archive)
             .unwrap_or_else(|e| panic!("{archive}: {e}"));
         let igz = Igz::parse(&entry).unwrap_or_else(|e| panic!("{archive}: {e}"));
@@ -193,7 +201,7 @@ fn spawn_models(dump: &Path) -> Vec<guacamole::props::PropModel> {
 fn particle_keys(dump: &Path, igz: &Igz<'_>, view: &Scene) -> (Vec<WarmKey>, usize) {
     let usrdir = dump.join("PS3_GAME/USRDIR");
     let mut emitters = Vec::new();
-    for archive in guac_extract::particles::archives() {
+    for archive in guac_extract::particles::archives_with(&walkers(dump)) {
         let entry = guac_extract::scripts::entry(&usrdir, &archive)
             .unwrap_or_else(|e| panic!("{archive}: {e}"));
         let igz = Igz::parse(&entry).unwrap_or_else(|e| panic!("{archive}: {e}"));
@@ -619,8 +627,10 @@ fn the_census_is_the_discs() {
         (spawn_models, spawns.len(), spawns_beyond.len()),
         // AS.63: 13 past while its rule hadn't taken 6 into the props', 35
         // models and 26 keys while the 3 that show nothing (`inviso.mdl`
-        // and `design_inviso.mdl`) were drawn.
-        (32, 25, 7),
+        // and `design_inviso.mdl`) were drawn; 32, 25 and 7 while only
+        // global's and Eruptor's archives gave the part its models (before
+        // openspec AU.1 read every character's).
+        (913, 147, 86),
         "what the scripts spawn: the spawn part's models, their keys and their faded ones, those past the level's and its props'"
     );
     assert_eq!(
@@ -634,8 +644,10 @@ fn the_census_is_the_discs() {
         // AH.39: 22 glow masks before `global.bld`'s models; the heroes'
         // 1, 0, 1, 0 while only Eruptor's were (before the arrival lane),
         // their static keys 7 before AG.23's receiving level keys left 16
-        // of them to the heroes' table; 29 glow masks before AS.63's rule.
-        (37, 33, 23, 17, 8),
+        // of them to the heroes' table; 29 glow masks before AS.63's rule;
+        // 37 masks and the heroes' 8 static ones before openspec AU.1's
+        // every character's spawn models (whose masks hold those 8).
+        (78, 33, 23, 17, 0),
         "the level's glow masks, the heroes' keys and their glow masks"
     );
     assert_eq!(

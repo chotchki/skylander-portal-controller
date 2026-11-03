@@ -283,6 +283,7 @@ fn current(m: &Manifest) -> bool {
         && crate::levels::complete(m)
         && crate::PARTS.iter().all(|p| m.parts.contains_key(*p))
         && crate::scripts::complete(m)
+        && crate::particles::complete(m)
         && crate::interface::record_current(m)
 }
 

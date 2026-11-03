@@ -64,8 +64,9 @@ const LEVEL_SHARED: usize = 5;
 const INTERFACE_TEXTURES: usize = 6;
 /// A level's events: none of the parts the TV reads done, then each.
 const LEVEL_EVENTS: usize = PLAYED.len() + 1;
-/// The emitters' archives: global.bld and the fighter's.
-const PARTICLE_ARCHIVES: usize = 2;
+/// The emitters' archives: global.bld, the fighter's and since AU.1 each
+/// walker's.
+const PARTICLE_ARCHIVES: usize = 2 + WALKERS;
 /// The script stage's events: none of its two parts done, then each.
 const SCRIPT_EVENTS: usize = 3;
 /// The script entries (bootstrap, global, init_setup and the fighter's),
@@ -447,11 +448,12 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     assert_eq!(recorded(&m, "nodes/"), NODES);
     assert_eq!(m.parts["nodes"].len(), NODES);
     assert_eq!(recorded(&m, "scripts/"), ENTRIES);
-    assert_eq!(recorded(&m, "spawns/"), 2);
+    // Global's, the fighter's and since AU.1 each walker's.
+    assert_eq!(recorded(&m, "spawns/"), 2 + WALKERS);
     assert!(scripts::complete(&m));
     // AH.87's: an archive's emitters each (the builders' place none).
-    assert_eq!(recorded(&m, "particles/"), 2);
-    assert_eq!(m.parts["particles"].len(), 2);
+    assert_eq!(recorded(&m, "particles/"), PARTICLE_ARCHIVES);
+    assert_eq!(m.parts["particles"].len(), PARTICLE_ARCHIVES);
     assert!(done.particles.read && done.particles.failed.is_none());
     assert_eq!(recorded(&m, "ir/characters"), 0);
     assert_eq!(recorded(&m, "video/"), 0);
@@ -573,6 +575,9 @@ fn the_roster_is_written_before_any_intro_work_starts() {
             .1
             .contains("minionload_016_spyrodark.bld")
     );
+    // The fighter's models past his body; since AU.1 each walker's spawn
+    // file too, which holds none (the model builder's character, nothing
+    // past his body).
     assert_eq!((sc.props, sc.refused_props.len()), (SPAWN_PROPS, 0));
     assert_eq!(
         (
@@ -580,7 +585,7 @@ fn the_roster_is_written_before_any_intro_work_starts() {
             sc.spawn_files.written,
             sc.spawn_files.kept
         ),
-        (ENTRIES, 2, 1)
+        (ENTRIES, 2 + WALKERS, 1)
     );
     assert_eq!(
         fs::read(dir.join("scripts/global.igz")).unwrap(),
@@ -929,10 +934,15 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
     );
     let sc = &done.scripts;
     assert_eq!((sc.parts_read, sc.parts_kept, sc.entries), (0, 2, 0));
-    assert_eq!((sc.files.written, sc.files.kept), (0, ENTRIES + 3));
+    // The entries, the spawn models' two base files and texture, and each
+    // walker's spawn models (AU.1).
+    assert_eq!(
+        (sc.files.written, sc.files.kept),
+        (0, ENTRIES + 3 + WALKERS)
+    );
     let pa = &done.particles;
     assert!(pa.kept && !pa.read);
-    assert_eq!((pa.files.written, pa.files.kept), (0, 2));
+    assert_eq!((pa.files.written, pa.files.kept), (0, PARTICLE_ARCHIVES));
     let so = &done.sounds;
     assert!(so.kept && !so.read);
     assert_eq!((so.files.written, so.files.kept), (0, SOUND_ARCHIVES));
@@ -1640,6 +1650,77 @@ fn an_extract_made_before_the_walkers_resumes_for_its_scripts_part_alone() {
         "only those: every other part kept"
     );
     assert_eq!(sc.walkers, WALKERS);
+    drop(again);
+    assert_eq!(
+        open(&s.dump, &s.root, &s.known, &|_| {}).unwrap().state,
+        DirState::Current
+    );
+}
+
+/// AU.1: an extract made before the walkers' archives gave the spawn
+/// models and the particles their files (each part holding the base's
+/// alone, `global.bld`'s and the fighter's) isn't current: it opens as a
+/// resume and reads those two parts again, writing only the walkers'
+/// files, every other part kept, then is current.
+#[test]
+fn an_extract_made_before_au1_reads_the_walkers_spawns_and_particles_alone() {
+    let s = setup();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    stages::run(&mut opened.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    let dir = opened.dir.path().to_path_buf();
+    drop(opened);
+    let base: Vec<String> = scripts::spawn_archives()
+        .iter()
+        .flat_map(|a| {
+            [
+                IrFormat::Ron.spawn_path(a),
+                guac_extract::particles::path(IrFormat::Ron, a),
+            ]
+        })
+        .collect();
+    let path = dir.join("manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let mut gone = Vec::new();
+    for part in [scripts::SPAWNS, guac_extract::particles::PART] {
+        let files = json["parts"][part].as_array_mut().unwrap();
+        let ir = |f: &str| f.starts_with("spawns/") || f.starts_with("particles/");
+        gone.extend(
+            files
+                .iter()
+                .map(|f| f.as_str().unwrap().to_owned())
+                .filter(|f| ir(f) && !base.contains(f)),
+        );
+        files.retain(|f| !ir(f.as_str().unwrap()) || base.iter().any(|b| f == b.as_str()));
+    }
+    assert_eq!(gone.len(), 2 * WALKERS, "{gone:?}");
+    let outputs = json["outputs"].as_array_mut().unwrap();
+    outputs.retain(|o| !gone.iter().any(|f| o["path"] == f.as_str()));
+    fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+    for f in &gone {
+        fs::remove_file(dir.join(f)).unwrap();
+    }
+    let mut again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    assert_eq!(again.state, DirState::Resume);
+    let done = stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    let sc = &done.scripts;
+    assert_eq!(
+        (sc.parts_read, sc.parts_kept),
+        (1, 1),
+        "the spawn models part, the scripts part kept"
+    );
+    assert!(done.particles.read, "the particles part read again");
+    let written = done.roster.files.written
+        + done.progression.files.written
+        + done.models.files.written
+        + done.models.palettes.files.written
+        + done.levels.files.written
+        + sc.script_files.written
+        + done.sounds.files.written;
+    assert_eq!(written, 0, "every other part kept");
+    for f in &gone {
+        assert!(again.dir.output_done(f).unwrap(), "{f}");
+    }
     drop(again);
     assert_eq!(
         open(&s.dump, &s.root, &s.known, &|_| {}).unwrap().state,

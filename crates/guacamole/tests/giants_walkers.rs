@@ -26,7 +26,7 @@
 
 mod common;
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -87,6 +87,45 @@ fn named(halt: &str) -> String {
         }
     }
     halt.to_owned()
+}
+
+/// `m`'s name as the run's registry gives it, or, where that's its id alone,
+/// off aj-vm's live table (`AH18_LIVE_TABLE`) when it's set.
+fn member_name(vm: &Vm, m: guac_script::MemberId) -> String {
+    let own = vm.config().members.name(m);
+    if own.contains(' ') || !own.contains(char::is_numeric) {
+        return own;
+    }
+    table_name(m).unwrap_or(own)
+}
+
+/// `m`'s name off aj-vm's live table (`AH18_LIVE_TABLE`), when it's set.
+fn table_name(m: guac_script::MemberId) -> Option<String> {
+    static TABLE: std::sync::OnceLock<HashMap<guac_script::MemberId, String>> =
+        std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        let Some(text) = std::env::var("AH18_LIVE_TABLE")
+            .ok()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+        else {
+            return HashMap::new();
+        };
+        text.lines()
+            .filter(|l| !l.starts_with('#'))
+            .filter_map(|row| {
+                let c: Vec<&str> = row.split('\t').collect();
+                let ns = c.first()?.to_ascii_lowercase();
+                let ns = ns.strip_prefix("tfb").unwrap_or(&ns).to_owned();
+                let name = c.get(2)?.to_ascii_lowercase();
+                let name = name.trim_start_matches('-').to_owned();
+                Some((
+                    guac_script::MemberId::named(&ns, &name),
+                    format!("{ns}.{name}"),
+                ))
+            })
+            .collect()
+    });
+    table.get(&m).cloned()
 }
 
 fn capture_dir() -> PathBuf {
@@ -221,6 +260,11 @@ struct Opts {
     /// `GUAC_TEST_UNMODEL`'s value (AG.221), taken out through the TV's own
     /// [`guacamole::unmodel::take_out`] rather than `without`'s pairs.
     key: Option<&'static str>,
+    /// The TV's listing for chapter 1 (`scripts::level_config`: the first
+    /// fight's placements with the rest) and the first fight's creatures
+    /// walked as bodies, his hands posed off his model (AH.50) each step:
+    /// AH.29's sweep, his attacks against a Chompy (openspec AU.1).
+    fight: bool,
 }
 
 const STRICT: Opts = Opts {
@@ -229,6 +273,7 @@ const STRICT: Opts = Opts {
     cells: &[],
     without: &[],
     key: None,
+    fight: false,
 };
 const DISCOVER: Opts = Opts {
     mode: Mode::Strict,
@@ -236,6 +281,7 @@ const DISCOVER: Opts = Opts {
     cells: &[],
     without: &[],
     key: None,
+    fight: false,
 };
 /// Tree Rex strict on the registry: the two members his walk reached past it
 /// until AH.49 and AG.160 modelled them, his minion's first tick writing
@@ -395,6 +441,11 @@ struct W {
     tv_view: bool,
     drawn: Option<guac_motion::camera::View>,
     chain: Option<guac_motion::camera::GameCamera>,
+    /// What poses his hands each step in a fight run ([`Opts::fight`]): his
+    /// model, palette and attach nodes off the extract, at his scale.
+    rig: Option<guacamole::hands::Rig>,
+    /// What play mode stopped, as the VM gave it ([`W::stops`] names each).
+    halts: Vec<Halt>,
 }
 
 impl W {
@@ -407,7 +458,11 @@ impl W {
         // As the TV lists them: every walker whose new asks of the viewport
         // are all read (AH.150), and this one (any unread let through, so
         // his scripts run).
-        let mut config = scripts::with_walkers(scripts::smash_config(o.mode), &l.walkers);
+        let base = match o.fight {
+            true => scripts::level_config(o.mode, &l.files, l.level_unit, LEVEL_NAME),
+            false => scripts::smash_config(o.mode),
+        };
+        let mut config = scripts::with_walkers(base, &l.walkers);
         add_cells(&mut config, o);
         if let Some(w) = walker {
             let mut w = w.clone();
@@ -419,6 +474,9 @@ impl W {
         let vm = scripts::init_chain(l.program.clone(), &l.files, &handles, &l.order, config);
         let mut world = ScriptWorld::new(&l.files, &handles, objects);
         world.set_inert(vm.inert());
+        if o.fight {
+            world.walk_first_fight(l.level_unit);
+        }
         // As the TV's: the sounds part the level's load reads, each start of
         // a sound it gives audio for playing on the game clock (openspec
         // AR.9; AR.9's review: a sound's copy listed as an animation moved
@@ -498,6 +556,12 @@ impl W {
         let next = objects[6].max(HERO) + 1;
         let toy = l.toy(load).unwrap_or_else(|| panic!("{load}: no figure"));
         let scale = walk.scale;
+        let rig = o.fight.then(|| guacamole::hands::Rig {
+            model: read_ron(&l.dir, &IrFormat::Ron.model_path(load)),
+            palette: palette.clone(),
+            nodes: read_ron(&l.dir, &IrFormat::Ron.nodes_path(load)),
+            scale,
+        });
         W {
             vm,
             world,
@@ -525,6 +589,8 @@ impl W {
             tv_view: false,
             drawn: None,
             chain: None,
+            rig,
+            halts: Vec::new(),
         }
     }
 
@@ -559,7 +625,12 @@ impl W {
     fn step(&mut self) -> Result<(), Halt> {
         let dt = self.dt;
         self.vm.set_tick_seconds(dt);
-        let pads = self.bench.pads;
+        let mut pads = self.bench.pads;
+        // As the TV's `step_scripts`: the attack buttons reach his scripts
+        // only while he's joined and on them (openspec AU.1).
+        if self.minion.is_none() || self.off.is_some() {
+            pads[0].actions = [false; 4];
+        }
         self.world.read_pads(pads);
         self.vm.set_activity(&self.world.activity(&mut self.bench));
         // Off his scripts he's off the player loop's joined run, as on the
@@ -572,6 +643,7 @@ impl W {
         assert!(play || stopped.is_empty(), "strict mode stops by halting");
         self.stops
             .extend(stopped.iter().map(|h| named(&h.to_string())));
+        self.halts.extend(stopped.iter().cloned());
         self.world.end_step();
         scripts::add_scripted(&mut self.vm, &mut self.world);
         self.bench.stand_props(&self.world);
@@ -582,6 +654,7 @@ impl W {
         );
         self.stops
             .extend(report.stopped.iter().map(|h| named(&h.to_string())));
+        self.halts.extend(report.stopped.iter().cloned());
         self.apply_scale();
         // His fall-back where the TV's `step_scripts` takes one: Eruptor at
         // any stop, a walker once his setup ran through and wrote his
@@ -616,6 +689,13 @@ impl W {
         }
         self.world.advance(dt, &mut self.bench);
         self.steps += 1;
+        // His hands posed off his model and what his scripts play on him,
+        // and what hangs from them set there (AH.50), as the TV's step does.
+        if let Some(rig) = self.rig.as_mut() {
+            rig.scale = self.scale;
+            rig.pose(&mut self.world, self.hero, f64::from(self.steps) / 60.0);
+            self.world.place_hung(&mut self.bench);
+        }
         self.bench.place_bodies(&self.world);
         if self.tv_view {
             let feet = self.hero().pivot;
@@ -932,8 +1012,8 @@ fn a_probe_of_the_part() {
     );
     for w in &l.walkers {
         println!(
-            "  {} unit {} asks {} scripts {:?}",
-            w.load_file, w.unit, w.asks, w.scripts
+            "  {} unit {} asks {} scripts {:?}; attack scripts {:?}, held {:?}",
+            w.load_file, w.unit, w.asks, w.scripts, w.attack_scripts, w.held_scripts
         );
     }
 }
@@ -975,9 +1055,14 @@ fn the_whitelist_holds_each_listed_walkers_scripts() {
     for (w, e) in listed.iter().zip(&entries) {
         let mut ours: Vec<String> = e.scripts.iter().map(|s| format!("/{s}")).collect();
         ours.sort_by_key(key);
-        let mut tv = w.scripts.clone();
+        // His walk's and, since AU.1, his attacks' whose asks are read.
+        let mut tv: Vec<String> = w.scripts.iter().chain(&w.attack_scripts).cloned().collect();
         tv.sort_by_key(key);
+        tv.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
         assert_eq!(ours, tv, "{}", w.load_file);
+        for (held, _) in &w.held_scripts {
+            assert!(!ours.contains(held), "{}: {held} is held", w.load_file);
+        }
     }
     println!(
         "{} walkers listed, {} on the whitelist, {} scripts",
@@ -1001,8 +1086,15 @@ fn a_probe_of_the_asks() {
             known.extend(guacamole::on_screen::reached(p, id as u32).0);
         }
     }
-    for w in l.walkers.iter().filter(|w| w.asks > 0) {
-        println!("{} (asks {}):", w.load_file, w.asks);
+    for w in l
+        .walkers
+        .iter()
+        .filter(|w| w.asks > 0 || !w.held_scripts.is_empty())
+    {
+        println!(
+            "{} (asks {}, held {:?}):",
+            w.load_file, w.asks, w.held_scripts
+        );
         for (id, s) in p
             .scripts
             .iter()
@@ -1013,6 +1105,7 @@ fn a_probe_of_the_asks() {
             if !w
                 .scripts
                 .iter()
+                .chain(w.held_scripts.iter().map(|(n, _)| n))
                 .any(|n| n.eq_ignore_ascii_case(&format!("/{file}")))
             {
                 continue;
@@ -1022,10 +1115,11 @@ fn a_probe_of_the_asks() {
                     continue;
                 }
                 println!(
-                    "  from {file}: ask in {} #{} def {:?}",
+                    "  from {file}: ask in {} #{} def {:?}, read {:?}",
                     p.scripts[a.script as usize].name,
                     a.position,
-                    a.def.map(|d| p.defs[d as usize].display.clone())
+                    a.def.map(|d| p.defs[d as usize].display.clone()),
+                    on_screen::read_of(p, &a, on_screen::READ).map(|r| r.verdict)
                 );
             }
         }
@@ -3721,7 +3815,10 @@ fn the_fourteen_asking_walkers_join_or_keep_their_cards_for_their_own_reasons() 
         started.elapsed(),
         load1()
     );
-    assert_eq!((gating, cosmetic), (9, 1));
+    // AH.150's nine and one, and AU.2's: Sonic Boom's hatchling's and Stump
+    // Smash's acorn's, and the woodpecker's five in each of Tree Rex's two
+    // files.
+    assert_eq!((gating, cosmetic), (9 + 12, 1));
     // As the TV joins them.
     let mut table = Vec::new();
     for load in ASKING {
@@ -3853,6 +3950,7 @@ const PLAY: Opts = Opts {
     cells: &[],
     without: &[],
     key: None,
+    fight: false,
 };
 /// [`PLAY`] with `collisioninfo.object collisions` taken out of the registry
 /// (`Members::without`, test-only): the member AG.160 modelled, which
@@ -5550,4 +5648,789 @@ fn a_giants_entry_beam_punches_the_view_in_and_out() {
         range(&fire)
     );
     println!("{:.2?}; load after: {:.2}", started.elapsed(), load1());
+}
+
+/// AH.29's sweep (openspec AU.1, AU.2): what one press of an attack did.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+struct Press {
+    /// The action pressed, 1-4 (bottom the first, then the second, the
+    /// third and the top's, AH.24's positions).
+    action: usize,
+    /// The palette slots his scripts started on him in the window, and of
+    /// those the ones started within [`READ_BY`] steps of the press (an
+    /// idle's variation starts on its own now and then, not on a press).
+    slots: Vec<u32>,
+    press_slots: Vec<u32>,
+    /// The clones made in the window from his file's templates, by name.
+    clones: Vec<String>,
+    /// Each hit on a Chompy in the window: its name and the health it took.
+    hits: Vec<(String, f32)>,
+    /// What stopped in the window among his placements (his minion, his
+    /// file's, the clones of his templates), as the VM named it.
+    stops: Vec<String>,
+}
+
+impl Press {
+    /// Whether any script of his did anything on it: a clip on him started
+    /// at the press, a clone of his file's, a stop.
+    fn read(&self) -> bool {
+        !self.press_slots.is_empty() || !self.clones.is_empty() || !self.stops.is_empty()
+    }
+}
+
+/// One stop among his placements: the member (named off aj-vm's live
+/// table where it's set), the op, the script and its position.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+struct StopAt {
+    member: String,
+    op: String,
+    script: String,
+    position: u32,
+    placement: String,
+}
+
+/// One character's sweep.
+#[derive(Debug, Default, serde::Serialize)]
+struct Fought {
+    load: String,
+    giant: bool,
+    /// His file's scripts the TV's listing holds back, each with its unread
+    /// asks of the gameplay viewport (`WalkerScripts::held_scripts`).
+    held: Vec<(String, usize)>,
+    /// Why he never got to the presses (his join or the route stopping).
+    failed: Option<String>,
+    presses: Vec<Press>,
+    /// Every stop among his placements over his runs, each once.
+    stops: Vec<StopAt>,
+    /// Stops elsewhere (the level's), each once.
+    level_stops: Vec<String>,
+    /// How many runs it took (a fresh one after his minion stops).
+    runs: u32,
+    took: f32,
+    /// Every member his runs reached, by name (against AH.12's ceiling).
+    reached: std::collections::BTreeSet<String>,
+}
+
+impl Fought {
+    /// AH.29's three, and the one between.
+    fn outcome(&self) -> &'static str {
+        if self.failed.is_some() {
+            "failed"
+        } else if self.presses.iter().any(|p| !p.hits.is_empty()) {
+            "attacking"
+        } else if !self.stops.is_empty() {
+            "stopped"
+        } else if self.presses.iter().any(Press::read) {
+            "reads the press, no hit"
+        } else {
+            "walking only"
+        }
+    }
+}
+
+/// The first fight's four Chompies, by placement.
+const SWEEP_CHOMPIES: [&str; 4] = [
+    "Enemy_Chompy(1)",
+    "Enemy_Chompy(2)",
+    "Enemy_Chompy(3)",
+    "Enemy_Chompy(4)",
+];
+/// The one set in front of him for each press.
+const TARGET: &str = "Enemy_Chompy(2)";
+/// The steps a press's window runs, the button down for the first six,
+/// after the quiet steps set before it once the target is in front of him;
+/// a clip started within the first [`READ_BY`] is the press's.
+const WINDOW: u32 = 180;
+const HELD: u32 = 6;
+const QUIET: u32 = 30;
+const READ_BY: u32 = 12;
+
+impl W {
+    /// The handle of the level's placement `name`.
+    fn level_handle(&self, l: &Level, name: &str) -> Handle {
+        let p = self
+            .files
+            .placed
+            .iter()
+            .find(|p| p.name == name && p.obj.unit == l.level_unit)
+            .unwrap_or_else(|| panic!("no {name}"));
+        self.handles[&p.obj]
+    }
+
+    /// The hero set down at `at` facing `facing`, at rest, as the route's
+    /// teleports do (`common::Run::put`).
+    fn put(&mut self, at: Vec3, facing: f32) {
+        let hero = self.bench.heroes.get_mut(&self.hero).unwrap();
+        hero.pivot = at + Vec3::Y;
+        hero.facing = facing;
+        hero.walk.velocity = Vec3::ZERO;
+        hero.settle(&self.bench.world, &[HERO_BODY]);
+    }
+
+    /// A creature's `creature info` on its `description`.
+    fn creature_info(&self, h: Handle) -> Option<Value> {
+        let id = self.vm.placement_of(h)?;
+        let d = self.vm.local(id, "description").map(|v| self.vm.value(v))?;
+        self.vm.field(d, "creature info").map(|v| self.vm.value(v))
+    }
+
+    fn creature_health(&self, h: Handle) -> Option<f32> {
+        let c = self.creature_info(h)?;
+        self.vm
+            .field(c, "hp")
+            .and_then(|v| self.vm.value(v).as_f32())
+    }
+
+    /// Its health and full health set to `hp`, as AH.10's stun staging pokes
+    /// them, so a hit takes health it can show.
+    fn set_creature_health(&mut self, h: Handle, hp: i32) {
+        let Some(c) = self.creature_info(h) else {
+            return;
+        };
+        self.vm.set_field(c, "hp", Value::Int(hp));
+        if let Some(cp) = self
+            .vm
+            .field(c, "character parameters")
+            .map(|v| self.vm.value(v))
+        {
+            self.vm.set_field(cp, "hp max", Value::Int(hp));
+        }
+    }
+
+    /// Whose a stop is: his minion's, his file's or a clone of his file's
+    /// templates'.
+    fn his(&self, h: &Halt) -> bool {
+        let Some(p) = h.placement else {
+            return false;
+        };
+        if p == self.hero {
+            return true;
+        }
+        let unit = self.unit;
+        self.files
+            .placed
+            .iter()
+            .any(|x| x.obj.unit == unit && self.handles.get(&x.obj) == Some(&p))
+            || self
+                .world
+                .template_obj(Value::Entity(p))
+                .is_some_and(|o| o.unit == unit)
+    }
+}
+
+/// `load` along AH.8's route to anchor B as `giants_chompy`'s `fight`
+/// takes Eruptor (the route's set-downs, the scene waited on, the
+/// creatures where anchor B has them, the combat manager's first alert),
+/// every Chompy's health 100, his own kept full; then each of `actions`
+/// pressed in turn with [`TARGET`] set in front of him in reach, each
+/// window's press, clips, clones, hits and stops into `out`. Returns the
+/// action his minion stopped in, if it did (the next run takes the rest).
+fn fight_presses(l: &Level, load: &str, actions: &[usize], out: &mut Fought) -> Option<usize> {
+    use guacamole::anchors::{ANCHOR_B, FIRST_ALERT, OPENING, ROUTE};
+    let o = Opts {
+        fight: true,
+        ..PLAY
+    };
+    let mut w = match W::joined(l, load, o, 120) {
+        Ok(w) => w,
+        Err(b) => {
+            let (_, when, h) = *b;
+            out.failed = Some(format!("{when}: {}", named(&h.to_string())));
+            return None;
+        }
+    };
+    let chompies: Vec<Handle> = SWEEP_CHOMPIES
+        .iter()
+        .map(|n| w.level_handle(l, n))
+        .collect();
+    let target = w.level_handle(l, TARGET);
+    let mut waited = 0u32;
+    let mut k = 0u32;
+    while k < OPENING {
+        if k == ROUTE[4].0
+            && guacamole::anchors::route_waits(
+                Some(k),
+                ROUTE[4].0,
+                w.world.holds_sounds_of(l.level_unit) && guacamole::anchors::scene_holds(&w.vm),
+                waited,
+            )
+        {
+            w.bench.pads[0] = Pad {
+                connected: true,
+                ..Pad::default()
+            };
+            let _ = w.step();
+            waited += 1;
+            continue;
+        }
+        if let Some((_, at, facing)) = ROUTE.iter().find(|r| r.0 == k) {
+            w.put(Vec3::from_array(*at), *facing);
+        }
+        if k == ROUTE[4].0 {
+            for (name, at, facing) in ANCHOR_B {
+                let h = w.level_handle(l, name);
+                w.world.place(h, Vec3::from_array(at), facing);
+            }
+        }
+        w.bench.pads[0] = Pad {
+            connected: true,
+            ..Pad::default()
+        };
+        if let Err(h) = w.step() {
+            out.failed = Some(format!("route step {k}: {}", named(&h.to_string())));
+            return None;
+        }
+        k += 1;
+    }
+    for (name, at, facing) in ANCHOR_B {
+        let h = w.level_handle(l, name);
+        w.world.place(h, Vec3::from_array(at), facing);
+    }
+    scripts::alert_in(&mut w.vm, FIRST_ALERT);
+    let radius = w.walk.shape.width.max(w.walk.shape.length) * 0.5 * w.scale * FOOT;
+    let anchor = Vec3::from_array(ANCHOR_B[1].1);
+    let mut seen_halts = w.halts.len();
+    for &action in actions {
+        for &c in &chompies {
+            w.set_creature_health(c, 1000);
+        }
+        if let Some(m) = w.minion {
+            let full =
+                w.vm.local(m, "description")
+                    .map(|v| w.vm.value(v))
+                    .and_then(|d| w.vm.field(d, "creature info"))
+                    .map(|v| w.vm.value(v))
+                    .and_then(|c| w.vm.field(c, "character parameters"))
+                    .map(|v| w.vm.value(v))
+                    .and_then(|cp| w.vm.field(cp, "hp max"))
+                    .and_then(|v| w.vm.value(v).as_f32())
+                    .unwrap_or(500.0);
+            scripts::set_health(&mut w.vm, m, full as i32);
+        }
+        // The target in front of him, just past his solid, facing him; him
+        // facing it.
+        // The first Chompy still standing, in front of him.
+        let target = chompies
+            .iter()
+            .copied()
+            .find(|&c| w.vm.placement_of(c).is_some_and(|id| !w.vm.removed(id)))
+            .unwrap_or(target);
+        let at = w.hero().pivot;
+        let mut along = anchor - at;
+        along.y = 0.0;
+        let along = along.normalize_or_zero();
+        let spot = Vec3::new(at.x, anchor.y, at.z) + along * (radius + 1.0);
+        w.world.place(
+            target,
+            spot,
+            guacamole::script_engine::heading_of(-along).rem_euclid(360.0),
+        );
+        w.bench.heroes.get_mut(&w.hero).unwrap().facing =
+            guacamole::script_engine::heading_of(along).rem_euclid(360.0);
+        // A few steps with nothing pressed: the clips his turn to it and his
+        // idle start on their own, which the press's window doesn't count.
+        let quiet = w.world.start_count();
+        for _ in 0..QUIET {
+            w.bench.pads[0] = Pad {
+                connected: true,
+                ..Pad::default()
+            };
+            if let Err(h) = w.step() {
+                out.failed = Some(format!("a quiet step: {}", named(&h.to_string())));
+                return None;
+            }
+        }
+        let background: Vec<u32> = w
+            .world
+            .started_since(quiet)
+            .into_iter()
+            .filter_map(|i| {
+                let seq = &w.world.sequences()[i];
+                (seq.actor == w.hero).then(|| w.world.clip_of(seq).map(|(_, s)| s))?
+            })
+            .collect();
+        let since = w.world.start_count();
+        let clones_before: HashSet<Handle> = w.world.clones().into_iter().collect();
+        let mut health: Vec<Option<f32>> = chompies.iter().map(|&c| w.creature_health(c)).collect();
+        let mut press = Press {
+            action: action + 1,
+            ..Press::default()
+        };
+        let mut stopped_in = false;
+        let mut read_by = None;
+        for s in 0..WINDOW {
+            if s == READ_BY {
+                read_by = Some(w.world.start_count());
+            }
+            let mut actions = [false; 4];
+            actions[action] = s < HELD;
+            w.bench.pads[0] = Pad {
+                stick: Stick::CENTRED,
+                actions,
+                connected: true,
+            };
+            if let Err(h) = w.step() {
+                press.stops.push(named(&h.to_string()));
+                break;
+            }
+            for (i, &c) in chompies.iter().enumerate() {
+                let now = w.creature_health(c);
+                if let (Some(was), Some(is)) = (health[i], now)
+                    && is < was
+                {
+                    press.hits.push((SWEEP_CHOMPIES[i].to_owned(), was - is));
+                }
+                health[i] = now;
+            }
+            if w.off.is_some() {
+                stopped_in = true;
+            }
+        }
+        let early: Vec<usize> = match read_by {
+            Some(by) => {
+                let late: HashSet<usize> = w.world.started_since(by).into_iter().collect();
+                w.world
+                    .started_since(since)
+                    .into_iter()
+                    .filter(|i| !late.contains(i))
+                    .collect()
+            }
+            None => w.world.started_since(since),
+        };
+        for i in w.world.started_since(since) {
+            let seq = &w.world.sequences()[i];
+            if seq.actor == w.hero
+                && let Some((_, slot)) = w.world.clip_of(seq)
+                && !background.contains(&slot)
+            {
+                press.slots.push(slot);
+                if early.contains(&i) {
+                    press.press_slots.push(slot);
+                }
+            }
+        }
+        for h in w.world.clones() {
+            let name = w.world.name(h);
+            if !clones_before.contains(&h)
+                && !name.is_empty()
+                && w.world
+                    .template_obj(Value::Entity(h))
+                    .is_some_and(|o| o.unit == w.unit)
+            {
+                press.clones.push(name);
+            }
+        }
+        press.clones.sort();
+        press.clones.dedup();
+        for h in &w.halts[seen_halts..] {
+            let at = StopAt {
+                member: match &h.reason {
+                    guac_script::Reason::UnmodelledMember(_) => named(&h.to_string())
+                        .rsplit_once("= ")
+                        .map_or_else(|| format!("{:?}", h.reason), |(_, n)| n.to_owned()),
+                    r => format!("{r:?}"),
+                },
+                op: h.op.map_or_else(String::new, |c| c.type_name().to_owned()),
+                script: h.script.rsplit(['/', '\\']).next().unwrap_or("").to_owned(),
+                position: h.position,
+                placement: h.placement_name.clone(),
+            };
+            if w.his(h) {
+                press.stops.push(named(&h.to_string()));
+                if !out.stops.contains(&at) {
+                    out.stops.push(at);
+                }
+            } else {
+                let s = named(&h.to_string());
+                if !out.level_stops.contains(&s) {
+                    out.level_stops.push(s);
+                }
+            }
+        }
+        seen_halts = w.halts.len();
+        out.presses.push(press);
+        if stopped_in {
+            out.reached
+                .extend(w.vm.reached().iter().map(|m| member_name(&w.vm, *m)));
+            return Some(action);
+        }
+    }
+    out.reached
+        .extend(w.vm.reached().iter().map(|m| member_name(&w.vm, *m)));
+    None
+}
+
+/// The positions `AH29_ACTIONS` asks pressed alone (comma-separated, 1-4),
+/// each in a run of its own, so nothing an earlier press left behind (a
+/// fire on the ground, a summoned helper) hits in its window.
+fn presses_alone() -> Option<Vec<usize>> {
+    std::env::var("AH29_ACTIONS").ok().map(|s| {
+        s.split(',')
+            .filter_map(|a| a.trim().parse::<usize>().ok())
+            .filter(|a| (1..=4).contains(a))
+            .map(|a| a - 1)
+            .collect()
+    })
+}
+
+/// AH.29's sweep for `load`: each attack pressed against a Chompy, a fresh
+/// run for the presses after one his minion stopped in, or each of
+/// [`presses_alone`] in a run of its own.
+fn sweep_one(l: &Level, load: &str) -> Fought {
+    let started = Instant::now();
+    let walker = l.walkers.iter().find(|w| w.load_file == load);
+    let giant = l
+        .roster
+        .figures
+        .iter()
+        .any(|f| f.load_file == load && f.category == Category::Giant);
+    let mut out = Fought {
+        load: load.to_owned(),
+        giant,
+        held: walker.map_or_else(Vec::new, |w| w.held_scripts.clone()),
+        ..Fought::default()
+    };
+    if let Some(alone) = presses_alone() {
+        for a in alone {
+            out.runs += 1;
+            fight_presses(l, load, &[a], &mut out);
+        }
+        out.took = started.elapsed().as_secs_f32();
+        return out;
+    }
+    let mut left: Vec<usize> = (0..4).collect();
+    while !left.is_empty() && out.runs < 4 {
+        out.runs += 1;
+        match fight_presses(l, load, &left, &mut out) {
+            Some(a) => left.retain(|x| *x > a),
+            None => break,
+        }
+    }
+    out.took = started.elapsed().as_secs_f32();
+    out
+}
+
+/// AH.29's sweep (openspec AU.1's routing, AU.2's measure): every modelled
+/// character joined at chapter 1's start in play mode on the TV's listing,
+/// his attack scripts on it where `WalkerScripts::attack_scripts` lists
+/// them, taken to anchor B along AH.8's route with the first fight's
+/// Chompies, each of
+/// his four attack positions pressed in turn with a Chompy set in front of
+/// him in reach; each listed as attacking (a hit, its health taken),
+/// stopped on a named member (the member, the op, the script), reading the
+/// press without a hit, or walking only; then the members ranked by how
+/// many characters stop on each. A hit is a Chompy's health falling in the
+/// press's window, whatever took it. Run whole, it holds AU.2's measure:
+/// every character attacking, every first attack hitting, the second on at
+/// least 45 (AU.10 has the rest), Sunburn's `move to` the one stop of his
+/// (AU.9) and none of the level's (Hot Head's attack stopped the UI's
+/// keyframer before AU.2's reference to a number). `AH29_ONLY` (comma-separated load files) runs those alone,
+/// `AH29_ACTIONS` ([`presses_alone`]) those positions alone, and either
+/// checks only Eruptor; `AH29_TABLE` (a path outside the tree) gets the
+/// table as JSON.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
+fn every_modelled_character_attacks_or_is_listed() {
+    let started = Instant::now();
+    let l = Level::open();
+    println!("load before: {:.2}", load1());
+    let only: Option<Vec<String>> = std::env::var("AH29_ONLY")
+        .ok()
+        .map(|s| s.split(',').map(str::to_owned).collect());
+    let mut loads: Vec<String> = l.fighters.iter().map(|(f, _)| f.clone()).collect();
+    loads.extend(l.walkers.iter().map(|w| w.load_file.clone()));
+    if let Some(only) = &only {
+        loads.retain(|x| only.contains(x));
+    }
+    let mut table = Vec::new();
+    for load in &loads {
+        let f = sweep_one(&l, load);
+        println!(
+            "{load}{}: {} (held {:?}, runs {}, {:.1} s, load {:.2}){}",
+            if f.giant { " [giant]" } else { "" },
+            f.outcome(),
+            f.held,
+            f.runs,
+            f.took,
+            load1(),
+            f.failed
+                .as_ref()
+                .map_or_else(String::new, |w| format!(" FAILED: {w}"))
+        );
+        for p in &f.presses {
+            println!(
+                "    action {}: slots {:?} (at the press {:?}), clones {:?}, hits {:?}, stops {:?}",
+                p.action, p.slots, p.press_slots, p.clones, p.hits, p.stops
+            );
+        }
+        for s in &f.level_stops {
+            println!("    the level's: {s}");
+        }
+        table.push(f);
+    }
+    let mut outcomes: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for f in &table {
+        outcomes.entry(f.outcome()).or_default().push(&f.load);
+    }
+    println!("== {} characters:", table.len());
+    for (o, who) in &outcomes {
+        println!("  {o}: {} - {who:?}", who.len());
+    }
+    // The members by how many characters stop on each (the first stop of a
+    // character's that names a member is the one modelling it unblocks).
+    let mut by_member: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for f in &table {
+        let mut mine: Vec<&String> = f.stops.iter().map(|s| &s.member).collect();
+        mine.sort();
+        mine.dedup();
+        for m in mine {
+            by_member.entry(m.clone()).or_default().push(f.load.clone());
+        }
+    }
+    let mut ranked: Vec<(String, Vec<String>)> = by_member.into_iter().collect();
+    ranked.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
+    println!("members by the characters stopping on them:");
+    for (m, who) in &ranked {
+        let at: Vec<String> = table
+            .iter()
+            .flat_map(|f| f.stops.iter().filter(|s| &s.member == m))
+            .map(|s| format!("{} #{} {}", s.script, s.position, s.op))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        println!("  {m}: {} - {who:?} at {at:?}", who.len());
+    }
+    let reached: std::collections::BTreeSet<&String> =
+        table.iter().flat_map(|f| f.reached.iter()).collect();
+    println!("members reached over the sweep: {}", reached.len());
+    if let Ok(path) = std::env::var("AH29_TABLE") {
+        let json = serde_json::json!({
+            "reached": reached,
+            "characters": table,
+            "outcomes": outcomes,
+            "members": ranked,
+            "load_after": load1(),
+            "seconds": started.elapsed().as_secs_f32(),
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+        println!("the table: {path}");
+    }
+    println!("{:.1?} in all, load {:.2}", started.elapsed(), load1());
+    // Eruptor's attacks hit (M3's checks stand: `giants_eruptor`).
+    let eruptor = table.iter().find(|f| f.load == "009_Eruptor");
+    if let Some(e) = eruptor {
+        assert_eq!(e.outcome(), "attacking", "{e:?}");
+    }
+    if only.is_some() || presses_alone().is_some() {
+        return;
+    }
+    // AU.2's measure, the whole roster swept.
+    assert_eq!(table.len(), 67, "Eruptor and the 66 walkers");
+    let not: Vec<&str> = table
+        .iter()
+        .filter(|f| f.outcome() != "attacking")
+        .map(|f| f.load.as_str())
+        .collect();
+    assert!(not.is_empty(), "not attacking: {not:?}");
+    let hits_on = |action: usize| {
+        table
+            .iter()
+            .filter(|f| {
+                f.presses
+                    .iter()
+                    .find(|p| p.action == action)
+                    .is_some_and(|p| !p.hits.is_empty())
+            })
+            .count()
+    };
+    assert_eq!(hits_on(1), 67, "every first attack hits");
+    assert!(hits_on(2) >= 45, "{} second attacks hit", hits_on(2));
+    let stops: BTreeSet<(&str, &str, u32)> = table
+        .iter()
+        .flat_map(|f| {
+            f.stops
+                .iter()
+                .map(|s| (f.load.as_str(), s.script.as_str(), s.position))
+        })
+        .collect();
+    assert_eq!(
+        stops,
+        BTreeSet::from([("008_FireDragon", "movementUpdate.ai", 129)]),
+        "Sunburn's `move to` the one stop (AU.9)"
+    );
+    let level: Vec<(&str, &String)> = table
+        .iter()
+        .flat_map(|f| f.level_stops.iter().map(|s| (f.load.as_str(), s)))
+        .collect();
+    assert!(level.is_empty(), "the level's own stops: {level:?}");
+}
+
+fn describe_op(program: &guac_script::Program, op: guac_script::OpId) -> String {
+    use guac_script::Ins;
+    fn path(program: &guac_script::Program, o: Option<guac_script::OperandId>) -> String {
+        use guac_script::{Elem, Ins, Operand};
+        let Some(o) = o else { return String::new() };
+        match &program.operands[o as usize] {
+            Operand::Path {
+                elems,
+                literal,
+                other,
+                ..
+            } => {
+                let names: Vec<String> = elems
+                    .iter()
+                    .map(|e| match e {
+                        Elem::Op(op) => match &program.ops[*op as usize] {
+                            Ins::Parameter(p) => program.sym(p.name).to_owned(),
+                            Ins::Variable { name, .. } => program.sym(*name).to_owned(),
+                            other => {
+                                format!("{:?}", program.op_info[*op as usize].class)
+                                    + &format!("{}", matches!(other, Ins::Define(_)) as u8)
+                            }
+                        },
+                        Elem::Named(a, b) => format!("{}.{}", program.sym(*a), program.sym(*b)),
+                        Elem::Member(m) => table_name(*m).unwrap_or_else(|| format!("{m:?}")),
+                        other => format!("{other:?}"),
+                    })
+                    .collect();
+                let other =
+                    other.map_or(String::new(), |o| format!(" @{}", path(program, Some(o))));
+                format!(
+                    "[{}{}{other}]",
+                    names.join("/"),
+                    literal.map_or(String::new(), |l| format!(" ={l:?}"))
+                )
+            }
+            Operand::Expr { a, op, b } => {
+                format!("({} {op:?} {})", path(program, *a), path(program, *b))
+            }
+        }
+    }
+    let path = |o: Option<guac_script::OperandId>| path(program, o);
+    let class = program.op_info[op as usize].class;
+    match &program.ops[op as usize] {
+        Ins::Parameter(p) => format!(
+            "{class:?} {} of {} = {}",
+            program.sym(p.name),
+            p.def
+                .map_or(String::new(), |d| program.defs[d as usize].display.clone()),
+            path(p.rhs)
+        ),
+        Ins::Define(d) => format!("{class:?} {}", program.defs[*d as usize].display),
+        Ins::Behaviour { name } => format!("{class:?} {}", program.sym(*name)),
+        Ins::Variable { name, .. } => format!("{class:?} {}", program.sym(*name)),
+        Ins::CheckValue { lhs, relation, rhs } => {
+            format!("{class:?} {} {relation} {}", path(*lhs), path(*rhs))
+        }
+        Ins::SetValue { lhs, rhs } => format!("{class:?} {} = {}", path(*lhs), path(*rhs)),
+        Ins::CheckReference {
+            lhs, relation, rhs, ..
+        } => {
+            format!("{class:?} {} {relation} {}", path(*lhs), path(*rhs))
+        }
+        Ins::SetReference { lhs, rhs, .. } => format!("{class:?} {} = {}", path(*lhs), path(*rhs)),
+        Ins::LoopValue { rhs } => format!("{class:?} {}", path(*rhs)),
+        Ins::FindVariable {
+            name,
+            filter,
+            owner,
+            index,
+            ..
+        } => format!(
+            "{class:?} {} filter {filter} of {} [{}]",
+            program.sym(*name),
+            path(*owner),
+            path(*index)
+        ),
+        Ins::World { operands, .. } => format!(
+            "{class:?} {}",
+            operands
+                .iter()
+                .map(|(k, o)| format!("{k:?}={}", path(*o)))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
+        Ins::UseMacro { np, .. } => format!("{class:?} {}", path(*np)),
+        _ => format!("{class:?}"),
+    }
+}
+
+/// A probe (openspec AU.2): the ops of each `script.ai:from-to` in
+/// `AU2_OPS` (comma-separated, file names any case), each as its position,
+/// the definition its block is in and what it does, read off the linked
+/// part. Output is the dump's, for a research folder, never the tree.
+#[test]
+#[ignore = "a probe: reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR"]
+fn a_probe_of_ops() {
+    let l = Level::open();
+    let p = &*l.program;
+    let defs: HashMap<guac_script::OpId, &str> =
+        p.defs.iter().map(|d| (d.op, d.display.as_str())).collect();
+    // `AU2_OBJ=unit:index,...`: each object's type in its unit's file.
+    if let Ok(objs) = std::env::var("AU2_OBJ") {
+        let list = guac_extract::scripts::read_walkers(&l.dir).unwrap();
+        let files = level_scripts::files_with(&list.listed, LEVEL_NAME);
+        for one in objs.split(',') {
+            let (u, i) = one.split_once(':').expect("unit:index");
+            let (u, i): (usize, usize) = (u.parse().unwrap(), i.parse().unwrap());
+            let bytes = std::fs::read(l.dir.join(&files[u].0)).unwrap();
+            let igz = Igz::parse(&bytes).unwrap();
+            let o = &igz.objects()[i];
+            println!("unit {u} ({}) object {i}: {}", files[u].0, igz.type_name(o));
+        }
+    }
+    // `AU2_GREP=script.ai:words`: each op of that script whose text holds
+    // the words, with its position and definition.
+    if let Ok(g) = std::env::var("AU2_GREP") {
+        let (file, words) = g.split_once(':').expect("script.ai:words");
+        for s in p.scripts.iter().filter(|s| {
+            s.name
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap()
+                .eq_ignore_ascii_case(file)
+        }) {
+            println!("{} (unit {}):", s.name, s.unit);
+            for (at, op) in s.ops.iter().enumerate() {
+                let text = describe_op(p, *op);
+                if text.contains(words) {
+                    let def = (0..=at)
+                        .rev()
+                        .find_map(|i| defs.get(&s.ops[i]))
+                        .copied()
+                        .unwrap_or("-");
+                    println!("  #{at} [{def}] {text}");
+                }
+            }
+        }
+        return;
+    }
+    // Nothing asked, nothing printed: the plain run of every disc test
+    // passes (AG.182).
+    let Ok(asked) = std::env::var("AU2_OPS") else {
+        println!("AU2_OPS unset (script.ai:from-to,...): nothing to dump");
+        return;
+    };
+    for one in asked.split(',') {
+        let (file, range) = one.split_once(':').expect("script.ai:from-to");
+        let (from, to) = range.split_once('-').expect("from-to");
+        let (from, to): (usize, usize) = (from.parse().unwrap(), to.parse().unwrap());
+        for s in p.scripts.iter().filter(|s| {
+            s.name
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap()
+                .eq_ignore_ascii_case(file)
+        }) {
+            println!("{} (unit {}), {} ops:", s.name, s.unit, s.ops.len());
+            for at in from..=to.min(s.ops.len().saturating_sub(1)) {
+                let def = (0..=at)
+                    .rev()
+                    .find_map(|i| defs.get(&s.ops[i]))
+                    .copied()
+                    .unwrap_or("-");
+                println!("  #{at} [{def}] {}", describe_op(p, s.ops[at]));
+            }
+        }
+    }
 }

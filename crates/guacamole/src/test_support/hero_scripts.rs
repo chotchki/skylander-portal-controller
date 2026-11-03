@@ -237,6 +237,22 @@ pub(crate) fn write_walkers_described(dir: &Path) {
     );
 }
 
+/// [`attack_builder::WALKER`] finding or making his description as
+/// [`write_walkers_described`]'s do, stopping where `fault` says.
+pub(crate) fn write_walker_described(dir: &Path, fault: attack_builder::WalkerFault) {
+    let (creature, _) = attack_builder::creature();
+    let a = attack_builder::attack_with_creatures();
+    write_files(
+        dir,
+        [&a.global, &a.init_setup, &a.fighter],
+        &creature,
+        &[(
+            attack_builder::WALKER_LOAD,
+            attack_builder::walker_described_as(&attack_builder::WALKER, fault),
+        )],
+    );
+}
+
 /// Giants' rows as AH.2 reads them, the table ours: what lays a
 /// figure's words out in the synthetic part's tests.
 pub(crate) fn progression_rows() -> guac_ir::progression::Progression {
