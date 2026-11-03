@@ -346,3 +346,186 @@ fn every_interior_on_level_214_is_entered_and_left() {
     );
     assert!(stops.is_empty(), "{stops:#?}");
 }
+
+/// openspec AS.96's review: the hero's figure off the portal while the
+/// cave's warp is owed (the step the darkness is whole, which is the step
+/// the controller asks it) and the next hero on, who comes in where the
+/// last stood under a handle of his own: he's the one set down inside, 1 ft
+/// behind the arrival, the original's warp control being the player's
+/// slot's, whoever stands on it; the cave waits for his exit and the
+/// darkness lifts. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_hero_swapped_while_the_caves_warp_is_owed_is_the_one_it_lands() {
+    println!("load at start: {}", load());
+    let started = std::time::Instant::now();
+    let (mut run, mut stops) = joined(guac_extract::levels::FIRST_RUN[0]);
+    let cave = handle(&run, "Interior_controller_Cave");
+    let p = run
+        .files
+        .placed
+        .iter()
+        .find(|p| p.name == "Interior_controller_Cave")
+        .unwrap()
+        .clone();
+    let arrival = run.files.points[&p.waypoints[1]] - Vec3::Z * 0.3048;
+    run.put(Vec3::new(11.0, 22.4, -28.5), 105.0);
+    for _ in 0..10 {
+        step(&mut run, &mut stops, None, [false; 4]);
+    }
+    let landed0 = run.world.landed.len();
+    let mut whole = None;
+    for k in 0..600 {
+        let dark = behaviour(&run, cave).as_deref() == Some(FADING);
+        step(
+            &mut run,
+            &mut stops,
+            (!dark).then_some([16.5, -30.2]),
+            [false; 4],
+        );
+        if guacamole::interiors::darkness(&run.vm, &run.world) >= 1.0 {
+            whole = Some(k);
+            break;
+        }
+    }
+    whole.expect("the darkness whole");
+    assert_eq!(run.world.landed.len(), landed0, "not landed yet");
+    let first = run.hero;
+    run.deactivate().unwrap_or_else(|h| panic!("{h}"));
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    let next = run.hero;
+    assert_ne!(first, next, "the next under a handle of his own");
+    let mut inside = None;
+    for k in 0..240 {
+        step(&mut run, &mut stops, None, [false; 4]);
+        if inside.is_none() && behaviour(&run, cave).as_deref() == Some(INSIDE) {
+            inside = Some(k);
+        }
+        if inside.is_some() && guacamole::interiors::darkness(&run.vm, &run.world) == 0.0 {
+            break;
+        }
+    }
+    let landed = run.world.landed.get(landed0).copied();
+    println!(
+        "swapped at the whole darkness; landed {landed:?}, the next {next:#x}, waiting {inside:?}; {:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    let landed = landed.expect("a warp landed");
+    assert_eq!(landed.minion, next, "the next hero set down");
+    assert!(
+        run.hero().pivot.distance(arrival) < 0.35,
+        "{} against {arrival}",
+        run.hero().pivot
+    );
+    assert!(inside.is_some(), "the cave waits for his exit");
+    assert_eq!(guacamole::interiors::darkness(&run.vm, &run.world), 0.0);
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
+/// Level 214's workshop under the house by Setup_004's yard: by its bomb
+/// spawner, and where AS.96's Mac route threw its bomb at its wall to the
+/// treasure (`Breakable_Stone_Wall(1)`), facing it.
+const WORKSHOP_BOMBS: [f32; 2] = [387.43, 216.0];
+const WORKSHOP_THROW: ([f32; 3], f32) = ([376.8054, -299.9297, 219.5375], 283.167);
+
+/// The bombs standing.
+fn bombs(run: &Run) -> Vec<Handle> {
+    run.world
+        .clones()
+        .into_iter()
+        .filter(|h| run.world.name(*h) == "Bomb_Template")
+        .filter(|h| run.world.actor(*h).is_some_and(|a| !a.removed))
+        .collect()
+}
+
+/// openspec AS.96's review: level 214's workshop wall and the bomb's reach.
+/// A bomb's burst opens every bombable wall within `Bomb_Range` of it
+/// across the ground, a level global that starts at 20 ft and that the
+/// burst sets to 35 ft once it has looked: a run's first burst reaches 20
+/// ft, every later one 35. Thrown from where AS.96's Mac route stood (its
+/// run's first burst: the `part` anchor skipped the first island's bombs),
+/// the bomb bursts 20-22 ft from the wall, which stands; taken again and
+/// thrown from the same place, it opens it. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_workshop_wall_takes_a_runs_first_burst_from_20_ft_and_a_later_from_35() {
+    println!("load at start: {}", load());
+    let started = std::time::Instant::now();
+    let (mut run, mut stops) = joined(LEVEL_214);
+    let range = run
+        .vm
+        .program()
+        .global_named("Bomb_Range")
+        .expect("the bomb's range");
+    assert_eq!(run.vm.global(range), Some(Value::Int(20)), "20 ft first");
+    let house = run.placed("Interior_Controller_Island_2_1").1;
+    let wall = handle(&run, "Breakable_Stone_Wall(1)");
+    let wall_at = run.world.actor(wall).unwrap().position;
+    let landed0 = run.world.landed.len();
+    run.put(house, 0.0);
+    for _ in 0..300 {
+        step(&mut run, &mut stops, None, [false; 4]);
+        if run.world.landed.len() > landed0 {
+            break;
+        }
+    }
+    assert!(run.world.landed.len() > landed0, "into the workshop");
+    for _ in 0..60 {
+        step(&mut run, &mut stops, None, [false; 4]);
+    }
+    let mut throws = Vec::new();
+    for _ in 0..2 {
+        let mut bomb = None;
+        for _ in 0..900 {
+            let at = run.hero().pivot;
+            let far = (at.x - WORKSHOP_BOMBS[0]).hypot(at.z - WORKSHOP_BOMBS[1]) > 0.8;
+            step(
+                &mut run,
+                &mut stops,
+                far.then_some(WORKSHOP_BOMBS),
+                [false; 4],
+            );
+            bomb = bombs(&run)
+                .into_iter()
+                .find(|b| behaviour(&run, *b).as_deref() == Some("following player"));
+            if bomb.is_some() {
+                break;
+            }
+        }
+        let bomb = bomb.expect("its bomb taken");
+        for _ in 0..60 {
+            step(&mut run, &mut stops, None, [false; 4]);
+        }
+        run.put(Vec3::from_array(WORKSHOP_THROW.0), WORKSHOP_THROW.1);
+        step(&mut run, &mut stops, None, [false; 4]);
+        let (mut last, mut burst) = (None, None);
+        for k in 0..150u32 {
+            step(&mut run, &mut stops, None, [false, false, false, k == 0]);
+            if burst.is_none() && behaviour(&run, bomb).as_deref() == Some("bomb") {
+                last = run.world.actor(bomb).map(|a| a.position);
+            } else if burst.is_none() && last.is_some() {
+                burst = last;
+            }
+        }
+        let burst = burst.expect("thrown and burst");
+        let ft = (burst.x - wall_at.x).hypot(burst.z - wall_at.z) / 0.3048;
+        throws.push((ft, run.world.actor(wall).is_some_and(|a| a.removed)));
+    }
+    println!(
+        "throws (ft from the wall across the ground, open): {throws:?}; {:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    assert!(
+        throws.iter().all(|(ft, _)| (20.0..22.0).contains(ft)),
+        "{throws:?}"
+    );
+    assert!(
+        !throws[0].1,
+        "the run's first burst reaches 20 ft: {throws:?}"
+    );
+    assert!(throws[1].1, "a later one 35 ft: {throws:?}");
+    assert_eq!(run.vm.global(range), Some(Value::Int(35)));
+    assert!(stops.is_empty(), "{stops:#?}");
+}

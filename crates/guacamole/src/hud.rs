@@ -54,10 +54,10 @@ use crate::theme::{Role, Step, TvTheme};
 use crate::tv_state::{Pen, TvAssets, UiTree};
 
 /// Under the pause overlay (900).
-const HUD_Z: i32 = 800;
+pub(crate) const HUD_Z: i32 = 800;
 
 /// A damage number over the HUD, under the pause overlay.
-const DAMAGE_Z: i32 = 850;
+pub(crate) const DAMAGE_Z: i32 = 850;
 
 /// The bars' width and the health bar's height, design px.
 const BAR_WIDTH: f32 = 520.0;

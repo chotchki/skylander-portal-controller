@@ -30,7 +30,7 @@ use crate::tv::{choice_bundle, other_choice_bundle};
 use crate::tv_state::{Pen, Redrawn, TvAssets, UiTree};
 
 /// Over the portal's alert (940), under the corner join code (960).
-const RESTART_Z: i32 = 950;
+pub(crate) const RESTART_Z: i32 = 950;
 
 /// The choices' names, for the router's focus and the mirror.
 pub(crate) const RESTART_CHAPTER: &str = "restart-chapter";

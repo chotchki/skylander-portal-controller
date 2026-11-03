@@ -127,6 +127,33 @@ mod tests {
         assert!(screens(&mut app).is_empty(), "lifted");
     }
 
+    /// openspec AS.96's review: the black screen stacks over the HUD and its
+    /// damage numbers (which the interior's cutscene hides anyway) and under
+    /// everything that asks something of a player mid-fade: the pause, the
+    /// portal's alerts, the arrival card, Restart chapter, an intro.
+    #[test]
+    fn the_darkness_sits_over_the_hud_and_under_the_pause_and_alerts() {
+        let mut app = app(0.5);
+        app.update();
+        let mut q = app
+            .world_mut()
+            .query_filtered::<&GlobalZIndex, With<DarknessScreen>>();
+        let z: Vec<i32> = q.iter(app.world()).map(|z| z.0).collect();
+        assert_eq!(z, vec![DARKNESS_Z]);
+        for under in [crate::hud::HUD_Z, crate::hud::DAMAGE_Z] {
+            assert!(DARKNESS_Z > under, "{under}");
+        }
+        for over in [
+            crate::pause::OVERLAY_Z,
+            crate::alert::ALERT_Z,
+            crate::arrival::ARRIVAL_Z,
+            crate::defeat::RESTART_Z,
+            crate::intro_player::OVERLAY_Z,
+        ] {
+            assert!(DARKNESS_Z < over, "{over}");
+        }
+    }
+
     /// No level started, no darkness, whatever the run holds.
     #[test]
     fn no_level_no_darkness() {

@@ -3,8 +3,10 @@
 //! hero walking into its box to a room elsewhere in the level and back. As
 //! its script has it, on chapter 1's cave and level 214's houses alike:
 //!
-//! - **The way in.** While no other interior holds the level (`Global` 372,
-//!   the one in use) and no player is dying, a hero inside the controller's
+//! - **The way in.** While no other interior holds the level (the `Active
+//!   Interior` global), no player is dying and no cutscene holds the game
+//!   (`Cutscene State`, which only `Game - Cutscene` writes, its `start`
+//!   parameter: 1 as one starts, 0 as it ends), a hero inside the controller's
 //!   box (its `CollisionInfo`, 26 × 15 × 16 ft on chapter 1's cave) starts
 //!   it; a Giant too big for a house enters by facing its door from 6 ft past
 //!   the box's length instead (its field-of-view check), unless the
@@ -13,7 +15,8 @@
 //!   stretched over the screen whose blend cuts the level's darkness sprite
 //!   out of it, its alpha slid 255 to 0, so less of the darkness is cut out
 //!   as it goes ([`darkness`]); a cutscene holds the level (no switching,
-//!   the HUD hidden) and the entry's stinger plays.
+//!   which the TV's portal doesn't hold to yet: AS.112; the HUD hidden) and
+//!   the entry's stinger plays.
 //! - **The warp.** Dark, it clones a marker 1 ft behind the next of its
 //!   waypoints (its facing turned about: the room's arrival), another 7 ft
 //!   on for a second player, and asks the portal to warp each player there
@@ -39,6 +42,9 @@
 //! off the portal (`Portal - Exit Object`) and, 0.2 s on, puts him back at
 //! the marker; here the macro is answered ([`answer`]) and the hero is set
 //! down at the marker 0.2 s on, his minion kept (stand-in ledger: `warp`).
+//! As the original's warp control belongs to the player's slot, a warp
+//! whose minion's figure came off the portal while it was owed lands the
+//! hero who came in after him.
 //! The atmospheric zone the switch names isn't drawn yet (AG.155: the TV
 //! keeps the level's start zone), and the darkness is drawn as a black
 //! screen of that alpha, the mask's own art not drawn ([`darkness`]).
@@ -94,7 +100,9 @@ fn arg(args: &[(&str, Value)], name: &str) -> Option<Value> {
 /// answered`): the warp, by name. A warp of a minion that names nothing
 /// (the second player's, with no second player) is answered as done; one of
 /// an actor is owed, landing [`WARP_DELAY`] or its own delay on, whichever
-/// is longer (stand-in ledger: `warp`). Anything else runs its body.
+/// is longer (stand-in ledger: `warp`); one of a minion already owed one is
+/// answered with the first left standing, as the macro's body ends on a
+/// warp control already holding him. Anything else runs its body.
 pub fn answer(world: &mut ScriptWorld, name: &str, args: &[(&str, Value)]) -> bool {
     if !name.eq_ignore_ascii_case(WARP) {
         return false;
@@ -108,13 +116,20 @@ pub fn answer(world: &mut ScriptWorld, name: &str, args: &[(&str, Value)]) -> bo
     let Some(h) = world.actor_of(Some(minion)) else {
         return true;
     };
+    if world.warps.iter().any(|w| w.minion == h) {
+        info!(
+            minion = h,
+            ?target,
+            "a warp asked while one's owed: the first stands"
+        );
+        return true;
+    }
     info!(
         minion = h,
         ?target,
         delay,
         "a warp asked: the minion lands at its target"
     );
-    world.warps.retain(|w| w.minion != h);
     world.warps.push(Warp {
         minion: h,
         target,
@@ -126,7 +141,10 @@ pub fn answer(world: &mut ScriptWorld, name: &str, args: &[(&str, Value)]) -> bo
 /// The warps owed `dt` seconds on: each due one landed, the minion set down
 /// at its target facing as the target does, a hero at rest, as a script's
 /// `teleport to` sets him down (stand-in ledger: `warp`). One whose target
-/// names no place by then is dropped, logged.
+/// names no place by then is dropped, logged. One whose minion's figure
+/// came off the portal while it was owed (neither a hero nor an actor
+/// standing now) lands the hero who came in after him once his minion's
+/// activated, one no other owed warp names, and until then stays owed.
 pub(crate) fn land(world: &mut ScriptWorld, dt: f32, engine: &mut dyn Engine) {
     if world.warps.is_empty() {
         return;
@@ -136,11 +154,32 @@ pub(crate) fn land(world: &mut ScriptWorld, dt: f32, engine: &mut dyn Engine) {
     }
     let (due, owed): (Vec<Warp>, Vec<Warp>) = world.warps.drain(..).partition(|w| w.left <= 0.0);
     world.warps = owed;
-    for w in due {
+    for mut w in due {
         let Some(at) = world.point(w.target, engine) else {
             warn!(minion = w.minion, target = ?w.target, "a warp's target names no place: it lands nowhere");
             continue;
         };
+        let standing = world.actors.get(&w.minion).is_some_and(|a| !a.removed);
+        if engine.hero(w.minion).is_none() && !standing {
+            // In means activated: his minion's actor in the run, which on
+            // the TV is once his entry beam lands (AH.224), whose activation
+            // stands him where the beam did.
+            let owed: Vec<Handle> = world.warps.iter().map(|o| o.minion).collect();
+            let next = engine
+                .heroes()
+                .into_iter()
+                .find(|h| !owed.contains(h) && world.actors.get(h).is_some_and(|a| !a.removed));
+            let Some(next) = next else {
+                world.warps.push(w);
+                continue;
+            };
+            info!(
+                gone = w.minion,
+                minion = next,
+                "a warp's minion went off the portal: the hero in now lands"
+            );
+            w.minion = next;
+        }
         let facing = facing_of(world, w.target).unwrap_or(0.0).rem_euclid(360.0);
         if let Some(hero) = engine.hero(w.minion) {
             hero.pivot = at;
@@ -274,14 +313,17 @@ mod tests {
     struct One {
         seam: ParryWorld,
         hero: Hero,
+        /// His handle: another once his figure's swapped, none while no
+        /// hero's in.
+        handle: Option<Handle>,
     }
 
     impl Engine for One {
         fn hero(&mut self, h: Handle) -> Option<&mut Hero> {
-            (h == HERO).then_some(&mut self.hero)
+            (Some(h) == self.handle).then_some(&mut self.hero)
         }
         fn heroes(&self) -> Vec<Handle> {
-            vec![HERO]
+            self.handle.into_iter().collect()
         }
         fn seam(&self) -> &dyn PhysicsSeam {
             &self.seam
@@ -306,6 +348,7 @@ mod tests {
         One {
             seam: ParryWorld::new(&[]).unwrap(),
             hero,
+            handle: Some(HERO),
         }
     }
 
@@ -395,9 +438,10 @@ mod tests {
     }
 
     /// A warp of no one (the second player's with none) is answered with
-    /// nothing owed; a second warp of the same minion replaces the first;
-    /// one whose target names no place by then lands nowhere and goes; any
-    /// other macro isn't answered.
+    /// nothing owed; a second warp of a minion already owed one is answered
+    /// with the first standing (the macro's body ends on a warp control
+    /// already holding him); one whose target names no place by then lands
+    /// nowhere and goes; any other macro isn't answered.
     #[test]
     fn a_warp_of_no_one_owes_nothing_and_a_targetless_one_lands_nowhere() {
         let (mut w, mut e) = (world(), one());
@@ -416,12 +460,50 @@ mod tests {
         assert!(answer(
             &mut w,
             WARP,
-            &warp(Value::Entity(HERO), Value::Null, 0.0)
+            &warp(Value::Entity(HERO), Value::Null, 0.5)
         ));
-        assert_eq!(w.warps.len(), 1, "the second replaces the first");
+        assert_eq!(w.warps.len(), 1, "one owed");
+        land(&mut w, 0.21, &mut e);
+        assert_eq!(e.hero.pivot, Vec3::new(3.0, 1.0, -4.0), "the first stood");
+        assert!(w.warps.is_empty());
+        let (mut w, mut e) = (world(), one());
+        answer(&mut w, WARP, &warp(Value::Entity(HERO), Value::Null, 0.0));
         land(&mut w, 1.0, &mut e);
         assert!(w.warps.is_empty() && w.landed.is_empty());
         assert_eq!(e.hero.pivot, Vec3::ZERO);
+    }
+
+    /// openspec AS.96's review: his figure off the portal while his warp is
+    /// owed, the next hero, who comes in where he stood under a handle of
+    /// his own, is the one it sets down once his minion's activated (on the
+    /// TV, his entry beam landed, which stands him where it did), as the
+    /// original's warp control is the player's slot's; while no hero's in,
+    /// or the next isn't activated, it stays owed.
+    #[test]
+    fn a_warp_owed_a_hero_swapped_off_lands_the_next_one() {
+        const NEXT: Handle = 0x6200_0009;
+        let (mut w, mut e) = (world(), one());
+        answer(
+            &mut w,
+            WARP,
+            &warp(Value::Entity(HERO), Value::Entity(MARKER), 0.0),
+        );
+        land(&mut w, 0.1, &mut e);
+        e.handle = None;
+        land(&mut w, 0.5, &mut e);
+        assert_eq!(w.warps.len(), 1, "owed while no hero's in");
+        assert!(w.landed.is_empty());
+        e.handle = Some(NEXT);
+        land(&mut w, 1.0 / 60.0, &mut e);
+        assert_eq!(e.hero.pivot, Vec3::ZERO, "not while his beam runs");
+        assert_eq!(w.warps.len(), 1);
+        w.actors.insert(NEXT, Actor::blank());
+        land(&mut w, 1.0 / 60.0, &mut e);
+        assert_eq!(e.hero.pivot, Vec3::new(3.0, 1.0, -4.0));
+        assert_eq!(e.hero.facing, 90.0);
+        assert!(w.warps.is_empty());
+        assert_eq!(w.landed.len(), 1);
+        assert_eq!(w.landed[0].minion, NEXT);
     }
 
     /// The dev entry's interior anchor: outside the named controller's
