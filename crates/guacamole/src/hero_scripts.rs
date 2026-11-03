@@ -25,7 +25,8 @@
 //!   of its range has no ground and sleeps, as AH.21 runs it.
 //! - The join: the hero placed on the TV whose file the part holds, a
 //!   fighter ([`guac_extract::scripts::FIGHTERS`], Eruptor) or a walker
-//!   (AG.27, every other modelled character), joins by AH.17's join ([`guacamole::scripts::join_request`],
+//!   (AG.27, every other modelled character), joins by AH.17's join
+//!   ([`guacamole::scripts::join_request`],
 //!   then on the next step [`guacamole::scripts::join_enter`], the
 //!   original's entry beam run each step after by
 //!   [`guacamole::scripts::entry_beams`] until it activates his minion as its
@@ -35,8 +36,9 @@
 //!   engine's alone ([`ScriptedHero`]), a walker's attack buttons reaching
 //!   his scripts as Eruptor's do (hero-attacks' Which characters attack,
 //!   openspec AU.1: what his attacks spawn listed where its viewport asks
-//!   are read, [`scripts::WalkerScripts::attack_scripts`]). Eruptor with no run (the part
-//!   lacking his file), a join that fails or his script stopped in play
+//!   are read, [`scripts::WalkerScripts::attack_scripts`]). Eruptor with no
+//!   run (the part lacking his file), a join that fails or his script
+//!   stopped in play
 //!   walks on AG.16's controller, logged (stand-in ledger: `walker`); a
 //!   walker whose join fails keeps his card ([`KeepsCard`]), one whose
 //!   script stops in play walks on it at what his scripts had set.
