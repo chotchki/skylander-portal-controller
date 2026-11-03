@@ -6672,6 +6672,14 @@ mod tests {
                 r.path()
             );
         }
+        // What the characters' attacks reach (openspec AU.2): a cell each.
+        for r in members::ATTACKS {
+            let (_, place) = c
+                .members
+                .get(MemberId::named(r.namespace, r.name))
+                .unwrap_or_else(|| panic!("{}", r.path()));
+            assert_eq!(place, guac_script::Place::ValueCell, "{}", r.path());
+        }
         // The sounds' members on the host (openspec AR.10), over the cells
         // the earlier tables registered for some of them.
         for r in members::SOUNDS {
