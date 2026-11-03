@@ -301,6 +301,15 @@ pub struct ScriptStage {
     /// Spawn models read this run, and those refused.
     pub props: usize,
     pub refused_props: Vec<(String, String)>,
+    /// The screens' part (AS.53, [`crate::screens`]), counted apart from
+    /// the two above: read this run, or kept; its entries written or kept,
+    /// the archives the dump lacks with why, and its files (not in
+    /// [`ScriptStage::files`]).
+    pub screens_read: bool,
+    pub screens_kept: bool,
+    pub screens: usize,
+    pub screens_missing: Vec<(String, String)>,
+    pub screen_files: Files,
     /// Of [`ScriptStage::files`], the script entries' and the spawn
     /// models' (their IR and textures).
     pub script_files: Files,
@@ -751,7 +760,8 @@ fn levels_stage(
 /// The fight's script data outside a level (AH.22,
 /// [`crate::scripts`]): each script archive's entry, checked and copied
 /// raw into `scripts/<stem>.igz`, then each spawn archive's models into
-/// `spawns/<stem>.<ron|postcard>` and their textures into the store. A part
+/// `spawns/<stem>.<ron|postcard>` and their textures into the store, then
+/// the screens' entries (AS.53, [`crate::screens`]). A part
 /// already in ([`IdentityDir::part_holds`]) is kept without reading; one
 /// that doesn't read is reported in [`ScriptStage::failed`], and the other
 /// lands; a file that won't write stops the run.
@@ -926,6 +936,7 @@ pub fn script_stage(
             }
         }
     }
+    screen_part(dir, &usrdir, &mut stage)?;
     send(Event::Scripts { done: 2, total });
     for f in [stage.script_files, stage.spawn_files] {
         stage.files.written += f.written;
@@ -934,6 +945,49 @@ pub fn script_stage(
     }
     stage.took = started.elapsed();
     Ok(stage)
+}
+
+/// The screens' part (AS.53, [`crate::screens`]): kept while it's recorded
+/// with every file it names intact (an archive the dump lacks recorded as
+/// none), else each archive's entry read, checked and written, and the part
+/// recorded; one that won't read is the part's failure alone.
+pub fn screen_part(dir: &mut IdentityDir, usrdir: &Path, stage: &mut ScriptStage) -> Result<()> {
+    let recorded = dir.manifest().parts.get(crate::screens::PART).cloned();
+    if let Some(files) = recorded
+        && dir.part_holds(crate::screens::PART, &files)?
+    {
+        count_kept(dir, &files, &mut stage.screen_files);
+        stage.screens = files.len();
+        stage.screens_kept = true;
+        return Ok(());
+    }
+    match crate::screens::read(usrdir) {
+        Ok(read) => {
+            let mut files = Vec::with_capacity(read.entries.len());
+            for (archive, bytes, _) in &read.entries {
+                let rel = crate::screens::path(archive);
+                put(dir, &rel, bytes, &mut stage.screen_files)?;
+                files.push(rel);
+            }
+            stage.screens = files.len();
+            stage.screens_missing = read.missing;
+            dir.record_part(crate::screens::PART, files)?;
+            stage.screens_read = true;
+        }
+        Err((archive, reason)) => {
+            let e = ExtractError::ScriptsUnreadable {
+                part: crate::screens::PART.to_owned(),
+                archive: archive.clone(),
+                reason,
+            };
+            stage.failed.push(PartFailure {
+                part: crate::screens::PART.to_owned(),
+                archive,
+                reason: e.to_string(),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// `files`, each already in, counted as kept with its recorded size.

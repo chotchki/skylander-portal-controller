@@ -637,6 +637,100 @@ fn screen_positions_and_colours_are_read_and_written_by_their_parts() {
     );
 }
 
+/// AS.53: a reference to a set's `count` names the count itself, read as
+/// the set stands at each read (what `System - Add/Remove System Update
+/// Macro - Update On Variable` keeps as `if var over 0`, the stream
+/// loader's queue's count, so its update runs once the queue grows): read
+/// through it before the set grows and after, and checked over 0 after;
+/// written through, the set resizes.
+#[test]
+fn a_reference_to_a_sets_count_reads_the_count_as_it_stands() {
+    let p = program(|w| {
+        let queue = w.variable("queue", "ScriptSet", Some("ValueInfo"));
+        let over = w.variable("over", "ScriptReference", None);
+        let (before, after, ran) = (var(w, "before"), var(w, "after"), var(w, "ran"));
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let count = [El::Local(queue), El::Member("setvariant", "count")];
+                setref(w, &[El::Local(over)], &count);
+                let through = [
+                    El::Local(over),
+                    El::Member("abstractscriptgroup", "valuedereferencer"),
+                ];
+                let v = w.rhs(INT, &through);
+                w.set(&[El::Local(before)], v);
+                let two = w.int(2);
+                w.set(&count, two);
+                let v = w.rhs(INT, &through);
+                w.set(&[El::Local(after)], v);
+                let zero = w.int(0);
+                let lhs = w.value(&through);
+                let (at, o) = w.open(Class::CheckValue, "if");
+                w.refer(o, 0x1C, lhs);
+                w.word(o, 0x20, 4);
+                w.refer(o, 0x24, zero);
+                let one = w.int(1);
+                w.set(&[El::Local(ran)], one);
+                w.end_block(at);
+                // Written through, the set itself resizes.
+                let three = w.int(3);
+                w.set(&through, three);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "Thing", 0);
+    vm.tick(id, &mut Engine::default())
+        .unwrap_or_else(|h| panic!("{h}"));
+    assert_eq!(vm.local(id, "before"), Some(Value::Int(0)));
+    assert_eq!(
+        vm.local(id, "after"),
+        Some(Value::Int(2)),
+        "the count as it stands"
+    );
+    assert_eq!(
+        vm.local(id, "ran"),
+        Some(Value::Int(1)),
+        "over 0 once it grew"
+    );
+    let queue = vm.local(id, "queue").unwrap();
+    assert_eq!(vm.set(queue).map(<[Value]>::len), Some(3));
+}
+
+/// AS.53: a structure an embedder makes by its definition's name, each
+/// field as a structure variable's are (a number 0, a reference nothing, a
+/// set empty), its own and not the definition's; a name no structure is
+/// placed under makes none.
+#[test]
+fn an_embedder_makes_a_fresh_structure_by_its_definitions_name() {
+    let p = program(|w| {
+        let (section, _) = w.open(Class::StructureSection, "STRUCTURES");
+        let (at, _) = w.open(Class::DefineStructure, "Screen Data");
+        let n = w.variable("count", "ValueInfo", Some(INT));
+        w.push(n);
+        let r = w.variable("description", "ScriptReference", None);
+        w.push(r);
+        let set = w.variable("defs", "ScriptSet", Some("ValueInfo"));
+        w.push(set);
+        w.end_block(at);
+        w.end_block(section);
+        w.end("C:/tfb/Synthetic/Types.ai");
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let a = vm.new_structure("Screen Data").expect("made");
+    let b = vm.new_structure("Screen Data").expect("made");
+    assert_ne!(a, b, "each its own");
+    assert_eq!(vm.field(a, "count"), Some(Value::Int(0)));
+    assert_eq!(vm.field(a, "description"), Some(Value::Null));
+    let defs = vm.field(a, "defs").unwrap();
+    assert_eq!(vm.set(defs).map(<[Value]>::len), Some(0));
+    assert!(vm.set_field(a, "count", Value::Int(4)));
+    assert_eq!(vm.field(b, "count"), Some(Value::Int(0)));
+    assert_eq!(vm.new_structure("Nothing Here"), None);
+}
+
 /// AH.67: a colour literal keeps alpha in its high byte and red in its low,
 /// so the eruption's dark colour, `0xFF141422` as the file holds it, reads
 /// red 34, green 20, blue 20 and alpha 255, the oracle's going-black tint.

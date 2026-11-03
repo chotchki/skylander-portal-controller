@@ -115,9 +115,11 @@ impl Places {
 /// The game systems' update macros the loop runs, by name (openspec AH.21):
 /// the destructibles system's (a breakable woken in range made a target,
 /// one broken shut down, the bounce and a delayed effect) and the actor
-/// remover's (debris gone 1.5 s on). The set's other update macros (the
-/// encounter's camera pans, the HUD's) stay off.
-pub const UPDATES: [&str; 8] = [
+/// remover's (debris gone 1.5 s on), and a level's end-of-level sequencing
+/// once its `Game - Level End` adds it (openspec AS.53: the fanfare, the
+/// completion screen's stream, the movie, the level switch). The set's
+/// other update macros (the encounter's camera pans, the HUD's) stay off.
+pub const UPDATES: [&str; 9] = [
     "Destructibles - System Update",
     "Destructibles - Bounce",
     "Destructibles - Delayed Particle",
@@ -126,6 +128,7 @@ pub const UPDATES: [&str; 8] = [
     "CS Internal - Update",
     "Dialogue Internal - Update Dialogue Wrapper",
     "Gesture - Update",
+    "System - End of Level Sequencing",
 ];
 
 /// The portal manager's tick as the loop runs it: each stretch's positions

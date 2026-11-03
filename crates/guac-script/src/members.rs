@@ -2351,6 +2351,14 @@ pub const LEVEL_UP: &[Registered] = &[m(
 /// An attach node's `root` (AS.47: level 214's intro attaches its scene's
 /// actors to the camera rig's node and reads the rig back by it), the
 /// host's: the actor the node is on.
+///
+/// What a level's end reaches past those (AS.53), value cells: the
+/// gameplay viewport's filter effect and its two non-sprite settings,
+/// which the menus' blurred backdrop slides as the completion screen's
+/// loading page comes up (nothing draws a filter), and the stream loader's
+/// `load level variation`, the slot a stream loads into, written beside
+/// `system.load level` (the TV streams nothing in: a stream reads as
+/// loaded the next step, the `level-request` row).
 pub const LEVELS: &[Registered] = &[
     m("clonedsequence", "clones", "SetVariant", "", 0.0, 0.0, Host),
     // The labels as the live table cuts them.
@@ -2470,6 +2478,42 @@ pub const LEVELS: &[Registered] = &[
         0.0,
         0.0,
         Host,
+    ),
+    m(
+        "viewportinfo",
+        "filter effect",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Cell,
+    ),
+    m(
+        "viewportfiltereffectinfo",
+        "non-sprite percentage",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        100.0,
+        Cell,
+    ),
+    m(
+        "viewportfiltereffectinfo",
+        "non-sprite intensity",
+        "FloatMeasurement",
+        "percent",
+        0.0,
+        700.0,
+        Cell,
+    ),
+    m(
+        "system",
+        "load level variation",
+        "IntMeasurement",
+        "",
+        0.0,
+        0.0,
+        Cell,
     ),
 ];
 
@@ -4590,6 +4634,42 @@ mod tests {
         );
         assert_eq!(r.spec().default, Value::Null);
         assert_eq!(convert(&r.spec(), Value::Int(2)), None);
+    }
+
+    /// AS.53: what a level's end reaches: the viewport's filter effect an
+    /// object cell reading nothing, its two non-sprite settings percent
+    /// cells held to the registry's 0-100 and 0-700, and the stream
+    /// loader's variation a whole-number cell reading 0.
+    #[test]
+    fn the_level_ends_backdrop_and_stream_slot_are_cells() {
+        let (r, place) = level_member("viewportinfo", "filter effect");
+        assert_eq!((r.kind(), place), (Kind::Reference, Place::ValueCell));
+        assert_eq!(r.spec().default, Value::Null);
+        for (name, max) in [
+            ("non-sprite percentage", 100.0),
+            ("non-sprite intensity", 700.0),
+        ] {
+            let (r, place) = level_member("viewportfiltereffectinfo", name);
+            assert_eq!(
+                (r.units, r.kind(), place),
+                ("percent", Kind::Float, Place::ValueCell),
+                "{name}"
+            );
+            assert_eq!(
+                convert(&r.spec(), Value::Int(900)),
+                Some(Value::Float(max)),
+                "{name}"
+            );
+            assert_eq!(
+                convert(&r.spec(), Value::Int(40)),
+                Some(Value::Float(40.0)),
+                "{name}"
+            );
+        }
+        let (r, place) = level_member("system", "load level variation");
+        assert_eq!((r.kind(), place), (Kind::Int, Place::ValueCell));
+        assert_eq!(r.spec().default, Value::Int(0));
+        assert_eq!(convert(&r.spec(), Value::Float(2.7)), Some(Value::Int(2)));
     }
 
     /// AS.34: the save system's state, the host's enum over the

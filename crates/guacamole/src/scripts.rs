@@ -509,6 +509,10 @@ pub struct ScriptWorld {
     /// `movies`): one that doesn't has it over as soon as it's queued, the
     /// level asked in the same step as before AS.19.
     pub plays_movies: bool,
+    /// The end-of-level sequencing as [`crate::level_end`] meets it on the
+    /// run (openspec AS.53): the completion screen's results and continue,
+    /// the movie it queued, the fader's clean-up.
+    pub sequence: crate::level_end::Sequence,
     /// The level end [`crate::level_end`] wrote, and why it changed no level
     /// yet if it hasn't.
     level_end: Option<LevelEnd>,
@@ -857,6 +861,7 @@ impl ScriptWorld {
             level_end_asked: false,
             level_end_movie: None,
             plays_movies: false,
+            sequence: Default::default(),
             level_end: None,
             achievements: Vec::new(),
             save: Default::default(),
@@ -3552,7 +3557,9 @@ pub const PORTAL_MANAGER: &str = "Spyro_PortalManager";
 /// every tick, under `handles`, in the order its load adds them
 /// ([`load_order`], openspec AH.195): the definition's first tick registers
 /// the minion into that loaded data (`Portal - Define Minion`). The portal's
-/// tag, the level streaming and the entry beam aren't run (AJ's, AM's).
+/// tag, the level streaming and the entry beam aren't run (AJ's, AM's):
+/// the stream's request is answered done once the definition has
+/// registered its minion ([`answer_stream_done`]).
 pub fn join_request(
     vm: &mut Vm,
     host: &mut WorldHost<'_, '_>,
@@ -3669,7 +3676,28 @@ fn ready_of(vm: &mut Vm, host: &mut WorldHost<'_, '_>, hero: Handle) -> Result<R
         )));
     };
     host.world.hero_template(template, hero);
+    answer_stream_done(vm, host, pm, loaded)?;
     Ok(Ready { pm, minion, desc })
+}
+
+/// The join's stream answered done (openspec AS.53), once his definition
+/// has registered its minion through it: the portal's request for `loaded`,
+/// which names no level to load, taken off its queue by the portal's own
+/// `Remove Portal Object Stream`, the queue's update dropped with it. His
+/// file is linked and its placements joined already; left queued, the
+/// stream loader would load it, find it named nothing and queue it again
+/// every other step (stand-in ledger: `level-request`).
+fn answer_stream_done(
+    vm: &mut Vm,
+    host: &mut WorldHost<'_, '_>,
+    pm: PlacementId,
+    loaded: Value,
+) -> Result<(), Halt> {
+    const DONE: &str = "Remove Portal Object Stream";
+    if vm.program().macro_named(DONE).is_some() {
+        vm.call_for(pm, DONE, &[("use loaded data", loaded)], &[], host)?;
+    }
+    Ok(())
 }
 
 /// `Game - Activate/Deactivate Minion` for `ready`'s minion at `at`, as

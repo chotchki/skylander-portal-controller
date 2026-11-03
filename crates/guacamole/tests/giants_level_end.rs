@@ -104,11 +104,19 @@ fn chapter_1s_end_asks_for_the_next_level_by_name() {
     );
     assert_eq!(asked, 1);
     assert_eq!(run.world.level_change(), Some(&change));
-    // The init chain's own request (`DEBUG_LevelLoad`, `debug/debug`) is a
-    // stream, read as loaded.
+    // The init chain's own request (`DEBUG_LevelLoad`, `debug/debug`), the
+    // join's character stream twice before it's answered done, then the
+    // sequencing's objectives screen and its letting go (AS.53) are
+    // streams, read as loaded.
     assert_eq!(
         run.world.streams.iter().cloned().collect::<Vec<_>>(),
-        [Some("debug/debug".to_owned())]
+        [
+            Some("debug/debug".to_owned()),
+            Some("character/".to_owned()),
+            Some("character/".to_owned()),
+            Some("misc/UI_ObjectivesScreen".to_owned()),
+            Some("misc/".to_owned()),
+        ]
     );
     assert!(
         stops.is_empty(),
@@ -174,8 +182,8 @@ fn chapter_1s_end_without_the_interfaces_model_is_held_and_said() {
         "taken once"
     );
     assert!(
-        run.world.streams.iter().all(Option::is_none) && run.world.streams.len() == 1,
-        "only the init chain's own stream, unread: {:?}",
+        run.world.streams.iter().all(Option::is_none),
+        "only streams, each unread: {:?}",
         run.world.streams
     );
     run.world
@@ -1360,6 +1368,213 @@ fn chapter_1s_outro_plays_to_its_end() {
         Some("Level_214")
     );
     assert_eq!(change.name, NEXT);
+    assert!(
+        stops.is_empty(),
+        "{:#?}",
+        stops.iter().map(ToString::to_string).collect::<Vec<_>>()
+    );
+    println!(
+        "{:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
+
+/// A host profile's id for the save system's session (`giants_saves`').
+const HOST: &str = "01LEVELENDHOST";
+
+/// One step in play mode, then the save system's requests answered as the
+/// TV's system answers them, each write handed back done at once: the
+/// completion screen's collection reads the save (its chests, its stars).
+fn saved_step(run: &mut Run, session: &mut guacamole::story_save::Session) -> Vec<Halt> {
+    let stops = run.step_play().unwrap();
+    {
+        let mut spawn = guacamole::scripts::headless_spawner(1 << 50);
+        let mut engine = guacamole::script_engine::NoEngine;
+        let mut host = guacamole::scripts::WorldHost {
+            world: &mut run.world,
+            engine: &mut engine,
+            generator: &mut run.generator,
+            spawn: &mut spawn,
+        };
+        guacamole::story_save::serve(&mut run.vm, &mut host, session, "level_213_tutotial")
+            .unwrap_or_else(|h| panic!("{h}"));
+    }
+    if session.take_write().is_some() {
+        session.written(&mut run.world.save, Ok(()));
+    }
+    stops
+}
+
+/// AS.53: chapter 1's end runs the original's end-of-level sequencing on
+/// the game systems' tick, the save system on and the objectives screen's
+/// scripts linked, the run showing its completion screen as the TV's does.
+/// State 1 in the tick after the outro's `Game - Level End`: the fanfare
+/// started on the game systems' placement, the gameplay paused (`Pause
+/// Layer` 1), the objectives screen's stream asked and read as loaded;
+/// state 2, the completion screen: the objectives screen's own collection
+/// read (the story's two, the four dares, the seven finds, the level clear
+/// star alone),
+/// and the sequencing waiting there 60 steps until a continue; the
+/// continue raising it to 3, then 4, the movie (FMV02) handed to the player
+/// and the sequencing waiting on it; the movie over, its fader cleaned up
+/// (the sprite and the fader gone), `Change Level` set to `Level_214` and
+/// asked as the level switch would: the change to level 214. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn chapter_1s_end_sequences_its_completion_screen_movie_and_level() {
+    use guacamole::level_end::{COMPLETION, MOVIE, ObjectiveKind, Status, seq};
+    use guacamole::scripts::{MovieEnd, MovieState};
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let setup = Setup {
+        interface: true,
+        sounds: true,
+        ..Setup::default()
+    };
+    let (mut run, _found) = run_on_with(Mode::Play, setup);
+    run.world.plays_movies = true;
+    run.world.sequence.shows_completion = true;
+    let mut session = guacamole::story_save::Session::new(Some(HOST.into()));
+    let mut stops = Vec::new();
+    for _ in 0..2 {
+        stops.extend(saved_step(&mut run, &mut session));
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    for _ in 0..120 {
+        stops.extend(saved_step(&mut run, &mut session));
+    }
+    run.put(Vec3::from_array(END.0), END.1);
+    let (ender, _) = run.placed("Temp_Level_Ender");
+    assert!(run.world.wake(ender));
+    let woken_at = run.steps;
+    let gs = level_end::sequencing(&run.vm, &run.world).expect("the game systems' placement");
+    let mut recorded_at = None;
+    let mut since = run.world.start_count();
+    let mut fanfare = None;
+    while run.world.sequence.completion.is_none() {
+        assert!(
+            run.steps < woken_at + 2400,
+            "no completion screen by step {}",
+            run.steps
+        );
+        stops.extend(saved_step(&mut run, &mut session));
+        if recorded_at.is_none() && level_end::recorded(&run.vm).is_some() {
+            recorded_at = Some(run.steps);
+        }
+        for i in run.world.started_since(since) {
+            let sq = &run.world.sequences()[i];
+            let name = match sq.template {
+                Value::Object(o) => run.vm.program().name_of(o).unwrap_or("").to_owned(),
+                _ => String::new(),
+            };
+            if name == "ui_success_fanfare" {
+                fanfare = Some((run.steps, run.world.name(sq.actor)));
+            }
+        }
+        since = run.world.start_count();
+    }
+    let screen_at = run.steps;
+    println!(
+        "woken at {woken_at}; level end recorded at {recorded_at:?}; the fanfare {fanfare:?}; the completion screen at {screen_at}"
+    );
+    assert_eq!(seq(&run.vm), Some(COMPLETION));
+    assert_eq!(
+        fanfare.as_ref().map(|(s, a)| (*s, a.as_str())),
+        recorded_at.map(|r| (r + 1, "Macros_GameSystems")),
+        "the fanfare in state 1, the tick after the level end"
+    );
+    let layer = run.vm.program().global_named("Pause Layer").unwrap();
+    assert_eq!(run.vm.global_peek(layer), Some(Value::Int(1)), "paused");
+    assert!(
+        run.world
+            .streams
+            .iter()
+            .any(|s| s.as_deref() == Some("misc/UI_ObjectivesScreen")),
+        "the objectives screen's stream asked: {:?}",
+        run.world.streams
+    );
+    let c = run.world.sequence.completion.clone().unwrap();
+    let r = c.results.clone().expect("the objectives screen's results");
+    println!("{r:#?}");
+    let in_tab = |t: i32| r.objectives.iter().filter(|o| o.category == t).count();
+    assert_eq!((in_tab(0), in_tab(1), in_tab(2)), (2, 4, 7));
+    assert_eq!(r.stars.len(), 3);
+    assert_eq!(r.tabs.len(), 3);
+    assert!(r.tabs.iter().all(Option::is_some), "{:?}", r.tabs);
+    assert!(r.objectives.iter().all(|o| o.description.is_some()));
+    let time = r
+        .objectives
+        .iter()
+        .find(|o| o.kind == ObjectiveKind::Time)
+        .expect("the time dare");
+    assert!(time.total > 0.0, "a target time");
+    // The story's first undone (the end anchor skips the level to the
+    // outro), its second done by the level's end itself; the time dare
+    // done (the run's clock barely moved), the no-lives-lost dare done.
+    assert_eq!(
+        r.objectives
+            .iter()
+            .filter(|o| o.category == 0)
+            .map(|o| o.status)
+            .collect::<Vec<_>>(),
+        [Status::Open, Status::NewlyDone]
+    );
+    assert_eq!(time.status, Status::NewlyDone);
+    assert_eq!(r.stars, [true, false, false], "only the level clear star");
+    // Waits there for the continue.
+    for _ in 0..60 {
+        stops.extend(saved_step(&mut run, &mut session));
+    }
+    assert_eq!(seq(&run.vm), Some(COMPLETION), "waiting on the screen");
+    run.world
+        .sequence
+        .completion
+        .as_mut()
+        .unwrap()
+        .continue_asked = true;
+    let continued_at = run.steps;
+    while run.world.level_end_movie().is_none() {
+        assert!(run.steps < continued_at + 30, "no movie by {}", run.steps);
+        stops.extend(saved_step(&mut run, &mut session));
+    }
+    let movie_at = run.steps;
+    assert_eq!(seq(&run.vm), Some(MOVIE));
+    let movie = run.world.level_end_movie().cloned().unwrap();
+    assert_eq!(movie.name, "fmv02");
+    assert_eq!(movie.state, MovieState::Queued);
+    // The movie's sprite and its fader, as the movie macro made them.
+    let faders = run.vm.program().global_named("movie faders").unwrap();
+    let fader_count = |run: &mut Run| {
+        let v = run.vm.global(faders).unwrap();
+        run.vm.set(v).map_or(0, <[Value]>::len)
+    };
+    assert_eq!(fader_count(&mut run), 1, "the movie's fader");
+    run.world.movie_playing();
+    for _ in 0..30 {
+        stops.extend(saved_step(&mut run, &mut session));
+    }
+    assert_eq!(seq(&run.vm), Some(MOVIE), "waiting on the movie");
+    run.world.movie_over(MovieEnd::Skipped);
+    let over_at = run.steps;
+    while run.world.level_change().is_none() {
+        assert!(run.steps < over_at + 30, "no level change by {}", run.steps);
+        stops.extend(saved_step(&mut run, &mut session));
+    }
+    let change = run.world.level_change().cloned().unwrap();
+    println!(
+        "continued at {continued_at}; the movie at {movie_at}; over at {over_at}; the change at {}: {change:?}",
+        run.steps
+    );
+    assert_eq!(fader_count(&mut run), 0, "the fader cleaned up");
+    assert_eq!(change.name, NEXT);
+    let changing = run.vm.program().global_named("Change Level").unwrap();
+    let named = match run.vm.global_peek(changing) {
+        Some(Value::Object(o)) => run.vm.program().name_of(o),
+        _ => None,
+    };
+    assert_eq!(named, Some("Level_214"), "the sequencing's own level");
+    assert!(run.vm.stopped(gs).is_none());
     assert!(
         stops.is_empty(),
         "{:#?}",

@@ -1622,6 +1622,10 @@ impl IntroFixture {
         opened
             .dir
             .record_part(guac_extract::interface::PART, Vec::new())?;
+        // AS.53's screen scripts: likewise.
+        opened
+            .dir
+            .record_part(guac_extract::screens::PART, Vec::new())?;
         // AT.30's model part: the models above are the fixture's, so the
         // part names no record and a stage over the fixture reads again.
         opened

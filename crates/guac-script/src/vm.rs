@@ -1682,6 +1682,16 @@ impl Vm {
         self.sets[s as usize].elems.last().copied()
     }
 
+    /// A fresh structure of the definition placed under `name`, each field
+    /// made as a structure variable's are (numbers 0, references nothing,
+    /// sets empty): how an embedder makes what a script's spawn of a
+    /// structure variable would hand it (the objectives screen's data,
+    /// openspec AS.53). `None` when no structure is placed under `name`.
+    pub fn new_structure(&mut self, name: &str) -> Option<Value> {
+        let def = self.program.structure_named(name)?;
+        self.new_struct(def, 0).ok().flatten().map(Value::Struct)
+    }
+
     /// What `v` holds when it names a cell or a file variable that has one
     /// (a set's number member, a reference's target); `v` itself otherwise.
     pub fn value(&self, v: Value) -> Value {
@@ -4389,10 +4399,14 @@ impl Vm {
                 None => Value::Cell(c),
             });
         }
-        // A part of a packed value the VM keeps, or a number a member holds
-        // (a value cell's or the host's): the place itself, so a write
-        // through it lands there and a read reads it there.
+        // A part of a packed value the VM keeps, a number a member holds
+        // (a value cell's or the host's), or a set's count: the place
+        // itself, so a write through it lands there and a read reads it
+        // there, the count as the set stands then (openspec AS.53: the
+        // stream loader's update runs while its queue's count, handed by
+        // reference, reads over 0).
         let bindable = match spot {
+            Spot::Count(_) => true,
             Spot::Packed { base, .. } => !matches!(base, Base::Member { cell: None, .. }),
             Spot::Member { member, .. } => self.config.members.get(member).is_some_and(|(s, _)| {
                 matches!(s.kind, Kind::Int | Kind::Float | Kind::Color | Kind::Screen)
@@ -4910,6 +4924,7 @@ impl Vm {
             })
         };
         match *self.bound.get(b as usize)? {
+            Spot::Count(s) => Some(Value::Int(self.sets.get(s as usize)?.elems.len() as i32)),
             Spot::Packed { base, part } => Some(part.get(part.word(whole(base)?)?)),
             Spot::Member { cell: Some(s), .. } => self.value_cell_values.get(s as usize).copied(),
             _ => None,

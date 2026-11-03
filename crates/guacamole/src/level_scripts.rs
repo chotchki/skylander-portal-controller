@@ -149,6 +149,18 @@ pub fn files(level: &str) -> Vec<(String, Role)> {
 /// [`files`] with the walkers' entries (`walkers`: load files, as
 /// [`scripts::WalkerList::listed`]) between the fighters' and the level's.
 pub fn files_with(walkers: &[String], level: &str) -> Vec<(String, Role)> {
+    files_with_screens(walkers, &[], level)
+}
+
+/// [`files_with`] and then the screens' entries the extract holds
+/// (`screens`: their files, [`guac_extract::screens::path`], openspec
+/// AS.53) before the level's, which stays last: linked, their placements
+/// never run, the level's end calling their macros.
+pub fn files_with_screens(
+    walkers: &[String],
+    screens: &[String],
+    level: &str,
+) -> Vec<(String, Role)> {
     let role = |archive: &str| match archive {
         guac_extract::roster::BOOTSTRAP => Role::Bootstrap,
         guac_extract::roster::GLOBAL => Role::Global,
@@ -157,7 +169,19 @@ pub fn files_with(walkers: &[String], level: &str) -> Vec<(String, Role)> {
     scripts::archives_with(walkers)
         .iter()
         .map(|a| (scripts::script_path(a), role(a)))
+        .chain(screens.iter().map(|s| (s.clone(), Role::Other)))
         .chain(std::iter::once((levels::script_path(level), Role::Other)))
+        .collect()
+}
+
+/// The screens' entries the extract at `dir` holds (openspec AS.53): each
+/// of the screens part's files there, none for an extract the part hasn't
+/// reached yet (an older one resuming, a dump without the archive).
+pub fn screens_in(dir: &Path) -> Vec<String> {
+    guac_extract::screens::ARCHIVES
+        .iter()
+        .map(|a| guac_extract::screens::path(a))
+        .filter(|p| dir.join(p).is_file())
         .collect()
 }
 
@@ -186,7 +210,7 @@ pub fn load(dir: &Path, level: &str) -> Result<Linked, String> {
     // The walkers the part was made with (AG.27); none for an extract made
     // before them.
     let list = scripts::read_walkers(dir)?;
-    let files = files_with(&list.listed, level);
+    let files = files_with_screens(&list.listed, &screens_in(dir), level);
     let started = Instant::now();
     let mut entries = Vec::with_capacity(files.len());
     for (rel, role) in &files {

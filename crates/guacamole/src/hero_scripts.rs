@@ -469,6 +469,9 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     // The level end's movie, which the TV plays before the level it names
     // (openspec AS.19, `crate::movies`).
     script_world.plays_movies = true;
+    // And its completion screen, which the TV shows until a continue
+    // (openspec AU.5, `crate::completion`).
+    script_world.sequence.shows_completion = true;
     // Chapter 1's first fight and goats by their names (another level's
     // placements so named are its own: AS.51); another level's first
     // encounter, where the TV runs one (AS.54).

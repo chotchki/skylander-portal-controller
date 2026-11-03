@@ -437,6 +437,12 @@ impl Program {
         self.macros.get(&s)?.first().copied()
     }
 
+    /// A placed structure definition by name.
+    pub fn structure_named(&self, name: &str) -> Option<DefId> {
+        let s = self.find_sym(name)?;
+        self.structures.get(&s)?.first().copied()
+    }
+
     /// The script whose source path ends with `suffix`.
     pub fn script_named(&self, suffix: &str) -> Option<ScriptId> {
         self.scripts

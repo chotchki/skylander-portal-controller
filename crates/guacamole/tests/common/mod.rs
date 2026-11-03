@@ -68,21 +68,24 @@ pub fn identity() -> DumpIdentity {
     }
 }
 
-/// The script part's archives in link order, as `level_scripts` links them.
-pub const ARCHIVES: [(&str, Role); 5] = [
+/// The script part's archives in link order, as `level_scripts` links them:
+/// the objectives screen's entry before the level's since AS.53 (the screens
+/// part's, linked with no placement run).
+pub const ARCHIVES: [(&str, Role); 6] = [
     ("permanent/bootstrap.bld", Role::Bootstrap),
     ("permanent/global.bld", Role::Global),
     ("character/init_setup.bld", Role::Other),
     ("character/009_eruptor.bld", Role::Other),
+    ("misc/ui_objectivesscreen.bld", Role::Other),
     ("level/level_213_tutotial.bld", Role::Other),
 ];
 
 /// The units whose running placements start with the level, in order.
-pub const ORDER: [u16; 3] = [1, 2, 4];
+pub const ORDER: [u16; 3] = [1, 2, 5];
 /// Eruptor's file: its placements join with him.
 pub const ERUPTOR: u16 = 3;
 /// The level's file.
-pub const LEVEL: u16 = 4;
+pub const LEVEL: u16 = 5;
 
 /// The first hero's handle in a headless run: past every placement's and
 /// object's. The next hero after a take-off joins under one of his own
