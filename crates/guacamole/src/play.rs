@@ -1791,10 +1791,9 @@ fn judge_portal(
     (prepare, queue): (Option<Res<Prepare>>, Option<Res<IntroQueue>>),
     mut pads: ResMut<LevelPads>,
     source: Option<Res<ScriptSource>>,
-    (choice, movies, completion): (
+    (choice, movies): (
         Option<Res<crate::level_choice::LevelChoice>>,
         Option<Res<crate::movies::Movies>>,
-        Option<Res<crate::completion::CompletionOpen>>,
     ),
 ) {
     let on_portal = current.is_some_and(|c| matches!(c.screen, TvScreen::Portal { .. }));
@@ -1834,10 +1833,11 @@ fn judge_portal(
     // And while the next level is read, the hero still in this one
     // (openspec AS.49): the level a script's level end or an ask leaves.
     let changing = choice.as_deref().is_some_and(|c| c.changing());
-    // And while the level end's movie converts or plays (openspec AS.19),
-    // and while its completion screen waits for its continue (AU.5).
-    let movie = movies.as_deref().is_some_and(crate::movies::Movies::holds)
-        || completion.is_some_and(|c| c.0);
+    // And while the level end's movie converts or plays (openspec AS.19).
+    // Its completion screen (AU.5) holds no clock: the router takes the
+    // pads as its own, so the hero stands still while the sequencing's
+    // steps and its fanfare run on.
+    let movie = movies.as_deref().is_some_and(crate::movies::Movies::holds);
     let held = play.inside.as_ref().is_some_and(|i| {
         alert.is_some() || i.hero.is_none() || play.arrivals.holding() || changing || movie
     });
@@ -6413,20 +6413,29 @@ mod tests {
         assert!(on.distance(at) > 0.1, "he walks on: {at} -> {on}");
     }
 
-    /// AU.5: the level's completion screen holds the level while it waits
-    /// for its continue, him and the clock still under the stick, and lets
-    /// it go once it's closed.
+    /// AU.5: the level's completion screen takes the pads, so the hero
+    /// comes to a stop under the stick still pushed and stands while the
+    /// clock runs on (the sequencing's steps and its fanfare with it);
+    /// closed, he walks on.
     #[test]
-    fn the_completion_screen_holds_the_level() {
+    fn the_completion_screen_stills_the_hero_and_leaves_the_clock() {
         let tmp = tempfile::tempdir().unwrap();
         let (mut app, _pad) = walking(tmp.path());
         assert_eq!(mode(&app), Mode::Level);
         app.insert_resource(crate::completion::CompletionOpen(true));
-        until(&mut app, "the hold", |a| mode(a) == Mode::Held);
-        assert_eq!(alert(&app), None, "no alert: the screen's hold");
-        let at = stands_still(&mut app, 30);
+        // His walk winds down as it does with the stick let go.
+        for _ in 0..40 {
+            app.update();
+        }
+        let at = hero(&app).pivot;
+        let clock = app.world().resource::<Time<Virtual>>().elapsed();
+        for _ in 0..30 {
+            app.update();
+            assert_eq!(hero(&app).pivot, at, "he moved under the screen");
+        }
+        assert_eq!(mode(&app), Mode::Level, "no hold");
+        assert!(app.world().resource::<Time<Virtual>>().elapsed() > clock);
         app.insert_resource(crate::completion::CompletionOpen(false));
-        until(&mut app, "the walk again", |a| mode(a) == Mode::Level);
         for _ in 0..10 {
             app.update();
         }

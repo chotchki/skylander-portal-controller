@@ -111,8 +111,10 @@ const WELL_CENTRE: f32 = 283.0;
 const STAR_SIZE: f32 = 52.0;
 
 /// Whether the completion screen holds the TV: shown, its continue not
-/// yet asked. The router takes it as a modal's (its tabs the choices), and
-/// the level holds under it.
+/// yet asked. The router takes it as a modal's (its tabs the choices), the
+/// hero standing still under it while the level's clock runs on: the
+/// sequencing waits in its own state and its fanfare plays (the original's
+/// pause plays sound through it), where a held level would stop both.
 #[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CompletionOpen(pub(crate) bool);
 
