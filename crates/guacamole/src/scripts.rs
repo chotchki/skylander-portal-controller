@@ -740,7 +740,14 @@ impl ClipInfo {
 pub fn clip_infos(palette: &guac_ir::palette::Palette) -> Vec<ClipInfo> {
     let mut out = vec![ClipInfo::default(); usize::from(palette.slots)];
     for e in &palette.entries {
-        if let guac_ir::palette::SlotEntry::Clip {
+        use guac_ir::palette::SlotEntry;
+        if let SlotEntry::Clip {
+            additive,
+            partial,
+            layered,
+            ..
+        }
+        | SlotEntry::Blocks {
             additive,
             partial,
             layered,

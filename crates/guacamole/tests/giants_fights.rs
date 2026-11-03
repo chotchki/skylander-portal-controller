@@ -908,11 +908,13 @@ fn off_the_world(run: &Run, h: Handle) -> bool {
 const OFF_FOR_THE_SAIL: [&str; 3] = ["The_Ship_2", "Flynn_Island_2", "Door_(1)"];
 
 /// The sail's lines, in the order its scenes voice them.
-const SAIL_LINES: [&str; 6] = [
+const SAIL_LINES: [&str; 7] = [
     "vo_flynn_lvl214_igc03_007",
     "vo_flynn_boom_01",
     "vo_cali_lvl214_igc03_002",
     "vo_flynn_lvl214_igc03_008",
+    // Its ninth scene's, an animator camera's shot read since AS.78.
+    "vo_flynn_lvl214_igc03_009",
     "vo_cali_lvl214_igc03_010",
     "vo_flynn_lvl214_igc03_011",
 ];
@@ -1011,8 +1013,9 @@ fn skipping_the_sail(run: &Run, k: u32) -> [bool; 4] {
 /// (`level_end::SKIPPED_CUTSCENES` lists it no more): its eleven scenes in
 /// order, every scene object reading its actor (Flynn's and Cali's from
 /// their definitions, `scripts::with_cutscene_objects`: unlisted, the
-/// second scene's walk held on an object reading none), its six lines
-/// voiced in order and over by its end; its second scene's player waypoint
+/// second scene's walk held on an object reading none), its seven lines
+/// voiced in order and over by its end, its four animator camera shots each
+/// its clip's length (AS.78); its second scene's player waypoint
 /// sets him down on the second island's ship, and the sail takes itself
 /// off, so Setup_003, which waits for it, can start. AS.77: what the sail
 /// took off stands again once its SHUTDOWN resets the set holding it, the
@@ -1063,6 +1066,23 @@ fn level_214s_first_ship_part_sails_to_the_second_island() {
         (0..11).collect::<Vec<_>>(),
         "every scene, in order, none skipped"
     );
+    // AS.78: the fifth to seventh and the ninth scenes are animator camera
+    // shots (`214_Recovered.mdl`'s four: 3.13, 2.93, 2.17 and 4.67 s), each
+    // lasting its clip; until AS.78 a step each.
+    let length = |k: usize| s.scenes.get(k + 1).map_or(ended, |(_, n)| *n) - s.scenes[k].1;
+    for (k, clip) in [
+        (4, 3.133_333_3),
+        (5, 2.933_333_3),
+        (6, 2.166_666_7),
+        (8, 4.666_666_5),
+    ] {
+        let want = clip * 60.0;
+        assert!(
+            (f64::from(length(k)) - want).abs() <= 2.0,
+            "scene {k}: {} steps, its camera's clip {want:.0}",
+            length(k)
+        );
+    }
     assert!(
         s.unnamed.is_empty(),
         "objects reading no actor: {:?}",

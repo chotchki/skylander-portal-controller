@@ -66,14 +66,16 @@ pub fn level_palettes(
         .collect())
 }
 
-/// Each slot's clip length at 100 %, 0 where a slot holds no clip.
+/// Each slot's clip length at 100 %, 0 where a slot holds no clip; a clip
+/// past one Havok block its whole length (openspec AS.78: the animator
+/// cameras' shots last it).
 pub fn lengths(palette: &guac_ir::palette::Palette) -> Vec<f32> {
     let mut out = vec![0.0; usize::from(palette.slots)];
     for e in &palette.entries {
-        if let guac_ir::palette::SlotEntry::Clip { clip, .. } = &e.entry
+        if let Some(d) = palette.duration(e.slot)
             && let Some(l) = out.get_mut(usize::from(e.slot))
         {
-            *l = clip.duration;
+            *l = d;
         }
     }
     out
@@ -481,7 +483,7 @@ mod tests {
         // Another level's, where level 212's should be: past the first
         // run's levels, under the name its rule carries (openspec AS.54).
         let past = levels::part_path(ir, "level_212", levels::PALETTES);
-        assert_eq!(past, "levels/level_212/palettes.v2.ron");
+        assert_eq!(past, "levels/level_212/palettes.v3.ron");
         let other = tmp.path().join(&past);
         std::fs::create_dir_all(other.parent().unwrap()).unwrap();
         std::fs::copy(&path, &other).unwrap();

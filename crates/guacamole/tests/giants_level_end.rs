@@ -30,7 +30,8 @@ const NEXT: &str = "level_214_tutotial_2";
 /// Chapter 1's end on the TV's listing (`scripts::LEVEL_END_SCRIPTS`), the
 /// interface's model loaded (the level string's English text is what names
 /// the archive): `Temp_Level_Ender` woken 120 steps after his join, the run
-/// stepped in play mode until a level change is held or 1,200 steps pass.
+/// stepped in play mode until a level change is held or 2,000 steps pass
+/// (the outro's camera shot 10 s since AS.78).
 /// The scripts' own level end names `Level_214`, whose text
 /// `Level_214_Tutotial_2` is the archive `level_214_tutotial_2`; the outro
 /// plays to its end (AS.52); `system.load level` holds the request on later
@@ -62,7 +63,7 @@ fn chapter_1s_end_asks_for_the_next_level_by_name() {
     let mut recorded_at = None;
     while run.world.level_change().is_none() {
         assert!(
-            run.steps < woken_at + 1200,
+            run.steps < woken_at + 2000,
             "no level change by step {}",
             run.steps
         );
@@ -148,7 +149,7 @@ fn chapter_1s_end_without_the_interfaces_model_is_held_and_said() {
     let woken_at = run.steps;
     while run.world.level_end().is_none_or(|e| e.unread.is_none()) {
         assert!(
-            run.steps < woken_at + 1200,
+            run.steps < woken_at + 2000,
             "no level end by step {}",
             run.steps
         );
@@ -685,10 +686,15 @@ fn level_214s_wall_opens_to_a_bomb() {
 const HANDED_OVER: [f32; 3] = [-9.144, -12.578118, 18.10268];
 
 /// The intro's lines, in the order its scenes voice them.
-const INTRO_LINES: [&str; 7] = [
+const INTRO_LINES: [&str; 10] = [
     "vo_flynn_lvl214_igc01_002",
     "vo_cali_lvl214_igc01_003a",
     "vo_flynn_lvl214_igc01_004",
+    // The fourth to sixth scenes' (their animator cameras' shots read since
+    // AS.78: until then each lasted a step and voiced nothing).
+    "vo_flynn_lvl214_igc01_004a",
+    "vo_flynn_lvl214_igc01_005",
+    "vo_blobbers_general_028",
     "vo_flynn_lvl214_igc01_006",
     "vo_flynn_lvl214_igc01_013",
     "vo_cali_lvl214_igc01_013a",
@@ -805,7 +811,7 @@ fn the_ship_stands_after_the_intro(run: &Run, parts_before: &[String]) {
 /// in, then played to its end (`level_end::SKIPPED_CUTSCENES` lists it no
 /// more): its ten scenes in order, every scene object reading its actor
 /// (Flynn's and Cali's, their definitions listed since AS.82: until then
-/// the sixth scene's walk held on an object reading none), its seven lines
+/// the sixth scene's walk held on an object reading none), its ten lines
 /// voiced in order, each its recording's length and over by the cutscene's
 /// end (Flynn's sixth scene's line within that scene, where the held walk
 /// left it on), the hand-over on the deck, the ship and what
@@ -885,6 +891,18 @@ fn level_214s_intro_plays_to_its_end_on_the_ship() {
         (0..10).collect::<Vec<_>>(),
         "every scene, in order, none skipped"
     );
+    // AS.78: the first and the fourth to sixth scenes are animator camera
+    // shots (`214_Intro.mdl`'s slots 0, 2, 3 and 4: 3.00, 2.30, 1.97 and
+    // 3.97 s), each lasting its clip; until AS.78 a step each.
+    let length = |k: usize| scenes.get(k + 1).map_or(ended, |(_, n)| *n) - scenes[k].1;
+    for (k, clip) in [(0, 3.0), (3, 2.3), (4, 1.966_666_7), (5, 3.966_666_7)] {
+        let want = clip * 60.0;
+        assert!(
+            (f64::from(length(k)) - want).abs() <= 2.0,
+            "scene {k}: {} steps, its camera's clip {want:.0}",
+            length(k)
+        );
+    }
     assert!(unnamed.is_empty(), "objects reading no actor: {unnamed:?}");
     for who in ["Flynn_NPC", "Cali_NPC", "009_Eruptor"] {
         assert!(actors.contains(who), "{who} in its scenes: {actors:?}");
@@ -910,7 +928,7 @@ fn level_214s_intro_plays_to_its_end_on_the_ship() {
         // Played whole: none cut short by a scene's end.
         let played = v.ended.unwrap() - v.started;
         assert!(
-            (played as f32 - v.length * 60.0).abs() <= 2.0,
+            played as f32 >= v.length * 60.0 - 2.0,
             "{} played {played} steps of {:.2} s",
             v.sound,
             v.length
@@ -922,7 +940,7 @@ fn level_214s_intro_plays_to_its_end_on_the_ship() {
     let line = lines
         .voices
         .iter()
-        .find(|v| v.sound == INTRO_LINES[3])
+        .find(|v| v.sound == INTRO_LINES[6])
         .expect("the sixth scene's line");
     assert!(
         line.started >= u64::from(sixth.0) && line.ended.is_some_and(|e| e <= u64::from(sixth.1)),
@@ -1070,8 +1088,7 @@ const OUTRO_MABU: [(&str, &str); 3] = [
 /// under them, the actors on their own scripts (140 %, a hat each), every
 /// line voiced in order; then its own `Game - Level End`
 /// names level 214, which the TV asks for. Nothing stops. The second scene
-/// ends a frame in, its animated camera's clip unread.
-/// (Stand-in ledger: `cinematic-camera`.)
+/// lasts its animator camera's clip (AS.78: 10.0 s, past one Havok block).
 #[test]
 #[ignore = "reads the Giants dump"]
 fn chapter_1s_outro_plays_to_its_end() {
@@ -1104,7 +1121,7 @@ fn chapter_1s_outro_plays_to_its_end() {
     let (mut hats, mut scales) = (0usize, Vec::new());
     while run.world.level_change().is_none() {
         assert!(
-            run.steps < woken + 1200,
+            run.steps < woken + 2000,
             "no level change by step {}",
             run.steps
         );
@@ -1166,9 +1183,8 @@ fn chapter_1s_outro_plays_to_its_end() {
         .map(|v| (v.sound.clone(), v.started))
         .collect();
     // AR.17's check kept (the as-ch1-ending review): no line plays on at the
-    // level change but Norticus' last, which AS.78's one-step second scene
-    // leaves playing (in the original its 11.78 s end inside that scene's
-    // camera clip); the TV's change takes it off with the run.
+    // level change. Until AS.78 Norticus' last did, its scene a single step
+    // with its animator camera's clip unread.
     let playing: Vec<String> = run
         .world
         .plays()
@@ -1177,10 +1193,7 @@ fn chapter_1s_outro_plays_to_its_end() {
         .filter(|n| n.starts_with("vo_"))
         .collect();
     println!("lines playing at the change: {playing:?}");
-    assert!(
-        playing.iter().all(|n| n == "vo_norticus_lvl213_igc24_005"),
-        "{playing:?}"
-    );
+    assert!(playing.is_empty(), "{playing:?}");
     println!(
         "woken at {woken}; scenes (index, first step) {scenes:?}; the cutscene over at {ended:?}; \
          Norticus' clips {clips:?}; voices {voices:?}; the change at {}: {change:?}",
@@ -1200,6 +1213,26 @@ fn chapter_1s_outro_plays_to_its_end() {
             f64::from(next - at) / 60.0
         );
     }
+    // AS.78: the second scene lasts its animator camera's clip (301 frames
+    // at 30 a second, 10.0 s, read past its first Havok block), and
+    // Norticus' last line, voiced as it opens, is over by its end or a
+    // couple of seconds into the next (its 11.78 s is the scene's and the
+    // fade's).
+    let second = scenes[2].1 - scenes[1].1;
+    assert!((599..=603).contains(&second), "the camera's shot: {second}");
+    let last = lines
+        .voices
+        .iter()
+        .find(|v| v.sound == "vo_norticus_lvl213_igc24_005")
+        .expect("his last line");
+    println!("his last line: {last:?}");
+    assert!(
+        last.ended.is_some_and(
+            |e| e <= u64::from(scenes[2].1) + 150 && last.started + 5 >= u64::from(scenes[1].1)
+        ),
+        "{last:?} against the second scene {:?}",
+        (scenes[1].1, scenes[2].1)
+    );
     // The first scene's walks run to the end: each Mabu stopped within its
     // walk's 20 ft of its path's last waypoint (a walk not skipped leaves
     // him where he reached it).

@@ -227,7 +227,7 @@ impl PaletteCount {
         self.palettes += 1;
         for e in &p.entries {
             match e.entry {
-                SlotEntry::Clip { .. } => self.clips += 1,
+                SlotEntry::Clip { .. } | SlotEntry::Blocks { .. } => self.clips += 1,
                 SlotEntry::Network => self.networks += 1,
             }
         }

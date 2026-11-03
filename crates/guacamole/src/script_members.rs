@@ -1349,6 +1349,13 @@ impl ScriptWorld {
                     _ => Value::Int(i32::from(s.kind)),
                 }
             }
+            // A palette's clip, not yet played, has its length (openspec
+            // AS.78: an animator camera's shot reads its clip's off the
+            // palette entry, `force fixed anim time`, before any copy plays;
+            // read as nothing, every such shot lasted no time).
+            Member::SeqRawDuration if matches!(object, Some(Object::Clip { .. })) => {
+                Value::Float(self.length_of(recv.ok_or(HostFault::Nothing)?))
+            }
             Member::SeqTimeRemaining
             | Member::SeqPercentRemaining
             | Member::SeqRate
@@ -6752,6 +6759,41 @@ mod animation_tests {
         };
         w.told = Value::Entity(SYSTEMS);
         assert_eq!(w.elements(&mine, &mut e).unwrap(), clips);
+    }
+
+    /// AS.78: a palette's clip read before any copy of it plays has its
+    /// length as its raw duration (an animator camera's shot lasts what
+    /// `Cutscene Camera - Set Camera - Animator Camera` reads off its palette
+    /// entry); a slot the extract refused reads 0, a sequence its own.
+    #[test]
+    fn a_palette_clips_raw_duration_is_its_length() {
+        let (mut w, mut e) = (world(), pit());
+        let clips = palette(&mut w);
+        w.set_palette(TEMPLATE, vec![1.0, 0.5, 0.0, 10.0]);
+        let raw = |w: &mut ScriptWorld, e: &mut dyn Engine, v: Value| {
+            w.get(
+                &Access {
+                    placement: C1,
+                    receiver: Some(v),
+                    member: MemberId::named("sequence", "raw duration"),
+                    other_point: None,
+                    via: None,
+                    op: None,
+                },
+                e,
+            )
+        };
+        for (clip, length) in clips.iter().zip([1.0, 0.5, 0.0, 10.0]) {
+            assert_eq!(raw(&mut w, &mut e, *clip), Ok(Value::Float(length)));
+        }
+        // A copy playing: the sequence's own length, as before.
+        let Answer::Run {
+            result: Some(s), ..
+        } = w.play_on(clips[3], C1)
+        else {
+            panic!("a copy");
+        };
+        assert_eq!(raw(&mut w, &mut e, s), Ok(Value::Float(10.0)));
     }
 
     /// Slot 0 a base clip, 1 partial, 2 additive (and partial: additive
