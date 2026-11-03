@@ -388,6 +388,7 @@ fn route_input(
     actions: Option<ResMut<HeroActions>>,
     modal: Option<Res<ModalOpen>>,
     completion: Option<Res<crate::completion::CompletionOpen>>,
+    ending: Option<Res<crate::completion::LevelEnding>>,
     mut out: MessageWriter<TvInput>,
 ) {
     let (mut frame, dpad, stick) = read_devices(keys.as_deref(), pads.iter().map(|(_, p)| p));
@@ -417,6 +418,9 @@ fn route_input(
     // and the portal doesn't hold the level (AG.29); under an intro or a
     // hold, nothing, and a face held through it stays his only once let go.
     let held = level.held();
+    // A level's end holds the players as the original's gameplay pause
+    // does, its clock running on (AS.125): as under a layer above.
+    let ending = ending.is_some_and(|e| e.0);
     let mut release = false;
     let walked = match (layer, level.seat_mut()) {
         (Layer::Level, Some(seat)) if held => {
@@ -425,7 +429,7 @@ fn route_input(
             release = seat.holding();
             Some(seat.hold(&level_pads))
         }
-        (Layer::Level, Some(seat)) => Some(seat.step(&level_pads)),
+        (Layer::Level, Some(seat)) if !ending => Some(seat.step(&level_pads)),
         (_, Some(seat)) => {
             seat.swallow(&level_pads);
             Some(HeroPad::STILL)

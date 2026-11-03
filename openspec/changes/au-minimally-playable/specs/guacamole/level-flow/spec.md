@@ -6,7 +6,7 @@ What follows a level's end on the TV, on the way to the next chapter: the comple
 ## ADDED Requirements
 
 ### Requirement: A level's end shows its completion screen
-When a level's own end-of-level sequencing runs, the TV SHALL show its completion screen over the held level. The screen SHALL be laid out on the TV's own screens with the disc's own art and fonts. It SHALL show what the original's shows for that level, as the original's sequencing computes it (its objectives and what was found). A press of the original's continue button on any pad SHALL go on to whatever the level end queued next, its movie or the next level.
+When a level's own end-of-level sequencing runs, the TV SHALL show its completion screen over the held level, laid out on the TV's own screens with the disc's own art and fonts, showing what the original's shows for that level as its sequencing computes it (its objectives and what was found: chapter 1's 13). A press of the original's continue button on any pad SHALL go on to whatever the level end queued next, its movie or the next level.
 
 #### Scenario: Chapter 1's end
 - **WHEN** chapter 1's outro ends

@@ -834,6 +834,30 @@ pub fn start_run(
             &[],
             host,
         )?;
+        // The original's switch names the adventure before the level loads,
+        // so the level's definition finds it at its STARTUP; here the
+        // definition ran a step before this part, found no title and left
+        // `level adventure data` empty (the completion screen's treasure
+        // and scroll counts reading -1, the chests and stars, and every
+        // collection check reading through it). Taken as it would have.
+        if let Some(lcd) = global(vm, "level control data").map(|v| vm.value(v))
+            && vm.field(lcd, "level adventure data") == Some(Value::Null)
+            && vm
+                .program()
+                .macro_named("Game - Get Adventure Data")
+                .is_some()
+        {
+            let (_, back) = vm.call_with(
+                None,
+                "Game - Get Adventure Data",
+                &[("adventure title", title)],
+                &["adventure data"],
+                host,
+            )?;
+            if let Some(ad) = back.first().copied().flatten() {
+                vm.set_reference(lcd, "level adventure data", ad);
+            }
+        }
     }
     // The level initializer's save: slot and header, the percent complete
     // worked out first.

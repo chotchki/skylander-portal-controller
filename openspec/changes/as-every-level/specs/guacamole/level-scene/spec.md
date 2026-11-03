@@ -25,18 +25,22 @@ When chapter 1's end wakes its outro, the TV SHALL play the outro's cutscene to 
 - **THEN** Norticus and the Mabu are drawn and play their scene, then the level holds for level 214
 
 ### Requirement: A level's end runs its own sequencing
-When a level's own scripts record its end, the TV SHALL run the original's end-of-level sequencing from the next game step, its states the scripts' own: the gameplay paused, the HUD hidden, the music faded and the fanfare played, the completion screen until a continue, the movie the end queued, then the level it named asked for as the original's level switch asks it, nothing stopped in the run.
+When a level's own scripts record its end, the TV SHALL run the original's end-of-level sequencing from the next game step, its states the scripts' own: the gameplay paused, the HUD hidden, the music faded, the fanfare, the completion screen until a continue, the movie the end queued, then its level asked as the original's switch asks it (chapter 1's 214 three steps after FMV02), nothing stopped and no pad moving the hero or pausing meanwhile.
 
 #### Scenario: Chapter 1's end
 - **WHEN** chapter 1's outro records its level end
 - **THEN** the fanfare starts in the next step, the completion screen holds until a continue, FMV02 plays, and level 214 is asked for
 
+#### Scenario: The players held through it
+- **WHEN** a player holds the stick and presses an attack or Start between chapter 1's end and level 214's ask
+- **THEN** the hero stands where the outro left him, no attack reaches his scripts and the level doesn't pause, its clock running on
+
 #### Scenario: A run that can't sequence it
-- **WHEN** the scripts that run the sequencing have stopped in play
-- **THEN** the TV still plays the movie the end queued and asks for the level it named
+- **WHEN** the scripts that run the sequencing have stopped in play, its completion screen up or not
+- **THEN** the screen goes, and the TV still plays the movie the end queued and asks for the level it named
 
 ### Requirement: The TV says why it holds a level
-While the TV holds a level for its end's movie to convert on its first play, or for the next level to be read, it SHALL show over the held level what it's getting ready and, for a level's read, how far it has got.
+While the TV holds a level for its end's movie to convert on its first play (FMV02's 26.9 s on the Mac), or for the next level to be read, it SHALL show over the held level what it's getting ready and, for a level's read, how far it has got.
 
 #### Scenario: FMV02's first play
 - **WHEN** chapter 1's end hands FMV02 over and the extract doesn't hold it yet

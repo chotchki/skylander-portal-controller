@@ -641,14 +641,17 @@ fn screen_positions_and_colours_are_read_and_written_by_their_parts() {
 /// the set stands at each read (what `System - Add/Remove System Update
 /// Macro - Update On Variable` keeps as `if var over 0`, the stream
 /// loader's queue's count, so its update runs once the queue grows): read
-/// through it before the set grows and after, and checked over 0 after;
-/// written through, the set resizes.
+/// through it before the set grows and after, and checked over 0 after,
+/// through its dereferencer and as the reference itself (what the game
+/// systems' and the UI's `find subset ... if var over 0` compare); written
+/// through, the set resizes.
 #[test]
 fn a_reference_to_a_sets_count_reads_the_count_as_it_stands() {
     let p = program(|w| {
         let queue = w.variable("queue", "ScriptSet", Some("ValueInfo"));
         let over = w.variable("over", "ScriptReference", None);
         let (before, after, ran) = (var(w, "before"), var(w, "after"), var(w, "ran"));
+        let itself = var(w, "itself");
         idle(
             w,
             |_| {},
@@ -674,6 +677,17 @@ fn a_reference_to_a_sets_count_reads_the_count_as_it_stands() {
                 let one = w.int(1);
                 w.set(&[El::Local(ran)], one);
                 w.end_block(at);
+                // The reference compared as itself, not through its
+                // dereferencer: the count it's bound to.
+                let zero = w.int(0);
+                let lhs = w.value(&[El::Local(over)]);
+                let (at, o) = w.open(Class::CheckValue, "if");
+                w.refer(o, 0x1C, lhs);
+                w.word(o, 0x20, 4);
+                w.refer(o, 0x24, zero);
+                let one = w.int(1);
+                w.set(&[El::Local(itself)], one);
+                w.end_block(at);
                 // Written through, the set itself resizes.
                 let three = w.int(3);
                 w.set(&through, three);
@@ -694,6 +708,11 @@ fn a_reference_to_a_sets_count_reads_the_count_as_it_stands() {
         vm.local(id, "ran"),
         Some(Value::Int(1)),
         "over 0 once it grew"
+    );
+    assert_eq!(
+        vm.local(id, "itself"),
+        Some(Value::Int(1)),
+        "the reference itself over 0"
     );
     let queue = vm.local(id, "queue").unwrap();
     assert_eq!(vm.set(queue).map(<[Value]>::len), Some(3));

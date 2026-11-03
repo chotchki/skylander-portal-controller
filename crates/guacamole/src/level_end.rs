@@ -128,6 +128,12 @@ pub struct Sequence {
     pub movie: Option<String>,
     /// Whether the fader's clean-up has run for the movie.
     pub fader_cleaned: bool,
+    /// From the level end recorded until its level is asked (states 1-6,
+    /// or AS.15's stand-in): the original's gameplay pause holds the
+    /// players through it, its sequencing having disabled the pause menu,
+    /// so the TV's pads move no one and Start pauses nothing while the
+    /// level's clock runs on (openspec AS.125).
+    pub ending: bool,
 }
 
 /// The completion screen on the run: what it shows, and its continue.
@@ -495,6 +501,7 @@ pub fn step(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<Option<Ended>, 
     let Some(to) = recorded(vm) else {
         return Ok(None);
     };
+    host.world.sequence.ending = true;
     match sequencing(vm, host.world) {
         Some(gs) => sequenced(vm, host, gs),
         None => stand_in(vm, host, to),
@@ -514,6 +521,7 @@ fn sequenced(
     }
     if let Some(to) = change_level(vm) {
         host.world.level_end_asked = true;
+        host.world.sequence.ending = false;
         let string = match to {
             Value::Object(o) => vm.program().name_of(o).map(str::to_owned),
             _ => None,
@@ -600,7 +608,15 @@ fn continue_now(
 
 /// AS.15's way over a run that can't sequence the level's end: the
 /// movie the level end queued handed to the player, then its level asked.
+/// A completion screen the sequencing had up when it stopped is let go
+/// unanswered: nothing would run its continue.
 fn stand_in(vm: &mut Vm, host: &mut WorldHost<'_, '_>, to: Value) -> Result<Option<Ended>, Halt> {
+    if let Some(c) = &mut host.world.sequence.completion
+        && !c.continued
+    {
+        warn!("the sequencing stopped under its completion screen: the screen let go");
+        c.continued = true;
+    }
     if host.world.level_end_movie.is_none()
         && let Some(name) = host
             .world
@@ -632,6 +648,7 @@ fn stand_in(vm: &mut Vm, host: &mut WorldHost<'_, '_>, to: Value) -> Result<Opti
         return Ok(None);
     }
     host.world.level_end_asked = true;
+    host.world.sequence.ending = false;
     let string = match to {
         Value::Object(o) => vm.program().name_of(o).map(str::to_owned),
         _ => None,
@@ -787,6 +804,8 @@ mod tests {
 
     /// The file of [`sequenced`]'s program, as the game systems' script.
     const GS_PATH: &str = "C:/tfb/Content/Levels/Includes/Global/scripts/GameSystems.ai";
+    /// [`sequenced`]'s macro that stops the placement it's called for.
+    const BROKEN: &str = "Broken For The Test";
 
     /// A file in the original's shape for the sequencing (AS.53), our ops:
     /// `level progression data` recording chapter 1's level end and FMV02 in
@@ -839,6 +858,7 @@ mod tests {
             let sequencing = w.op(Class::DefineMacro, SEQUENCING);
             let collect = w.op(Class::DefineMacro, COLLECT);
             let shutdown = w.op(Class::DefineMacro, SHUTDOWN);
+            let broken = w.op(Class::DefineMacro, BROKEN);
             let setref = |w: &mut Writer<'_>, var, to_what| {
                 let l = w.value(&[El::Local(data), El::Local(var)]);
                 let r = w.reference(&[El::Local(to_what)], None);
@@ -857,7 +877,7 @@ mod tests {
             let (shut_down, _) = w.open(Class::ShutDown, "SHUTDOWN");
             w.end_block(shut_down);
             let (section, _) = w.open(Class::MacroSection, "MACROS");
-            for def in [marker, fmv, sequencing, collect, shutdown] {
+            for def in [marker, fmv, sequencing, collect, shutdown, broken] {
                 let p = w.push(def);
                 let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
                 let enter = w.flow(Class::FlowMacro);
@@ -907,6 +927,12 @@ mod tests {
                     w.inc(&[El::Local(data), El::Local(seq_var)]);
                     let one = w.int(1);
                     w.set(&[El::Local(shut)], one);
+                }
+                if def == broken {
+                    // A member nothing registers: the call stops its
+                    // placement, as a stop in the game systems' tick would.
+                    let one = w.int(1);
+                    w.set(&[El::Local(data), El::Member("nosuch", "member")], one);
                 }
                 w.end_block(p);
             }
@@ -1053,6 +1079,65 @@ mod tests {
         assert_eq!(seq(&vm), Some(COMPLETION + 1));
         assert_eq!(shut(&mut vm), Value::Int(1));
         assert!(world.sequence.completion.unwrap().results.is_ok());
+    }
+
+    /// The game systems' placement stopped, as a stop in its tick leaves it.
+    fn stop_game_systems(vm: &mut Vm, world: &mut ScriptWorld) {
+        let gs = sequencing(vm, world).expect("the run sequences");
+        let mut generator = Generator::seeded(1);
+        let mut engine = NoEngine;
+        let mut spawn = headless_spawner(0x2000);
+        let mut host = WorldHost {
+            world,
+            engine: &mut engine,
+            generator: &mut generator,
+            spawn: &mut spawn,
+        };
+        assert!(vm.call_with(Some(gs), BROKEN, &[], &[], &mut host).is_err());
+        assert!(vm.stopped(gs).is_some(), "stopped");
+        assert_eq!(sequencing(vm, world), None);
+    }
+
+    /// AS.53: a run whose game systems' placement stops under its
+    /// completion screen takes AS.15's way on: the screen let go
+    /// unanswered (no continue would run), the movie the level end queued
+    /// handed to the player, its level asked once that's over; the pads
+    /// held from the level end to the ask.
+    #[test]
+    fn a_stopped_sequencing_lets_its_screen_go_and_takes_the_stand_in() {
+        let mut shows = |vm: &mut Vm, w: &mut ScriptWorld| {
+            w.sequence.shows_completion = true;
+            w.plays_movies = true;
+            set_seq(vm, COMPLETION);
+        };
+        let mut ending = Vec::new();
+        let mut drive = |k: usize, vm: &mut Vm, w: &mut ScriptWorld| {
+            ending.push(w.sequence.ending);
+            match k {
+                0 => stop_game_systems(vm, w),
+                2 => w.movie_playing(),
+                3 => w.movie_over(MovieEnd::Skipped),
+                _ => {}
+            }
+        };
+        let (out, vm, world) = run_sequenced(&mut shows, 6, &mut drive);
+        let to = recorded(&vm).unwrap();
+        assert_eq!(
+            out,
+            [
+                Some(Ended::Completion),
+                Some(Ended::Movie("fmv02".into())),
+                None,
+                None,
+                Some(Ended::Asked(to)),
+                None
+            ]
+        );
+        let c = world.sequence.completion.as_ref().unwrap();
+        assert!(c.continued && !c.continue_asked, "let go unanswered");
+        assert_eq!(seq(&vm), Some(COMPLETION), "nothing raised it");
+        assert_eq!(ending, [true, true, true, true, false, false]);
+        assert_eq!(world.level_end().map(|e| e.value), Some(to));
     }
 
     /// AS.53: the movie is read by name while its sprite is the template the

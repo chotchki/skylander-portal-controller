@@ -118,6 +118,14 @@ const STAR_SIZE: f32 = 52.0;
 #[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CompletionOpen(pub(crate) bool);
 
+/// Whether the level's end holds the players: from its level end recorded
+/// until its level is asked (`Sequence::ending`, openspec AS.125), the
+/// original's gameplay pause having disabled its pause menu. The router
+/// hands the walking pad nothing then (no walk, no attack, no Start) while
+/// the level's clock runs on.
+#[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LevelEnding(pub(crate) bool);
+
 /// Which of the three tab columns has the focus and shows its objectives:
 /// 0 the story goals, 1 the dares, 2 the collections.
 #[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -153,6 +161,7 @@ pub(crate) struct CompletionPlugin;
 impl Plugin for CompletionPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CompletionOpen>()
+            .init_resource::<LevelEnding>()
             .init_resource::<CompletionTab>()
             .init_resource::<CompletionReport>()
             .init_resource::<Loaded>()
@@ -181,8 +190,14 @@ pub(crate) fn is_open(world: &ScriptWorld) -> bool {
 fn open_completion(
     world: Option<Res<ScriptWorld>>,
     mut open: ResMut<CompletionOpen>,
+    mut ending: ResMut<LevelEnding>,
     mut tab: ResMut<CompletionTab>,
 ) {
+    let holds = world.as_deref().is_some_and(|w| w.sequence.ending);
+    if ending.0 != holds {
+        info!(holds, "the level's end holds the players");
+        ending.0 = holds;
+    }
     let now = world.as_deref().is_some_and(is_open);
     if open.0 != now {
         info!(open = now, "the completion screen");
@@ -977,6 +992,7 @@ mod tests {
             )));
         let mut world = ScriptWorld::new(&Files::default(), &HashMap::new(), [1, 2, 3, 4, 5, 6, 7]);
         world.sequence.shows_completion = true;
+        world.sequence.ending = true;
         world.sequence.completion = Some(Completion {
             results: Ok(results()),
             continue_asked: false,
@@ -1009,7 +1025,8 @@ mod tests {
     /// focuses and shows the second; the accept button (South, the router's
     /// Activate) on it asks the continue, which closes the screen and lets
     /// the router's modal go. With no extract known, the TV's own style,
-    /// named.
+    /// named. The level's end holds the players under it and after it, as
+    /// the run's sequence says (AS.125), until its level is asked.
     #[test]
     fn the_screen_shows_the_runs_results_moves_its_tabs_and_its_accept_continues() {
         let (mut app, presses) = screen_app();
@@ -1017,6 +1034,7 @@ mod tests {
             app.update();
         }
         assert!(app.world().resource::<CompletionOpen>().0);
+        assert!(app.world().resource::<LevelEnding>().0, "the players held");
         assert_eq!(drawn(&mut app), 1);
         assert_eq!(focused(&app), Some(TABS[0]));
         let r = report(&app);
@@ -1054,6 +1072,19 @@ mod tests {
         assert_eq!(drawn(&mut app), 0);
         let r = report(&app);
         assert!(r.continue_asked && !r.shown);
+        assert!(
+            app.world().resource::<LevelEnding>().0,
+            "held past the screen"
+        );
+        app.world_mut()
+            .resource_mut::<ScriptWorld>()
+            .sequence
+            .ending = false;
+        app.update();
+        assert!(
+            !app.world().resource::<LevelEnding>().0,
+            "let go at the ask"
+        );
     }
 
     /// The screen's lines: a time's `@` filled with its target, its tally

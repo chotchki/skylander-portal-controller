@@ -5,6 +5,8 @@
 //! on the portal view the level covers. This draws the same band over the
 //! held level, top right under the join corner's card, where the TV's own
 //! words over a level already sit; the portal view's header is unchanged.
+//! A portal alert over the held level takes the screen whole and the band
+//! waits under it (drawn, it overlapped the alert's card).
 
 use bevy::prelude::*;
 use serde::Serialize;
@@ -13,7 +15,7 @@ use crate::extraction::{Band, ExtractBand};
 use crate::level_choice::LevelChoice;
 use crate::movies::Movies;
 use crate::pad::LevelPads;
-use crate::play::PlaySystems;
+use crate::play::{Play, PlaySystems};
 use crate::theme::{Role, Step, TvTheme};
 use crate::tv_state::{Pen, TvAssets};
 
@@ -46,14 +48,15 @@ impl Plugin for HeldBandPlugin {
 
 /// The band the held level shows: the movie's while it converts, else the
 /// header's while the next level is read; none while the level doesn't
-/// show.
+/// show or a portal alert covers it.
 pub(crate) fn wanted(
     level_shows: bool,
+    alert: bool,
     movie: Option<Band>,
     changing: bool,
     header: Option<&Band>,
 ) -> Option<Band> {
-    if !level_shows {
+    if !level_shows || alert {
         return None;
     }
     movie.or_else(|| changing.then(|| header.cloned()).flatten())
@@ -63,6 +66,7 @@ pub(crate) fn wanted(
 fn show_held_band(
     mut commands: Commands,
     pads: Res<LevelPads>,
+    play: Option<Res<Play>>,
     movies: Option<Res<Movies>>,
     choice: Option<Res<LevelChoice>>,
     header: Option<Res<ExtractBand>>,
@@ -72,6 +76,7 @@ fn show_held_band(
 ) {
     let want = wanted(
         pads.shows(),
+        play.as_deref().and_then(Play::alert).is_some(),
         movies.as_deref().and_then(Movies::band),
         choice.as_deref().is_some_and(LevelChoice::changing),
         header.as_deref().and_then(|h| h.0.as_ref()),
@@ -165,18 +170,34 @@ mod tests {
 
     /// AS.88: over the level, the movie's band while it converts, else the
     /// header's while the next level is read; neither held, none; the level
-    /// not showing (the portal view draws its own header), none.
+    /// not showing (the portal view draws its own header), none; a portal
+    /// alert over the held level, none until it goes.
     #[test]
     fn the_held_level_shows_the_movies_band_or_the_next_levels() {
         let movie = band("Getting FMV02 ready", None);
         let level = band("Getting level_214_tutotial_2 ready", Some(40));
         assert_eq!(
-            wanted(true, Some(movie.clone()), true, Some(&level)),
+            wanted(true, false, Some(movie.clone()), true, Some(&level)),
             Some(movie.clone())
         );
-        assert_eq!(wanted(true, None, true, Some(&level)), Some(level.clone()));
-        assert_eq!(wanted(true, None, false, Some(&level)), None, "no read");
-        assert_eq!(wanted(true, None, true, None), None);
-        assert_eq!(wanted(false, Some(movie), true, Some(&level)), None);
+        assert_eq!(
+            wanted(true, false, None, true, Some(&level)),
+            Some(level.clone())
+        );
+        assert_eq!(
+            wanted(true, false, None, false, Some(&level)),
+            None,
+            "no read"
+        );
+        assert_eq!(wanted(true, false, None, true, None), None);
+        assert_eq!(
+            wanted(false, false, Some(movie.clone()), true, Some(&level)),
+            None
+        );
+        assert_eq!(
+            wanted(true, true, Some(movie), true, Some(&level)),
+            None,
+            "under an alert"
+        );
     }
 }

@@ -1522,6 +1522,25 @@ fn chapter_1s_end_sequences_its_completion_screen_movie_and_level() {
     );
     assert_eq!(time.status, Status::NewlyDone);
     assert_eq!(r.stars, [true, false, false], "only the level clear star");
+    // Each find's count read off the save through the level's adventure
+    // (none below 0, as the getters leave a count for an adventure they
+    // don't find): none found by the end anchor's skip, each of its total.
+    assert_eq!(
+        r.objectives
+            .iter()
+            .filter(|o| o.category == 2)
+            .map(|o| (o.count, o.total))
+            .collect::<Vec<_>>(),
+        [
+            (0.0, 1.0),
+            (0.0, 1.0),
+            (0.0, 3.0),
+            (0.0, 4.0),
+            (0.0, 1.0),
+            (0.0, 1.0),
+            (0.0, 1.0)
+        ]
+    );
     // Waits there for the continue.
     for _ in 0..60 {
         stops.extend(saved_step(&mut run, &mut session));

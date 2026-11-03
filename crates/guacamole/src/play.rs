@@ -6582,6 +6582,61 @@ mod tests {
         assert!(on.distance(at) > 0.1, "he walks on: {at} -> {on}");
     }
 
+    /// AS.125: from a level's end recorded until its level is asked the
+    /// players are held as the original's gameplay pause holds them while
+    /// the clock runs on (the sequencing's steps, its fanfare): the hero
+    /// comes to a stop under the stick still pushed, an attack press
+    /// reaches no step and Start pauses nothing; the hold over, he walks on.
+    #[test]
+    fn a_level_ends_sequencing_holds_the_players_and_leaves_the_clock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = walking(tmp.path());
+        assert_eq!(mode(&app), Mode::Level);
+        app.insert_resource(crate::completion::LevelEnding(true));
+        for _ in 0..40 {
+            app.update();
+        }
+        let at = hero(&app).pivot;
+        let clock = app.world().resource::<Time<Virtual>>().elapsed();
+        app.world_mut()
+            .resource_mut::<crate::hero::HeroActions>()
+            .take();
+        for button in [
+            GamepadButton::South,
+            GamepadButton::West,
+            GamepadButton::RightTrigger,
+            GamepadButton::Start,
+        ] {
+            test_pad::press(&mut app, pad, button);
+            app.update();
+            assert_eq!(hero(&app).pivot, at, "he moved under the hold");
+        }
+        for _ in 0..20 {
+            app.update();
+            assert_eq!(hero(&app).pivot, at, "he moved under the hold");
+        }
+        assert_eq!(
+            app.world_mut()
+                .resource_mut::<crate::hero::HeroActions>()
+                .take(),
+            [false; 4],
+            "no attack reached a step"
+        );
+        assert_eq!(
+            app.world().resource::<LevelPads>().seat().unwrap().pause(),
+            None,
+            "Start paused nothing"
+        );
+        assert_eq!(mode(&app), Mode::Level, "no hold of the clock");
+        assert!(app.world().resource::<Time<Virtual>>().elapsed() > clock);
+        app.insert_resource(crate::completion::LevelEnding(false));
+        for _ in 0..10 {
+            app.update();
+        }
+        let on = hero(&app).pivot;
+        assert!(on.distance(at) > 0.1, "he walks on: {at} -> {on}");
+    }
+
     /// AG.63: with a second Eruptor holding the level, the hero taken off
     /// brings the other in where he stood and the way he faced, the camera
     /// the same, and the level carries on.
