@@ -61,6 +61,7 @@ mod tv_state;
 mod video;
 mod warm;
 mod watch;
+mod yes_no;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -522,6 +523,8 @@ fn run_tv(
             hud::HudPlugin,
             defeat::DefeatPlugin,
             darkness::DarknessPlugin,
+            // AU.6: a dialogue's yes-or-no question over the level.
+            yes_no::YesNoPlugin,
         ),
         // The figures' progress (AH.1) and, AS.38, AU.3, AU.4: the host's
         // story save, resumed and kept.

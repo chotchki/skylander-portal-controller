@@ -387,6 +387,7 @@ fn route_input(
     hero: Option<ResMut<HeroInput>>,
     actions: Option<ResMut<HeroActions>>,
     modal: Option<Res<ModalOpen>>,
+    prompt: Option<Res<crate::yes_no::PromptOpen>>,
     mut out: MessageWriter<TvInput>,
 ) {
     let (mut frame, dpad, stick) = read_devices(keys.as_deref(), pads.iter().map(|(_, p)| p));
@@ -406,7 +407,9 @@ fn route_input(
     }
 
     let playing = queue.as_ref().is_some_and(|q| q.playing().is_some());
-    let layer = Layer::top(playing, level.shows()).over(modal.is_some_and(|m| m.0));
+    // AU.6's yes-or-no question takes the pads as Restart chapter does.
+    let modal = modal.is_some_and(|m| m.0) || prompt.is_some_and(|p| p.0);
+    let layer = Layer::top(playing, level.shows()).over(modal);
     if matches!(layer, Layer::Intro | Layer::Level) {
         repeat.swallow();
     }
@@ -611,6 +614,7 @@ pub(crate) struct InputShots<'w, 's> {
     focus: Option<Res<'w, InputFocus>>,
     choices: Query<'w, 's, &'static FocusId>,
     modal: Option<Res<'w, ModalOpen>>,
+    prompt: Option<Res<'w, crate::yes_no::PromptOpen>>,
 }
 
 impl InputShots<'_, '_> {
@@ -637,7 +641,10 @@ impl InputShots<'_, '_> {
             .collect();
         InputShot {
             layer: Layer::top(intro_playing, level.shows())
-                .over(self.modal.as_ref().is_some_and(|m| m.0))
+                .over(
+                    self.modal.as_ref().is_some_and(|m| m.0)
+                        || self.prompt.as_ref().is_some_and(|p| p.0),
+                )
                 .name()
                 .to_owned(),
             pads,

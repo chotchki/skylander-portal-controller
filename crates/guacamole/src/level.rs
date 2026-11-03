@@ -4266,7 +4266,7 @@ mod tests {
         assert_eq!(
             read().as_deref(),
             Some(
-                "the level has no 213_Init_Location with a waypoint, nor a placement running InitializeLevel.ai"
+                "the level has no 213_Init_Location or CS_Hub_Intro_Final_Positions with a waypoint, nor a placement running InitializeLevel.ai"
             )
         );
     }

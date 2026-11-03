@@ -1473,6 +1473,8 @@ pub(crate) fn step_scripts(
         Ok(None) => {}
         Err(h) => stopped.push(h),
     }
+    // A script's own `Change Level` (openspec AU.6): the hub's way on.
+    guacamole::level_switch::step(vm, &mut world);
     world.end_step();
     scripts::add_scripted(vm, &mut world);
     // What his figure's words hold after the step, onto his slot's values

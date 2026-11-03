@@ -26,3 +26,7 @@ When a level's end names the hub, the TV SHALL take the hero there and draw it w
 #### Scenario: The next chapter
 - **WHEN** the kid takes the way the original's hub offers into the next chapter
 - **THEN** that chapter is read, extracted on its first entry, and shown with the hero in it
+
+#### Scenario: The way on after level 214
+- **WHEN** the kid has talked with Cali on the hub after level 214, then talks to Flynn at the helm and answers yes to his question
+- **THEN** level 201 is read, extracted on its first entry, and shown with the hero in it

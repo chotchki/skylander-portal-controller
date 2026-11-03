@@ -410,6 +410,7 @@ impl Run {
         // The level's end where the host doesn't run the original's, as the
         // TV's step makes it (openspec AS.15).
         self.with_host(guacamole::level_end::step)?;
+        guacamole::level_switch::step(&self.vm, &mut self.world);
         self.world.end_step();
         scripts::add_scripted(&mut self.vm, &mut self.world);
         // The props stand by where he is as the step began, after the
@@ -446,6 +447,7 @@ impl Run {
         if let Err(h) = self.with_host(guacamole::level_end::step) {
             stopped.push(h);
         }
+        guacamole::level_switch::step(&self.vm, &mut self.world);
         self.world.end_step();
         scripts::add_scripted(&mut self.vm, &mut self.world);
         self.bench.stand_props(&self.world);
