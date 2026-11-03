@@ -191,6 +191,7 @@ async fn native_waiting_as(kind: DriverKind) -> Native {
         hooks: Hooks::default(),
         progression: ProgressionSlot::default(),
         level_hero: LevelHero::default(),
+        game_host: crate::saves::GameHost::default(),
         #[cfg(feature = "test-hooks")]
         test_injector: None,
     });
@@ -424,6 +425,200 @@ async fn launch_tracks_no_process_and_marks_the_game_current() {
         !n.driver.ipc_queried.load(Ordering::SeqCst),
         "BootDirect reached a spawn arm"
     );
+}
+
+/// AU.3: the launch makes the profile unlocked on the launching phone the
+/// game's host, whose story save alone advances; the quit takes it away, and
+/// a launch from a phone with none unlocked hosts nobody.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_launching_phones_profile_hosts_the_game_until_the_quit() {
+    use crate::saves::Host;
+    let n = native().await;
+    let (sid, profile_id) = n.unlocked_session().await;
+    assert_eq!(n.state.game_host.get(), None);
+    let launch = r#"{"serial":"BLUS30968"}"#;
+    assert_eq!(
+        n.send("POST", "/api/launch", launch, Some(sid)).await,
+        StatusCode::ACCEPTED
+    );
+    assert_eq!(
+        n.state.game_host.get(),
+        Some(Host {
+            profile_id,
+            game: "BLUS30968".into()
+        })
+    );
+    assert_eq!(
+        n.send("POST", "/api/quit", "", Some(sid)).await,
+        StatusCode::ACCEPTED
+    );
+    assert_eq!(n.state.game_host.get(), None, "the quit kept the host");
+    assert_eq!(
+        n.send("POST", "/api/launch", launch, None).await,
+        StatusCode::ACCEPTED
+    );
+    assert_eq!(
+        n.state.game_host.get(),
+        None,
+        "a phone with no profile hosted"
+    );
+}
+
+/// AU.3, at its review: of two phones each with a profile unlocked, the one
+/// that launches hosts, not the one unlocked first; a launch while the game
+/// runs is refused and moves nothing, nor does a profile switch on either
+/// phone; after the quit the other phone's launch hosts its profile. A
+/// product driver's launch hosts nobody.
+#[tokio::test(flavor = "multi_thread")]
+async fn of_two_phones_the_launching_one_hosts() {
+    use crate::saves::Host;
+    let host = |profile_id: &str| {
+        Some(Host {
+            profile_id: profile_id.into(),
+            game: "BLUS30968".into(),
+        })
+    };
+    let launch = r#"{"serial":"BLUS30968"}"#;
+    let n = native().await;
+    let (a, alice) = n.unlocked_session_as("Alice", "#e63946").await;
+    let (b, bob) = n.unlocked_session_as("Bob", "#457b9d").await;
+    assert_eq!(
+        n.send("POST", "/api/launch", launch, Some(b)).await,
+        StatusCode::ACCEPTED
+    );
+    assert_eq!(
+        n.state.game_host.get(),
+        host(&bob),
+        "not the launcher hosted"
+    );
+    assert_eq!(
+        n.send("POST", "/api/launch", launch, Some(a)).await,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        n.state.game_host.get(),
+        host(&bob),
+        "a refused launch moved it"
+    );
+    n.state.sessions.set_profile(b, Some(alice.clone())).await;
+    n.state.sessions.set_profile(a, None).await;
+    assert_eq!(
+        n.state.game_host.get(),
+        host(&bob),
+        "a profile switch moved it"
+    );
+    n.state.sessions.set_profile(a, Some(alice.clone())).await;
+    assert_eq!(
+        n.send("POST", "/api/quit", "", Some(b)).await,
+        StatusCode::ACCEPTED
+    );
+    assert_eq!(
+        n.send("POST", "/api/launch", launch, Some(a)).await,
+        StatusCode::ACCEPTED
+    );
+    assert_eq!(n.state.game_host.get(), host(&alice));
+
+    // The product's launch runs through to its boot (which this harness's
+    // driver fails, a 500) without a host.
+    let product = native_as(DriverKind::Mock).await;
+    let (sid, _) = product.unlocked_session().await;
+    product.send("POST", "/api/launch", launch, Some(sid)).await;
+    assert_eq!(product.state.game_host.get(), None, "the product hosted");
+}
+
+/// AU.15: a phone's quit asks the TV for the pause menu's quit save while
+/// the host and the game are still up, and takes the level down only once
+/// the TV answers, past the cover's 1.5 s when the save takes longer. With
+/// no host, or no TV listening, nothing is asked; a TV that never answers
+/// holds the quit no longer than `QUIT_SAVE_WAIT`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_quit_waits_for_the_tvs_save_before_the_level_comes_down() {
+    use crate::saves::QuitSaved;
+    let launch = r#"{"serial":"BLUS30968"}"#;
+    let n = native().await;
+    let (sid, _) = n.unlocked_session().await;
+    n.state.game_host.listen();
+    assert_eq!(
+        n.send("POST", "/api/launch", launch, Some(sid)).await,
+        StatusCode::ACCEPTED
+    );
+    // The TV's stand-in: what it saw when the ask came, answering 2.5 s on.
+    let tv = {
+        let state = n.state.clone();
+        tokio::spawn(async move {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let ticket = loop {
+                if let Some(t) = state.game_host.quit_asked() {
+                    break t;
+                }
+                assert!(Instant::now() < deadline, "no quit's save asked");
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            };
+            let host = state.game_host.get();
+            let running = state.rpcs3.lock().await.current.is_some();
+            tokio::time::sleep(Duration::from_millis(2500)).await;
+            let still = state.rpcs3.lock().await.current.is_some();
+            state.game_host.answer_quit(ticket, QuitSaved::Written);
+            (host.is_some(), running, still)
+        })
+    };
+    let began = Instant::now();
+    assert_eq!(
+        n.send("POST", "/api/quit", "", Some(sid)).await,
+        StatusCode::ACCEPTED
+    );
+    let took = began.elapsed();
+    let (hosted, running, still) = tv.await.unwrap();
+    assert!(
+        hosted && running,
+        "asked with the host {hosted}, the game {running}"
+    );
+    assert!(still, "the level came down before the TV answered");
+    assert!(took >= Duration::from_millis(2500), "{took:?}");
+    assert_eq!(n.state.game_host.get(), None);
+    assert_eq!(n.state.game_host.quit_asked(), None);
+
+    // No host: nothing asked, the quit at the cover's pace.
+    assert_eq!(
+        n.send("POST", "/api/launch", launch, None).await,
+        StatusCode::ACCEPTED
+    );
+    let began = Instant::now();
+    assert_eq!(
+        n.send("POST", "/api/quit", "", None).await,
+        StatusCode::ACCEPTED
+    );
+    assert!(began.elapsed() < Duration::from_millis(2500));
+    assert_eq!(n.state.game_host.quit_asked(), None, "asked with no host");
+
+    // A TV that never answers: the quit goes on at the bound.
+    assert_eq!(
+        n.send("POST", "/api/launch", launch, Some(sid)).await,
+        StatusCode::ACCEPTED
+    );
+    let began = Instant::now();
+    assert_eq!(
+        n.send("POST", "/api/quit", "", Some(sid)).await,
+        StatusCode::ACCEPTED
+    );
+    let took = began.elapsed();
+    assert!(
+        (Duration::from_secs(5)..Duration::from_secs(7)).contains(&took),
+        "{took:?}"
+    );
+
+    // No TV listening: a host's quit asks nothing.
+    let quiet = native().await;
+    let (sid, _) = quiet.unlocked_session().await;
+    assert_eq!(
+        quiet.send("POST", "/api/launch", launch, Some(sid)).await,
+        StatusCode::ACCEPTED
+    );
+    assert_eq!(
+        quiet.send("POST", "/api/quit", "", Some(sid)).await,
+        StatusCode::ACCEPTED
+    );
+    assert_eq!(quiet.state.game_host.quit_asked(), None);
 }
 
 /// The phone tells the apps apart by `/api/status`'s `app` (AA.18, AA.19).

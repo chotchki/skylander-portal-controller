@@ -120,6 +120,9 @@ pub struct AppState {
     /// The slot whose figure is the hero in a level, as guacamole's TV says;
     /// the slot reset refuses it (AH.3).
     pub level_hero: crate::progress::LevelHero,
+    /// The profile whose phone started the game (AU.3): its story save alone
+    /// advances. guacamole's launch sets it; the product never does.
+    pub game_host: crate::saves::GameHost,
 
     /// The driver again, as the /api/_test/* endpoints inject failure
     /// outcomes into it: the mock's or the native driver's, else `None`.

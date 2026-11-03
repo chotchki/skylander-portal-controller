@@ -1153,8 +1153,14 @@ mod tests {
         out
     }
 
-    /// guacamole's own tables: settings (AA) and the figure store (AH.1).
-    const GUACAMOLE_ONLY: [&str; 3] = ["figure_generation", "figure_instances", "settings"];
+    /// guacamole's own tables: settings (AA), the figure store (AH.1) and
+    /// the story saves (AU.3).
+    const GUACAMOLE_ONLY: [&str; 4] = [
+        "figure_generation",
+        "figure_instances",
+        "settings",
+        "story_saves",
+    ];
 
     #[tokio::test]
     async fn guacamoles_set_has_the_products_tables_plus_its_own() {

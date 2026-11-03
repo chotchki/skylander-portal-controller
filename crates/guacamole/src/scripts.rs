@@ -517,6 +517,10 @@ pub struct ScriptWorld {
     /// awarded until AM's per-profile achievements read them
     /// (stand-in ledger: `achievements`).
     pub achievements: Vec<i32>,
+    /// `system.save state` as the host answers it (openspec AS.38,
+    /// [`crate::story_save`]): a save or load asked reads active until
+    /// guacamole's store has done it.
+    pub save: crate::story_save::SaveState,
     /// The placements the VM leaves inert, off the whitelist (design
     /// decision 6): a script waking one is logged and listed in `woken`.
     pub(crate) inert: std::collections::HashSet<Handle>,
@@ -855,6 +859,7 @@ impl ScriptWorld {
             plays_movies: false,
             level_end: None,
             achievements: Vec::new(),
+            save: Default::default(),
             inert: Default::default(),
             woken: Vec::new(),
             fired: Vec::new(),
@@ -1817,6 +1822,7 @@ impl ScriptWorld {
             Member::LoadLevel => self.load_level,
             // The last unlocked, 0 before any (nothing on the disc reads it).
             Member::Achievement => Value::Int(self.achievements.last().copied().unwrap_or(0)),
+            Member::SaveState => Value::Int(self.save.get()),
             Member::Controller(n) => Value::Entity(self.controllers[n]),
             Member::Physical(n) => Value::Entity(self.physical[n]),
             Member::Portal => Value::Entity(self.portal),
@@ -1884,6 +1890,14 @@ impl ScriptWorld {
                     "a script unlocked an achievement: kept, nothing awarded until per-profile achievements"
                 );
             }
+            // A save, load or finalize asked, or the state cleared
+            // (openspec AS.38, `crate::story_save`).
+            (Member::SaveState, v) => match v {
+                Value::Int(i) => self.save.set(i),
+                other => self
+                    .save
+                    .set(other.as_f32().ok_or(HostFault::Nothing)? as i32),
+            },
             (Member::Buffer, Value::Float(f)) => match on.and_then(|h| self.actors.get_mut(&h)) {
                 Some(k) => {
                     k.buffer = f;

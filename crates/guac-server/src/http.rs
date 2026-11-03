@@ -1233,7 +1233,11 @@ impl Drop for LoadingGuard<'_> {
     }
 }
 
-async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Signed) -> Response {
+async fn launch_game(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Signed(body_bytes): Signed,
+) -> Response {
     let body: LaunchBody = match serde_json::from_slice(&body_bytes) {
         Ok(b) => b,
         Err(e) => {
@@ -1381,6 +1385,38 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
         }
     };
 
+    // The game's host (openspec AU.3): the profile unlocked on the phone that
+    // started it, whose story save alone advances; none when that phone has
+    // none unlocked. Set before the boot, so the TV never sees the game
+    // without it, and cleared again if the boot fails. guacamole's alone.
+    let hosts = crate::saves::GameHost::kept_under(state.driver_kind);
+    if hosts {
+        let session = headers
+            .get("x-session-id")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(SessionId);
+        let profile_id = match session {
+            Some(sid) => state.sessions.profile_of(sid).await,
+            None => None,
+        };
+        info!(
+            serial = %body.serial,
+            host = ?profile_id,
+            "the game's host: its story save alone advances"
+        );
+        state
+            .game_host
+            .set(profile_id.map(|profile_id| crate::saves::Host {
+                profile_id,
+                game: body.serial.as_str().to_owned(),
+            }));
+    }
+    let unhost = || {
+        if hosts {
+            state.game_host.set(None);
+        }
+    };
     let (tx, rx) = tokio::sync::oneshot::channel();
     if let Err(e) = state
         .driver_tx
@@ -1395,6 +1431,7 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
         })
         .await
     {
+        unhost();
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("queue BootDirect: {e}"),
@@ -1404,6 +1441,7 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
     match rx.await {
         Ok(Ok(())) => {}
         Ok(Err(e)) => {
+            unhost();
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("direct-boot failed: {e}"),
@@ -1411,6 +1449,7 @@ async fn launch_game(State(state): State<Arc<AppState>>, Signed(body_bytes): Sig
                 .into_response();
         }
         Err(e) => {
+            unhost();
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("BootDirect ack dropped: {e}"),
@@ -1637,6 +1676,10 @@ async fn inject_load(
     (StatusCode::ACCEPTED, "queued").into_response()
 }
 
+/// How long a phone's quit waits for guacamole's TV to save the host's story
+/// (openspec AU.15), counted from the ask, the cover's 1.5 s included.
+const QUIT_SAVE_WAIT: Duration = Duration::from_secs(5);
+
 async fn quit_game(
     State(state): State<Arc<AppState>>,
     axum::extract::Query(q): axum::extract::Query<QuitQuery>,
@@ -1656,6 +1699,19 @@ async fn quit_game(
             return (StatusCode::CONFLICT, "no game is running").into_response();
         }
     }
+
+    // The quit's save (openspec AU.15): the pause menu's Quit Game saves the
+    // slot and the header before it leaves the level, so guacamole's TV makes
+    // that save for the host while the cover lands, and the level comes down
+    // once the store has it or QUIT_SAVE_WAIT is up. guacamole's alone: the
+    // product never sets a host, and with no TV listening nothing is asked.
+    let quit_save = match state.game_host.get() {
+        Some(_) if crate::saves::GameHost::kept_under(state.driver_kind) => state
+            .game_host
+            .ask_quit_save()
+            .map(|ticket| (ticket, tokio::time::Instant::now())),
+        _ => None,
+    };
 
     // Phase 1: arm cover. switching=true takes precedence over
     // cover_active in back-face selection (gives SWITCHING badge for
@@ -1678,6 +1734,20 @@ async fn quit_game(
     // (~1.5s — slight overlap with the tail of the ease-out cubic,
     // imperceptible to the user) before killing.
     tokio::time::sleep(Duration::from_millis(1500)).await;
+    if let Some((ticket, asked)) = quit_save {
+        let left = QUIT_SAVE_WAIT.saturating_sub(asked.elapsed());
+        match state.game_host.quit_saved(ticket, left).await {
+            Some(saved) => info!(
+                ?saved,
+                waited_ms = asked.elapsed().as_millis() as u64,
+                "the quit's save"
+            ),
+            None => warn!(
+                waited_ms = asked.elapsed().as_millis() as u64,
+                "the quit's save didn't answer in time: the level comes down without it"
+            ),
+        }
+    }
 
     // Phase 3: kill RPCS3 behind the cover. Now safe — the launcher
     // is rendering opaque (Main with iris animating 0→IRIS_FULL,
@@ -1687,6 +1757,8 @@ async fn quit_game(
     guard.current_eboot = None;
     let proc = guard.process.take();
     drop(guard);
+    // No game, no host (openspec AU.3); the product never sets one.
+    state.game_host.set(None);
     if let Some(mut proc) = proc {
         // PLAN 16.6.1.3: under no-GUI + IPC there's no "RPCS3 " main window — pass
         // the IPC-published game-window handle so WM_CLOSE has a real target

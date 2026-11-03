@@ -443,6 +443,14 @@ impl PlayerLoop {
         stopped: &mut Vec<Halt>,
         then: &mut guac_script::Native<'_>,
     ) -> Result<StepReport, Halt> {
+        // The system monitor's save macros, ahead of the walk (openspec
+        // AS.38, `crate::story_save::tick`; stand-in ledger: `story-save`):
+        // nothing on a run whose save system was never activated. A stop is
+        // logged in play mode, the walk going on, as a slice's is.
+        match crate::story_save::tick(vm, host) {
+            Err(h) if vm.config().mode == Mode::Play => stopped.push(h),
+            other => other?,
+        }
         let places = Places::of(vm, host.world);
         let play = vm.config().mode == Mode::Play;
         let mut native = |vm: &mut Vm, id: PlacementId, host: &mut dyn Host| {
