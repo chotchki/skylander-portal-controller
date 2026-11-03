@@ -421,6 +421,130 @@ fn a_call_binds_by_name_returns_through_its_frame_and_resets_it() {
     assert_eq!(vm.frame(add, "b"), Some(Value::Int(0)));
 }
 
+/// A host that answers the macro `Add` when `take` holds, keeping each
+/// call's name and arguments.
+struct Answering {
+    take: bool,
+    asked: Vec<(String, Vec<(String, Value)>)>,
+}
+
+impl Host for Answering {
+    fn get(&mut self, _: &Access) -> Result<Value, HostFault> {
+        Err(HostFault::Unmodelled)
+    }
+    fn set(&mut self, _: &Access, _: Value) -> Result<(), HostFault> {
+        Err(HostFault::Unmodelled)
+    }
+    fn reset(&mut self, _: &Access) -> Result<(), HostFault> {
+        Err(HostFault::Unmodelled)
+    }
+    fn draw(&mut self) -> u32 {
+        0
+    }
+    fn answer(&mut self, name: &str, args: &[(&str, Value)]) -> bool {
+        self.asked.push((
+            name.to_owned(),
+            args.iter().map(|(n, v)| ((*n).to_owned(), *v)).collect(),
+        ));
+        self.take
+    }
+}
+
+/// `Add(a, b)` writing `result = a + b`, called with a = 2 and b left out,
+/// its result read back into `sum`, then `after` set.
+fn answered_program() -> Arc<Program> {
+    program(|w| {
+        let a = var(w, "a");
+        let b = var(w, "b");
+        let result = var(w, "result");
+        let sum = var(w, "sum");
+        let after = var(w, "after");
+        let def = std::cell::Cell::new(None);
+        frame(
+            w,
+            |_| {},
+            |_| {},
+            |w| {
+                let zero = w.int(0);
+                let (at, d) = w.define("Add", &[("a", zero), ("b", zero)]);
+                let ra = read(w, a);
+                let rb = read(w, b);
+                let plus = w.expr(ra, Some((0, rb)));
+                w.set(&[El::Local(result)], plus);
+                w.end_block(at);
+                def.set(Some(d));
+            },
+            |_| {},
+            |w| {
+                let d = def.get().unwrap();
+                let bh = w.behaviour("idle");
+                let two = w.int(2);
+                let ret = parameter(w, "result", d);
+                call_then(w, d, &[("a", two)], |w| {
+                    let r = w.rhs(INT, &[El::Local(ret)]);
+                    w.set(&[El::Local(sum)], r);
+                });
+                let seven = w.int(7);
+                w.set(&[El::Local(after)], seven);
+                w.end_block(bh);
+            },
+        );
+    })
+}
+
+#[test]
+fn a_call_the_host_answers_skips_its_body_and_runs_on() {
+    let p = answered_program();
+    let mut config = Config::new(Mode::Strict);
+    config.answered = vec!["add".to_owned()];
+    let mut vm = Vm::new(p.clone(), config);
+    let id = vm.add(HANDLE, "Thing", 0);
+    let mut host = Answering {
+        take: true,
+        asked: Vec::new(),
+    };
+    vm.tick(id, &mut host).unwrap_or_else(|h| panic!("{h}"));
+    // Asked once, by its display name, with its INTERFACE's parameters in
+    // order as the call bound them (b left out reads 0).
+    assert_eq!(host.asked.len(), 1, "{:?}", host.asked);
+    let (name, args) = &host.asked[0];
+    assert_eq!(name, "Add");
+    assert_eq!(
+        args,
+        &vec![
+            ("a".to_owned(), Value::Int(2)),
+            ("b".to_owned(), Value::Int(0))
+        ]
+    );
+    // The body never ran: the after-return code read its result at its
+    // default, and the script ran on past the use block.
+    assert_eq!(vm.local(id, "sum"), Some(Value::Int(0)), "the body ran");
+    assert_eq!(vm.local(id, "after"), Some(Value::Int(7)));
+    let add = p.macro_named("Add").unwrap();
+    assert_eq!(vm.frame(add, "a"), Some(Value::Int(0)), "reset once closed");
+}
+
+#[test]
+fn a_call_the_host_declines_or_isnt_asked_runs_its_body() {
+    let p = answered_program();
+    for (answered, take, asked) in [(true, false, 1), (false, true, 0)] {
+        let mut config = Config::new(Mode::Strict);
+        if answered {
+            config.answered = vec!["Add".to_owned()];
+        }
+        let mut vm = Vm::new(p.clone(), config);
+        let id = vm.add(HANDLE, "Thing", 0);
+        let mut host = Answering {
+            take,
+            asked: Vec::new(),
+        };
+        vm.tick(id, &mut host).unwrap_or_else(|h| panic!("{h}"));
+        assert_eq!(host.asked.len(), asked, "{answered} {take}");
+        assert_eq!(vm.local(id, "sum"), Some(Value::Int(2)), "{answered}");
+        assert_eq!(vm.local(id, "after"), Some(Value::Int(7)), "{answered}");
+    }
+}
+
 /// `set [set] <set> add <element>` (`OpChangeMembership` code 0).
 fn add_to(w: &mut Writer<'_>, set: Location, element: &[El<'_>]) {
     let lhs = w.stack(StackClass::Set, &[El::Local(set)]);

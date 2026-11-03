@@ -15,6 +15,7 @@ mod card_view;
 mod cards;
 mod cli;
 mod creatures;
+mod darkness;
 mod defeat;
 mod dev_entry;
 mod driver;
@@ -503,8 +504,13 @@ fn run_tv(
         play::PlayPlugin,
         // The portal's alerts and the arrival (AG.29, AG.72) over the level.
         (alert::AlertPlugin, arrival::ArrivalPlugin),
-        // AH.26: the HUD and Restart chapter over the level.
-        (hud::HudPlugin, defeat::DefeatPlugin),
+        // AH.26: the HUD and Restart chapter over the level; AS.96: an
+        // interior's darkness over both.
+        (
+            hud::HudPlugin,
+            defeat::DefeatPlugin,
+            darkness::DarknessPlugin,
+        ),
         progress::ProgressPlugin,
         hero_scripts::HeroScriptsPlugin,
         tints::CloneTintsPlugin,

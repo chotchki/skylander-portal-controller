@@ -17,6 +17,7 @@ pub mod game_controller;
 pub mod hands;
 pub mod hud_messages;
 pub mod interface_host;
+pub mod interiors;
 pub mod level_end;
 pub mod level_scene;
 pub mod level_scripts;
