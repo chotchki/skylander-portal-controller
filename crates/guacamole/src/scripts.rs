@@ -2352,8 +2352,10 @@ pub fn hero_config(mode: Mode) -> Config {
     members::register(&mut c.members, members::FIGURE);
     // The gameplay camera's (openspec AG.28), over the cells it takes over.
     members::register(&mut c.members, members::CAMERA);
-    // What the walkers' scripts reach past those (openspec AG.160).
+    // What the walkers' scripts reach past those (openspec AG.160), and
+    // every character's attacks (openspec AU.2).
     members::register(&mut c.members, members::WALKERS);
+    members::register(&mut c.members, members::ATTACKS);
     music_members(&mut c);
     let first: Vec<&str> = GLOBAL_FIRST_TICKS
         .iter()

@@ -92,12 +92,17 @@ fn named(halt: &str) -> String {
 /// `m`'s name as the run's registry gives it, or, where that's its id alone,
 /// off aj-vm's live table (`AH18_LIVE_TABLE`) when it's set.
 fn member_name(vm: &Vm, m: guac_script::MemberId) -> String {
-    static TABLE: std::sync::OnceLock<HashMap<guac_script::MemberId, String>> =
-        std::sync::OnceLock::new();
     let own = vm.config().members.name(m);
     if own.contains(' ') || !own.contains(char::is_numeric) {
         return own;
     }
+    table_name(m).unwrap_or(own)
+}
+
+/// `m`'s name off aj-vm's live table (`AH18_LIVE_TABLE`), when it's set.
+fn table_name(m: guac_script::MemberId) -> Option<String> {
+    static TABLE: std::sync::OnceLock<HashMap<guac_script::MemberId, String>> =
+        std::sync::OnceLock::new();
     let table = TABLE.get_or_init(|| {
         let Some(text) = std::env::var("AH18_LIVE_TABLE")
             .ok()
@@ -120,7 +125,7 @@ fn member_name(vm: &Vm, m: guac_script::MemberId) -> String {
             })
             .collect()
     });
-    table.get(&m).cloned().unwrap_or(own)
+    table.get(&m).cloned()
 }
 
 fn capture_dir() -> PathBuf {
@@ -6210,7 +6215,7 @@ fn describe_op(program: &guac_script::Program, op: guac_script::OpId) -> String 
                             }
                         },
                         Elem::Named(a, b) => format!("{}.{}", program.sym(*a), program.sym(*b)),
-                        Elem::Member(m) => format!("{m:?}"),
+                        Elem::Member(m) => table_name(*m).unwrap_or_else(|| format!("{m:?}")),
                         other => format!("{other:?}"),
                     })
                     .collect();
@@ -6231,10 +6236,11 @@ fn describe_op(program: &guac_script::Program, op: guac_script::OpId) -> String 
     let class = program.op_info[op as usize].class;
     match &program.ops[op as usize] {
         Ins::Parameter(p) => format!(
-            "{class:?} {} of {}",
+            "{class:?} {} of {} = {}",
             program.sym(p.name),
             p.def
-                .map_or(String::new(), |d| program.defs[d as usize].display.clone())
+                .map_or(String::new(), |d| program.defs[d as usize].display.clone()),
+            path(p.rhs)
         ),
         Ins::Define(d) => format!("{class:?} {}", program.defs[*d as usize].display),
         Ins::Behaviour { name } => format!("{class:?} {}", program.sym(*name)),
@@ -6284,9 +6290,48 @@ fn describe_op(program: &guac_script::Program, op: guac_script::OpId) -> String 
 fn a_probe_of_ops() {
     let l = Level::open();
     let p = &*l.program;
-    let asked = std::env::var("AU2_OPS").expect("AU2_OPS=script.ai:from-to,...");
     let defs: HashMap<guac_script::OpId, &str> =
         p.defs.iter().map(|d| (d.op, d.display.as_str())).collect();
+    // `AU2_OBJ=unit:index,...`: each object's type in its unit's file.
+    if let Ok(objs) = std::env::var("AU2_OBJ") {
+        let list = guac_extract::scripts::read_walkers(&l.dir).unwrap();
+        let files = level_scripts::files_with(&list.listed, LEVEL_NAME);
+        for one in objs.split(',') {
+            let (u, i) = one.split_once(':').expect("unit:index");
+            let (u, i): (usize, usize) = (u.parse().unwrap(), i.parse().unwrap());
+            let bytes = std::fs::read(l.dir.join(&files[u].0)).unwrap();
+            let igz = Igz::parse(&bytes).unwrap();
+            let o = &igz.objects()[i];
+            println!("unit {u} ({}) object {i}: {}", files[u].0, igz.type_name(o));
+        }
+    }
+    // `AU2_GREP=script.ai:words`: each op of that script whose text holds
+    // the words, with its position and definition.
+    if let Ok(g) = std::env::var("AU2_GREP") {
+        let (file, words) = g.split_once(':').expect("script.ai:words");
+        for s in p.scripts.iter().filter(|s| {
+            s.name
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap()
+                .eq_ignore_ascii_case(file)
+        }) {
+            println!("{} (unit {}):", s.name, s.unit);
+            for (at, op) in s.ops.iter().enumerate() {
+                let text = describe_op(p, *op);
+                if text.contains(words) {
+                    let def = (0..=at)
+                        .rev()
+                        .find_map(|i| defs.get(&s.ops[i]))
+                        .copied()
+                        .unwrap_or("-");
+                    println!("  #{at} [{def}] {text}");
+                }
+            }
+        }
+        return;
+    }
+    let asked = std::env::var("AU2_OPS").expect("AU2_OPS=script.ai:from-to,...");
     for one in asked.split(',') {
         let (file, range) = one.split_once(':').expect("script.ai:from-to");
         let (from, to) = range.split_once('-').expect("from-to");
