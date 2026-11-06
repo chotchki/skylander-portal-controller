@@ -28,6 +28,16 @@ use serde::Serialize;
 
 use crate::scripts::{FIRST_FIGHT, Rarity, ScriptWorld, loot_index};
 
+/// Level 214's second island's fights, by the file variable sets
+/// Setup_006's own STARTUP takes off: what the dev entry's `part2` anchor
+/// leaves behind (openspec AS.76).
+pub const SECOND_ISLAND_FIGHTS: [&str; 4] = [
+    "Setup_003_Island_2",
+    "Setup_004",
+    "Setup_004B_MonsterClosets",
+    "Setup_005",
+];
+
 /// AH.8's route from the strip to anchor B as a scripted hero's set-downs
 /// (`route-record.json`, its steps' end points): the step each is made at
 /// (from the route's start), where his pivot goes (metres) and his facing

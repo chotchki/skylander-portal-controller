@@ -137,6 +137,13 @@ fn by_the_second_part(setup: Setup) -> (Run, Vec<String>) {
     let (part, at) = run.placed("Ship_part_2(1)");
     assert!(run.world.wake(part));
     run.put(at, 0.0);
+    // The second island's fights left behind, as the anchor leaves them.
+    let setup_003 = run.placed("Setup_003_Controller").0;
+    let Run { vm, world, .. } = &mut run;
+    let off =
+        guacamole::scripts::take_off_sets(vm, world, &guacamole::anchors::SECOND_ISLAND_FIGHTS);
+    assert!(off > 20, "{off} taken off");
+    assert!(gone(&run, setup_003), "its controller among them");
     (run, stops)
 }
 
@@ -246,7 +253,11 @@ fn level_214s_final_island_carries_him_hung_on_its_rigs() {
         "MoneyBags at 120 %: {sizes:?}"
     );
     assert!(stops.is_empty(), "{stops:#?}");
-    println!("{:.1} s; load at end: {}", started.elapsed().as_secs_f64(), load());
+    println!(
+        "{:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
 }
 
 /// Skipped by △ from the part on, as a player would: on the third island's
@@ -263,7 +274,11 @@ fn on_the_third_ship(run: &mut Run, stops: &mut Vec<String>) {
     assert!(run.vm.removed(fin));
     for k in 0..900u32 {
         let cs = cutscene_name(run);
-        still(run, stops, [false, false, false, cs.is_some() && k % 20 == 10]);
+        still(
+            run,
+            stops,
+            [false, false, false, cs.is_some() && k % 20 == 10],
+        );
     }
 }
 
@@ -290,7 +305,10 @@ fn visit_persephone(run: &mut Run, stops: &mut Vec<String>) {
         }
     }
     assert!(played, "her cutscene played");
-    assert!(cutscene_name(run).is_none(), "and ended on its menu's back-out");
+    assert!(
+        cutscene_name(run).is_none(),
+        "and ended on its menu's back-out"
+    );
     assert_eq!(global(run, "Visited Persephony"), Some(Value::Int(1)));
     for _ in 0..240 {
         still(run, stops, [false; 4]);
@@ -309,7 +327,11 @@ fn visit_persephone(run: &mut Run, stops: &mut Vec<String>) {
     for _ in 0..300 {
         still(run, stops, [false; 4]);
     }
-    assert!(run.hero().pivot.y < 0.0, "back on deck: {}", run.hero().pivot);
+    assert!(
+        run.hero().pivot.y < 0.0,
+        "back on deck: {}",
+        run.hero().pivot
+    );
 }
 
 /// A turret entered by its prompt (△) from where he stands, its pointer
@@ -342,7 +364,11 @@ fn play_turret(run: &mut Run, stops: &mut Vec<String>, count: usize) -> u32 {
         }
         still(run, stops, [false; 4]);
     }
-    assert!(view(run).state.ends_with("State - Active"), "{:?}", view(run));
+    assert!(
+        view(run).state.ends_with("State - Active"),
+        "{:?}",
+        view(run)
+    );
     let from = view(run).hits;
     for k in 0..7200u32 {
         let Some(v) = turret::view(&run.vm, &run.world) else {
@@ -411,10 +437,14 @@ fn level_214s_third_island_is_walked_to_its_end() {
     assert_eq!(behaviour(&run, bridge).as_deref(), Some("drop"));
     assert!(gone(&run, barrier), "the barrier off as the bridge drops");
     walk(&mut run, &mut stops, &[[620.0, 468.9]]);
-    let first: Vec<Handle> = ["Enemy_TreeRex(4)", "Enemy_TreeRex(5)", "Enemy_Chompy_Spawner(4)"]
-        .iter()
-        .map(|n| run.placed(n).0)
-        .collect();
+    let first: Vec<Handle> = [
+        "Enemy_TreeRex(4)",
+        "Enemy_TreeRex(5)",
+        "Enemy_Chompy_Spawner(4)",
+    ]
+    .iter()
+    .map(|n| run.placed(n).0)
+    .collect();
     let beaten = fight(&mut run, &mut stops, &first, 6000);
     println!("Setup_006's first: {beaten:?}, health {:?}", run.health());
     assert!(beaten.iter().all(Option::is_some), "{beaten:?}");
@@ -444,7 +474,11 @@ fn level_214s_third_island_is_walked_to_its_end() {
     println!("the first turret over at {t1}");
     assert_eq!(global(&run, "First Gate Openned"), Some(Value::Int(1)));
     // Through the gate and up the pad.
-    walk(&mut run, &mut stops, &[[676.0, 456.0], [695.0, 456.0], [702.3, 458.0]]);
+    walk(
+        &mut run,
+        &mut stops,
+        &[[676.0, 456.0], [695.0, 456.0], [702.3, 458.0]],
+    );
     for _ in 0..360 {
         let s = stick_to(&run, [702.3, 472.0]);
         step(&mut run, &mut stops, s, [false; 4]);
@@ -572,10 +606,22 @@ fn level_214s_third_island_is_walked_to_its_end() {
         .results
         .clone()
         .expect("its results read");
-    println!("{} objectives, stars {:?}", results.objectives.len(), results.stars);
+    println!(
+        "{} objectives, stars {:?}",
+        results.objectives.len(),
+        results.stars
+    );
     assert!(!results.objectives.is_empty());
-    assert!(run.world.level_change().is_none(), "the screen before the level");
-    run.world.sequence.completion.as_mut().unwrap().continue_asked = true;
+    assert!(
+        run.world.level_change().is_none(),
+        "the screen before the level"
+    );
+    run.world
+        .sequence
+        .completion
+        .as_mut()
+        .unwrap()
+        .continue_asked = true;
     for _ in 0..1200 {
         still(&mut run, &mut stops, [false; 4]);
         if run.world.level_change().is_some() {
@@ -589,7 +635,11 @@ fn level_214s_third_island_is_walked_to_its_end() {
         "{:#?}",
         stops.iter().take(5).collect::<Vec<_>>()
     );
-    println!("{:.1} s; load at end: {}", started.elapsed().as_secs_f64(), load());
+    println!(
+        "{:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
 }
 
 /// openspec AS.113, AS.126: level 201's start: its intro held for the hero
@@ -610,7 +660,11 @@ fn level_201s_intro_hands_him_over_and_he_walks() {
     let end = Vec3::new(158.99, 12.70, -159.0);
     let mut played = false;
     for k in 0..3000u32 {
-        still(&mut run, &mut stops, [false, false, false, k > 120 && k % 20 == 10]);
+        still(
+            &mut run,
+            &mut stops,
+            [false, false, false, k > 120 && k % 20 == 10],
+        );
         played |= cutscene_name(&run).as_deref() == Some("Level 201 Intro CS");
         if k > 200 && played && !guacamole::anchors::scene_holds(&run.vm) {
             break;
@@ -620,7 +674,10 @@ fn level_201s_intro_hands_him_over_and_he_walks() {
         still(&mut run, &mut stops, [false; 4]);
     }
     assert!(played, "its intro ran");
-    assert!(!guacamole::scripts::player_hud_hidden(&run.vm), "the HUD back");
+    assert!(
+        !guacamole::scripts::player_hud_hidden(&run.vm),
+        "the HUD back"
+    );
     let at = run.hero().pivot;
     assert!(at.distance(end) < 0.5, "at its path's end: {at}");
     assert!(run.hero().footing.supported, "on the ground");

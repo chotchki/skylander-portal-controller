@@ -837,6 +837,27 @@ mod tests {
         app.world().resource::<crate::play::Play>().hero().unwrap()
     }
 
+    /// openspec AS.115: a hero hung on a rig or in a turret has no body in
+    /// Avian's world (a turret's shot starts inside him), and let go he has
+    /// his body back.
+    #[test]
+    fn a_hung_hero_has_no_body_until_hes_let_go() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _) = fight_app(tmp.path(), Some(start()));
+        let e = hero_entity(&app);
+        let h = e.to_bits();
+        let bodied = |app: &App| {
+            app.world()
+                .get::<SeamBody>(Entity::try_from_bits(h).unwrap())
+                .is_some()
+        };
+        until(&mut app, "his body", |a| bodied(a));
+        app.world_mut().get_mut::<HeroBody>(e).unwrap().hero.hung = true;
+        until(&mut app, "no body hung", |a| !bodied(a));
+        app.world_mut().get_mut::<HeroBody>(e).unwrap().hero.hung = false;
+        until(&mut app, "his body back", |a| bodied(a));
+    }
+
     /// AH.25: with the entry asked, the synthetic encounter's creature (a
     /// first fight's placement) runs from its script on the TV, `idle`
     /// until its 30th tick and `battle` after, its health its script's; the

@@ -66,7 +66,10 @@ pub struct TurretView {
 /// Find Target` reads its graphic's place 10 pixels left of where the ray
 /// goes through, at 1.5 pixels a unit.
 pub fn pointer_at(x: f32, y: f32) -> [f32; 2] {
-    let (w, h) = (crate::viewport::SCREEN_WIDTH, crate::viewport::SCREEN_HEIGHT);
+    let (w, h) = (
+        crate::viewport::SCREEN_WIDTH,
+        crate::viewport::SCREEN_HEIGHT,
+    );
     [(x - w / 2.0 + 10.0) / 1.5, (y - h / 2.0) / 1.5]
 }
 
@@ -135,4 +138,20 @@ pub fn view(vm: &Vm, world: &ScriptWorld) -> Option<TurretView> {
         hits,
         targets,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// openspec AS.76: a pointer's offset for a place on the screen is what
+    /// `New Turret - Find Target` turns back into that place: 1.5 pixels a
+    /// unit, its graphic read 10 pixels left of the ray.
+    #[test]
+    fn a_pointers_offset_lands_on_its_place() {
+        assert_eq!(pointer_at(630.0, 360.0), [0.0, 0.0]);
+        let [x, y] = pointer_at(516.15, 373.47);
+        assert!((x * 1.5 - 10.0 - (516.15 - 640.0)).abs() < 1e-3);
+        assert!((y * 1.5 - (373.47 - 360.0)).abs() < 1e-3);
+    }
 }

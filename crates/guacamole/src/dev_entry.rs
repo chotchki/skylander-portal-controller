@@ -57,7 +57,8 @@
 //!   unplayed (objective 1 unmet on the completion screen); Auric unmet,
 //!   the part woken as his scene's end has `Temp_Teleporter.ai` wake it; the
 //!   second island's fights unfought, their four sets taken off as
-//!   Setup_006's own STARTUP takes them off ([`SECOND_ISLAND_FIGHTS`]). From
+//!   Setup_006's own STARTUP takes them off
+//!   ([`anchors::SECOND_ISLAND_FIGHTS`]). From
 //!   the part on everything is the level's own.
 //! - Interior (openspec AS.96): any level's interior by its controller's
 //!   name (`{"anchor": "interior", "interior": "<name>"}`, or
@@ -211,13 +212,6 @@ pub(crate) const BY_THE_SECOND_PART: ([f32; 3], f32) = ([-291.11, -22.3, 816.5],
 /// What the second ship part wakes for the anchor: as `Temp_Teleporter.ai`
 /// wakes it once Auric's scene is over.
 pub(crate) const SECOND_PART_WAKES: [&str; 1] = ["Ship_part_2(1)"];
-/// The second island's fights, by the sets Setup_006's STARTUP takes off.
-pub(crate) const SECOND_ISLAND_FIGHTS: [&str; 4] = [
-    "Setup_003_Island_2",
-    "Setup_004",
-    "Setup_004B_MonsterClosets",
-    "Setup_005",
-];
 /// By level 214's first ship part on its ledge (metres), where the jump
 /// pad's flight lands him (openspec AS.75), facing it.
 pub(crate) const BY_THE_PART: ([f32; 3], f32) = ([29.45, -6.92, 56.37], 0.0);
@@ -691,8 +685,12 @@ pub(crate) fn drive(
         }
     }
     if plan.anchor == Anchor::Part2 {
-        let off = scripts::take_off_sets(&mut runtime.vm, &mut world, &SECOND_ISLAND_FIGHTS);
-        info!(off, "the dev entry leaves the second island's fights behind");
+        let off =
+            scripts::take_off_sets(&mut runtime.vm, &mut world, &anchors::SECOND_ISLAND_FIGHTS);
+        info!(
+            off,
+            "the dev entry leaves the second island's fights behind"
+        );
     }
     let figure = earning
         .as_deref()

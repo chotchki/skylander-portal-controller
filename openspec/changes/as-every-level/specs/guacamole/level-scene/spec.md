@@ -203,3 +203,26 @@ A hero walking into an interior's box on any level SHALL be taken to its room: t
 #### Scenario: Level 214's house by the yard
 - **WHEN** the hero walks into the house the Mabu ran into, takes its room's bomb and walks into its exit's box
 - **THEN** he stands outside its door with the bomb still over him, which opens the wall before the second key
+
+### Requirement: Level 214's third island
+The third island SHALL play from the second ship part to the level's end on the original's own scripts: the flight with the hero riding the ship, Flynn sending him to Persephone, the drawbridge dropping once she's been visited, Setup_006's fight, each turret shot from by the stick with its calibration and padlocks, the pad, the block bridge, the second gate, the third ship part and its outro.
+
+#### Scenario: The flight
+- **WHEN** a hero takes the second ship part
+- **THEN** its cutscene plays its nine scenes, carrying his body on the rig's and the ship's nodes with his controller and body off, and sets him down on the third island's ship, the scene's MoneyBags at 120 %
+
+#### Scenario: A turret
+- **WHEN** a hero enters a turret by its prompt, moves its pointer onto the calibration circle and then onto a padlock with the stick and fires
+- **THEN** the shot flies to the padlock and breaks it, and the last padlock's gate opens and lets him out
+
+#### Scenario: The level's end
+- **WHEN** the hero takes the third ship part
+- **THEN** its outro plays its seven scenes and the level's end names the village, which goes to hub stage 1
+
+### Requirement: Level 201's start
+Level 201 SHALL start where its intro hands the first player over: the intro held for his join and played or skipped by △, him then on the ground at its path's end, walking on the stick.
+
+#### Scenario: From the hub
+- **WHEN** Flynn's ready question is answered yes on hub stage 1
+- **THEN** level 201 reads on its first entry, its intro plays, and he walks from where it hands him over with nothing stopped
+

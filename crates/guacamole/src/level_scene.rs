@@ -176,6 +176,11 @@ pub const INIT_SCRIPT: &str = "InitializeLevel.ai";
 /// four stages hold it at the same place. No other level holds it.
 pub const HUB_START_PLACEMENT: &str = "CS_Hub_Intro_Final_Positions";
 
+/// Where a PvP arena's first player starts (openspec AS.126): the place its
+/// level initializer gives `PvP - Setup Level Initializer` as `start point
+/// p1`.
+pub const ARENA_START_PLACEMENT: &str = "StartLoc_P1";
+
 /// The first player's path through a story level's intro (level 201's
 /// `IGC_201_Intro.ai` walks him along it): where it ends is where the intro
 /// hands him over.
@@ -185,11 +190,12 @@ pub const INTRO_PATH: &str = "p1 WP's";
 /// settled onto the ground. A hub stage starts where its intro hands the
 /// first player over, [`HUB_START_PLACEMENT`]'s first waypoint, its
 /// intro's run setting him down there again ([`crate::scripts::INTROS`]).
-/// Any other level (every level but chapter 1's and the hub's) starts at
-/// its first placement running [`INIT_SCRIPT`]: its first waypoint, or its
-/// own place when it has no path (on chapter 1 the two are one point), a
-/// reading until that level's scripts set the start (AS.47;
-/// stand-in ledger: `spawn`).
+/// A story level whose intro walks him in starts at that path's end
+/// ([`INTRO_PATH`], AS.113), a PvP arena at [`ARENA_START_PLACEMENT`]
+/// (AS.126). Any other level starts at its first placement running
+/// [`INIT_SCRIPT`]: its first waypoint, or its own place when it has no
+/// path (on chapter 1 the two are one point), a reading until that level's
+/// scripts set the start (AS.47; stand-in ledger: `spawn`).
 pub fn start_point(placements: &Placements) -> Result<Vec3, LevelError> {
     let first_waypoint = |a: &guac_ir::level::Placement| {
         placements
@@ -212,6 +218,11 @@ pub fn start_point(placements: &Placements) -> Result<Vec3, LevelError> {
         if p.is_finite() {
             return Ok(p);
         }
+    }
+    // A PvP arena's first player starts at the place its initializer names
+    // (openspec AS.126).
+    if let Some(a) = named(ARENA_START_PLACEMENT) {
+        return Ok(Vec3::from_array(a.position));
     }
     let start = match named(START_PLACEMENT).or_else(|| named(HUB_START_PLACEMENT)) {
         Some(a) => first_waypoint(a),
@@ -2477,6 +2488,11 @@ mod tests {
         // No such path: as before.
         p.actors[1].name = "Sheep_1".into();
         assert_eq!(start_point(&p), Ok(Vec3::new(-1.0, 4.0, 109.0)));
+        // A PvP arena's start is its first player's place (AS.126).
+        let mut arena = placement(ARENA_START_PLACEMENT, None);
+        arena.position = [2.0, 3.0, 4.0];
+        p.actors.push(arena);
+        assert_eq!(start_point(&p), Ok(Vec3::new(2.0, 3.0, 4.0)));
     }
 
     /// AS.13: a level without chapter 1's start placement starts at its

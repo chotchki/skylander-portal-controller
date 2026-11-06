@@ -4341,7 +4341,12 @@ mod tests {
         posed(&mut w, Vec3::new(5.0, 6.0, 7.0), Quat::IDENTITY);
         let attach = |w: &mut ScriptWorld, e: &mut Bench, v: Value| {
             w.set_member(
-                &at("abstractplacement", "attach node", Some(Value::Entity(HERO)), None),
+                &at(
+                    "abstractplacement",
+                    "attach node",
+                    Some(Value::Entity(HERO)),
+                    None,
+                ),
                 Member::AttachNode,
                 v,
                 e,
@@ -4353,7 +4358,11 @@ mod tests {
         let hero = e.hero.as_ref().unwrap();
         assert!(hero.hung);
         assert_eq!(hero.pivot, Vec3::new(5.0, 6.0, 7.0));
-        assert_eq!(hero.walk.velocity, Vec3::ZERO, "his walk stops as he's hung");
+        assert_eq!(
+            hero.walk.velocity,
+            Vec3::ZERO,
+            "his walk stops as he's hung"
+        );
         // The rig flies on, turned a quarter.
         posed(
             &mut w,
@@ -4375,7 +4384,10 @@ mod tests {
         );
         let ground = w.objs.value(Object::Facet(OWNER, Facet::Ground));
         attach(&mut w, &mut e, ground);
-        assert!(!e.hero.as_ref().unwrap().hung, "another's ground hangs nobody");
+        assert!(
+            !e.hero.as_ref().unwrap().hung,
+            "another's ground hangs nobody"
+        );
     }
 
     /// openspec AS.76: an actor hung from another turns with it: what a
@@ -4411,14 +4423,62 @@ mod tests {
         w.ray.end = Vec3::new(20.0, 0.0, 0.0);
         let ray = w.objs.value(Object::RayCast);
         let asked = |w: &mut ScriptWorld, e: &mut Bench| {
-            let a = at("positionmeasurement", "collision", Some(Value::Entity(BALL)), Some(ray));
+            let a = at(
+                "positionmeasurement",
+                "collision",
+                Some(Value::Entity(BALL)),
+                Some(ray),
+            );
             w.get_member(&a, Member::Collision, e)
         };
-        assert_eq!(asked(&mut w, &mut e), Ok(Value::Int(0)), "no turret: no touch");
+        assert_eq!(
+            asked(&mut w, &mut e),
+            Ok(Value::Int(0)),
+            "no turret: no touch"
+        );
         w.ray_picks = true;
         assert_eq!(asked(&mut w, &mut e), Ok(Value::Int(1)), "1 m off the ray");
         w.ray.end = Vec3::new(20.0, 20.0, 0.0);
         assert_eq!(asked(&mut w, &mut e), Ok(Value::Int(0)), "well off it");
+        // A shot starts inside its turret's base and passes it; anything
+        // else overlapping the base touches it, and its shot touches another.
+        let (base, shot) = (0x6000_0031, 0x6000_0032);
+        let solid = Vec3::new(1.0, 2.0, 3.0);
+        w.actors.insert(base, ball(solid, 0.0));
+        w.actors.insert(shot, ball(solid, 0.0));
+        let name = |w: &mut ScriptWorld, name: &str| {
+            let o = Obj { unit: 9, index: 1 };
+            w.templates
+                .insert(o, crate::scripts::Placed::named(o, name, None, 5));
+            w.actors.get_mut(&shot).unwrap().template = Some(o);
+        };
+        name(&mut w, "New_Turret_Projectile_Fire");
+        let touch = |w: &mut ScriptWorld, e: &mut Bench| {
+            let a = at(
+                "positionmeasurement",
+                "collision",
+                Some(Value::Entity(base)),
+                Some(Value::Entity(shot)),
+            );
+            w.get_member(&a, Member::Collision, e)
+        };
+        assert_eq!(
+            touch(&mut w, &mut e),
+            Ok(Value::Int(1)),
+            "no turret: it touches"
+        );
+        w.turret_base = Some(base);
+        assert_eq!(
+            touch(&mut w, &mut e),
+            Ok(Value::Int(0)),
+            "its own shot passes"
+        );
+        name(&mut w, "009_LavaProjectile");
+        assert_eq!(
+            touch(&mut w, &mut e),
+            Ok(Value::Int(1)),
+            "another's doesn't"
+        );
     }
 
     /// openspec AS.76: a point put at a place on the screen lands there, on
@@ -4440,7 +4500,10 @@ mod tests {
         let s = crate::viewport::pack_screen(300.0, 500.0);
         write(&mut w, &mut e, Value::Screen(s)).unwrap();
         let (x, y) = w.view.project(w.view.converter).unwrap();
-        assert!((x - 300.0).abs() < 0.01 && (y - 500.0).abs() < 0.01, "{x} {y}");
+        assert!(
+            (x - 300.0).abs() < 0.01 && (y - 500.0).abs() < 0.01,
+            "{x} {y}"
+        );
         assert!(write(&mut w, &mut e, Value::Int(3)).is_err());
     }
 
@@ -4463,17 +4526,39 @@ mod tests {
             sets: Vec::new(),
         };
         let answer = w
-            .scene_move(HERO, &call, None, Vec3::new(1.0, 5.0, 11.0), (true, false, true), &mut e)
+            .scene_move(
+                HERO,
+                &call,
+                None,
+                Vec3::new(1.0, 5.0, 11.0),
+                (true, false, true),
+                &mut e,
+            )
             .unwrap();
         assert_eq!(answer, Answer::Done);
         let hero = e.hero.as_ref().unwrap();
-        assert_eq!(hero.walk.velocity, Vec3::Z * SCENE_WALK_SPEED, "across the ground");
+        assert_eq!(
+            hero.walk.velocity,
+            Vec3::Z * SCENE_WALK_SPEED,
+            "across the ground"
+        );
         assert_eq!(hero.facing, 0.0);
         let answer = w
-            .scene_move(HERO, &call, None, Vec3::new(1.0, 5.0, 11.0), (true, true, true), &mut e)
+            .scene_move(
+                HERO,
+                &call,
+                None,
+                Vec3::new(1.0, 5.0, 11.0),
+                (true, true, true),
+                &mut e,
+            )
             .unwrap();
         assert!(matches!(answer, Answer::Run { .. }));
-        assert_eq!(e.hero.as_ref().unwrap().walk.velocity, Vec3::ZERO, "reached");
+        assert_eq!(
+            e.hero.as_ref().unwrap().walk.velocity,
+            Vec3::ZERO,
+            "reached"
+        );
     }
 
     /// AH.50's hand: an actor hung on his node 7 sits there; posed again,
