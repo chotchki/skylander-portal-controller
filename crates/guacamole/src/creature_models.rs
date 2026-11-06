@@ -283,8 +283,8 @@ mod tests {
 
     /// openspec AS.54: past chapter 1, a level's first encounter's models
     /// (its spawners', its clones' template's) in its list's order, chapter
-    /// 1's fight's names in it left out (214's own `Enemy_Chompy(4)`); the
-    /// skinned templates' after them as on chapter 1.
+    /// 1's fight's names left out of it (`Enemy_Chompy(1)`, off its list);
+    /// the skinned templates' after them as on chapter 1.
     #[test]
     fn a_levels_encounter_draws_its_own_models() {
         let level = "level_214_tutotial_2";
@@ -292,7 +292,7 @@ mod tests {
             identity: identity(),
             level: level.into(),
             actors: vec![
-                placed("Enemy_Chompy(4)", Some("chompy_placed.mdl")),
+                placed("Enemy_Chompy(1)", Some("chompy_placed.mdl")),
                 placed("_Template_Undead_Chompy", Some("chompy_undead.mdl")),
                 placed("Enemy_Chompy_Spawner(5)", Some("legs.mdl")),
                 placed("Enemy_Chompy_Spawner(1)", Some("legs.mdl")),

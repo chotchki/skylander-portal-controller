@@ -5570,7 +5570,7 @@ mod tests {
                 "{name}"
             );
         }
-        assert!(!l214.whitelist.lists("Enemy_Chompy(4)", "C:/x/Any.ai"));
+        assert!(!l214.whitelist.lists("Enemy_Chompy(1)", "C:/x/Any.ai"));
         // Its intro, 214's alone (openspec AS.47, AS.60).
         assert!(l214.whitelist.lists("214_Intro_IGC", "C:/x/Any.ai"));
         assert!(!other.whitelist.lists("214_Intro_IGC", "C:/x/Any.ai"));
@@ -5775,11 +5775,11 @@ mod tests {
                 && !e.clones.contains(&"TreeRex_special_homing_actor"),
             "never walked"
         );
-        // A Tree Rex of a fight past the TV's (Setup_005's yard).
+        // Its template's name, which the TV's listing doesn't hold.
         assert!(
             !l214
                 .whitelist
-                .lists("Enemy_TreeRex(3)", "C:/x/S2_Enemy_TreeRex.ai")
+                .lists("Enemy_TreeRex", "C:/x/S2_Enemy_TreeRex.ai")
         );
     }
 
