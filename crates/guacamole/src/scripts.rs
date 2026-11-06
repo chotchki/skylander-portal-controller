@@ -2848,6 +2848,14 @@ pub const START_PROPS: [&str; 23] = [
     "StoneWall_Piece.ai",
 ];
 
+/// The levels' food (openspec AS.133, design decision 2's whitelist), every
+/// tick, by script, on every level: `FoodInit.ai` hands the level's food set
+/// to the combat system, whose experience balls drop one of its templates at
+/// a kill once enough kills have counted down, and `Healing_Food.ai` is each
+/// food, placed or dropped: it heals a hero who comes within 8 ft and goes,
+/// and turns its solid off, so a hero walks through it.
+pub const FOOD_SCRIPTS: [&str; 2] = ["/Healing_Food.ai", "/FoodInit.ai"];
+
 /// The Titan boulders' script, its first tick alone (openspec AG.60): its
 /// STARTUP makes each boulder's solid the original's cylinder and lays its
 /// pebbles, then it's held, so the feat it waits for (a Giant lifting it)
@@ -3336,6 +3344,7 @@ pub fn smash_config(mode: Mode) -> Config {
         placements.extend(PICKUPS.iter().map(|s| (*s).to_owned()));
         placements.extend(BREAKABLES.iter().map(|s| (*s).to_owned()));
         scripts.extend(START_PROPS.iter().map(|s| (*s).to_owned()));
+        scripts.extend(FOOD_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(CAMERA_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(GOAT_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(ROUTE_SCRIPTS.iter().map(|s| (*s).to_owned()));
@@ -5872,6 +5881,31 @@ mod tests {
             assert!(l214.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
             assert!(!other.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
             assert!(!e.placements.contains(&name), "{name} never walked");
+        }
+    }
+
+    /// openspec AS.133: the food's two scripts on every level's listing, by
+    /// file, the wizard's own `018_Healing_Food.ai` off it.
+    #[test]
+    fn the_levels_food_is_listed_by_script_on_every_level() {
+        let files = Files::default();
+        let food = "C:/tfb/Content/Levels/Includes/GameElement_Food/scripts";
+        for level in [
+            guac_extract::levels::FIRST_RUN[0],
+            "level_214_tutotial_2",
+            "level_201",
+        ] {
+            let c = level_config(Mode::Play, &files, 4, level);
+            for script in ["Healing_Food.ai", "FoodInit.ai"] {
+                assert!(
+                    c.whitelist.lists("", &format!("{food}/{script}")),
+                    "{level}: {script}"
+                );
+            }
+            assert!(
+                !c.whitelist.lists("", "C:/x/018_Healing_Food.ai"),
+                "{level}"
+            );
         }
     }
 

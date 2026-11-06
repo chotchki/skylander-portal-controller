@@ -11,7 +11,7 @@
 
 use guac_motion::seam::Vec3;
 use guac_motion::stick::{DEAD_ZONE, Stick};
-use guac_script::{Handle, Mode};
+use guac_script::{Handle, Mode, Value};
 use guacamole::script_engine::Pad;
 
 mod common;
@@ -400,13 +400,6 @@ fn wait_for(
     done(run).then_some(run.steps)
 }
 
-/// His health back to full, where a hand would eat or swap figures: the
-/// level's food isn't on the TV's listing yet (AS.133).
-fn eat(run: &mut Run) {
-    let minion = run.minion.expect("he's joined");
-    assert!(guacamole::scripts::set_health(&mut run.vm, minion, 290));
-}
-
 /// Setup_004B fought from its trigger, the step it ended.
 fn setup_004b(run: &mut Run, stops: &mut Vec<String>) -> u32 {
     let controller = handle(run, "Setup_004B_Controller");
@@ -566,8 +559,8 @@ fn level_214s_south_room_is_walked_in_and_out_of_setup_005s_yard() {
 /// lobbers beaten, the second key taken; down to the door with two locks,
 /// △ by its second lock turns both; past it Auric's scene plays, his
 /// teleporter wakes the ship part, and a press by it takes it, which wakes
-/// the sail to the third island. His health is set back to full before the
-/// helper's fight and past it ([`eat`]). Nothing stops.
+/// the sail to the third island, on the health he brings, no top-up.
+/// Nothing stops.
 #[test]
 #[ignore = "reads the Giants dump"]
 fn level_214s_second_island_is_walked_to_its_second_ship_part() {
@@ -599,7 +592,6 @@ fn level_214s_second_island_is_walked_to_its_second_ship_part() {
         Ok(()),
         "into the helper's yard"
     );
-    eat(&mut run);
     let helper = handle(&run, "Setup_005_Controller_Helper");
     let rex = handle(&run, "Enemy_TreeRex(3)");
     let near = handle(&run, "Enemy_Elf_Near_S2(1)");
@@ -632,7 +624,6 @@ fn level_214s_second_island_is_walked_to_its_second_ship_part() {
         900,
     )
     .expect("the yard's jump pad woken");
-    eat(&mut run);
     assert_eq!(walk(&mut run, &mut stops, &[SHORT_OF_THE_PAD]), Ok(()));
     let on_ledge = fly_to(&mut run, &mut stops, ON_THE_LEDGE, -21.6, 420).expect("onto the ledge");
     let lobber = handle(&run, "Enemy_Elf_Lobber(1)");
@@ -744,5 +735,213 @@ fn level_214s_second_island_is_walked_to_its_second_ship_part() {
         started.elapsed().as_secs_f64(),
         load()
     );
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
+/// Where the keys' pan wakes: by the door of two locks' second lock, across
+/// the ground, from the yard.
+const TO_THE_SECOND_LOCK: [[f32; 2]; 2] = [[-240.0, 795.0], [-247.0, 801.0]];
+const BY_THE_SECOND_LOCK: [f32; 2] = [-251.0, 801.0];
+
+/// Up to the door of two locks from the yard, the keys' pan (`PAN- Show
+/// Key_2(1)`, a 20 ft range) played out with him held: the steps it came
+/// on and went.
+fn panned_at_the_door(run: &mut Run, stops: &mut Vec<String>) -> (u32, u32) {
+    assert_eq!(walk(run, stops, &TO_THE_SECOND_LOCK), Ok(()), "to the door");
+    let mut on = None;
+    for _ in 0..120 {
+        push_with(run, stops, BY_THE_SECOND_LOCK, [false; 4]);
+        if cutscene_name(run).is_some() {
+            on = Some(run.steps);
+            break;
+        }
+    }
+    let on = on.expect("the keys' pan comes on");
+    let over = wait_for(run, stops, |run| cutscene_name(run).is_none(), 900).expect("it ends");
+    (on, over)
+}
+
+/// openspec AS.98: a hero at the door of two locks short of a key is panned
+/// to what he lacks and let go. With neither key taken it shows both, with
+/// the south room's taken only the top's, and the door stays shut. Nothing
+/// stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_door_of_two_locks_pans_to_the_keys_he_lacks() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, mut stops) = joined_214();
+    setup_004b(&mut run, &mut stops);
+    the_chase(&mut run, &mut stops);
+    let (on, over) = panned_at_the_door(&mut run, &mut stops);
+    let door = handle(&run, "Door_Template_Skylanders_2(3)");
+    assert!(
+        over - on > 300,
+        "both keys shown, a pan each: {on} to {over}"
+    );
+    assert_ne!(behaviour(&run, door).as_deref(), Some("done"), "still shut");
+    let at = run.hero().pivot;
+    assert_eq!(walk(&mut run, &mut stops, &[[-240.0, 795.0]]), Ok(()));
+    println!(
+        "neither key: the pan {on} to {over} with him at {at}, let go, back to {}; {:.1} s; load at end: {}",
+        run.hero().pivot,
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    assert!(stops.is_empty(), "{stops:#?}");
+
+    let (mut run, mut stops) = joined_214();
+    setup_004b(&mut run, &mut stops);
+    the_chase(&mut run, &mut stops);
+    into_the_south_room(&mut run, &mut stops);
+    assert_eq!(
+        walk(&mut run, &mut stops, &[BY_THE_KEY]),
+        Ok(()),
+        "to the key"
+    );
+    let landed = run.world.landed.len();
+    for _ in 0..400 {
+        if run.world.landed.len() > landed {
+            break;
+        }
+        push_with(&mut run, &mut stops, ROOM_EXIT, [false; 4]);
+    }
+    assert_eq!(
+        walk(&mut run, &mut stops, &BACK_TO_THE_YARD),
+        Ok(()),
+        "to the yard"
+    );
+    let (on_one, over_one) = panned_at_the_door(&mut run, &mut stops);
+    println!(
+        "the room's key taken: the pan {on_one} to {over_one}; {:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    assert!(
+        over_one - on_one < over - on,
+        "one key shown is the shorter pan: {} against {}",
+        over_one - on_one,
+        over - on
+    );
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
+/// The combat system's food counter, kills to the next drop.
+fn set_food_counter(run: &mut Run, to: i32) {
+    let g = run
+        .vm
+        .program()
+        .global_named("combat control data")
+        .expect("the combat system");
+    let data = run.vm.global_peek(g).expect("its data");
+    assert!(run.vm.set_field(data, "food counter", Value::Int(to)));
+}
+
+/// The food out of a drop: the clones of the food set's templates.
+fn dropped(run: &Run) -> Vec<Handle> {
+    run.world
+        .clones()
+        .into_iter()
+        .filter(|h| run.world.name(*h).starts_with("food_") && !gone(run, *h))
+        .collect()
+}
+
+/// openspec AS.133: the level's food, by its script. A hurt hero walking
+/// into a watermelon on the first island heals by 100 (the script's amount
+/// at the default difficulty) and it goes; it didn't stop him on the way in.
+/// The pie in Setup_005's yard takes itself off, woken, as its script does
+/// until a later adventure is done. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_placed_food_heals_a_hurt_hero_and_goes() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, mut stops) = joined_214();
+    let melon = handle(&run, "Food_Watermelon(1)");
+    let pie = handle(&run, "Batterson_Special_Pie(1)");
+    let at = run.world.actor(melon).unwrap().position;
+    run.put(Vec3::new(at.x, at.y + 0.2, at.z - 4.4), 0.0);
+    for _ in 0..30 {
+        step(&mut run, &mut stops, [false; 4]);
+    }
+    assert_eq!(
+        behaviour(&run, melon).as_deref(),
+        Some("wait for player to collect me")
+    );
+    let minion = run.minion.expect("he's joined");
+    assert!(guacamole::scripts::set_health(&mut run.vm, minion, 100));
+    assert_eq!(
+        walk(&mut run, &mut stops, &[[at.x, at.z]]),
+        Ok(()),
+        "it stops no one"
+    );
+    let eaten = wait_for(&mut run, &mut stops, |run| gone(run, melon), 180).expect("eaten");
+    let health = run.health().unwrap();
+    assert_eq!(health, 200.0, "100 more");
+    assert!(!gone(&run, pie), "asleep until a hero's in its range");
+    run.put(Vec3::new(-240.5, -24.9, 760.0), 0.0);
+    wait_for(&mut run, &mut stops, |run| gone(run, pie), 120).expect("the pie goes");
+    println!(
+        "the melon eaten at {eaten}, 100 to {health}; the pie off; {:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
+/// openspec AS.133: a drop. With the combat system's food counter at 1 the
+/// next enemy past 5 experience beaten leaves one of the level's food set
+/// where it fell: it comes up, falls to the ground and waits there, and a
+/// hurt hero walking to it heals by 100. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_kills_drop_food_that_lands_and_heals() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, mut stops) = joined_214();
+    run.put(Vec3::new(BY_004B_TRIGGER[0] - 4.0, -22.3, 722.4), 90.0);
+    assert_eq!(walk(&mut run, &mut stops, &[BY_004B_TRIGGER]), Ok(()));
+    set_food_counter(&mut run, 1);
+    let f = fight_until(
+        &mut run,
+        &mut stops,
+        |run| !dropped(run).is_empty(),
+        &FOES_004B,
+        IN_004B_YARD,
+        3000,
+    );
+    let drop_at = f.done.expect("a kill past the counter drops food");
+    let food = dropped(&run)[0];
+    let name = run.world.name(food);
+    assert!(
+        ["food_pizza_slice", "food_pretzel", "food_watermelon"].contains(&name.as_str()),
+        "{name}"
+    );
+    // Well out of its 8 ft while it falls.
+    let at = run.world.actor(food).unwrap().position;
+    let away = Vec3::new(at.x - 8.0, at.y - 4.0, at.z);
+    run.put(away, 90.0);
+    let mut rest = at;
+    for _ in 0..180 {
+        step(&mut run, &mut stops, [false; 4]);
+        rest = run.world.actor(food).unwrap().position;
+    }
+    assert!(!gone(&run, food), "it waits for him");
+    assert!(
+        (rest.y - run.hero().pivot.y).abs() < 2.0,
+        "down on the ground: {rest}, he's at {}",
+        run.hero().pivot
+    );
+    let minion = run.minion.expect("he's joined");
+    assert!(guacamole::scripts::set_health(&mut run.vm, minion, 100));
+    assert_eq!(walk(&mut run, &mut stops, &[[rest.x, rest.z]]), Ok(()));
+    wait_for(&mut run, &mut stops, |run| gone(run, food), 180).expect("eaten");
+    let health = run.health().unwrap();
+    println!(
+        "{name} dropped at {drop_at} at {at}, down at {rest}, eaten, health {health}; {:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    assert!(health >= 200.0, "100 more: {health}");
     assert!(stops.is_empty(), "{stops:#?}");
 }
