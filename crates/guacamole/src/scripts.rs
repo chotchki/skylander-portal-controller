@@ -2688,9 +2688,9 @@ pub const HUB_SCRIPTS: [&str; 11] = [
 pub const HUB_PEOPLE: [&str; 2] = ["/Flynn.ai", "/Cali.ai"];
 
 /// A level's own people the TV draws as it does the hub's (openspec AS.98),
-/// by level and placement, never walked for the same reason: Auric in his
-/// scene on level 214, whose `turn to` a walk's steering never ends on his
-/// turn rate of 0, and at his stall after it.
+/// by level and placement, never walked: Auric in his scene on level 214
+/// and at his stall after it. Walked, his scene never ended (a reading: its
+/// `Turn to Target` left to the walk's steering, as Cali's was at AU.6).
 pub const LEVEL_PEOPLE: [(&str, &str); 2] = [
     ("level_214_tutotial_2", "Moneybags_end"),
     ("level_214_tutotial_2", "Auric_store"),
