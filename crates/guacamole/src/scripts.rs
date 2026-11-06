@@ -3730,7 +3730,7 @@ pub const PASSAGES: [(&str, &[&str]); 1] = [(
 ///   (`ChainedGate_Controller`), Setup_007's lobbers coming from past it;
 /// - past that gate the third ship part (`Ship_part_3`) clones the outro
 ///   (`214_Outro_IGC`), whose `Game - Level End` names the village.
-pub const THIRD_ISLAND_WAY: [&str; 44] = [
+pub const THIRD_ISLAND_WAY: [&str; 43] = [
     "Ship_part_2(1)",
     "214_Final_Island_IGC",
     "Flynn_Island_3",
@@ -3775,7 +3775,6 @@ pub const THIRD_ISLAND_WAY: [&str; 44] = [
     "Padlock_Part_04",
     "Padlock_Part_05",
     "Chain_Link",
-    "214_Outro_Ship_Part",
 ];
 
 /// Each placement of the file-variable sets `names` taken off, as a script's
