@@ -2630,8 +2630,7 @@ impl ScriptWorld {
     /// body under it ([`ScriptWorld::move_scene_walks`]; chapter 1's
     /// outro walks its Mabu so, `CS Walk Obj to Location` handing the
     /// engine an actor no movement data of the scripts' moves). Reached,
-    /// the block runs, as a creature's. A hero walks on his controller
-    /// alone, so one the op moves is still unmodelled.
+    /// the block runs, as a creature's.
     /// (Stand-in ledger: `scene-walk`.)
     fn scene_move(
         &mut self,
@@ -2642,9 +2641,6 @@ impl ScriptWorld {
         (toward, done, last): (bool, bool, bool),
         engine: &mut dyn Engine,
     ) -> Result<Answer, HostFault> {
-        if engine.hero(mover).is_some() {
-            return Err(HostFault::Unmodelled);
-        }
         if !(done && last)
             && let Some(clip) = self.move_clip(call)
         {
@@ -2652,6 +2648,37 @@ impl ScriptWorld {
         }
         let mut aim = Aim::Still;
         let mut along = self.along(mover);
+        // A hero a scene walks (openspec AS.113: level 201's intro walks
+        // him in along his path) goes across the ground at a scene walk's
+        // speed on his controller, facing where he goes.
+        if engine.hero(mover).is_some() {
+            let mut to = (!done).then_some(point);
+            if done
+                && let Some(p) = path
+                && !last
+            {
+                along += 1;
+                to = self.point(p[along], engine);
+            }
+            if let Some(hero) = engine.hero(mover) {
+                let across = to.map_or(Vec3::ZERO, |t| {
+                    Vec3::new(t.x - hero.pivot.x, 0.0, t.z - hero.pivot.z).normalize_or_zero()
+                });
+                hero.walk.velocity = across * SCENE_WALK_SPEED;
+                if across != Vec3::ZERO {
+                    hero.facing = crate::script_engine::heading_of(across);
+                }
+            }
+            self.scene_walks.entry(mover).or_default().along = along;
+            return Ok(if done {
+                Answer::Run {
+                    receiver: None,
+                    result: None,
+                }
+            } else {
+                Answer::Done
+            });
+        }
         if done {
             if let Some(p) = path
                 && !last
@@ -3183,6 +3210,10 @@ impl ScriptWorld {
         }
     }
 }
+
+/// The speed a scene walks a hero at, ft/s: what the engine's scene walk
+/// gives an actor with no numbers of its own (stand-in ledger: `scene-walk`).
+const SCENE_WALK_SPEED: f32 = 20.0;
 
 impl ScriptWorld {
     /// Makes the actor under `h` a creature the engine moves (openspec

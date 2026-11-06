@@ -176,6 +176,11 @@ pub const INIT_SCRIPT: &str = "InitializeLevel.ai";
 /// four stages hold it at the same place. No other level holds it.
 pub const HUB_START_PLACEMENT: &str = "CS_Hub_Intro_Final_Positions";
 
+/// The first player's path through a story level's intro (level 201's
+/// `IGC_201_Intro.ai` walks him along it): where it ends is where the intro
+/// hands him over.
+pub const INTRO_PATH: &str = "p1 WP's";
+
 /// Where the hero starts: [`START_PLACEMENT`]'s first waypoint, before he's
 /// settled onto the ground. A hub stage starts where its intro hands the
 /// first player over, [`HUB_START_PLACEMENT`]'s first waypoint, its
@@ -193,7 +198,21 @@ pub fn start_point(placements: &Placements) -> Result<Vec3, LevelError> {
             .first()
             .map(|w| Vec3::from_array(w.position))
     };
+    let last_waypoint = |a: &guac_ir::level::Placement| {
+        placements
+            .waypoints
+            .get(usize::try_from(a.waypoints?).ok()?)?
+            .last()
+            .map(|w| Vec3::from_array(w.position))
+    };
     let named = |name: &str| placements.actors.iter().find(|a| a.name == name);
+    // A story level whose intro walks him in hands him over at its path's
+    // end (openspec AS.113, AS.126).
+    if let Some(p) = named(INTRO_PATH).and_then(last_waypoint) {
+        if p.is_finite() {
+            return Ok(p);
+        }
+    }
     let start = match named(START_PLACEMENT).or_else(|| named(HUB_START_PLACEMENT)) {
         Some(a) => first_waypoint(a),
         None => placements

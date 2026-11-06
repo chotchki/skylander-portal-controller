@@ -2562,7 +2562,15 @@ pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
 }];
 
 /// Level 214's third island (openspec AS.76), a table of its own beside
-/// [`ENCOUNTERS`] ([`encounters`]).
+/// [`ENCOUNTERS`] ([`encounters`]): Setup_006's controller, waking at the
+/// final island's end (or, with Persephone visited, its lobbers and two of
+/// its Elf Nears too) and at its first trigger past the drawbridge setting
+/// its two Tree Rexes and Chompy spawner on the hero, then once they're
+/// beaten its lobbers back behind the first gate and its Elf Nears in: the
+/// seven the first turret waits on. Setup_007's controller, whose trigger
+/// lies by the second turret: while the turret's game runs it clones its
+/// lobber (`Enemy_Elf_Lobber(10)`) past the second gate, up to twelve, until
+/// `Crache_1(1)`'s gone or the game's over.
 pub const THIRD_ISLAND: Encounter = Encounter {
     level: "level_214_tutotial_2",
     placements: &[
@@ -2600,8 +2608,9 @@ pub const THIRD_ISLAND: Encounter = Encounter {
 /// landing on a load; either way its last scene hands the players over at
 /// `CS_Hub_Intro_Final_Positions`' first two waypoints, which every stage
 /// holds alike ([`crate::level_scene::HUB_START_PLACEMENT`]).
-pub const INTROS: [(&str, &str); 5] = [
+pub const INTROS: [(&str, &str); 6] = [
     ("level_214_tutotial_2", "214_Intro_IGC"),
+    ("level_201", "_Level_201_Intro_CS"),
     ("level_hub_2_stage_1", "CS_Intro_Controller"),
     ("level_hub_2_stage_2", "CS_Hub_Intro_Stage2"),
     ("level_hub_2_stage_3", "CS_Hub_Intro_Stage3"),
@@ -3685,8 +3694,29 @@ pub const PASSAGES: [(&str, &[&str]); 1] = [(
 )];
 
 /// What takes the way on through level 214's third island (openspec
-/// AS.76), by placement name, listed and never walked.
-pub const THIRD_ISLAND_WAY: [&str; 10] = [
+/// AS.76), by placement name, listed and never walked:
+/// - the second ship part (`Ship_part_2(1)`, on the second island past
+///   Auric, AS.98) wakes the final island's cutscene, which carries the
+///   players on the ship's rigs to the third island's ship (AS.115) and
+///   brings `Island_3`'s placements back;
+/// - Flynn sends them to Persephone (`Flynn_Island_3`, a pan to her door,
+///   `Door_Persephone's_Room(3)`), whose room is an interior; her first
+///   visit's cutscene (`Persephone_214`) is what lets the drawbridge down
+///   (`DrawBridge`), and the menu it ends on is backed out of
+///   ([`crate::prompt::back_out_of_menu`]);
+/// - past Setup_006 the first turret (`Turret_1_Activator`) wakes once its
+///   side enemies are beaten: three padlocks shot from it (their chains and
+///   their pieces) open the first gate;
+/// - `PvP_JumpPad_SUPER(6)` past that gate launches a hero onto the stone
+///   blocks' plateau (`SetUp_Turret_2` wakes the second turret as he
+///   passes); the pads in the two pits below get him back up;
+/// - across the blocks (one pushed three spans north and two back makes
+///   the bridge, [`START_PROPS`]' `PushBlock_Template.ai`) the second turret
+///   (`Turret_2_Activator`) shoots the four padlocks of the second gate
+///   (`ChainedGate_Controller`), Setup_007's lobbers coming from past it;
+/// - past that gate the third ship part (`Ship_part_3`) clones the outro
+///   (`214_Outro_IGC`), whose `Game - Level End` names the village.
+pub const THIRD_ISLAND_WAY: [&str; 44] = [
     "Ship_part_2(1)",
     "214_Final_Island_IGC",
     "Flynn_Island_3",
@@ -3694,9 +3724,44 @@ pub const THIRD_ISLAND_WAY: [&str; 10] = [
     "Door_Persephone's_Room(3)",
     "DrawBridge",
     "Persephone_214",
+    "Spike_Gate_Wooden_Template(2)",
+    "Turret_1_Activator",
+    "Padlock_Target_01a",
+    "Padlock_Target_01a(1)",
+    "Padlock_Target_01a(2)",
+    "Chain_01a(1)",
+    "Chain_01b(1)",
+    "Chain_01c(1)",
+    "ChainFence_Gate1(1)",
+    "ChainFence_Gate1(2)",
+    "PvP_JumpPad_SUPER(5)",
+    "PvP_JumpPad_SUPER(6)",
+    "PvP_JumpPad_SUPER(7)",
+    "SetUp_Turret_2",
+    "Turret_2_Activator",
+    "ChainedGate_Controller",
+    "Padlock_Target_02a",
+    "Padlock_Target_02b",
+    "Padlock_Target_02c",
+    "Padlock_Target_02d",
+    "Chain_02a",
+    "Chain_02b",
+    "Chain_02c",
+    "Chain_02d",
+    "ChainFence_Gate2_1",
+    "ChainFence_Gate2_2",
+    "Crache_1",
+    "Crache_1(1)",
     "Ship_part_3",
     "214_Outro_IGC",
-    "Spike_Gate_Wooden_Template(2)",
+    // What they clone (a clone runs under its template's name).
+    "Padlock",
+    "Padlock_Part_02",
+    "Padlock_Part_03",
+    "Padlock_Part_04",
+    "Padlock_Part_05",
+    "Chain_Link",
+    "214_Outro_Ship_Part",
 ];
 
 /// The placements [`THIRD_ISLAND_WAY`] lists for the level whose archive
