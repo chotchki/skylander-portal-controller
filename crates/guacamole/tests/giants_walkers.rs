@@ -5745,6 +5745,42 @@ const HELD: u32 = 6;
 const QUIET: u32 = 30;
 const READ_BY: u32 = 12;
 
+/// How a press is made (openspec AU.10), each by an env of its own: the
+/// steps it's held (`AH29_HELD`, [`HELD`] a tap), the steps its window runs
+/// (`AH29_WINDOW`, [`WINDOW`]), a second tap that many steps into it
+/// (`AH29_AGAIN`), and the stick held forward through it (`AH29_WALK`).
+#[derive(Debug, Clone, Copy)]
+struct PressShape {
+    held: u32,
+    window: u32,
+    again: Option<u32>,
+    walk: bool,
+}
+
+impl PressShape {
+    fn read() -> Self {
+        let n = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<u32>().ok());
+        Self {
+            held: n("AH29_HELD").unwrap_or(HELD),
+            window: n("AH29_WINDOW").unwrap_or(WINDOW),
+            again: n("AH29_AGAIN"),
+            walk: std::env::var("AH29_WALK").is_ok(),
+        }
+    }
+
+    fn down(&self, step: u32) -> bool {
+        step < self.held || self.again.is_some_and(|a| (a..a + HELD).contains(&step))
+    }
+
+    fn stick(&self) -> Stick {
+        if self.walk {
+            Stick::new(0.0, 1.0)
+        } else {
+            Stick::CENTRED
+        }
+    }
+}
+
 impl W {
     /// The handle of the level's placement `name`.
     fn level_handle(&self, l: &Level, name: &str) -> Handle {
@@ -5958,14 +5994,15 @@ fn fight_presses(l: &Level, load: &str, actions: &[usize], out: &mut Fought) -> 
         };
         let mut stopped_in = false;
         let mut read_by = None;
-        for s in 0..WINDOW {
+        let shape = PressShape::read();
+        for s in 0..shape.window {
             if s == READ_BY {
                 read_by = Some(w.world.start_count());
             }
             let mut actions = [false; 4];
-            actions[action] = s < HELD;
+            actions[action] = shape.down(s);
             w.bench.pads[0] = Pad {
-                stick: Stick::CENTRED,
+                stick: shape.stick(),
                 actions,
                 connected: true,
             };
@@ -6126,8 +6163,8 @@ fn sweep_one(l: &Level, load: &str) -> Fought {
 /// (AU.9) and none of the level's (Hot Head's attack stopped the UI's
 /// keyframer before AU.2's reference to a number). `AH29_ONLY` (comma-separated load files) runs those alone,
 /// `AH29_ACTIONS` ([`presses_alone`]) those positions alone, and either
-/// checks only Eruptor; `AH29_TABLE` (a path outside the tree) gets the
-/// table as JSON.
+/// checks only Eruptor; [`PressShape`] makes each press otherwise (AU.10);
+/// `AH29_TABLE` (a path outside the tree) gets the table as JSON.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
 fn every_modelled_character_attacks_or_is_listed() {

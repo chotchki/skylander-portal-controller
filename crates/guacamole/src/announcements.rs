@@ -78,3 +78,224 @@ pub fn hints(vm: &Vm, world: &ScriptWorld) -> Vec<Line> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use guac_formats::igz::Igz;
+    use guac_formats::igz::builder::IgzBuilder;
+    use guac_formats::script::builder::{El, Writer};
+    use guac_formats::script::{Class, Graph, StackClass};
+    use guac_script::{Config, Generator, Mode, Obj, Program, Role, Unit, Whitelist};
+
+    use super::*;
+    use crate::script_engine::NoEngine;
+    use crate::scripts::{Files, Placed, WorldHost, headless_objects, headless_spawner};
+
+    const FILE: Obj = Obj { unit: 0, index: 2 };
+    const HANDLE: u64 = 0x30;
+    const PATH: &str = "C:/tfb/Content/Levels/Includes/Global/scripts/GameSystems.ai";
+
+    /// A file in the original's shape, our ops: the current scene's `extra
+    /// data` holding a card's structure (its sprite made when `sprite`), and
+    /// `all notifications` holding a hint, then a counter (`is a hint?` 0).
+    fn up(sprite: bool) -> Arc<Program> {
+        let mut b = IgzBuilder::new();
+        {
+            let mut w = Writer::new(&mut b);
+            let w = &mut w;
+            let def_ty = w.op(Class::DefineStructure, "CS Seq - Enemy Intro UI Def");
+            let string = w.variable("string", "ScriptReference", None);
+            let data_ty = w.op(Class::DefineStructure, "CS Seq - Enemy Intro UI Data");
+            let container = w.variable("generated container", "ScriptReference", None);
+            let def = w.variable("def", "ScriptStructure", None);
+            w.refer(def, 0x24, def_ty);
+            let scene_ty = w.op(Class::DefineStructure, "CS - Scene Data");
+            let extra = w.variable("extra data", "ScriptSet", None);
+            w.refer(extra, 0x24, data_ty);
+            let held = w.variable("the card", "ScriptStructure", None);
+            w.refer(held, 0x24, data_ty);
+            let cs_ty = w.op(Class::DefineStructure, "CS - Data");
+            let cur = w.variable("cur scene data", "ScriptStructure", None);
+            w.refer(cur, 0x24, scene_ty);
+            let control_ty = w.op(Class::DefineStructure, "CS - Control Data");
+            let current = w.variable("current cs", "ScriptStructure", None);
+            w.refer(current, 0x24, cs_ty);
+            let control = w.b.object(0, "ScriptStructure", 0x20);
+            w.text(control, 0x08, "cs control data");
+            w.refer(control, 0x1C, control_ty);
+            let note_ty = w.op(Class::DefineStructure, "Notification - Notification Data");
+            let is_hint = w.variable("is a hint?", "ValueInfo", Some("IntMeasurement"));
+            let text = w.variable("associated text", "ScriptReference", None);
+            let queue_ty = w.op(Class::DefineStructure, "Notification Queue");
+            let notes = w.variable("all notifications", "ScriptSet", None);
+            w.refer(notes, 0x24, note_ty);
+            let hint = w.variable("the hint", "ScriptStructure", None);
+            w.refer(hint, 0x24, note_ty);
+            let counter = w.variable("the counter", "ScriptStructure", None);
+            w.refer(counter, 0x24, note_ty);
+            let queue = w.b.object(0, "ScriptStructure", 0x20);
+            w.text(queue, 0x08, "all notifications");
+            w.refer(queue, 0x1C, queue_ty);
+            let name = w.op(Class::DefineMacro, "the name");
+            let line = w.op(Class::DefineMacro, "the line");
+            let count = w.op(Class::DefineMacro, "the count");
+            let at = [El::Local(control), El::Local(current), El::Local(cur)];
+            let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+            let (start, _) = w.open(Class::StartUp, "STARTUP");
+            let refer = |w: &mut Writer<'_>, lhs: &[El<'_>], to| {
+                let l = w.value(lhs);
+                let r = w.reference(&[El::Local(to)], None);
+                let o = w.op(Class::SetReference, "setref||=");
+                w.refer(o, 0x1C, l);
+                w.refer(o, 0x20, r);
+                w.push(o);
+            };
+            let join = |w: &mut Writer<'_>, set: &[El<'_>], element: &[El<'_>]| {
+                let set = w.stack(StackClass::Set, set);
+                let element = w.group(element, None);
+                let o = w.op(Class::ChangeMembership, "set [set]||to");
+                w.refer(o, 0x1C, set);
+                w.word(o, 0x20, 0);
+                w.refer(o, 0x24, element);
+                w.push(o);
+            };
+            let card = [at[0], at[1], at[2], El::Local(held)];
+            refer(
+                w,
+                &[
+                    card[0],
+                    card[1],
+                    card[2],
+                    card[3],
+                    El::Local(def),
+                    El::Local(string),
+                ],
+                name,
+            );
+            if sprite {
+                refer(
+                    w,
+                    &[card[0], card[1], card[2], card[3], El::Local(container)],
+                    name,
+                );
+            }
+            join(w, &[at[0], at[1], at[2], El::Local(extra)], &card);
+            let one = w.int(1);
+            w.set(
+                &[El::Local(queue), El::Local(hint), El::Local(is_hint)],
+                one,
+            );
+            refer(
+                w,
+                &[El::Local(queue), El::Local(hint), El::Local(text)],
+                line,
+            );
+            refer(
+                w,
+                &[El::Local(queue), El::Local(counter), El::Local(text)],
+                count,
+            );
+            join(
+                w,
+                &[El::Local(queue), El::Local(notes)],
+                &[El::Local(queue), El::Local(hint)],
+            );
+            join(
+                w,
+                &[El::Local(queue), El::Local(notes)],
+                &[El::Local(queue), El::Local(counter)],
+            );
+            w.end_block(start);
+            let (shut, _) = w.open(Class::ShutDown, "SHUTDOWN");
+            w.end_block(shut);
+            let (section, _) = w.open(Class::MacroSection, "MACROS");
+            for d in [name, line, count] {
+                let p = w.open_macro(d, &[]);
+                w.end_block(p);
+            }
+            w.end_block(section);
+            let (types, _) = w.open(Class::StructureSection, "STRUCTURES");
+            for (ty, vars) in [
+                (def_ty, vec![string]),
+                (data_ty, vec![container, def]),
+                (scene_ty, vec![extra, held]),
+                (cs_ty, vec![cur]),
+                (control_ty, vec![current]),
+                (note_ty, vec![is_hint, text]),
+                (queue_ty, vec![notes, hint, counter]),
+            ] {
+                let p = w.push(ty);
+                for v in vars {
+                    w.push(v);
+                }
+                w.end_block(p);
+            }
+            w.end_block(types);
+            w.end_block(pre);
+            w.end(PATH);
+        }
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = Unit {
+            name: "global",
+            role: Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        Arc::new(Program::link(&[unit]).unwrap())
+    }
+
+    fn read(sprite: bool) -> (Option<String>, Vec<String>) {
+        let program = up(sprite);
+        let files = Files {
+            placed: vec![Placed::named(FILE, "Macros_GameSystems", Some(PATH), 4)],
+            ..Files::default()
+        };
+        let handles = HashMap::from([(FILE, HANDLE)]);
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let mut config = Config::new(Mode::Strict);
+        config.whitelist = Whitelist::only(&[], &["GameSystems.ai"]);
+        let sid = program.script_named("GameSystems.ai").unwrap();
+        let mut vm = Vm::new(program, config);
+        vm.add_at(HANDLE, "Macros_GameSystems", sid, FILE);
+        let mut generator = Generator::seeded(1);
+        let mut engine = NoEngine;
+        let mut spawn = headless_spawner(0x1000);
+        let mut host = WorldHost {
+            world: &mut world,
+            engine: &mut engine,
+            generator: &mut generator,
+            spawn: &mut spawn,
+        };
+        vm.step(&mut host).unwrap();
+        let name = |vm: &Vm, l: Line| match l.string {
+            Value::Object(o) => vm
+                .program()
+                .def_of(o)
+                .map(|d| vm.program().defs[d as usize].display.clone())
+                .unwrap_or_default(),
+            other => format!("{other:?}"),
+        };
+        let card = enemy_card(&vm, host.world).map(|l| name(&vm, l));
+        let hints = hints(&vm, host.world)
+            .into_iter()
+            .map(|l| name(&vm, l))
+            .collect();
+        (card, hints)
+    }
+
+    /// openspec AS.131: the card reads its string while its sprite stands,
+    /// nothing past it; the queue's hints read, its counters don't.
+    #[test]
+    fn the_card_reads_while_its_sprite_stands_and_the_queue_gives_its_hints() {
+        assert_eq!(
+            read(true),
+            (Some("the name".to_owned()), vec!["the line".to_owned()])
+        );
+        assert_eq!(read(false).0, None, "no sprite, no card");
+    }
+}

@@ -614,6 +614,7 @@ const STAGE_PEOPLE: [(&[&str], &[&str]); 4] = [
             "Persephone",
             "Auric",
             "Hatterson",
+            "Dreadbeard",
             "Ermit",
             "Brock",
             "Wilikin_Girl_01",
@@ -628,6 +629,7 @@ const STAGE_PEOPLE: [(&[&str], &[&str]); 4] = [
             "Persephone",
             "Auric",
             "Hatterson",
+            "Dreadbeard",
             "Ermit",
             "Brock",
         ],
@@ -640,6 +642,7 @@ const STAGE_PEOPLE: [(&[&str], &[&str]); 4] = [
             "Persephone",
             "Auric",
             "Hatterson",
+            "Dreadbeard",
             "Ermit",
             "Brock",
         ],
@@ -707,6 +710,7 @@ fn every_hub_stages_people_stand_talk_and_stop_the_hero() {
             ("Persephone", false),
             ("Brock", true),
             ("Ermit", false),
+            ("Dreadbeard", true),
             ("Cali", true),
         ] {
             if !here.contains(&name) {

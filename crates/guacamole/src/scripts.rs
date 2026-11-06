@@ -2690,11 +2690,11 @@ pub const HUB_SCRIPTS: [&str; 9] = [
 /// scene's actors are, AS.52), the fairy circling the ship (each a `move
 /// from` itself: [`crate::script_members`]). In the rooms: Persephone, her
 /// fly-in the first time, Auric's store, Hatterson's (`Batterson`) and his
-/// orbit's, Breakstone. Each takes itself off until its adventure's done,
-/// so stage 1's first visit shows neither the Hermit nor Brock. Off it:
-/// Dreadbeard (the card game, AS.106's) and the robot flying by (stage 1
-/// past 5 adventures, a count no run reaches yet: AS.130).
-pub const HUB_PEOPLE: [&str; 14] = [
+/// orbit's, Dreadbeard at his card table, Breakstone. Each takes itself off
+/// until its adventure's done, so stage 1's first visit shows neither the
+/// Hermit nor Brock. Off it: the robot flying by (stage 1 past 5 adventures,
+/// a count no run reaches yet: AS.130).
+pub const HUB_PEOPLE: [&str; 15] = [
     "/Flynn.ai",
     "/Cali.ai",
     "/Hermit.ai",
@@ -2709,6 +2709,7 @@ pub const HUB_PEOPLE: [&str; 14] = [
     "/MabuWalker.ai",
     "/HammerGuy.ai",
     "/Hub2_Background_Fairy.ai",
+    "/CardPirate_Template.ai",
 ];
 
 /// A level's own people the TV draws as it does the hub's (openspec AS.98),
@@ -2992,8 +2993,8 @@ pub const INTERIOR_SCRIPTS: [&str; 3] = [
 ];
 
 /// Level 214's bomb hints (openspec AS.57), by placement name: each plays
-/// Eon's line once a hero touches its volume, its text an announcement the
-/// TV draws nowhere. By name, since the hints' script is every level's
+/// Eon's line once a hero touches its volume, its text a hint the TV draws
+/// (AS.131). By name, since the hints' script is every level's
 /// (chapter 1's fifteen stay off).
 pub const BOMB_HINTS: [&str; 2] = ["0_Hint_Use_Bombs", "0_Hint_Use_Bombs(1)"];
 
@@ -6017,7 +6018,7 @@ mod tests {
             "{dir}/Cutscenes/Scripts/CS_Flynn.ai"
         )));
         // Openspec AU.34: the rest by theirs, Auric's scene and store alike,
-        // the card game's Dreadbeard off.
+        // the robot flying by off.
         for script in [
             "Scripts/Hermit.ai",
             "Scripts/Brock.ai",
@@ -6029,9 +6030,10 @@ mod tests {
         ] {
             assert!(is_hub_person(&format!("{dir}/{script}")), "{script}");
         }
-        assert!(!is_hub_person(
+        assert!(is_hub_person(
             "C:/tfb/Content/Levels/Includes/GameElement_CardGame_Sky2/Scripts/CardPirate_Template.ai"
         ));
+        assert!(!is_hub_person(&format!("{dir}/Scripts/GiantRobot.ai")));
     }
 
     /// openspec AS.98: a level's own people are its placements by name, by

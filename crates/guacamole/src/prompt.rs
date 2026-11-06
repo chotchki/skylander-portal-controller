@@ -31,7 +31,8 @@
 //!   doesn't run never puts its page up. [`back_out`] picks the branch the
 //!   menu's back button picks the step it waits (stand-in ledger: `cs-menu`).
 //! - **A screen a yes brings up** (Auric's and Hatterson's stores, Brock's
-//!   arenas, Cali's challenges: [`SCREENS`]): each queues a screen on the
+//!   arenas, Cali's challenges, Dreadbeard's cards: [`SCREENS`]; his waits on
+//!   its game's end from then on): each queues a screen on the
 //!   update macros the TV doesn't run, and every dialogue refuses its talk
 //!   button from then on, Flynn's way on among them. The macro is answered
 //!   with nothing shown ([`answer_screen`]; stand-in ledger: `hub-screens`).
@@ -54,10 +55,11 @@ pub const CLOSE_MENU: &str = "Menu - Close Menu Immediately";
 
 /// The macros a yes on the hub calls for a screen the TV doesn't have:
 /// answered by the host ([`answer_screen`]).
-pub const SCREENS: [&str; 3] = [
+pub const SCREENS: [&str; 4] = [
     "System - Store UI - Show Menu",
     "Arena UI - Show Arena Select UI",
     "System - Show Heroic Challenge Select UI",
+    "Card Game - Start Card Game",
 ];
 
 /// The game systems' script, in whose name the answer runs.
