@@ -226,3 +226,16 @@ Level 201 SHALL start where its intro hands the first player over: the intro hel
 - **WHEN** Flynn's ready question is answered yes on hub stage 1
 - **THEN** level 201 reads on its first entry, its intro plays, and he walks from where it hands him over with nothing stopped
 
+### Requirement: A level's sky stays about the eye
+A level's sky SHALL draw through the view with its translation taken out, its coordinates metres from the eye wherever the camera stands: in the first capture chapter 1's 14 sky draws hold 0, 0, -0.2, 0 in the matrix's last column where every other static draw holds the eye's 37.58, -14.97, 114.07, 114.17.
+
+#### Scenario: Past the dome
+- **WHEN** the camera stands further from the level's origin than its dome reaches, as on level 214's second and third islands, 750-830 m out of a dome reaching 585 m
+- **THEN** the sky fills the view behind the level, with no black past it
+
+### Requirement: A camera's rig holds its last clip
+A camera's rig, a model of joints alone, SHALL hold the pose its last clip reached once none plays, what hangs on it staying there, rather than looping its first shot under them.
+
+#### Scenario: Level 201's pod lands
+- **WHEN** the pod's last shot has played and the scene lets the player go
+- **THEN** he is let go where the pod stands on the dock, with no jump onto his path

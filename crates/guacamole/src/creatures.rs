@@ -256,13 +256,14 @@ fn placed(a: &guacamole::script_engine::Actor) -> Transform {
 /// The clips `c`'s scripts play on it out of its palette, each with the time
 /// it poses at, oldest first: a clip past one Havok block the block playing
 /// and the time within it (openspec AS.78: an animator camera's rig, whose
-/// node the shot's view hangs on, rides its clip to its end).
+/// node the shot's view hangs on, rides its clip to its end), which with no
+/// clip on it holds the last one's pose (AS.141, [`guacamole::hands::held`]).
 fn playing_clips<'c>(
     c: &'c DrawnCreature,
     world: &ScriptWorld,
 ) -> Vec<(&'c guac_ir::clip::Clip, f64)> {
     match &c.palette {
-        Some(p) => guacamole::hands::playing(world, c.actor, p),
+        Some(p) => guacamole::hands::posing(world, c.actor, p),
         None => Vec::new(),
     }
 }
