@@ -259,18 +259,15 @@ fn a_fall_lands_without_turning_into_a_skid() {
     let floor = c.pivot.y;
     c.pivot.y += 12.0;
     c.footing.supported = false;
-    c.walk.velocity = Vec3::new(0.0, -10.0, 5.0);
+    c.walk.velocity = Vec3::new(0.0, -60.0, 5.0);
+    let physics = Physics {
+        air_deceleration: 0.0,
+        ..Physics::CHOMPY
+    };
     let mut fastest = 0.0_f32;
     for _ in 0..240 {
         let before = c.pivot;
-        c.step_steered(
-            &world,
-            &Physics::CHOMPY,
-            Aim::Still,
-            DT,
-            &[],
-            Surfaces::NONE,
-        );
+        c.step_steered(&world, &physics, Aim::Still, DT, &[], Surfaces::NONE);
         let across = Vec3::new(c.pivot.x - before.x, 0.0, c.pivot.z - before.z).length();
         fastest = fastest.max(across / DT / FOOT);
     }
