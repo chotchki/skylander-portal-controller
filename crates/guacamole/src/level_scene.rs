@@ -214,10 +214,10 @@ pub fn start_point(placements: &Placements) -> Result<Vec3, LevelError> {
     let named = |name: &str| placements.actors.iter().find(|a| a.name == name);
     // A story level whose intro walks him in hands him over at its path's
     // end (openspec AS.113, AS.126).
-    if let Some(p) = named(INTRO_PATH).and_then(last_waypoint) {
-        if p.is_finite() {
-            return Ok(p);
-        }
+    if let Some(p) = named(INTRO_PATH).and_then(last_waypoint)
+        && p.is_finite()
+    {
+        return Ok(p);
     }
     // A PvP arena's first player starts at the place its initializer names
     // (openspec AS.126).
