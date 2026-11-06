@@ -3779,25 +3779,27 @@ pub const THIRD_ISLAND_WAY: [&str; 44] = [
 /// remove of the set does: a dev entry leaving fights behind that a walk
 /// would have fought (openspec AS.76). How many went.
 pub fn take_off_sets(vm: &mut Vm, world: &mut ScriptWorld, names: &[&str]) -> usize {
+    let program = vm.program().clone();
     let mut off = 0;
     for name in names {
-        let Some(elements) = vm.program().global_named(name).and_then(|g| {
-            let set = vm.global_peek(g)?;
-            vm.set(set).map(<[Value]>::to_vec)
-        }) else {
+        let Some(g) = program.global_named(name) else {
             continue;
         };
-        for v in elements {
-            let h = match v {
-                Value::Entity(h) => Some(h),
-                Value::Object(o) => world.handles().get(&o).copied(),
-                _ => None,
+        let Some((_, guac_script::Global::Set { members, .. })) =
+            program.globals.get(g as usize)
+        else {
+            continue;
+        };
+        for member in members {
+            let guac_script::Elem::Object(o) = member else {
+                continue;
             };
-            if let Some(h) = h {
-                off += usize::from(vm.remove(h));
-                if let Some(a) = world.actors.get_mut(&h) {
-                    a.removed = true;
-                }
+            let Some(&h) = world.handles().get(o) else {
+                continue;
+            };
+            off += usize::from(vm.remove(h));
+            if let Some(a) = world.actors.get_mut(&h) {
+                a.removed = true;
             }
         }
     }
