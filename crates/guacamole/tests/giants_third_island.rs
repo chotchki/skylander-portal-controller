@@ -581,6 +581,7 @@ fn level_214s_third_island_is_walked_to_its_end() {
     // The third ship part, its outro to the screen.
     let part = run.placed("Ship_part_3").0;
     let mut scenes = Vec::new();
+    let mut outro_sizes = std::collections::BTreeMap::new();
     for k in 0..8000u32 {
         let cs = cutscene_name(&run);
         let taking = cs.is_none() && !gone(&run, part) && k % 20 < 2;
@@ -591,12 +592,25 @@ fn level_214s_third_island_is_walked_to_its_end() {
             assert_eq!(n, 7, "its seven scenes");
             scenes.push(i);
         }
+        for h in run.world.clones() {
+            let name = run.world.name(h).to_owned();
+            if ["Flynn_NPC", "Cali_NPC"].contains(&name.as_str())
+                && let Some(a) = run.world.actor(h).filter(|a| !a.removed)
+            {
+                outro_sizes.insert(name, a.scale[0]);
+            }
+        }
         if run.world.sequence.completion.is_some() {
             break;
         }
     }
-    println!("the outro's scenes {scenes:?} to step {}", run.steps);
+    println!(
+        "the outro's scenes {scenes:?} to step {}; sizes {outro_sizes:?}",
+        run.steps
+    );
     assert_eq!(scenes, (0..7).collect::<Vec<_>>());
+    assert_eq!(outro_sizes.get("Flynn_NPC"), Some(&130.0));
+    assert_eq!(outro_sizes.get("Cali_NPC"), Some(&110.0));
     let results = run
         .world
         .sequence
@@ -640,6 +654,99 @@ fn level_214s_third_island_is_walked_to_its_end() {
         started.elapsed().as_secs_f64(),
         load()
     );
+}
+
+/// openspec AS.115: △ pressed while he hangs from the final island's rigs:
+/// the cutscene skips as the original's own skip does and he's handed back,
+/// off the rig with his body in the seam, on the third island's ship and
+/// walking. A kid skipping mid-flight never leaves him hung.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_final_island_skipped_while_hung_hands_him_back() {
+    println!("load at start: {}", load());
+    let (mut run, mut stops) = by_the_second_part(setup());
+    take_the_second_part(&mut run, &mut stops);
+    let fin = run.placement("214_Final_Island_IGC");
+    let mut hung_when_pressed = 0;
+    for k in 0..6000u32 {
+        fly(&mut run, k);
+        let hung = run.hero().hung;
+        let press = hung && k % 20 == 10;
+        hung_when_pressed += u32::from(press);
+        still(&mut run, &mut stops, [false, false, false, press]);
+        if run.vm.removed(fin) {
+            break;
+        }
+    }
+    assert!(run.vm.removed(fin), "the cutscene ends");
+    assert!(hung_when_pressed > 0, "△ pressed while he hung");
+    assert!(!run.hero().hung, "handed back");
+    // Flynn's pan, skipped as well.
+    for k in 0..900u32 {
+        let cs = cutscene_name(&run);
+        still(
+            &mut run,
+            &mut stops,
+            [false, false, false, cs.is_some() && k % 20 == 10],
+        );
+    }
+    let at = run.hero().pivot;
+    println!("△ {hung_when_pressed} times hung; at {at}");
+    assert!(
+        at.distance(Vec3::new(583.02, -16.89, 465.05)) < 2.0,
+        "on the third island's ship: {at}"
+    );
+    assert!(run.bench.bodies.contains_key(&run.hero), "his body back");
+    for _ in 0..240 {
+        step(&mut run, &mut stops, Stick::new(0.0, 1.0), [false; 4]);
+    }
+    let moved = run.hero().pivot.distance(at);
+    println!("walked {moved:.2} m; load at end: {}", load());
+    assert!(moved > 1.0, "{moved}");
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
+/// openspec AS.114: the sail's MoneyBags clone at his 120 %, nothing
+/// stopped: `214_RFP_MoneyBags` is an object the cutscene adds, so nothing
+/// but the size script's listing gives it.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_sail_shows_moneybags_at_his_size() {
+    println!("load at start: {}", load());
+    let (mut run, _found) = run_on_level(Mode::Play, LEVEL_214, setup());
+    let mut stops = Vec::new();
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    stops.extend(skip_214s_intro(&mut run).iter().map(ToString::to_string));
+    for _ in 0..60 {
+        still(&mut run, &mut stops, [false; 4]);
+    }
+    let (_, at) = run.placed("Ship_part_1(1)");
+    run.put(at, 0.0);
+    let sail = run.placement("214_Recover_First_Part_IGC");
+    let mut sizes = std::collections::BTreeMap::new();
+    for k in 0..6000u32 {
+        still(&mut run, &mut stops, [k % 20 < 2, false, false, false]);
+        for h in run.world.clones() {
+            if run.world.name(h) == "214_RFP_MoneyBags"
+                && let Some(a) = run.world.actor(h).filter(|a| !a.removed)
+            {
+                sizes.insert(h, a.scale[0]);
+            }
+        }
+        if run.vm.removed(sail) {
+            break;
+        }
+    }
+    println!("sizes {sizes:?}; load at end: {}", load());
+    assert!(run.vm.removed(sail), "the sail ends");
+    assert!(
+        !sizes.is_empty() && sizes.values().all(|s| (*s - 120.0).abs() < 1e-3),
+        "MoneyBags at 120 %: {sizes:?}"
+    );
+    assert!(stops.is_empty(), "{stops:#?}");
 }
 
 /// openspec AS.113: level 201's intro played to its end, the landing pod's
@@ -712,12 +819,15 @@ fn level_201s_intro_plays_to_its_end_and_walks_him_in() {
 fn level_201s_intro_hands_him_over_and_he_walks() {
     println!("load at start: {}", load());
     let (mut run, _) = run_on_level(Mode::Play, "level_201", setup());
+    let end = Vec3::new(158.99, 12.70, -159.0);
+    let start = run.hero().pivot;
+    println!("his start {start}");
+    assert!(start.distance(end) < 2.0, "where its path ends: {start}");
     let mut stops = Vec::new();
     for _ in 0..2 {
         stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
     }
     run.join().unwrap_or_else(|h| panic!("{h}"));
-    let end = Vec3::new(158.99, 12.70, -159.0);
     let mut played = false;
     for k in 0..3000u32 {
         still(

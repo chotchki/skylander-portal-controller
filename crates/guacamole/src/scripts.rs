@@ -2607,7 +2607,10 @@ pub const THIRD_ISLAND: Encounter = Encounter {
 /// which the hub's definition sets off its `complete` flags), only the
 /// landing on a load; either way its last scene hands the players over at
 /// `CS_Hub_Intro_Final_Positions`' first two waypoints, which every stage
-/// holds alike ([`crate::level_scene::HUB_START_PLACEMENT`]).
+/// holds alike ([`crate::level_scene::HUB_START_PLACEMENT`]). Level 201's
+/// (openspec AS.113) lands him by pod and walks him along his path, its
+/// five scenes held for the hero and skipped by △ alike
+/// ([`crate::level_scene::INTRO_PATH`]).
 pub const INTROS: [(&str, &str); 6] = [
     ("level_214_tutotial_2", "214_Intro_IGC"),
     ("level_201", "_Level_201_Intro_CS"),
@@ -3082,12 +3085,11 @@ pub fn is_level_definition(file: &str) -> bool {
 }
 
 /// The cutscene actors' sizes (openspec AS.114), by script, every tick:
-/// `NPC_Size_120.ai` (level 214's MoneyBags and outro Auric, 120 %, each
-/// with its shadow on) and `NPC_Size_130.ai` (its outro Persephone, 130 %)
-/// are templates a cutscene adds as an object of its own, so no definer
-/// names them as [`cutscene_objects`]' do. Every placement running them on
-/// the disc's levels a cutscene clones is a template, so this lists their
-/// clones alone.
+/// `NPC_Size_120.ai` (level 214's MoneyBags, 120 %, its shadow on) and
+/// `NPC_Size_130.ai` are templates' scripts a cutscene adds as an object of
+/// its own, so no definer names them as [`cutscene_objects`]' do. Every
+/// placement running them on the disc's levels a cutscene clones is a
+/// template, so this lists their clones alone.
 pub const NPC_SIZES: [&str; 2] = ["NPC_Size_120.ai", "NPC_Size_130.ai"];
 
 /// The macro a cutscene object is defined by: its `object def` and
@@ -3785,8 +3787,7 @@ pub fn take_off_sets(vm: &mut Vm, world: &mut ScriptWorld, names: &[&str]) -> us
         let Some(g) = program.global_named(name) else {
             continue;
         };
-        let Some((_, guac_script::Global::Set { members, .. })) =
-            program.globals.get(g as usize)
+        let Some((_, guac_script::Global::Set { members, .. })) = program.globals.get(g as usize)
         else {
             continue;
         };
