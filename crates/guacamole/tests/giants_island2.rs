@@ -221,6 +221,74 @@ const FOES_004B: [&str; 10] = [
     "Enemy_Elf_Lobber(0)",
 ];
 
+fn line_hash(line: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    line.hash(&mut h);
+    h.finish()
+}
+
+/// openspec AS.131: Setup_004B's lobber's enemy intro puts his card up for
+/// the step's 2.2 s, and the post-cutscene hint comes after the scene, a hint
+/// the notifications' queue takes off after its 4 s stay. By their timing
+/// and a hash of each line, read at run time; no line is in the tree.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_lobbers_intro_puts_up_his_card_then_the_hint() {
+    use guacamole::announcements::{enemy_card, hints};
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, mut stops) = joined_214();
+    run.put(Vec3::new(BY_004B_TRIGGER[0] - 4.0, -22.3, 722.4), 90.0);
+    assert_eq!(walk(&mut run, &mut stops, &[BY_004B_TRIGGER]), Ok(()));
+    let (mut card, mut hint) = (None::<(u32, u32, u64)>, None::<(u32, u32, u64)>);
+    let mut cutscene_over = None;
+    for _ in 0..2400 {
+        step(&mut run, &mut stops, [false; 4]);
+        let now = run.steps;
+        let seen = |at: &mut Option<(u32, u32, u64)>, text: Option<String>| {
+            if let Some(text) = text {
+                let h = line_hash(&text);
+                match at {
+                    Some((_, end, _)) => *end = now,
+                    None => *at = Some((now, now, h)),
+                }
+            }
+        };
+        seen(
+            &mut card,
+            enemy_card(&run.vm, &run.world).and_then(|c| c.text),
+        );
+        seen(
+            &mut hint,
+            hints(&run.vm, &run.world)
+                .into_iter()
+                .next()
+                .and_then(|h| h.text),
+        );
+        if card.is_some() && cutscene_over.is_none() && cutscene_name(&run).is_none() {
+            cutscene_over = Some(now);
+        }
+        if hint.is_some_and(|(_, end, _)| end + 60 < now) {
+            break;
+        }
+    }
+    let (card, hint) = (card.expect("his card"), hint.expect("the hint"));
+    println!(
+        "the card {card:?} ({:.2} s), the scene over at {cutscene_over:?}, the hint {hint:?} ({:.2} s); {:.1} s; load at end: {}",
+        (card.1 - card.0) as f32 / 60.0,
+        (hint.1 - hint.0) as f32 / 60.0,
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    let seconds = |(from, to, _): (u32, u32, u64)| (to - from) as f32 / 60.0;
+    assert!((seconds(card) - 2.2).abs() < 0.1, "{card:?}");
+    assert!(hint.0 >= cutscene_over.unwrap(), "after the scene");
+    assert!((seconds(hint) - 4.0).abs() < 0.6, "{hint:?}");
+    assert_ne!(card.2, hint.2, "two lines");
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
 /// openspec AS.97: level 214's Setup_004B, from its trigger to its end, on
 /// the stick. Set down past the second locked door; the trigger queues the
 /// lobber down off his ledge and plays his enemy intro; the closets let out

@@ -225,3 +225,11 @@ A hero walking into an interior's box on any level SHALL be taken to its room: t
 #### Scenario: Level 214's house by the yard
 - **WHEN** the hero walks into the house the Mabu ran into, takes its room's bomb and walks into its exit's box
 - **THEN** he stands outside its door with the bomb still over him, which opens the wall before the second key
+
+### Requirement: An enemy's intro names him
+When a level's scripts play an enemy's intro with a name card, the TV SHALL show the enemy's name for as long as the scripts hold it, in the TV's own look, and any hint the scripts queue for after the scene for its stay. Neither SHALL show under a portal alert.
+
+#### Scenario: The lobber's intro
+- **WHEN** the hero sets off Setup_004B on level 214
+- **THEN** the lobber's name shows over his intro for 2.2 s, and once the scene ends the hint shows for about 4 s
+

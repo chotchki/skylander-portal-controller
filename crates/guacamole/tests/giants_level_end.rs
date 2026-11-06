@@ -1367,6 +1367,54 @@ fn chapter_1s_outro_plays_to_its_end() {
 /// A host profile's id for the save system's session (`giants_saves`').
 const HOST: &str = "01LEVELENDHOST";
 
+/// openspec AU.31: a level that took longer than its dare misses it: the
+/// clock put past the target before the level's end, the time dare reads
+/// that time and open, no longer the 0:00 that met it however long it took.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn chapter_1s_time_dare_is_missed_past_its_target() {
+    use guacamole::level_end::{ObjectiveKind, Status};
+    let setup = Setup {
+        interface: true,
+        sounds: true,
+        ..Setup::default()
+    };
+    let (mut run, _found) = run_on_with(Mode::Play, setup);
+    run.world.sequence.shows_completion = true;
+    let mut session = guacamole::story_save::Session::new(Some(HOST.into()));
+    let mut stops = Vec::new();
+    for _ in 0..2 {
+        stops.extend(saved_step(&mut run, &mut session));
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    for _ in 0..120 {
+        stops.extend(saved_step(&mut run, &mut session));
+    }
+    let g = run.vm.program().global_named("level control data").unwrap();
+    let data = run.vm.global_peek(g).unwrap();
+    let stats = run.vm.field(data, "level stat tracking").unwrap();
+    assert!(run.vm.set_field(stats, "playtime", Value::Float(36_000.0)));
+    run.put(Vec3::from_array(END.0), END.1);
+    let (ender, _) = run.placed("Temp_Level_Ender");
+    assert!(run.world.wake(ender));
+    let woken_at = run.steps;
+    while run.world.sequence.completion.is_none() {
+        assert!(run.steps < woken_at + 2400, "no completion screen");
+        stops.extend(saved_step(&mut run, &mut session));
+    }
+    let r = run.world.sequence.completion.clone().unwrap();
+    let r = r.results.expect("the objectives screen's results");
+    let time = r
+        .objectives
+        .iter()
+        .find(|o| o.kind == ObjectiveKind::Time)
+        .expect("the time dare");
+    println!("the time dare at {} s of {}", time.count, time.total);
+    assert!(time.count >= 36_000.0, "{}", time.count);
+    assert_eq!(time.status, Status::Open);
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
 /// One step in play mode, then the save system's requests answered as the
 /// TV's system answers them, each write handed back done at once: the
 /// completion screen's collection reads the save (its chests, its stars).
@@ -1425,8 +1473,14 @@ fn chapter_1s_end_sequences_its_completion_screen_movie_and_level() {
         stops.extend(saved_step(&mut run, &mut session));
     }
     run.join().unwrap_or_else(|h| panic!("{h}"));
+    // The level's play: the steps from the join on no cutscene ran on, what
+    // the time dare's clock adds up (openspec AU.31).
+    let mut played = 0u32;
+    let cutscene_state = run.vm.program().global_named("Cutscene State").unwrap();
+    let in_play = |run: &Run| run.vm.global_peek(cutscene_state) == Some(Value::Int(0));
     for _ in 0..120 {
         stops.extend(saved_step(&mut run, &mut session));
+        played += u32::from(in_play(&run));
     }
     run.put(Vec3::from_array(END.0), END.1);
     let (ender, _) = run.placed("Temp_Level_Ender");
@@ -1443,6 +1497,7 @@ fn chapter_1s_end_sequences_its_completion_screen_movie_and_level() {
             run.steps
         );
         stops.extend(saved_step(&mut run, &mut session));
+        played += u32::from(in_play(&run));
         if recorded_at.is_none() && level_end::recorded(&run.vm).is_some() {
             recorded_at = Some(run.steps);
         }
@@ -1493,6 +1548,18 @@ fn chapter_1s_end_sequences_its_completion_screen_movie_and_level() {
         .find(|o| o.kind == ObjectiveKind::Time)
         .expect("the time dare");
     assert!(time.total > 0.0, "a target time");
+    // The dare's clock the level's play, none of its cutscenes' (openspec
+    // AU.31; it read 0 before the game systems' tick added it).
+    println!(
+        "the time dare's time {} s of {} steps in play, {} steps run",
+        time.count, played, run.steps
+    );
+    assert!(played > 120, "a level's play: {played} steps");
+    assert!(
+        (time.count - played as f32 / 60.0).abs() < 0.1,
+        "the dare's {} s against {played} steps in play",
+        time.count
+    );
     // The story's first undone (the end anchor skips the level to the
     // outro), its second done by the level's end itself; the time dare
     // done (the run's clock barely moved), the no-lives-lost dare done.

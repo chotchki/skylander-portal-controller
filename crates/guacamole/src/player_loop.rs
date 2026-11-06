@@ -120,9 +120,10 @@ impl Places {
 /// one broken shut down, the bounce and a delayed effect) and the actor
 /// remover's (debris gone 1.5 s on), and a level's end-of-level sequencing
 /// once its `Game - Level End` adds it (openspec AS.53: the fanfare, the
-/// completion screen's stream, the movie, the level switch). The set's
-/// other update macros (the encounter's camera pans, the HUD's) stay off.
-pub const UPDATES: [&str; 9] = [
+/// completion screen's stream, the movie, the level switch), and the
+/// notifications' queue (openspec AS.131: a hint's stay). The set's other
+/// update macros (the encounter's camera pans, the HUD's) stay off.
+pub const UPDATES: [&str; 10] = [
     "Destructibles - System Update",
     "Destructibles - Bounce",
     "Destructibles - Delayed Particle",
@@ -132,6 +133,7 @@ pub const UPDATES: [&str; 9] = [
     "Dialogue Internal - Update Dialogue Wrapper",
     "Gesture - Update",
     "System - End of Level Sequencing",
+    "Notification - Manage Queue",
 ];
 
 /// The portal manager's tick as the loop runs it: each stretch's positions

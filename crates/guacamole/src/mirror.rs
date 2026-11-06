@@ -168,6 +168,8 @@ pub struct TvSnapshot {
     /// The header's band over a held level (openspec AS.88): its title,
     /// detail and share done; none while none is drawn.
     pub held_band: Option<crate::held_band::HeldBandReport>,
+    /// The words the scripts put up over a level (openspec AS.131).
+    pub announce: Option<crate::announce::AnnounceReport>,
 }
 
 /// Shared with the routes: the last snapshot, skips asked for over HTTP,
@@ -1325,6 +1327,7 @@ fn mirror_tv(
             Option<Res<guacamole::scripts::ScriptWorld>>,
             Option<Res<crate::completion::CompletionReport>>,
             Option<Res<crate::held_band::HeldBandReport>>,
+            Option<Res<crate::announce::AnnounceReport>>,
         ),
     ),
 ) {
@@ -1385,6 +1388,7 @@ fn mirror_tv(
             .filter(|c| !c.results.is_empty())
             .cloned(),
         held_band: story.3.as_deref().filter(|b| b.title.is_some()).cloned(),
+        announce: story.4.as_deref().cloned(),
     };
     let mut shared = mirror.0.lock().unwrap_or_else(|e| e.into_inner());
     if *shared != snapshot {

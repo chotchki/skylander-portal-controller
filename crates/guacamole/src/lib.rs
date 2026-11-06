@@ -8,6 +8,7 @@
 //! `main.rs`.
 
 pub mod anchors;
+pub mod announcements;
 pub mod census;
 pub mod character;
 pub mod creature_models;

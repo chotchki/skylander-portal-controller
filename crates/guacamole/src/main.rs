@@ -8,6 +8,7 @@
 //! and driver worker on its own tokio thread.
 
 mod alert;
+mod announce;
 mod arrival;
 mod button_prompt;
 mod card_motion;
@@ -547,6 +548,7 @@ fn run_tv(
             completion::CompletionPlugin,
             // AS.88: the header's band over a held level.
             held_band::HeldBandPlugin,
+            announce::AnnouncePlugin,
             slow_frames::SlowFramesPlugin,
             // AG.290: the world's button prompts by the walking pad.
             button_prompt::ButtonPromptPlugin,
