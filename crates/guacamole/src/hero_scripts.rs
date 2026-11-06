@@ -488,9 +488,11 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     if source.chapter_1() {
         script_world.walk_first_fight(level);
         script_world.walk_goats(level);
-    } else if let Some(e) = scripts::encounter(source.level()) {
-        let (walked, templates) = script_world.walk_encounter(level, e);
-        info!(level = %source.level(), walked, templates, "the level's first encounter walks");
+    } else {
+        for e in scripts::encounters(source.level()) {
+            let (walked, templates) = script_world.walk_encounter(level, e);
+            info!(level = %source.level(), walked, templates, "the level's encounter walks");
+        }
     }
     for p in source.files.placed.iter().filter(|p| p.obj.unit == level) {
         if let Some(model) = &p.model

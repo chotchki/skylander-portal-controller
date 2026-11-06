@@ -156,6 +156,10 @@ pub struct Hero {
     /// and before its slowing: the speed his locomotion mixes his gaits by
     /// (AG.11, [`crate::locomotion`]).
     pub gait_speed: f32,
+    /// Hung on something a script hangs him from (openspec AS.115: a
+    /// scene's rig or ship, a turret): his controller takes no step, and his
+    /// place is what he hangs from's.
+    pub hung: bool,
     /// The steps one and two frames before the next.
     steps: [f32; 2],
     solid: HavokSolid,
@@ -181,6 +185,7 @@ impl Hero {
             held_off: false,
             probe_held: false,
             gait_speed: 0.0,
+            hung: false,
             steps: [NOMINAL_STEP; 2],
             solid,
             tuning,
@@ -458,10 +463,15 @@ impl Hero {
         surfaces: &Surfaces,
     ) {
         let [before, _] = self.steps;
+        self.steps = [step, before];
         self.probe_held = false;
+        if self.hung {
+            self.gait_speed = 0.0;
+            self.velocity = Vec3::ZERO;
+            return;
+        }
         self.gait_speed = self.walk.velocity.length();
         self.engine(seam, step, exclude, surfaces);
-        self.steps = [step, before];
     }
 
     /// One game frame of an actor no stick drives (openspec AH.18, AH design

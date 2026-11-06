@@ -94,10 +94,8 @@ pub fn skinned_models(
     let mut out: Vec<(String, Model)> = Vec::new();
     // A level's first encounter past chapter 1's (openspec AS.54): its
     // placements and the templates it clones, by name in its own file.
-    let encounter = crate::scripts::encounter(&placements.level)
-        .map(|e| e.placements.iter().chain(e.clones.iter()))
-        .into_iter()
-        .flatten();
+    let encounter = crate::scripts::encounters(&placements.level)
+        .flat_map(|e| e.placements.iter().chain(e.clones.iter()));
     let first_fight = guac_extract::levels::FIRST_RUN
         .contains(&placements.level.as_str())
         .then_some(FIRST_FIGHT.iter())

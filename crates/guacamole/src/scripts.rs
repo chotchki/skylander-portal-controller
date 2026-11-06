@@ -483,6 +483,11 @@ pub struct ScriptWorld {
     /// ([`add_scripted`]).
     pub revived: Vec<(Handle, Obj)>,
     time_scale: f32,
+    /// Whether a target's `collision` against the ray caster picks along
+    /// it: while a turret's game runs (openspec AS.76, [`crate::turret`]).
+    pub(crate) ray_picks: bool,
+    /// The active turret's base, which its own shots pass.
+    pub(crate) turret_base: Option<Handle>,
     load_level: Value,
     /// The levels the scripts asked for, as each step took them.
     pub requests: Vec<Value>,
@@ -854,6 +859,8 @@ impl ScriptWorld {
             scripted: Vec::new(),
             revived: Vec::new(),
             time_scale: FULL_SPEED,
+            ray_picks: false,
+            turret_base: None,
             load_level: Value::Null,
             requests: Vec::new(),
             levels: None,
@@ -2554,6 +2561,28 @@ pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
     steered: &["TreeRex_special_homing_actor"],
 }];
 
+/// Level 214's third island (openspec AS.76), a table of its own beside
+/// [`ENCOUNTERS`] ([`encounters`]).
+pub const THIRD_ISLAND: Encounter = Encounter {
+    level: "level_214_tutotial_2",
+    placements: &[
+        "Setup_006_Controller",
+        "Enemy_TreeRex(4)",
+        "Enemy_TreeRex(5)",
+        "Enemy_Elf_Lobber(4)",
+        "Enemy_Elf_Lobber(6)",
+        "Enemy_Elf_Lobber(7)",
+        "Enemy_Elf_Near_S2(5)",
+        "Enemy_Elf_Near_S2(6)",
+        "Enemy_Elf_Near_S2(7)",
+        "Enemy_Elf_Near_S2(8)",
+        "Enemy_Chompy_Spawner(4)",
+        "Setup_007_Controller",
+    ],
+    clones: &["Enemy_Elf_Lobber(10)"],
+    steered: &[],
+};
+
 /// The intros the TV runs past chapter 1's, by level and placement
 /// (openspec AS.47, AS.60). Level 214's (`214_Intro_IGC`, awake from the
 /// load), held for the hero ([`hold_intro`]) and played to its end since
@@ -2703,6 +2732,15 @@ pub fn release_intro(vm: &mut Vm, world: &mut ScriptWorld) -> bool {
 /// runs one past chapter 1's.
 pub fn encounter(level: &str) -> Option<&'static Encounter> {
     ENCOUNTERS.iter().find(|e| e.level == level)
+}
+
+/// Every encounter the TV runs on the level whose archive is `level`.
+pub fn encounters(level: &str) -> impl Iterator<Item = &'static Encounter> {
+    let level = level.to_owned();
+    ENCOUNTERS
+        .iter()
+        .chain(std::iter::once(&THIRD_ISLAND))
+        .filter(move |e| e.level == level)
 }
 
 /// The loot on the way to the first fight (openspec AH.20, design decision
@@ -3592,23 +3630,25 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
     } else {
         smash_config(mode)
     };
-    if let (Some(e), Whitelist::Only { placements, .. }) = (encounter(name), &mut config.whitelist)
-    {
-        placements.extend(
-            e.placements
-                .iter()
-                .chain(e.clones)
-                .chain(e.steered)
-                .map(|s| (*s).to_owned()),
-        );
+    if let Whitelist::Only { placements, .. } = &mut config.whitelist {
+        for e in encounters(name) {
+            placements.extend(
+                e.placements
+                    .iter()
+                    .chain(e.clones)
+                    .chain(e.steered)
+                    .map(|s| (*s).to_owned()),
+            );
+        }
     }
     // Its intro (openspec AS.47).
     if let (Some(i), Whitelist::Only { placements, .. }) = (intro(name), &mut config.whitelist) {
         placements.push(i.to_owned());
     }
-    // What takes the way on past its fights (openspec AS.59).
+    // What takes the way on past its fights (openspec AS.59, AS.76).
     if let Whitelist::Only { placements, .. } = &mut config.whitelist {
         placements.extend(passages(name).iter().map(|s| (*s).to_owned()));
+        placements.extend(third_island_way(name).iter().map(|s| (*s).to_owned()));
     }
     // A hub stage's sky, its stage's controller, its background and its
     // way on (openspec AS.46, AS.47, AU.6); the filter cells Cali's dialogue
@@ -3643,6 +3683,30 @@ pub const PASSAGES: [(&str, &[&str]); 1] = [(
         "214_Recover_First_Part_IGC",
     ],
 )];
+
+/// What takes the way on through level 214's third island (openspec
+/// AS.76), by placement name, listed and never walked.
+pub const THIRD_ISLAND_WAY: [&str; 10] = [
+    "Ship_part_2(1)",
+    "214_Final_Island_IGC",
+    "Flynn_Island_3",
+    "Cali_Island_3",
+    "Door_Persephone's_Room(3)",
+    "DrawBridge",
+    "Persephone_214",
+    "Ship_part_3",
+    "214_Outro_IGC",
+    "Spike_Gate_Wooden_Template(2)",
+];
+
+/// The placements [`THIRD_ISLAND_WAY`] lists for the level whose archive
+/// is `level`.
+pub fn third_island_way(level: &str) -> &'static [&'static str] {
+    match level {
+        "level_214_tutotial_2" => &THIRD_ISLAND_WAY,
+        _ => &[],
+    }
+}
 
 /// The placements [`PASSAGES`] lists for the level whose archive is
 /// `level`.

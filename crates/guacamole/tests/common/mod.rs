@@ -248,6 +248,13 @@ impl Bench {
     /// and each awake creature's, as the seam holds solids (0.05 m in).
     pub fn place_bodies(&mut self, world: &ScriptWorld) {
         for (h, hero) in &self.heroes {
+            // Hung he has no body, as the TV's (AS.115).
+            if hero.hung {
+                if let Some(b) = self.bodies.remove(h) {
+                    self.world.remove_body(b);
+                }
+                continue;
+            }
             let id = *self.bodies.entry(*h).or_insert(HERO_BODY);
             let solid = *hero.solid();
             self.world
@@ -1088,8 +1095,10 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     if chapter_1 {
         world.walk_first_fight(LEVEL);
         world.walk_goats(LEVEL);
-    } else if let Some(e) = scripts::encounter(level) {
-        world.walk_encounter(LEVEL, e);
+    } else {
+        for e in scripts::encounters(level) {
+            world.walk_encounter(LEVEL, e);
+        }
     }
     let (meshes, start) = level_bodies(&igzs[LEVEL as usize], level);
     let parry = ParryWorld::new(&meshes).expect("the level's collision");

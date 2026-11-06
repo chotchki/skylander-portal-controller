@@ -139,6 +139,40 @@ pub fn answer(
     Ok(true)
 }
 
+/// What a cutscene's menu scene waits on (openspec AS.76): a scene made by
+/// `Cutscene - Add Scene - Show Menu` (Persephone's upgrade menu on level
+/// 214) keeps a `menu info` among its scene's extra data and advances once
+/// that info's `pick branch` is set, by its menu's buttons or, backed out
+/// of, to the branch its definition names (`no branch title`). The info and
+/// that branch, while a scene waits so.
+pub fn cutscene_menu(vm: &Vm) -> Option<(Value, Value)> {
+    let cs = global(vm, "cs control data")?;
+    let scene = field(vm, field(vm, cs, "current cs")?, "cur scene data")?;
+    let extra = field(vm, scene, "extra data")?;
+    let info = vm
+        .set(extra)?
+        .iter()
+        .copied()
+        .find(|i| field(vm, *i, "pick branch") == Some(Value::Null))?;
+    let def = field(vm, field(vm, scene, "scene definition")?, "extra def data")?;
+    let branch = vm
+        .set(def)?
+        .iter()
+        .find_map(|d| field(vm, *d, "no branch title"))?;
+    Some((info, branch))
+}
+
+/// A cutscene's menu backed out of as a player backing out would, the step
+/// its scene waits on it: the TV draws no such menu and buys no upgrade
+/// (AK), so the scene goes on by its own back-out branch (stand-in ledger:
+/// `cutscene-menu`). Whether one was.
+pub fn back_out_of_menu(vm: &mut Vm) -> bool {
+    match cutscene_menu(vm) {
+        Some((info, branch)) => vm.set_reference(info, "pick branch", branch),
+        None => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;

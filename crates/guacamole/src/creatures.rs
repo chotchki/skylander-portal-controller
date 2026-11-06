@@ -106,7 +106,11 @@ pub(crate) fn place_bodies(
         if !body.exclude.contains(&id) {
             body.exclude.push(id);
         }
-        wanted.push((h, solid, pose));
+        // Hung on a rig or in a turret he has no body (openspec AS.115):
+        // what a turret fires starts inside him.
+        if !body.hero.hung {
+            wanted.push((h, solid, pose));
+        }
     }
     if let Some(world) = world.as_deref() {
         wanted.extend(world.creature_bodies());

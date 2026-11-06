@@ -34,6 +34,7 @@ pub mod scripts;
 mod sound_members;
 pub mod sounds;
 pub mod story_save;
+pub mod turret;
 #[cfg(feature = "unmodel")]
 pub mod unmodel;
 pub mod viewport;

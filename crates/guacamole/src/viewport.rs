@@ -151,6 +151,19 @@ impl Viewport {
         ))
     }
 
+    /// The point 1 m in front of the eye that lands at `(x, y)` on the
+    /// screen, pixels from its top-left corner: [`Viewport::project`] turned
+    /// about, so the line from the eye through it holds everything that
+    /// lands there (openspec AS.76: a turret's pointer picking what it's
+    /// on).
+    pub fn unproject(&self, x: f32, y: f32) -> Vec3 {
+        let tan_y = (self.fov_y().to_radians() * 0.5).tan();
+        let tan_x = tan_y * SCREEN_WIDTH / SCREEN_HEIGHT;
+        let nx = x / SCREEN_WIDTH * 2.0 - 1.0;
+        let ny = 1.0 - y / SCREEN_HEIGHT * 2.0;
+        self.eye + self.rotation() * Vec3::new(nx * tan_x, ny * tan_y, -1.0)
+    }
+
     /// Whether `p` is on screen (the module docs' hypothesis): in front of
     /// the eye, within the far clip along the view, inside the picture.
     pub fn shows(&self, p: Vec3) -> bool {
@@ -177,6 +190,12 @@ pub fn fov_y(fov: f32) -> f32 {
 pub fn pack_screen(x: f32, y: f32) -> u32 {
     let half = |v: f32| (v * 16.0).trunc().clamp(-32768.0, 32767.0) as i16 as u16;
     u32::from(half(x)) << 16 | u32::from(half(y))
+}
+
+/// [`pack_screen`] undone: x and y, pixels.
+pub fn unpack_screen(s: u32) -> (f32, f32) {
+    let half = |v: u32| f32::from(v as u16 as i16) / 16.0;
+    (half(s >> 16), half(s))
 }
 
 /// The view the camera's scripts left, as the TV draws it: their eye and

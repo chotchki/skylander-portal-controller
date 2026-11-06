@@ -480,6 +480,10 @@ fn clean_up_fader(vm: &mut Vm, host: &mut WorldHost<'_, '_>, gs: PlacementId) ->
 /// step's requests (the module docs). A skip that stops is the error; it
 /// isn't tried again for that cutscene.
 pub fn step(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<Option<Ended>, Halt> {
+    if crate::prompt::back_out_of_menu(vm) {
+        info!("a cutscene's menu the TV doesn't draw: backed out of");
+    }
+    crate::turret::step(vm, host.world);
     if let Some((current, name, time)) = cutscene(vm)
         && time > 0.0
         && (SKIPPED_CUTSCENES.contains(&name.as_str()) || host.world.skip_cutscenes)

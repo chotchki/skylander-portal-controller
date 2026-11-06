@@ -234,6 +234,14 @@ impl ScriptWorld {
         self.interface.as_ref()
     }
 
+    /// One frame of the model's layout: what a sprite's `screen location`
+    /// reads off (openspec AS.76).
+    pub fn lay_out_interface(&mut self) {
+        if let Some(k) = &mut self.interface {
+            k.model_mut().lay_out(&guac_interface::NoWorld);
+        }
+    }
+
     /// Whether `at` goes to the model (the module docs).
     pub(crate) fn to_interface(&self, at: &Access) -> bool {
         let Some(k) = &self.interface else {

@@ -952,6 +952,18 @@ impl ScriptWorld {
         {
             return Some(angles_of(q));
         }
+        // Hung from another actor, it turns with it (openspec AS.76: a
+        // turret's body on its base, whose facing `New Turret - Find Target`
+        // holds its targets' headings against).
+        if depth > 0
+            && !a.removed
+            && let Some(owner) = self.actor_of(Some(a.attach)).filter(|&o| o != h)
+            && let Some(g) = self.angles_within(owner, engine, depth - 1)
+        {
+            let mut turned = a.angles;
+            turned.facing += g.facing;
+            return Some(turned);
+        }
         Some(a.angles)
     }
 
@@ -1590,6 +1602,24 @@ impl ScriptWorld {
                     // stand-in ledger: `ray-touch`). The fight's headless
                     // runs keep no props in the seam, and AG.90's fix walked
                     // a lob there onto this check.
+                    //
+                    // A turret's pointer (`New Turret - Find Target`, openspec
+                    // AS.76) asks it of its targets along the ray through
+                    // where it points: yes for one the ray passes within its
+                    // reach of (stand-in ledger: `turret-pick`).
+                    if self.ray_picks {
+                        let p = self.position(a, engine).ok_or(HostFault::Nothing)?;
+                        let (start, end) = (self.ray.start, self.ray.end);
+                        let d = end - start;
+                        let t = ((p - start).dot(d) / d.length_squared().max(1e-6)).clamp(0.0, 1.0);
+                        let off = (start + d * t).distance(p);
+                        return Ok(Value::Int(i32::from(off <= crate::turret::PICK_REACH)));
+                    }
+                    return Ok(Value::Int(0));
+                }
+                // A turret's shot leaves from inside its base's sphere, its
+                // barrel's nodes unposed (stand-in ledger: `turret-pick`).
+                if self.turret_base == Some(a) && self.name(b).starts_with(crate::turret::SHOTS) {
                     return Ok(Value::Int(0));
                 }
                 Value::Int(i32::from(self.touching(a, b, engine)?))
@@ -1906,6 +1936,14 @@ impl ScriptWorld {
                     a.attach = v;
                     a.hung = Vec3::ZERO;
                 }
+                // A hero hung has his controller off until he's let go
+                // (openspec AS.115); another's ground carries nobody here.
+                let carried = v != Value::Null
+                    && !matches!(self.object(Some(v)), Some(Object::Facet(_, Facet::Ground)));
+                if let Some(hero) = engine.hero(h) {
+                    hero.hung = carried;
+                    hero.walk.velocity = Vec3::ZERO;
+                }
             }
             // On a clip (openspec AH.49): what a sequence started from it
             // starts with. The layered bit takes a write only on a clip,
@@ -2042,8 +2080,15 @@ impl ScriptWorld {
                 }
             }
             // A point put where it lands on the screen (its lock type the
-            // screen's): no camera script does, so it's not modelled.
-            Member::ConverterScreen => return Err(HostFault::Unmodelled),
+            // screen's; openspec AS.76: a turret's pointer): on the line
+            // from the eye through that place.
+            Member::ConverterScreen => {
+                let Value::Screen(s) = v else {
+                    return Err(HostFault::Nothing);
+                };
+                let (x, y) = crate::viewport::unpack_screen(s);
+                self.view.converter = self.view.unproject(x, y);
+            }
             // The rest are read-only: a write goes nowhere, as the
             // original's member with no setter.
             _ => {}
@@ -3122,6 +3167,17 @@ impl ScriptWorld {
                 a.position = p;
                 if let Some(q) = turn {
                     a.angles = angles_of(q);
+                }
+            }
+            // A hung hero's body goes with his node (openspec AS.115), his
+            // place being his controller's.
+            if let Some(p) = at
+                && let Some(hero) = engine.hero(h)
+                && hero.hung
+            {
+                hero.pivot = p;
+                if let Some(q) = turn {
+                    hero.facing = angles_of(q).facing;
                 }
             }
         }
