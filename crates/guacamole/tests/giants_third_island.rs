@@ -98,6 +98,9 @@ fn behaviour(run: &Run, h: Handle) -> Option<String> {
 /// attack mashed once within 4.5 m, facing it. The step each went.
 fn fight(run: &mut Run, stops: &mut Vec<String>, foes: &[Handle], steps: u32) -> Vec<Option<u32>> {
     let mut beaten: Vec<Option<u32>> = vec![None; foes.len()];
+    // Pressed into a post with the foe past it: round it, as a hand would
+    // (the gate posts by Setup_006's trigger stop him dead on some runs).
+    let (mut from, mut stuck, mut round) = (run.hero().pivot, 0u32, None);
     for k in 0..steps {
         for (b, h) in beaten.iter_mut().zip(foes) {
             if b.is_none() && gone(run, *h) {
@@ -114,8 +117,24 @@ fn fight(run: &mut Run, stops: &mut Vec<String>, foes: &[Handle], steps: u32) ->
             .filter_map(|h| run.world.actor(*h).map(|a| a.position))
             .min_by(|a, b| a.distance(me).total_cmp(&b.distance(me)))
             .expect("one standing");
-        let s = stick_to(run, [near.x, near.z]);
-        let mash = (near.x - me.x).hypot(near.z - me.z) <= 4.5 && k % 4 < 2;
+        let far = (near.x - me.x).hypot(near.z - me.z);
+        stuck = if far > 4.5 && me.distance(from) < 0.01 {
+            stuck + 1
+        } else {
+            0
+        };
+        from = me;
+        if stuck > 30 {
+            let side = if (k / 120) % 2 == 0 { 1.0 } else { -1.0 };
+            let across = Vec3::new(near.z - me.z, 0.0, me.x - near.x).normalize_or_zero();
+            round = Some((k + 45, me + across * 6.0 * side));
+            stuck = 0;
+        }
+        let s = match round {
+            Some((until, to)) if k < until => stick_to(run, [to.x, to.z]),
+            _ => stick_to(run, [near.x, near.z]),
+        };
+        let mash = far <= 4.5 && k % 4 < 2;
         step(run, stops, s, [mash, false, false, false]);
     }
     beaten
