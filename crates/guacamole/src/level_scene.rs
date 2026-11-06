@@ -2458,6 +2458,27 @@ mod tests {
         assert_eq!(start_point(&p), Err(LevelError::NoStart));
     }
 
+    /// openspec AS.113, AS.126: a story level whose intro walks the first
+    /// player in (level 201's `p1 WP's`) starts at that path's end, where
+    /// the intro hands him over, its stray `InitializeLevel.ai` template
+    /// (level 201's stands in the air 268 m from anything) passed over.
+    #[test]
+    fn a_story_level_whose_intro_walks_him_in_starts_at_its_paths_end() {
+        let mut stray = placement("Temp_Initalize", None);
+        stray.script = Some("C:/tfb/InitializeLevel.ai".into());
+        stray.position = [-1.0, 4.0, 109.0];
+        let mut p = Placements {
+            identity: identity(),
+            level: "level_201".into(),
+            actors: vec![stray, placement(INTRO_PATH, Some(0))],
+            waypoints: vec![vec![waypoint([1.0, 2.0, 3.0]), waypoint([4.0, 5.0, 6.0])]],
+        };
+        assert_eq!(start_point(&p), Ok(Vec3::new(4.0, 5.0, 6.0)));
+        // No such path: as before.
+        p.actors[1].name = "Sheep_1".into();
+        assert_eq!(start_point(&p), Ok(Vec3::new(-1.0, 4.0, 109.0)));
+    }
+
     /// AS.13: a level without chapter 1's start placement starts at its
     /// first placement running `InitializeLevel.ai`, by the script's file
     /// name whatever its folder: at that one's first waypoint, or its own

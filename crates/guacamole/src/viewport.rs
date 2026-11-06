@@ -255,6 +255,26 @@ mod tests {
         assert!(fov_y(0.0).abs() < 1e-6);
     }
 
+    /// openspec AS.76: a place on the screen unprojects to a point that
+    /// projects back to it, 1 m ahead along the view's depth, and a packed
+    /// screen place unpacks to what was packed, negatives too.
+    #[test]
+    fn a_screen_place_goes_back_through_the_view() {
+        let mut v = Viewport {
+            eye: Vec3::new(3.0, 4.0, 5.0),
+            ..Viewport::default()
+        };
+        v.angles.facing = 30.0;
+        v.angles.tilt = -10.0;
+        for (x, y) in [(640.0, 360.0), (10.0, 700.0), (1200.0, 20.0)] {
+            let p = v.unproject(x, y);
+            let (px, py) = v.project(p).unwrap();
+            assert!((px - x).abs() < 0.01 && (py - y).abs() < 0.01, "{px} {py}");
+            assert!(((p - v.eye).dot(v.forward()) - 1.0).abs() < 1e-4);
+        }
+        assert_eq!(unpack_screen(pack_screen(-100.0, 37.5)), (-100.0, 37.5));
+    }
+
     /// What it looks at lands in the screen's middle; a point above it
     /// higher up, one to its right further right; one behind it nowhere.
     #[test]

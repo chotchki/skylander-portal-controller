@@ -3081,6 +3081,15 @@ pub fn is_level_definition(file: &str) -> bool {
     })
 }
 
+/// The cutscene actors' sizes (openspec AS.114), by script, every tick:
+/// `NPC_Size_120.ai` (level 214's MoneyBags and outro Auric, 120 %, each
+/// with its shadow on) and `NPC_Size_130.ai` (its outro Persephone, 130 %)
+/// are templates a cutscene adds as an object of its own, so no definer
+/// names them as [`cutscene_objects`]' do. Every placement running them on
+/// the disc's levels a cutscene clones is a template, so this lists their
+/// clones alone.
+pub const NPC_SIZES: [&str; 2] = ["NPC_Size_120.ai", "NPC_Size_130.ai"];
+
 /// The macro a cutscene object is defined by: its `object def` and
 /// `actor` are what [`cutscene_objects`] reads.
 const DEFINE_OBJECT: &str = "Cutscene - Define Object";
@@ -3337,6 +3346,8 @@ pub fn smash_config(mode: Mode) -> Config {
         scripts.extend(LEVEL_UI.iter().map(|s| (*s).to_owned()));
         // Eon's lines (openspec AR.29).
         scripts.extend(LINE_SCRIPTS.iter().map(|s| (*s).to_owned()));
+        // The cutscene actors' sizes (openspec AS.114).
+        scripts.extend(NPC_SIZES.iter().map(|s| (*s).to_owned()));
         first_tick.extend(START_PROPS_FIRST_TICK.iter().map(|s| (*s).to_owned()));
     }
     c
@@ -3763,6 +3774,35 @@ pub const THIRD_ISLAND_WAY: [&str; 44] = [
     "Chain_Link",
     "214_Outro_Ship_Part",
 ];
+
+/// Each placement of the file-variable sets `names` taken off, as a script's
+/// remove of the set does: a dev entry leaving fights behind that a walk
+/// would have fought (openspec AS.76). How many went.
+pub fn take_off_sets(vm: &mut Vm, world: &mut ScriptWorld, names: &[&str]) -> usize {
+    let mut off = 0;
+    for name in names {
+        let Some(elements) = vm.program().global_named(name).and_then(|g| {
+            let set = vm.global_peek(g)?;
+            vm.set(set).map(<[Value]>::to_vec)
+        }) else {
+            continue;
+        };
+        for v in elements {
+            let h = match v {
+                Value::Entity(h) => Some(h),
+                Value::Object(o) => world.handles().get(&o).copied(),
+                _ => None,
+            };
+            if let Some(h) = h {
+                off += usize::from(vm.remove(h));
+                if let Some(a) = world.actors.get_mut(&h) {
+                    a.removed = true;
+                }
+            }
+        }
+    }
+    off
+}
 
 /// The placements [`THIRD_ISLAND_WAY`] lists for the level whose archive
 /// is `level`.
@@ -5849,6 +5889,55 @@ mod tests {
                 "{script}"
             );
         }
+    }
+
+    /// openspec AS.76: level 214's third island on its listing alone: its
+    /// two fights' controllers and foes by name and walked, its lobber's
+    /// clones walked, the way on's placements listed and never walked, its
+    /// turrets' update macros in the game systems' tick; AS.114: the
+    /// cutscene actors' sizes by script on every level's.
+    #[test]
+    fn level_214s_third_island_is_listed() {
+        let files = Files::default();
+        let l214 = level_config(Mode::Play, &files, 4, "level_214_tutotial_2");
+        let other = level_config(Mode::Play, &files, 4, "level_212");
+        for name in THIRD_ISLAND.placements.iter().chain(&THIRD_ISLAND_WAY) {
+            assert!(l214.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+            assert!(!other.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+        }
+        for name in THIRD_ISLAND.clones {
+            assert!(l214.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+        }
+        assert!(encounters("level_214_tutotial_2").any(|e| *e == THIRD_ISLAND));
+        assert_eq!(encounters("level_214_tutotial_2").count(), 2);
+        assert_eq!(encounters("level_212").count(), 0);
+        for way in THIRD_ISLAND_WAY {
+            assert!(!THIRD_ISLAND.placements.contains(&way), "{way} walked");
+        }
+        for macro_name in [
+            "New Turret - Wait for Turret Activation",
+            "New Turret - Update Turret",
+        ] {
+            assert!(crate::player_loop::UPDATES.contains(&macro_name));
+        }
+        for script in NPC_SIZES {
+            let path = format!("C:/tfb/Content/Levels/Includes/NPC_IGC/{script}");
+            assert_eq!(
+                other.whitelist.listing("a clone", &path),
+                guac_script::Listed::Every,
+                "{script}"
+            );
+        }
+    }
+
+    /// openspec AS.113: level 201's intro is on the TV's listing, held for
+    /// the hero as 214's is.
+    #[test]
+    fn level_201s_intro_is_run() {
+        assert_eq!(intro("level_201"), Some("_Level_201_Intro_CS"));
+        let files = Files::default();
+        let l201 = level_config(Mode::Play, &files, 4, "level_201");
+        assert!(l201.whitelist.lists("_Level_201_Intro_CS", "C:/x/Any.ai"));
     }
 
     /// openspec AS.96: the interiors' scripts on every level's listing,

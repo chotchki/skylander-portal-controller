@@ -23,6 +23,7 @@ mod driver;
 mod emitters;
 mod extraction;
 mod held_band;
+mod turret_hud;
 mod hero;
 mod hero_scripts;
 mod hud;
@@ -547,6 +548,8 @@ fn run_tv(
             completion::CompletionPlugin,
             // AS.88: the header's band over a held level.
             held_band::HeldBandPlugin,
+            // AS.76: a turret's pointer over the level.
+            turret_hud::TurretHudPlugin,
             slow_frames::SlowFramesPlugin,
             // AG.290: the world's button prompts by the walking pad.
             button_prompt::ButtonPromptPlugin,

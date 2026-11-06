@@ -7,6 +7,7 @@
 //! Target` turns into the ray it picks a target along.
 
 use guac_script::{Value, Vm};
+use serde::Serialize;
 
 use crate::scripts::ScriptWorld;
 
@@ -38,4 +39,95 @@ pub fn step(vm: &Vm, world: &mut ScriptWorld) {
     if world.ray_picks {
         world.lay_out_interface();
     }
+}
+
+/// What a TV shows of the active turret: its state, where its first
+/// player's pointer is, where it wants calibrating and the line that asks.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TurretView {
+    /// `turret state`'s macro.
+    pub state: String,
+    /// The pointer's offset from the screen's middle, interface units.
+    pub pointer: Option<[f32; 2]>,
+    /// Calibrating, the circle's offset; its line's English when it reads.
+    pub calibration: Option<[f32; 2]>,
+    pub message: Option<String>,
+    /// The padlocks hit so far (`DBG_Lockhit`, the turret's objective).
+    pub hits: i32,
+    /// Where each of its targets standing stands from the screen's middle,
+    /// as the pointer's offset would be on it.
+    pub targets: Vec<[f32; 2]>,
+}
+
+/// A pointer's offset that lands on `(x, y)` on the screen: `New Turret -
+/// Find Target` reads its graphic's place 10 pixels left of where the ray
+/// goes through, at 1.5 pixels a unit.
+pub fn pointer_at(x: f32, y: f32) -> [f32; 2] {
+    let (w, h) = (crate::viewport::SCREEN_WIDTH, crate::viewport::SCREEN_HEIGHT);
+    [(x - w / 2.0 + 10.0) / 1.5, (y - h / 2.0) / 1.5]
+}
+
+/// The first player's data of `turret`.
+fn player(vm: &Vm, turret: Value) -> Option<Value> {
+    vm.field(turret, "p1 player data").map(|p| vm.value(p))
+}
+
+/// [`TurretView`] of the turret running now.
+pub fn view(vm: &Vm, world: &ScriptWorld) -> Option<TurretView> {
+    let turret = active(vm)?;
+    let state = match vm.field(turret, "turret state").map(|s| vm.value(s)) {
+        Some(Value::Object(o)) => vm.program().name_of(o).unwrap_or_default().to_owned(),
+        _ => String::new(),
+    };
+    let number = |v: Value, name: &str| vm.field(v, name).and_then(|f| vm.value(f).as_f32());
+    let pointer = player(vm, turret)
+        .and_then(|p| vm.field(p, "wii pointer data"))
+        .map(|p| vm.value(p))
+        .filter(|p| *p != Value::Null)
+        .and_then(|p| Some([number(p, "xrem")?, number(p, "yrem")?]));
+    let calibrating = vm
+        .field(turret, "calibration data")
+        .map(|c| vm.value(c))
+        .filter(|c| *c != Value::Null);
+    let calibration = calibrating
+        .and_then(|c| vm.field(c, "calibration location"))
+        .and_then(|l| match vm.value(l) {
+            Value::Screen(s) => {
+                let (x, y) = crate::viewport::unpack_screen(s);
+                Some([x, y])
+            }
+            _ => None,
+        });
+    let message = calibrating
+        .and_then(|c| vm.field(c, "remembered calibration message"))
+        .and_then(|m| world.text_of(vm.value(m)));
+    let hits = vm
+        .program()
+        .global_named("DBG_Lockhit")
+        .and_then(|g| vm.global_peek(g))
+        .and_then(|v| vm.value(v).as_i32())
+        .unwrap_or(0);
+    let targets = vm
+        .field(turret, "turret targets")
+        .and_then(|t| vm.set(t).map(<[Value]>::to_vec))
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|v| match v {
+            Value::Entity(h) => Some(h),
+            Value::Object(o) => world.handles().get(&o).copied(),
+            _ => None,
+        })
+        .filter(|h| !world.removed(*h))
+        .filter_map(|h| world.actor(h).map(|a| a.position))
+        .filter_map(|p| world.viewport().project(p))
+        .map(|(x, y)| pointer_at(x, y))
+        .collect();
+    Some(TurretView {
+        state,
+        pointer,
+        calibration,
+        message,
+        hits,
+        targets,
+    })
 }

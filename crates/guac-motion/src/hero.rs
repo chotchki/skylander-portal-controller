@@ -625,3 +625,28 @@ impl Hero {
         };
     }
 }
+
+#[cfg(test)]
+mod hung {
+    use super::*;
+    use crate::parry::ParryWorld;
+    use crate::tuning::eruptor_solid;
+
+    /// openspec AS.115: hung, his controller takes no step: his place holds
+    /// whatever walk he's left with, and let go it moves him again.
+    #[test]
+    fn a_hung_hero_takes_no_step_until_hes_let_go() {
+        let seam = ParryWorld::new(&[]).unwrap();
+        let pivot = Vec3::new(1.0, 2.0, 3.0);
+        let mut hero = Hero::new(eruptor_solid(), Tuning::ERUPTOR, pivot, 0.0);
+        hero.walk.velocity = Vec3::X * 20.0;
+        hero.hung = true;
+        hero.step_engine(&seam, 1.0 / 60.0, &[], Surfaces::NONE);
+        assert_eq!(hero.pivot, pivot);
+        assert_eq!(hero.velocity, Vec3::ZERO);
+        assert_eq!(hero.gait_speed, 0.0);
+        hero.hung = false;
+        hero.step_engine(&seam, 1.0 / 60.0, &[], Surfaces::NONE);
+        assert_ne!(hero.pivot, pivot);
+    }
+}
