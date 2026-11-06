@@ -3085,12 +3085,13 @@ pub fn is_level_definition(file: &str) -> bool {
 }
 
 /// The cutscene actors' sizes (openspec AS.114), by script, every tick:
-/// `NPC_Size_120.ai` (level 214's MoneyBags, 120 %, its shadow on) and
-/// `NPC_Size_130.ai` are templates' scripts a cutscene adds as an object of
-/// its own, so no definer names them as [`cutscene_objects`]' do. Every
-/// placement running them on the disc's levels a cutscene clones is a
-/// template, so this lists their clones alone.
-pub const NPC_SIZES: [&str; 2] = ["NPC_Size_120.ai", "NPC_Size_130.ai"];
+/// `NPC_Size_120.ai` (level 214's MoneyBags, 120 %, its shadow on) is a
+/// template's script a cutscene adds as an object of its own, so no definer
+/// names it as [`cutscene_objects`]' do (`NPC_Size_130.ai` needs no line:
+/// every level holding it holds Flynn's definer). Every placement running
+/// it on the disc's levels a cutscene clones is a template, so this lists
+/// their clones alone.
+pub const NPC_SIZES: [&str; 1] = ["NPC_Size_120.ai"];
 
 /// The macro a cutscene object is defined by: its `object def` and
 /// `actor` are what [`cutscene_objects`] reads.

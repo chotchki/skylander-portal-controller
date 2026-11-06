@@ -582,6 +582,7 @@ fn level_214s_third_island_is_walked_to_its_end() {
     let part = run.placed("Ship_part_3").0;
     let mut scenes = Vec::new();
     let mut outro_sizes = std::collections::BTreeMap::new();
+    let mut part_runs = false;
     for k in 0..8000u32 {
         let cs = cutscene_name(&run);
         let taking = cs.is_none() && !gone(&run, part) && k % 20 < 2;
@@ -594,6 +595,8 @@ fn level_214s_third_island_is_walked_to_its_end() {
         }
         for h in run.world.clones() {
             let name = run.world.name(h).to_owned();
+            // `IGC_Music_Player.ai`'s STARTUP clones its body.
+            part_runs |= name == "214_RP_Static_Parts";
             if ["Flynn_NPC", "Cali_NPC"].contains(&name.as_str())
                 && let Some(a) = run.world.actor(h).filter(|a| !a.removed)
             {
@@ -611,6 +614,7 @@ fn level_214s_third_island_is_walked_to_its_end() {
     assert_eq!(scenes, (0..7).collect::<Vec<_>>());
     assert_eq!(outro_sizes.get("Flynn_NPC"), Some(&130.0));
     assert_eq!(outro_sizes.get("Cali_NPC"), Some(&110.0));
+    assert!(part_runs, "the outro's ship part made its body");
     let results = run
         .world
         .sequence
