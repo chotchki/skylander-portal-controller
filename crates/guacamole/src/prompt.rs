@@ -21,6 +21,20 @@
 //! modal of its own and runs the answer, in place of the menu system drawing
 //! the confirmation prompt's page and taking its accept press (the host
 //! feeds no menu buttons, and the interface draws nothing yet).
+//!
+//! The hub's people offer screens the TV doesn't have (openspec AU.34), and
+//! none may leave the player stuck under it:
+//!
+//! - **A cutscene's menu** (`Cutscene - Add Scene - Show Menu`: Persephone's
+//!   upgrade pre-menu, the disc's only one on the hub and level 214) holds
+//!   its scene until a button picks a branch, and the menu system the TV
+//!   doesn't run never puts its page up. [`back_out`] picks the branch the
+//!   menu's back button picks the step it waits (stand-in ledger: `cs-menu`).
+//! - **A screen a yes brings up** (Auric's and Hatterson's stores, Brock's
+//!   arenas, Cali's challenges: [`SCREENS`]): each queues a screen on the
+//!   update macros the TV doesn't run, and every dialogue refuses its talk
+//!   button from then on, Flynn's way on among them. The macro is answered
+//!   with nothing shown ([`answer_screen`]; stand-in ledger: `hub-screens`).
 
 use guac_script::{Halt, Value, Vm};
 
@@ -37,6 +51,14 @@ pub const YES: i32 = 2;
 pub const YES_ACTION: &str = "Dialogue - Yes Action";
 pub const NO_ACTION: &str = "Dialogue - No Action";
 pub const CLOSE_MENU: &str = "Menu - Close Menu Immediately";
+
+/// The macros a yes on the hub calls for a screen the TV doesn't have:
+/// answered by the host ([`answer_screen`]).
+pub const SCREENS: [&str; 3] = [
+    "System - Store UI - Show Menu",
+    "Arena UI - Show Arena Select UI",
+    "System - Show Heroic Challenge Select UI",
+];
 
 /// The game systems' script, in whose name the answer runs.
 const GAME_SYSTEMS: &str = "GameSystems.ai";
@@ -137,6 +159,45 @@ pub fn answer(
         host,
     )?;
     Ok(true)
+}
+
+/// Whether `name` is one of [`SCREENS`], which the host answers with
+/// nothing shown (the module docs; stand-in ledger: `hub-screens`).
+pub fn answer_screen(name: &str) -> bool {
+    SCREENS.iter().any(|s| name.eq_ignore_ascii_case(s))
+}
+
+/// The menu step the current cutscene's scene waits on, unpicked: its
+/// `CS Seq Feature - Menus Info` and the branch its menu backs out to, off
+/// the scene's definition.
+fn menu_waiting(vm: &Vm) -> Option<(Value, Value)> {
+    let scene = global(vm, "cs control data")
+        .and_then(|c| field(vm, c, "current cs"))
+        .and_then(|c| field(vm, c, "cur scene data"))
+        .filter(|s| *s != Value::Null)?;
+    let elements = |set: Value| -> Vec<Value> {
+        vm.set(set)
+            .map(|e| e.iter().map(|v| vm.value(*v)).collect())
+            .unwrap_or_default()
+    };
+    let info = elements(field(vm, scene, "extra data")?)
+        .into_iter()
+        .find(|e| field(vm, *e, "pick branch") == Some(Value::Null))?;
+    let def = field(vm, scene, "scene definition").and_then(|d| field(vm, d, "extra def data"))?;
+    let no = elements(def)
+        .into_iter()
+        .find_map(|e| field(vm, e, "no branch title"))?;
+    Some((info, no))
+}
+
+/// A cutscene's menu backed out of (the module docs): the branch its back
+/// button picks picked, the step it holds up advancing on it as on a press.
+/// Whether one waited.
+pub fn back_out(vm: &mut Vm) -> bool {
+    let Some((info, no)) = menu_waiting(vm) else {
+        return false;
+    };
+    vm.set_reference(info, "pick branch", no)
 }
 
 #[cfg(test)]
@@ -366,6 +427,230 @@ mod tests {
             .and_then(|v| v.as_i32())
             .unwrap_or(0);
         (before, answered, after, status, closed)
+    }
+
+    /// A file in the original's shape, our ops: `cs control data`'s current
+    /// cutscene's scene holding a menu's info in its `extra data` (unpicked,
+    /// or picked when `picked`, past a structure that has no pick) and its
+    /// definition's `extra def data` the menu's definition with a
+    /// `no branch title`; with `menu` false the scene holds neither.
+    fn scene(menu: bool, picked: bool) -> Arc<Program> {
+        let mut b = IgzBuilder::new();
+        {
+            let mut w = Writer::new(&mut b);
+            let w = &mut w;
+            let other_ty = w.op(Class::DefineStructure, "Something Else");
+            let other_n = w.variable("n", "ValueInfo", Some("IntMeasurement"));
+            let info_ty = w.op(Class::DefineStructure, "CS Seq Feature - Menus Info");
+            let pick = w.variable("pick branch", "ScriptReference", None);
+            let menu_ty = w.op(Class::DefineStructure, "CS Seq Feature - Menus Def");
+            let no_title = w.variable("no branch title", "ScriptReference", None);
+            let def_ty = w.op(Class::DefineStructure, "CS - Scene Def");
+            let extra_def = w.variable("extra def data", "ScriptSet", None);
+            w.refer(extra_def, 0x24, menu_ty);
+            let held_menu = w.variable("the menu", "ScriptStructure", None);
+            w.refer(held_menu, 0x24, menu_ty);
+            let scene_ty = w.op(Class::DefineStructure, "CS - Scene Data");
+            let extra = w.variable("extra data", "ScriptSet", None);
+            w.refer(extra, 0x24, info_ty);
+            let definition = w.variable("scene definition", "ScriptStructure", None);
+            w.refer(definition, 0x24, def_ty);
+            let held_info = w.variable("the info", "ScriptStructure", None);
+            w.refer(held_info, 0x24, info_ty);
+            let held_other = w.variable("the other", "ScriptStructure", None);
+            w.refer(held_other, 0x24, other_ty);
+            let cs_ty = w.op(Class::DefineStructure, "CS - Data");
+            let cur = w.variable("cur scene data", "ScriptStructure", None);
+            w.refer(cur, 0x24, scene_ty);
+            let control_ty = w.op(Class::DefineStructure, "CS - Control Data");
+            let current = w.variable("current cs", "ScriptStructure", None);
+            w.refer(current, 0x24, cs_ty);
+            let control = w.b.object(0, "ScriptStructure", 0x20);
+            w.text(control, 0x08, "cs control data");
+            w.refer(control, 0x1C, control_ty);
+            let no = w.op(Class::DefineMacro, "CS_Branch_Dialogue_No");
+            let yes = w.op(Class::DefineMacro, "CS_Branch_Dialogue_Yes");
+            let at = [El::Local(control), El::Local(current), El::Local(cur)];
+            let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+            let (start, _) = w.open(Class::StartUp, "STARTUP");
+            let join = |w: &mut Writer<'_>, set: &[El<'_>], element: &[El<'_>]| {
+                let set = w.stack(StackClass::Set, set);
+                let element = w.group(element, None);
+                let o = w.op(Class::ChangeMembership, "set [set]||to");
+                w.refer(o, 0x1C, set);
+                w.word(o, 0x20, 0);
+                w.refer(o, 0x24, element);
+                w.push(o);
+            };
+            let refer = |w: &mut Writer<'_>, lhs: &[El<'_>], to| {
+                let l = w.value(lhs);
+                let r = w.reference(&[El::Local(to)], None);
+                let o = w.op(Class::SetReference, "setref||=");
+                w.refer(o, 0x1C, l);
+                w.refer(o, 0x20, r);
+                w.push(o);
+            };
+            let zero = w.int(0);
+            w.set(
+                &[
+                    at[0],
+                    at[1],
+                    at[2],
+                    El::Local(held_other),
+                    El::Local(other_n),
+                ],
+                zero,
+            );
+            join(
+                w,
+                &[at[0], at[1], at[2], El::Local(extra)],
+                &[at[0], at[1], at[2], El::Local(held_other)],
+            );
+            if menu {
+                let def = [at[0], at[1], at[2], El::Local(definition)];
+                let the_menu = [def[0], def[1], def[2], def[3], El::Local(held_menu)];
+                let the_info = [at[0], at[1], at[2], El::Local(held_info)];
+                refer(
+                    w,
+                    &[
+                        the_menu[0],
+                        the_menu[1],
+                        the_menu[2],
+                        the_menu[3],
+                        the_menu[4],
+                        El::Local(no_title),
+                    ],
+                    no,
+                );
+                join(
+                    w,
+                    &[def[0], def[1], def[2], def[3], El::Local(extra_def)],
+                    &the_menu,
+                );
+                if picked {
+                    refer(
+                        w,
+                        &[
+                            the_info[0],
+                            the_info[1],
+                            the_info[2],
+                            the_info[3],
+                            El::Local(pick),
+                        ],
+                        yes,
+                    );
+                }
+                join(w, &[at[0], at[1], at[2], El::Local(extra)], &the_info);
+            }
+            w.end_block(start);
+            let (shut, _) = w.open(Class::ShutDown, "SHUTDOWN");
+            w.end_block(shut);
+            let (section, _) = w.open(Class::MacroSection, "MACROS");
+            for def in [no, yes] {
+                let p = w.open_macro(def, &[]);
+                w.end_block(p);
+            }
+            w.end_block(section);
+            let (types, _) = w.open(Class::StructureSection, "STRUCTURES");
+            for (ty, vars) in [
+                (other_ty, vec![other_n]),
+                (info_ty, vec![pick]),
+                (menu_ty, vec![no_title]),
+                (def_ty, vec![extra_def, held_menu]),
+                (scene_ty, vec![extra, definition, held_info, held_other]),
+                (cs_ty, vec![cur]),
+                (control_ty, vec![current]),
+            ] {
+                let p = w.push(ty);
+                for v in vars {
+                    w.push(v);
+                }
+                w.end_block(p);
+            }
+            w.end_block(types);
+            w.end_block(pre);
+            w.end(PATH);
+        }
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = Unit {
+            name: "global",
+            role: Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        Arc::new(Program::link(&[unit]).unwrap())
+    }
+
+    /// [`scene`]'s STARTUP run, then [`back_out`] twice: what each said and
+    /// the name of the branch picked after.
+    fn backed_out(menu: bool, picked: bool) -> (bool, bool, Option<String>) {
+        let program = scene(menu, picked);
+        let files = Files {
+            placed: vec![Placed::named(FILE, "Macros_GameSystems", Some(PATH), 4)],
+            ..Files::default()
+        };
+        let handles = HashMap::from([(FILE, HANDLE)]);
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let mut config = Config::new(Mode::Strict);
+        config.whitelist = Whitelist::only(&[], &["GameSystems.ai"]);
+        let sid = program.script_named("GameSystems.ai").unwrap();
+        let mut vm = Vm::new(program, config);
+        vm.add_at(HANDLE, "Macros_GameSystems", sid, FILE);
+        let mut generator = Generator::seeded(1);
+        let mut engine = NoEngine;
+        let mut spawn = headless_spawner(0x1000);
+        let mut host = WorldHost {
+            world: &mut world,
+            engine: &mut engine,
+            generator: &mut generator,
+            spawn: &mut spawn,
+        };
+        vm.step(&mut host).unwrap();
+        let first = back_out(&mut vm);
+        let second = back_out(&mut vm);
+        let scene = global(&vm, "cs control data")
+            .and_then(|c| field(&vm, c, "current cs"))
+            .and_then(|c| field(&vm, c, "cur scene data"))
+            .unwrap();
+        let info = field(&vm, scene, "the info").unwrap();
+        let picked = field(&vm, info, "pick branch").and_then(|v| match v {
+            Value::Object(o) => vm
+                .program()
+                .def_of(o)
+                .map(|d| vm.program().defs[d as usize].display.clone()),
+            _ => None,
+        });
+        (first, second, picked)
+    }
+
+    /// openspec AU.34: a cutscene's menu waiting on a pick backs out to the
+    /// branch its scene's definition names, once; one already picked keeps
+    /// its pick, and a scene holding no menu is left alone.
+    #[test]
+    fn a_cutscenes_menu_backs_out_to_its_branch_once() {
+        assert_eq!(
+            backed_out(true, false),
+            (true, false, Some("CS_Branch_Dialogue_No".to_owned()))
+        );
+        assert_eq!(
+            backed_out(true, true),
+            (false, false, Some("CS_Branch_Dialogue_Yes".to_owned()))
+        );
+        assert_eq!(backed_out(false, false), (false, false, None));
+    }
+
+    /// openspec AU.34: the screens a yes on the hub calls for are answered
+    /// (any case, as the VM's names come), and nothing else is.
+    #[test]
+    fn the_hubs_screens_are_answered_and_nothing_else() {
+        for s in SCREENS {
+            assert!(answer_screen(s), "{s}");
+            assert!(answer_screen(&s.to_ascii_lowercase()), "{s}");
+        }
+        assert!(!answer_screen("Portal - Warp Player to Location"));
+        assert!(!answer_screen(""));
     }
 
     /// openspec AU.6: a dialogue UI at its asking state with its status

@@ -2528,7 +2528,11 @@ impl ScriptWorld {
         let done = if toward {
             guac_motion::steer::reached(at, point, distance)
         } else {
-            guac_motion::steer::cleared(at, point, distance)
+            // From itself it goes on along its facing, never clear of its own
+            // place (openspec AU.34: the hub's fairies; a reading, `steer::input`
+            // already heading a mover at its point along its facing).
+            self.actor_of(Some(target)) != Some(mover)
+                && guac_motion::steer::cleared(at, point, distance)
         };
         if self
             .actors
@@ -3173,12 +3177,23 @@ impl ScriptWorld {
     /// Each creature's controller body, where it stands: what the embedder
     /// keeps in the seam so a hero's sweep meets it. (Named for the
     /// creatures since AG.27's walkers, the playable characters on their
-    /// own scripts: AH.168.)
+    /// own scripts: AH.168.) And the solid of each of the people whose
+    /// script runs, unwalked (openspec AU.34), while it interacts with
+    /// actors, as a prop's is ([`crate::props::actor_body`]): the hero
+    /// stops on Flynn as he stops on a Chompy.
     pub fn creature_bodies(&self) -> Vec<(Handle, HavokSolid, Pose)> {
+        let people = self.people();
         let mut out: Vec<(Handle, HavokSolid, Pose)> = self
             .actors
             .iter()
-            .filter(|(_, a)| a.walker.is_some() && !a.removed && a.active)
+            .filter(|(h, a)| {
+                !a.removed
+                    && a.active
+                    && (a.walker.is_some()
+                        || (a.solid.interacts_with_actors != 0
+                            && !self.inert.contains(h)
+                            && people.binary_search(h).is_ok()))
+            })
             .filter_map(|(&h, a)| {
                 let solid = a.havok()?;
                 let rotation = Quat::from_rotation_y(a.angles.facing.to_radians());
@@ -4928,6 +4943,92 @@ mod fight_tests {
 
     fn wrap(d: f32) -> f32 {
         (d + 180.0).rem_euclid(360.0) - 180.0
+    }
+
+    /// openspec AU.34: a `move from` itself is never done: the mover goes
+    /// on along its facing at its speed (the hub's fairies, whose scripts
+    /// turn it each tick), where one from another point stops once clear.
+    #[test]
+    fn a_move_from_itself_goes_on_along_its_facing() {
+        let mut e = pit();
+        let mut w = world();
+        let mut fairy = chompy(Vec3::new(0.0, 3.0, 0.0), 90.0);
+        fairy.walker = None;
+        w.actors.insert(C1, fairy);
+        let from = |target: Value, beyond: i32| {
+            op(
+                Class::MoveFrom,
+                C1,
+                vec![
+                    ("_indexRHS", None),
+                    ("_LHS", Some(target)),
+                    ("_RHS", Some(Value::Int(beyond))),
+                    ("_NP", None),
+                ],
+                Vec::new(),
+            )
+        };
+        for _ in 0..60 {
+            assert_eq!(
+                ask(&mut w, &mut e, &from(Value::Entity(C1), 0)),
+                Answer::Done
+            );
+            w.advance(STEP, &mut e);
+        }
+        let a = w.actor(C1).unwrap();
+        assert!(a.position.x > 2.0, "along its facing: {}", a.position);
+        assert!(a.position.z.abs() < 1e-3, "{}", a.position);
+        assert!((a.position.y - 3.0).abs() < 1e-6, "{}", a.position);
+        // From a point it's already clear of: done, as ever.
+        assert!(matches!(
+            ask(&mut w, &mut e, &from(Value::Object(WP), 0)),
+            Answer::Run { .. }
+        ));
+    }
+
+    /// openspec AU.34: of those the engine doesn't walk, the people whose
+    /// script runs stand solid while they're on and interact with actors;
+    /// a person off the listing, asleep, taken off or solid to nothing has
+    /// no body, and neither has any other placement.
+    #[test]
+    fn the_people_stand_solid_while_their_scripts_run() {
+        let person = Obj { unit: 3, index: 40 };
+        let quiet = Obj { unit: 3, index: 41 };
+        let crate_ = Obj { unit: 3, index: 42 };
+        let dir = "C:/tfb/Content/Levels/Level_Hub_2/Scripts";
+        let files = Files {
+            placed: vec![
+                crate::scripts::Placed::named(person, "Flynn", Some(&format!("{dir}/Flynn.ai")), 4),
+                crate::scripts::Placed::named(quiet, "Cali", Some(&format!("{dir}/Cali.ai")), 4),
+                crate::scripts::Placed::named(crate_, "Crate", None, 4),
+            ],
+            ..Files::default()
+        };
+        let handles = HashMap::from([(person, C1), (quiet, C2), (crate_, C3)]);
+        let mut w = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        for h in [C1, C2, C3] {
+            let mut a = chompy(Vec3::ZERO, 0.0);
+            a.walker = None;
+            a.obj = w.actor(h).and_then(|old| old.obj);
+            w.actors.insert(h, a);
+        }
+        let bodies = |w: &ScriptWorld| {
+            w.creature_bodies()
+                .into_iter()
+                .map(|b| b.0)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(bodies(&w), [C1, C2], "the people, not the crate");
+        w.actors.get_mut(&C2).unwrap().solid.interacts_with_actors = 0;
+        assert_eq!(bodies(&w), [C1], "solid to nothing");
+        w.set_inert([C1]);
+        assert!(bodies(&w).is_empty(), "off the listing");
+        w.set_inert([]);
+        w.actors.get_mut(&C1).unwrap().active = false;
+        assert!(bodies(&w).is_empty(), "asleep");
+        w.actors.get_mut(&C1).unwrap().active = true;
+        w.actors.get_mut(&C1).unwrap().removed = true;
+        assert!(bodies(&w).is_empty(), "taken off");
     }
 
     #[test]

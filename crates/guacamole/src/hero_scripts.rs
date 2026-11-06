@@ -1475,6 +1475,8 @@ pub(crate) fn step_scripts(
         Ok(r) => stopped.extend(r.stopped),
         Err(h) => stopped.push(h),
     }
+    // A cutscene's menu the TV has no screen for backs out (openspec AU.34).
+    guacamole::prompt::back_out(vm);
     // A level's end where the host doesn't run the original's (openspec
     // AS.15): a listed cutscene skipped, the level end's level asked for.
     match guacamole::level_end::step(vm, &mut host) {

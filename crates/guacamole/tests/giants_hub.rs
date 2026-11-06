@@ -539,3 +539,224 @@ fn level_214s_end_takes_the_hero_to_the_stage_the_village_opens() {
         load()
     );
 }
+
+/// The stick held so he walks toward `to` as the view lies.
+fn stick_toward(run: &Run, to: guac_motion::seam::Vec3) -> guac_motion::stick::Stick {
+    let at = run.hero().pivot;
+    let want = (to.x - at.x).atan2(to.z - at.z).to_degrees();
+    let d = (want - run.bench.view).to_radians();
+    let raw = |a: f32| {
+        if a.abs() < 1e-4 {
+            0.0
+        } else {
+            a.signum()
+                * (guac_motion::stick::DEAD_ZONE + (1.0 - guac_motion::stick::DEAD_ZONE) * a.abs())
+        }
+    };
+    guac_motion::stick::Stick::new(raw(-d.sin()), raw(d.cos()))
+}
+
+/// The hero set down `from` and held walking straight at `name` for 3 s:
+/// how near across the ground his pivot came, and whether he came out the
+/// far side.
+fn walk_into(
+    run: &mut Run,
+    stops: &mut Vec<guac_script::Halt>,
+    name: &str,
+    from: guac_motion::seam::Vec3,
+) -> (f32, bool) {
+    run.put(from, 0.0);
+    let them = run.at(name);
+    let flat = |v: guac_motion::seam::Vec3| guac_motion::seam::Vec3::new(v.x, 0.0, v.z);
+    let start = flat(them) - flat(from);
+    let mut closest = start.length();
+    for _ in 0..180 {
+        let stick = stick_toward(run, them);
+        run.bench.pads[0] = guacamole::script_engine::Pad {
+            stick,
+            actions: [false; 4],
+            connected: true,
+        };
+        stops.extend(run.step_play().unwrap());
+        closest = closest.min(flat(them).distance(flat(run.hero().pivot)));
+    }
+    run.bench.pads[0].stick = guac_motion::stick::Stick::new(0.0, 0.0);
+    let end = flat(them) - flat(run.hero().pivot);
+    (closest, end.dot(start) < 0.0)
+}
+
+/// Who should be on each stage at its floor (`Levels_Completed` 2, 7, 14,
+/// 16), and who has taken itself off by then.
+const STAGE_PEOPLE: [(&[&str], &[&str]); 4] = [
+    (
+        &[
+            "Flynn",
+            "Cali",
+            "Persephone",
+            "Auric",
+            "CS_Auric",
+            "Hatterson",
+            "Hatterson(Orbit)",
+            "Breakstone",
+            "Background_Fairy",
+            "MabuRepairGuy1",
+            "MabuRepairGuy2",
+            "MabuRepairGuy3",
+            "MabuWalker1",
+            "MabuWalker2",
+        ],
+        &["Ermit", "Brock"],
+    ),
+    (
+        &[
+            "Flynn",
+            "Cali",
+            "Persephone",
+            "Auric",
+            "Hatterson",
+            "Ermit",
+            "Brock",
+            "Wilikin_Girl_01",
+            "Background_Fairy",
+        ],
+        &["Mabu_Repairer", "Barnsy"],
+    ),
+    (
+        &[
+            "Flynn",
+            "Cali",
+            "Persephone",
+            "Auric",
+            "Hatterson",
+            "Ermit",
+            "Brock",
+        ],
+        &[],
+    ),
+    (
+        &[
+            "Flynn",
+            "Cali",
+            "Persephone",
+            "Auric",
+            "Hatterson",
+            "Ermit",
+            "Brock",
+        ],
+        &[],
+    ),
+];
+
+/// openspec AU.34: every hub stage with its people on the TV's listing:
+/// each stage's stand where their scripts stand them, drawn on models of the
+/// level's and solid where their scripts say, those a stage's count takes
+/// off gone; a talk with each that has one ends, the store's yes shows
+/// nothing and takes nothing from the next talk, Persephone's upgrade menu
+/// backs out to its no, and Flynn still talks after them all. The hero
+/// walking at Flynn and at Cali stops on them. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn every_hub_stages_people_stand_talk_and_stop_the_hero() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    for ((stage, intro), (here, gone)) in STAGES.into_iter().zip(STAGE_PEOPLE) {
+        let (mut run, _found) = run_on_level(Mode::Play, stage, setup(&[]));
+        let mut stops = Vec::new();
+        for _ in 0..2 {
+            stops.extend(run.step_play().unwrap());
+        }
+        run.join().unwrap_or_else(|h| panic!("{stage}: {h}"));
+        let intro = run.placement(intro);
+        while !run.vm.removed(intro) {
+            assert!(run.steps < 3600, "{stage}: the intro's end");
+            stops.extend(run.step_play().unwrap());
+        }
+        for _ in 0..30 {
+            stops.extend(run.step_play().unwrap());
+        }
+        let skinned: Vec<String> = skinned_models_of(stage)
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect();
+        let placed = |run: &Run, name: &str| {
+            run.files
+                .placed
+                .iter()
+                .find(|p| p.obj.unit == LEVEL && p.name == name)
+                .unwrap_or_else(|| panic!("{stage}: {name}'s placement"))
+                .clone()
+        };
+        for name in here {
+            let (h, _) = run.placed(name);
+            let id = run.vm.placement_of(h).expect("run");
+            assert!(!run.vm.removed(id), "{stage}: {name} is here");
+            assert!(run.world.people().contains(&h), "{stage}: {name}");
+            assert!(!run.vm.inert().contains(&h), "{stage}: {name} runs");
+            let model = placed(&run, name).model.expect("a model");
+            assert!(skinned.contains(&model), "{stage}: {name}'s {model}");
+        }
+        for name in gone {
+            let id = run.placement(name);
+            assert!(run.vm.removed(id), "{stage}: {name} took itself off");
+        }
+        // A talk with each that has one, the stores and the arena said yes.
+        let mut talks = Vec::new();
+        for (name, yes) in [
+            ("Auric", true),
+            ("Hatterson", true),
+            ("Persephone", false),
+            ("Brock", true),
+            ("Ermit", false),
+            ("Cali", true),
+        ] {
+            if !here.contains(&name) {
+                continue;
+            }
+            let at = guac_motion::seam::Vec3::from_array(placed(&run, name).position);
+            let t = talk(
+                &mut run,
+                &mut stops,
+                at + guac_motion::seam::Vec3::new(1.5, 0.5, 1.5),
+                |_| yes,
+            );
+            println!("{stage}: {name}: {t:?}");
+            assert!(t.cutscene.is_some(), "{stage}: {name} talks: {t:?}");
+            assert!(t.ended.is_some(), "{stage}: {name}'s talk ends: {t:?}");
+            talks.push(t);
+        }
+        let branch = global(&run, "CutsceneMenu_LastPickedBranch");
+        println!("{stage}: the last menu's branch {branch:?}");
+        // The stores' yes took nothing from the talk button.
+        let by_flynn = run.at("Flynn") + guac_motion::seam::Vec3::new(1.5, 0.5, -2.5);
+        let flynn = talk(&mut run, &mut stops, by_flynn, |_| false);
+        println!("{stage}: Flynn after them: {flynn:?}");
+        assert!(flynn.cutscene.is_some(), "{stage}: {flynn:?}");
+        assert!(flynn.ended.is_some(), "{stage}: {flynn:?}");
+        // His solid and Cali's in the bench, and each stops him.
+        for (name, from) in [
+            ("Flynn", guac_motion::seam::Vec3::new(0.0, 0.0, -6.0)),
+            ("Cali", guac_motion::seam::Vec3::new(6.0, 0.0, 0.0)),
+        ] {
+            let (h, _) = run.placed(name);
+            assert!(
+                run.world.creature_bodies().iter().any(|b| b.0 == h),
+                "{stage}: {name}'s solid"
+            );
+            let at = run.at(name) + from;
+            let (closest, through) = walk_into(&mut run, &mut stops, name, at);
+            println!(
+                "{stage}: into {name}: {closest:.3} m at the closest, through {through}, from {at:?} to {:?}, cs {:?}",
+                run.hero().pivot,
+                cutscene_name(&run)
+            );
+            assert!(!through, "{stage}: through {name}");
+            assert!(closest > 1.0, "{stage}: {closest} m from {name}");
+        }
+        assert!(stops.is_empty(), "{stage}: {stops:#?}");
+    }
+    println!(
+        "{:.1} s, load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}

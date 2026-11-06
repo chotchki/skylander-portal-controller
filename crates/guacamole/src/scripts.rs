@@ -2337,7 +2337,7 @@ impl Host for WorldHost<'_, '_> {
         self.world.wakes(asleep)
     }
     fn answer(&mut self, name: &str, args: &[(&str, Value)]) -> bool {
-        crate::interiors::answer(self.world, name, args)
+        crate::prompt::answer_screen(name) || crate::interiors::answer(self.world, name, args)
     }
 }
 
@@ -2463,6 +2463,8 @@ pub fn hero_config(mode: Mode) -> Config {
     // A warp lands the minion where it asks, his minion kept (openspec
     // AS.96; stand-in ledger: `warp`).
     c.answered.push(crate::interiors::WARP.to_owned());
+    c.answered
+        .extend(crate::prompt::SCREENS.iter().map(|s| (*s).to_owned()));
     c
 }
 
@@ -2665,7 +2667,7 @@ pub const INTROS: [(&str, &str); 5] = [
 ///   ready question and on a yes plays his outro (`HS2 - Outro`), which changes
 ///   level to the chapter he offers, level 201 after 214
 ///   ([`crate::level_switch`]).
-pub const HUB_SCRIPTS: [&str; 11] = [
+pub const HUB_SCRIPTS: [&str; 9] = [
     "SkyDome_Controller.ai",
     "Hub2_Stage_1_Controller.ai",
     "Hub2_Stage_2_Controller.ai",
@@ -2675,17 +2677,39 @@ pub const HUB_SCRIPTS: [&str; 11] = [
     "Hub2_Background_Island.ai",
     "Hub2_Background_Actor.ai",
     "AtmZone_Controller.ai",
-    "/Flynn.ai",
-    "/Cali.ai",
 ];
 
-/// The hub's people the TV draws (openspec AU.28), by their scripts:
-/// Flynn at the helm and Cali on the main deck, each drawn on its
-/// placement's model where its scripts stand and turn it, posed by the
-/// clips they play, never walked (walked, a `turn to` is the engine's
-/// steering, which left Cali facing 73° and her intro's turn undone at
-/// AU.6; unwalked, the host turns it at once, as the headless runs do).
-pub const HUB_PEOPLE: [&str; 2] = ["/Flynn.ai", "/Cali.ai"];
+/// The hub's people the TV runs and draws (openspec AU.28, AU.34), by their
+/// scripts, each on its placement's model where its scripts stand and turn
+/// it, posed by the clips they play, never walked (walked, a `turn to` is
+/// the engine's steering, which left Cali facing 73° and her intro's turn
+/// undone at AU.6; unwalked, the host turns it at once, as the headless runs
+/// do). On the decks: Flynn, Cali, the Hermit, Brock, Barnsy, Seraphina,
+/// Auric's scene before his store, the Mabu at their hammers (`HammerGuy`)
+/// and on their paths (`MabuWalker`, steered with no body under them, as a
+/// scene's actors are, AS.52), the fairy circling the ship (each a `move
+/// from` itself: [`crate::script_members`]). In the rooms: Persephone, her
+/// fly-in the first time, Auric's store, Hatterson's (`Batterson`) and his
+/// orbit's, Breakstone. Each takes itself off until its adventure's done,
+/// so stage 1's first visit shows neither the Hermit nor Brock. Off it:
+/// Dreadbeard (the card game, AS.106's) and the robot flying by (stage 1
+/// past 5 adventures, a count no run reaches yet: AS.130).
+pub const HUB_PEOPLE: [&str; 14] = [
+    "/Flynn.ai",
+    "/Cali.ai",
+    "/Hermit.ai",
+    "/Brock.ai",
+    "/Persephone.ai",
+    "/Auric.ai",
+    "/Batterson.ai",
+    "/Hatterson_Orbit.ai",
+    "/Breakstone.ai",
+    "/Barnsy.ai",
+    "/Seraphina.ai",
+    "/MabuWalker.ai",
+    "/HammerGuy.ai",
+    "/Hub2_Background_Fairy.ai",
+];
 
 /// A level's own people the TV draws as it does the hub's (openspec AS.98),
 /// by level and placement, never walked: Auric in his scene on level 214
@@ -3695,6 +3719,7 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
         && let Whitelist::Only { scripts, .. } = &mut config.whitelist
     {
         scripts.extend(HUB_SCRIPTS.iter().map(|s| (*s).to_owned()));
+        scripts.extend(HUB_PEOPLE.iter().map(|s| (*s).to_owned()));
     }
     with_level(config, files, level)
 }
@@ -5991,6 +6016,22 @@ mod tests {
         assert!(!is_hub_person(&format!(
             "{dir}/Cutscenes/Scripts/CS_Flynn.ai"
         )));
+        // Openspec AU.34: the rest by theirs, Auric's scene and store alike,
+        // the card game's Dreadbeard off.
+        for script in [
+            "Scripts/Hermit.ai",
+            "Scripts/Brock.ai",
+            "Scripts/Persephone.ai",
+            "Scripts/Batterson.ai",
+            "Scripts/MabuWalker.ai",
+            "Scripts/HammerGuy.ai",
+            "Cutscenes/Scripts/Auric.ai",
+        ] {
+            assert!(is_hub_person(&format!("{dir}/{script}")), "{script}");
+        }
+        assert!(!is_hub_person(
+            "C:/tfb/Content/Levels/Includes/GameElement_CardGame_Sky2/Scripts/CardPirate_Template.ai"
+        ));
     }
 
     /// openspec AS.98: a level's own people are its placements by name, by
@@ -6065,6 +6106,14 @@ mod tests {
                     "{stage} {script}"
                 );
             }
+            // Its people's (openspec AU.34).
+            for script in HUB_PEOPLE {
+                assert_eq!(
+                    listing(&c, script.trim_start_matches('/')),
+                    guac_script::Listed::Every,
+                    "{stage} {script}"
+                );
+            }
             // Flynn's and Cali's own scripts, not their cutscene templates'.
             for template in ["CS_Flynn.ai", "CS_Cali.ai"] {
                 assert_eq!(
@@ -6090,6 +6139,15 @@ mod tests {
             for script in HUB_SCRIPTS {
                 assert_eq!(
                     listing(&c, script),
+                    guac_script::Listed::Off,
+                    "{other} {script}"
+                );
+            }
+            // The hub's people (openspec AU.34), Auric's store elsewhere
+            // among them: a level's own people are `LEVEL_PEOPLE`'s.
+            for script in HUB_PEOPLE {
+                assert_eq!(
+                    listing(&c, script.trim_start_matches('/')),
                     guac_script::Listed::Off,
                     "{other} {script}"
                 );
