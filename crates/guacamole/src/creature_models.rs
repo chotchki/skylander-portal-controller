@@ -79,7 +79,8 @@ pub fn creature_model(prop: &guac_ir::level::Prop, identity: DumpIdentity) -> Op
 /// Each skinned model the first fight's placements ([`FIRST_FIGHT`]) on
 /// chapter 1, or a later level's first encounter's placements and clones'
 /// templates (openspec AS.54, [`crate::scripts::encounter`]), a hub's
-/// people (openspec AU.28, [`crate::scripts::HUB_PEOPLE`]) and the level's
+/// people (openspec AU.28, [`crate::scripts::HUB_PEOPLE`]), a level's own
+/// (AS.98, [`crate::scripts::LEVEL_PEOPLE`]) and the level's
 /// templates whose clones draw ([`clones_draw`], openspec AS.63) name,
 /// once, by its path, the fight's first, each in its list's order (the
 /// people and the templates in the file's), as [`creature_model`] makes
@@ -120,15 +121,17 @@ pub fn skinned_models(
             .find(|a| a.name == *name)
             .and_then(|a| a.model.clone())
     });
-    // A hub's people (openspec AU.28), by their placements' scripts.
+    // A hub's people (openspec AU.28) and a level's own (AS.98), by their
+    // placements' scripts.
     let people = placements
         .actors
         .iter()
         .filter(|a| {
-            crate::scripts::is_hub(&placements.level)
-                && a.script
-                    .as_deref()
-                    .is_some_and(crate::scripts::is_hub_person)
+            a.script.as_deref().is_some_and(|s| {
+                crate::scripts::is_level_person(&placements.level, s)
+                    || (crate::scripts::is_hub(&placements.level)
+                        && crate::scripts::is_hub_person(s))
+            })
         })
         .filter_map(|a| a.model.clone());
     for path in named
@@ -360,6 +363,45 @@ mod tests {
         assert_eq!(
             models("level_hub_2_stage_1"),
             ["balloonist.mdl", "adventure_girl.mdl", "tortoise.mdl"]
+        );
+        assert_eq!(models("level_201"), ["tortoise.mdl"]);
+    }
+
+    /// openspec AS.98: on level 214 its own people's models (Auric's in his
+    /// scene and at his stall, one model) before the skinned templates';
+    /// on any other level his stall's script draws nothing of its own.
+    #[test]
+    fn a_levels_people_draw_their_own_models() {
+        let person = |name: &str, script: &str| Placement {
+            script: Some(format!("C:/tfb/Content/Levels/Level_214/Scripts/{script}")),
+            ..placed(name, Some("banker.mdl"))
+        };
+        let actors = vec![
+            person("Moneybags_end", "214_Meet_Auric_IGC.ai"),
+            person("Auric_store", "Auric.ai"),
+            template("2_Push_Block_Art_Sheep", "tortoise.mdl"),
+        ];
+        let models = |level: &str| {
+            let placements = Placements {
+                identity: identity(),
+                level: level.into(),
+                actors: actors.clone(),
+                waypoints: Vec::new(),
+            };
+            let props = Props {
+                identity: identity(),
+                level: level.into(),
+                props: vec![prop("banker.mdl", true), prop("tortoise.mdl", true)],
+                refused: Vec::new(),
+            };
+            skinned_models(&placements, &props, &identity())
+                .into_iter()
+                .map(|(p, _)| p)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            models("level_214_tutotial_2"),
+            ["banker.mdl", "tortoise.mdl"]
         );
         assert_eq!(models("level_201"), ["tortoise.mdl"]);
     }

@@ -75,6 +75,13 @@ On level 214 a hero within 10 ft across and 8 ft up or down of a spawner's bomb 
 - **WHEN** the hero carries a bomb to the castle wall before the pods and taps △
 - **THEN** the bomb flies, the wall falls in pieces and he walks through to the fight
 
+### Requirement: Level 214's second island plays to its second ship part
+Past level 214's second locked door its scripts SHALL run on foot to the second ship part: Setup_004B's lobber comes down off his ledge and its closets' eight waves come on; Setup_005's Chompies chase the Mabu into his house; the key in the room under it readies the helper's fight; the jump pads carry a hero up to the second key; the door of two locks opens to both; Auric's scene wakes the part, and taking it starts the sail to the third island.
+
+#### Scenario: From the second door to the sail
+- **WHEN** a hero walks on from the second locked door, beats what comes at him, takes both keys and turns them in the door of two locks
+- **THEN** Auric's scene plays, the ship part wakes, a press by it takes it and the sail plays, no script stopped
+
 ### Requirement: Level 214's intro hands the hero over on its ship
 Level 214's intro SHALL hold until a hero's minion is in, then play its ten scenes to their end (52.9 s, Flynn and Cali in them, its ten lines whole) or end on a player's △ past its first second, and hand him over on the ship's deck at (-9.14, -12.58, 18.10), 4.3 m from the level's start marker, every placement it took off back as its file has it and the ship's engine, masthead and roof standing once each, nothing stopped.
 

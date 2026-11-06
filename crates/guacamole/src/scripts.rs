@@ -1206,10 +1206,14 @@ impl ScriptWorld {
         out
     }
 
-    /// The hub's people ([`HUB_PEOPLE`], openspec AU.28): each placement
-    /// whose script is one of theirs, by its actor, unwalked, in handle
-    /// order; whether its script runs is the caller's to check.
+    /// The people the TV draws unwalked ([`HUB_PEOPLE`], openspec AU.28,
+    /// and [`LEVEL_PEOPLE`], AS.98): each placement whose script is one of
+    /// theirs, by its actor, in handle order; whether its script runs is the
+    /// caller's to check.
     pub fn people(&self) -> Vec<Handle> {
+        let person = |s: &str| {
+            is_hub_person(s) || LEVEL_PEOPLE.iter().any(|(_, script)| s.ends_with(script))
+        };
         let mut out: Vec<Handle> = self
             .actors
             .iter()
@@ -1218,7 +1222,7 @@ impl ScriptWorld {
                     && a.obj
                         .and_then(|o| self.templates.get(&o))
                         .and_then(|p| p.script.as_deref())
-                        .is_some_and(is_hub_person)
+                        .is_some_and(person)
             })
             .map(|(h, _)| *h)
             .collect();
@@ -2082,7 +2086,12 @@ impl ScriptWorld {
                         .and_then(|k| k.obj)
                     && let Some(p) = self.templates.get(&o)
                 {
+                    // What the engine walked it walks again (openspec AS.98).
+                    let walked = self.actors.get(&h).is_some_and(|k| k.walker.is_some());
                     self.actors.insert(h, actor_of(p));
+                    if walked {
+                        self.walk(h);
+                    }
                     self.revived.push((h, o));
                     return Ok(Answer::Done);
                 }
@@ -2678,10 +2687,27 @@ pub const HUB_SCRIPTS: [&str; 11] = [
 /// AU.6; unwalked, the host turns it at once, as the headless runs do).
 pub const HUB_PEOPLE: [&str; 2] = ["/Flynn.ai", "/Cali.ai"];
 
+/// A level's own people the TV draws as it does the hub's (openspec AS.98),
+/// by level and script, never walked for the same reason: Auric in his scene
+/// on level 214 (`Moneybags_end`), whose `turn to` a walk's steering never
+/// ends on his turn rate of 0, and at his stall after it (`Auric_store`).
+pub const LEVEL_PEOPLE: [(&str, &str); 2] = [
+    ("level_214_tutotial_2", "/214_Meet_Auric_IGC.ai"),
+    ("level_214_tutotial_2", "/Auric.ai"),
+];
+
 /// Whether a placement whose script is `script` is one of the hub's
 /// people ([`HUB_PEOPLE`]).
 pub fn is_hub_person(script: &str) -> bool {
     HUB_PEOPLE.iter().any(|p| script.ends_with(p))
+}
+
+/// Whether a placement of the level whose archive is `level`, running
+/// `script`, is one of its own people ([`LEVEL_PEOPLE`]).
+pub fn is_level_person(level: &str, script: &str) -> bool {
+    LEVEL_PEOPLE
+        .iter()
+        .any(|(l, s)| *l == level && script.ends_with(s))
 }
 
 /// Whether the level whose archive is `level` is a hub stage.
@@ -3680,10 +3706,11 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
 /// for it. From the second island to its second ship part (AS.98): Setup_005's
 /// Tree Rex and Elf Near beaten, its first activator pans to the yard's jump
 /// pad and wakes it; its lobber beaten, the second the ledge's, up to the
-/// second key; the door with two locks open, a hero near Auric sets off his
-/// scene (`Moneybags_end`, woken in the south room by `Activate_Auric`), which
-/// wakes his teleporter, which wakes the part (`Ship_part_2(1)`), whose
-/// shutdown wakes the sail to the third island (`214_Final_Island_IGC`).
+/// second key; a hero at the door with two locks short of a key is panned
+/// to the keys he lacks; the door open, a hero near Auric sets off his scene
+/// (`Moneybags_end`, woken in the south room by `Activate_Auric`), which wakes
+/// his teleporter, which wakes the part (`Ship_part_2(1)`), whose shutdown
+/// wakes the sail to the third island (`214_Final_Island_IGC`).
 pub const PASSAGES: [(&str, &[&str]); 1] = [(
     "level_214_tutotial_2",
     &[
@@ -3701,6 +3728,7 @@ pub const PASSAGES: [(&str, &[&str]); 1] = [(
         "PvP_JumpPad_SUPER(2)",
         "PvP_JumpPad_SUPER(3)",
         "PvP_JumpPad_SUPER(4)",
+        "PAN- Show Key_2(1)",
         "Activate_Auric",
         "Moneybags_end",
         "Auric_store",
@@ -5835,6 +5863,7 @@ mod tests {
             "PvP_JumpPad_SUPER(2)",
             "PvP_JumpPad_SUPER(3)",
             "PvP_JumpPad_SUPER(4)",
+            "PAN- Show Key_2(1)",
             "Activate_Auric",
             "Moneybags_end",
             "Auric_store",
@@ -5930,6 +5959,41 @@ mod tests {
         assert!(!is_hub_person(&format!(
             "{dir}/Cutscenes/Scripts/CS_Flynn.ai"
         )));
+    }
+
+    /// openspec AS.98: a level's own people are its placements running
+    /// their scripts, by their actors, unwalked: Auric's on level 214, on
+    /// no other level as a level's person.
+    #[test]
+    fn level_214s_auric_is_one_of_its_people_by_his_scripts() {
+        let dir = "C:/tfb/Content/Levels/Level_214";
+        let obj = |index| Obj { unit: 3, index };
+        let files = Files {
+            placed: vec![
+                Placed::named(
+                    obj(10),
+                    "Moneybags_end",
+                    Some(&format!("{dir}/cutscenes/scripts/214_Meet_Auric_IGC.ai")),
+                    4,
+                ),
+                Placed::named(
+                    obj(11),
+                    "Auric_store",
+                    Some("C:/tfb/Content/Levels/Includes/Store/Scripts/Auric.ai"),
+                    4,
+                ),
+                Placed::named(obj(12), "Mabu", Some(&format!("{dir}/Scripts/Mabu.ai")), 4),
+            ],
+            ..Files::default()
+        };
+        let handles: HashMap<Obj, Handle> =
+            (10..13).map(|i| (obj(i), 0x100 + u64::from(i))).collect();
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        assert_eq!(world.people(), [0x10A, 0x10B]);
+        assert!(is_level_person("level_214_tutotial_2", "C:/x/Auric.ai"));
+        assert!(!is_level_person("level_201", "C:/x/Auric.ai"));
+        world.walk(0x10A);
+        assert_eq!(world.people(), [0x10B], "a walked one isn't");
     }
 
     /// openspec AS.46, AS.47: a hub stage's sky, its stage's controller and
@@ -6360,6 +6424,25 @@ mod tests {
             "where its file has it"
         );
         assert_eq!(w.revived, [(grunt, GRUNT)]);
+        assert!(w.actor(grunt).unwrap().walker.is_none(), "walked by none");
+    }
+
+    /// AS.98: a placement the engine walks stays walked through a take-off
+    /// and a reset (level 214's intro takes placements off and resets them).
+    #[test]
+    fn a_reset_placement_the_engine_walks_stays_walked() {
+        let (mut w, grunt, _) = world();
+        w.walk(grunt);
+        for class in [Class::Remove, Class::Reset] {
+            w.op(
+                &call(class, Some(Value::Entity(grunt))),
+                &mut |_| 0,
+                &mut NoEngine,
+            )
+            .unwrap();
+        }
+        assert!(!w.removed(grunt), "back on");
+        assert!(w.actor(grunt).unwrap().walker.is_some(), "still walked");
     }
 
     /// AS.67: a clone's reset of itself stands it again as it was made: at

@@ -78,6 +78,11 @@ use crate::stick::Stick;
 use crate::tuning::{FOOT, NOMINAL_STEP, Tuning};
 use crate::walk::{Footing, Walk, turn_facing};
 
+/// What a steered actor's fall presses into the ground past, ft/s, to be
+/// taken off as it lands ([`Hero::step_steered`]): a drop of about a foot.
+/// A hypothesis; no recording has an enemy's fall.
+pub const HARD_LANDING: f32 = 20.0;
+
 /// Passes [`Hero::push_out`] takes off the walls he's in before it falls
 /// back on the search.
 pub const PUSH_PASSES: usize = 4;
@@ -478,7 +483,13 @@ impl Hero {
     /// walking on the spot (AH.10's `still_p1`: a Chompy 0.1° off the line
     /// through another's middle at 0.00 m/s, its velocity 90° off that line,
     /// for 120 frames). A walk its scripts set with no destination (a
-    /// lunge) is theirs and stays as set.
+    /// lunge) is theirs and stays as set, bar a fall's landing: a frame that
+    /// ends on the ground begun off it, pressing into it past
+    /// [`HARD_LANDING`], loses what pressed in, as the proxy's solve takes
+    /// it (openspec AS.97: kept, the next frame's walk along the ground
+    /// turned a 12 m fall's 83 ft/s into a skid across Setup_004B's yard).
+    /// The dips of a knockback over the ground stay as the walk turns them
+    /// (AH.10's run holds a Chompy's slide's speeds).
     pub fn step_steered(
         &mut self,
         seam: &dyn PhysicsSeam,
@@ -503,9 +514,16 @@ impl Hero {
         );
         self.walk.velocity = frame.velocity / FOOT;
         self.facing = frame.facing;
+        let off_the_ground = !self.footing.supported;
         self.step_engine(seam, step, exclude, surfaces);
         if matches!(aim, steer::Aim::To(_) | steer::Aim::From(_)) {
             self.walk.velocity = self.solved / FOOT;
+        } else if off_the_ground && self.footing.supported {
+            let n = self.footing.ground.unwrap_or(Vec3::Y);
+            let into = self.walk.velocity.dot(n);
+            if into < -HARD_LANDING {
+                self.walk.velocity -= n * into;
+            }
         }
     }
 

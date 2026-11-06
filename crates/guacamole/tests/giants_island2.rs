@@ -239,6 +239,25 @@ fn level_214s_setup_004b_is_fought_from_its_trigger_to_its_end() {
     assert_eq!(walk(&mut run, &mut stops, &[BY_004B_TRIGGER]), Ok(()));
     let from = run.steps;
     let health_before = run.health().unwrap();
+    // His walk down: a hop along his ledge, then off it to his path's end,
+    // where he stands and shoots. Under the intro, the first of the fight.
+    let intro = wait_for(
+        &mut run,
+        &mut stops,
+        |run| {
+            run.world
+                .actor(lobber)
+                .is_some_and(|a| a.position.y < -18.0 && a.velocity.length() < 1.0)
+        },
+        600,
+    )
+    .expect("the lobber down off his ledge");
+    let landed = run.world.actor(lobber).unwrap().position;
+    let path_end = Vec3::new(-196.01, -18.21, 726.83);
+    assert!(
+        (landed - path_end).length() < 1.5,
+        "at his path's end: {landed}"
+    );
     let f = fight_until(
         &mut run,
         &mut stops,
@@ -256,7 +275,7 @@ fn level_214s_setup_004b_is_fought_from_its_trigger_to_its_end() {
         })
         .count();
     println!(
-        "from {from} to {:?} ({:.1} s of game): {} beaten, {clones} let out of the closets, bites {:?}; health {health_before} -> {:?}, experience {:?}; the lobber gone {}; {:.1} s; load at end: {}",
+        "from {from}, the lobber down by {intro} at {landed}, to {:?} ({:.1} s of game): {} beaten, {clones} let out of the closets, bites {:?}; health {health_before} -> {:?}, experience {:?}; the lobber gone {}; {:.1} s; load at end: {}",
         f.done,
         f.done.map_or(0.0, |d| (d - from) as f32 / 60.0),
         f.beaten,
