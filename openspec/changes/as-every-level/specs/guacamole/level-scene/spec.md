@@ -256,7 +256,7 @@ A level's sky SHALL draw through the view with its translation taken out, its co
 - **THEN** the sky fills the view behind the level, with no black past it
 
 ### Requirement: A camera's rig holds its last clip
-A camera's rig, a model of joints alone, SHALL hold the pose its last clip reached once none plays, what hangs on it staying there, rather than looping its first shot under them.
+A camera's rig SHALL hold the pose its last clip reached once none plays, what hangs on it staying there, rather than looping its first shot under them: looped, level 201's pod flew 200 m back for 58 steps and 214's ship swept through the sail's last shot every 3.13 s.
 
 #### Scenario: Level 201's pod lands
 - **WHEN** the pod's last shot has played and the scene lets the player go
