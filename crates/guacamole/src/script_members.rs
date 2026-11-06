@@ -2648,37 +2648,6 @@ impl ScriptWorld {
         }
         let mut aim = Aim::Still;
         let mut along = self.along(mover);
-        // A hero a scene walks (openspec AS.113: level 201's intro walks
-        // him in along his path) goes across the ground at a scene walk's
-        // speed on his controller, facing where he goes.
-        if engine.hero(mover).is_some() {
-            let mut to = (!done).then_some(point);
-            if done
-                && let Some(p) = path
-                && !last
-            {
-                along += 1;
-                to = self.point(p[along], engine);
-            }
-            if let Some(hero) = engine.hero(mover) {
-                let across = to.map_or(Vec3::ZERO, |t| {
-                    Vec3::new(t.x - hero.pivot.x, 0.0, t.z - hero.pivot.z).normalize_or_zero()
-                });
-                hero.walk.velocity = across * SCENE_WALK_SPEED;
-                if across != Vec3::ZERO {
-                    hero.facing = crate::script_engine::heading_of(across);
-                }
-            }
-            self.scene_walks.entry(mover).or_default().along = along;
-            return Ok(if done {
-                Answer::Run {
-                    receiver: None,
-                    result: None,
-                }
-            } else {
-                Answer::Done
-            });
-        }
         if done {
             if let Some(p) = path
                 && !last
@@ -2695,6 +2664,8 @@ impl ScriptWorld {
                 Aim::From(point)
             };
         }
+        // A hero's steps are `move_hero_walk`'s (his scripts zero his walk
+        // each tick while a scene holds him).
         let walk = self.scene_walks.entry(mover).or_default();
         walk.aim = aim;
         walk.along = along;
@@ -2719,10 +2690,14 @@ impl ScriptWorld {
     /// ([`ScriptWorld::move_actors`]). The aim lasts the tick it was asked
     /// for, as a creature's does. One taken off, hung on something or
     /// walked as a creature since is let go.
-    pub(crate) fn move_scene_walks(&mut self, dt: f32) {
+    pub(crate) fn move_scene_walks(&mut self, dt: f32, engine: &mut dyn Engine) {
         let mut walking: Vec<Handle> = self.scene_walks.keys().copied().collect();
         walking.sort_unstable();
         for h in walking {
+            if engine.hero(h).is_some() {
+                self.move_hero_walk(h, dt, engine);
+                continue;
+            }
             let Some(a) = self
                 .actors
                 .get_mut(&h)
@@ -2752,6 +2727,47 @@ impl ScriptWorld {
             a.position += frame.velocity * dt;
             a.angles.facing = frame.facing;
             a.velocity = frame.velocity * FEET_PER_METRE;
+        }
+    }
+
+    /// A step of a scene's walk on a hero (openspec AS.113: level 201's
+    /// intro walks him in along his path): his pivot across the ground at a
+    /// scene walk's speed, on what's under him, facing where he goes. One
+    /// further from where he's going than any scene walks him starts there:
+    /// what he hung on let him go where its clip didn't pose it (level 201's
+    /// landing pod, stand-in ledger: `scene-walk`).
+    fn move_hero_walk(&mut self, h: Handle, dt: f32, engine: &mut dyn Engine) {
+        let Some(walk) = self.scene_walks.get_mut(&h) else {
+            return;
+        };
+        let Aim::To(to) = std::mem::take(&mut walk.aim) else {
+            return;
+        };
+        let Some(at) = engine.hero(h).map(|hero| hero.pivot) else {
+            return;
+        };
+        let across = Vec3::new(to.x - at.x, 0.0, to.z - at.z);
+        let far = across.length();
+        if far < 1e-4 {
+            return;
+        }
+        let next = if far > SCENE_WALK_REACH {
+            to
+        } else {
+            at + across / far * (SCENE_WALK_SPEED * METRES_PER_FOOT * dt).min(far)
+        };
+        let actors = self.actor_bodies(engine);
+        let ground = guac_motion::ground::ray(
+            engine.seam(),
+            next + Vec3::Y * 2.0,
+            Vec3::NEG_Y,
+            6.0,
+            &actors,
+        )
+        .map(|hit| hit.point.y);
+        if let Some(hero) = engine.hero(h) {
+            hero.pivot = Vec3::new(next.x, ground.unwrap_or(next.y), next.z);
+            hero.facing = crate::script_engine::heading_of(across);
         }
     }
 
@@ -3074,7 +3090,7 @@ impl ScriptWorld {
     /// `collisioninfo.environment contacts`.
     pub(crate) fn move_actors(&mut self, dt: f32, engine: &mut dyn Engine) {
         self.move_walkers(dt, engine);
-        self.move_scene_walks(dt);
+        self.move_scene_walks(dt, engine);
         // A scene walk is its actor's one motion (AS.68).
         let mut flying: Vec<Handle> = self
             .actors
@@ -3222,6 +3238,8 @@ impl ScriptWorld {
 /// The speed a scene walks a hero at, ft/s: what the engine's scene walk
 /// gives an actor with no numbers of its own (stand-in ledger: `scene-walk`).
 const SCENE_WALK_SPEED: f32 = 20.0;
+/// How far a scene walks a hero, metres: from further he starts there.
+const SCENE_WALK_REACH: f32 = 30.0;
 
 impl ScriptWorld {
     /// Makes the actor under `h` a creature the engine moves (openspec
@@ -4508,9 +4526,11 @@ mod tests {
     }
 
     /// openspec AS.113: a scene's walk takes a hero across the ground at a
-    /// scene walk's speed, facing where he goes, on his own controller.
+    /// scene walk's speed, facing where he goes, step by step, the block
+    /// run once he's there; from further than a scene walks him he starts
+    /// there.
     #[test]
-    fn a_scene_walks_a_hero_on_his_controller() {
+    fn a_scene_walks_a_hero_across_the_ground() {
         let mut e = bench();
         let pivot = Vec3::new(1.0, 0.0, 1.0);
         e.hero = Some(Hero::new(eruptor_solid(), Tuning::ERUPTOR, pivot, 0.0));
@@ -4525,39 +4545,40 @@ mod tests {
             words: Vec::new(),
             sets: Vec::new(),
         };
+        let to = Vec3::new(1.0, 5.0, 11.0);
         let answer = w
-            .scene_move(
-                HERO,
-                &call,
-                None,
-                Vec3::new(1.0, 5.0, 11.0),
-                (true, false, true),
-                &mut e,
-            )
+            .scene_move(HERO, &call, None, to, (true, false, true), &mut e)
             .unwrap();
         assert_eq!(answer, Answer::Done);
+        w.move_scene_walks(1.0, &mut e);
         let hero = e.hero.as_ref().unwrap();
+        let stride = SCENE_WALK_SPEED * METRES_PER_FOOT;
+        assert!(
+            (hero.pivot.z - (1.0 + stride)).abs() < 1e-4,
+            "{}",
+            hero.pivot
+        );
         assert_eq!(
-            hero.walk.velocity,
-            Vec3::Z * SCENE_WALK_SPEED,
+            (hero.pivot.x, hero.pivot.y),
+            (1.0, 0.0),
             "across the ground"
         );
         assert_eq!(hero.facing, 0.0);
         let answer = w
-            .scene_move(
-                HERO,
-                &call,
-                None,
-                Vec3::new(1.0, 5.0, 11.0),
-                (true, true, true),
-                &mut e,
-            )
+            .scene_move(HERO, &call, None, to, (true, true, true), &mut e)
             .unwrap();
         assert!(matches!(answer, Answer::Run { .. }));
+        let at = e.hero.as_ref().unwrap().pivot;
+        w.move_scene_walks(1.0, &mut e);
+        assert_eq!(e.hero.as_ref().unwrap().pivot, at, "reached: he stands");
+        let far = Vec3::new(200.0, 8.0, 1.0);
+        w.scene_move(HERO, &call, None, far, (true, false, true), &mut e)
+            .unwrap();
+        w.move_scene_walks(1.0 / 60.0, &mut e);
         assert_eq!(
-            e.hero.as_ref().unwrap().walk.velocity,
-            Vec3::ZERO,
-            "reached"
+            e.hero.as_ref().unwrap().pivot,
+            far,
+            "too far to walk: he's there"
         );
     }
 

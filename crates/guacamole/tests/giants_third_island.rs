@@ -642,6 +642,66 @@ fn level_214s_third_island_is_walked_to_its_end() {
     );
 }
 
+/// openspec AS.113: level 201's intro played to its end, the landing pod's
+/// rig posed by hand as a drawn clone's nodes are: he hangs on it from its
+/// first scene, is let go in its last, the scene walks him in along his
+/// path and hands him over at its end, the HUD back. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_201s_intro_plays_to_its_end_and_walks_him_in() {
+    println!("load at start: {}", load());
+    let (mut run, _) = run_on_level(Mode::Play, "level_201", setup());
+    let mut stops = Vec::new();
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    let (mut scenes, mut hung) = (Vec::new(), 0);
+    let landed = Vec3::new(160.8, 13.5, -126.7);
+    let mut ended = None;
+    for k in 0..6000u32 {
+        if let Some(v) = run.world.actor(run.hero).map(|a| a.attach)
+            && let Some(owner) = owner_of(&run, v)
+        {
+            let a = run.world.actor(owner).expect("what he hangs from");
+            let turn = guac_motion::seam::Quat::from_rotation_y(-a.angles.facing.to_radians());
+            let off = turn * (landed - a.position);
+            run.world.set_nodes(owner, vec![NodePose::at(off); 13]);
+        }
+        still(&mut run, &mut stops, [false; 4]);
+        hung += u32::from(run.hero().hung);
+        if let Some((i, n)) = scene_of(&run)
+            && scenes.last() != Some(&i)
+        {
+            assert_eq!(n, 5, "its five scenes");
+            scenes.push(i);
+        }
+        if k > 200 && !guacamole::anchors::scene_holds(&run.vm) {
+            ended = Some(run.steps);
+            break;
+        }
+    }
+    println!(
+        "scenes {scenes:?}, hung {hung} steps, over at {ended:?}: {}",
+        run.hero().pivot
+    );
+    assert_eq!(scenes, (0..5).collect::<Vec<_>>());
+    assert!(ended.is_some(), "its last walk ends");
+    assert!(hung > 1000, "{hung}");
+    assert!(!run.hero().hung);
+    let at = run.hero().pivot;
+    assert!(at.distance(Vec3::new(158.99, 12.7, -159.0)) < 1.5, "{at}");
+    for _ in 0..120 {
+        still(&mut run, &mut stops, [false; 4]);
+    }
+    assert!(
+        !guacamole::scripts::player_hud_hidden(&run.vm),
+        "the HUD back"
+    );
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
+}
+
 /// openspec AS.113, AS.126: level 201's start: its intro held for the hero
 /// and skipped by △, the HUD back, him where its path ends, on the ground
 /// and walking on the stick, nothing stopped; its stray `Temp_Initalize`
