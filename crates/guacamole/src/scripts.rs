@@ -2517,7 +2517,14 @@ pub struct Encounter {
 /// who runs his waypoints to the house by the yard and goes in, and sets
 /// the elves on the hero, its third wakes its Tree Rex and Chompy spawner)
 /// and the five it wakes, its Mabu walked as a creature (his capsule meets
-/// the level).
+/// the level); then Setup_004B past the second door (AS.97), whose
+/// controller queues its lobber down off his ledge at its trigger, plays
+/// his enemy intro and lets out its two closets' eight waves, each on the
+/// last's landing, its Chompies at the hero, the closets' clones walked; its
+/// end wakes the gate to Setup_005's yard, whose controller (AS.98) sets
+/// its five Chompies chasing the Mabu into the house off the yard, and whose
+/// helper, once the key in that house's room is taken, wakes the Tree Rex,
+/// the Elf Near and the lobbers on the ledges past the yard.
 pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
     level: "level_214_tutotial_2",
     placements: &[
@@ -2549,8 +2556,45 @@ pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
         "Enemy_Elf_Near_C",
         "Enemy_TreeRex(1)",
         "Enemy_Chompy_Spawner(2)",
+        // Setup_004B, past the second locked door (openspec AS.97).
+        "Setup_004B_Controller",
+        "Enemy_Elf_Lobber(13)",
+        "ClosetMesh_0_Intact(1)",
+        "ClosetMesh_0_Intact(2)",
+        "Enemy_Chompy(4)",
+        "Enemy_Chompy(5)",
+        "Enemy_Chompy(7)",
+        "Enemy_Chompy(9)",
+        "Enemy_Chompy(10)",
+        "Enemy_Chompy(11)",
+        "Enemy_Chompy(12)",
+        // Setup_005, the yard past its gate (openspec AS.98).
+        "Setup_005_Controller",
+        "Setup_005_NPC",
+        "Enemy_Chompy(41)",
+        "Enemy_Chompy(42)",
+        "Enemy_Chompy(43)",
+        "Enemy_Chompy(44)",
+        "Enemy_Chompy(45)",
+        "Setup_005_Trigger(2)",
+        "Setup_005_Controller_Helper",
+        "Enemy_TreeRex(3)",
+        "Enemy_Elf_Near_S2(1)",
+        "Enemy_Elf_Lobber(1)",
+        "Enemy_Elf_Lobber(2)",
+        "Enemy_Elf_Lobber(3)",
+        "Enemy_Chompy(13)",
+        "Enemy_Chompy(14)",
+        "Enemy_Chompy(15)",
+        "Enemy_Chompy(16)",
+        "Enemy_Chompy(17)",
     ],
-    clones: &["_Template_Undead_Chompy"],
+    clones: &[
+        "_Template_Undead_Chompy",
+        // What Setup_004B's closets let out (openspec AS.97).
+        "Enemy_Elf_Near_S2(0)",
+        "Enemy_Elf_Lobber(0)",
+    ],
     steered: &["TreeRex_special_homing_actor"],
 }];
 
@@ -3633,7 +3677,13 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
 /// a press, the part goes and wakes the sail (`214_Recover_First_Part_IGC`),
 /// whose cutscene, played to its end since AS.82 (or skipped by a
 /// player's △), sets him down on the second island's ship; Setup_003 waits
-/// for it.
+/// for it. From the second island to its second ship part (AS.98): Setup_005's
+/// Tree Rex and Elf Near beaten, its first activator pans to the yard's jump
+/// pad and wakes it; its lobber beaten, the second the ledge's, up to the
+/// second key; the door with two locks open, a hero near Auric sets off his
+/// scene (`Moneybags_end`, woken in the south room by `Activate_Auric`), which
+/// wakes his teleporter, which wakes the part (`Ship_part_2(1)`), whose
+/// shutdown wakes the sail to the third island (`214_Final_Island_IGC`).
 pub const PASSAGES: [(&str, &[&str]); 1] = [(
     "level_214_tutotial_2",
     &[
@@ -3641,6 +3691,22 @@ pub const PASSAGES: [(&str, &[&str]); 1] = [(
         "PvP_JumpPad_NORMAL(2)",
         "Ship_part_1(1)",
         "214_Recover_First_Part_IGC",
+        // Past Setup_004B, the camera's swing to the gate it opens; past
+        // Setup_005 the jump pads to the second key, then Auric's scene
+        // and what it wakes (openspec AS.98).
+        "Gate_Openner_camera_Swing",
+        "Jumpad_Activator_Second_Island(1)",
+        "Jumpad_Activator_Second_Island(2)",
+        "PvP_JumpPad_SUPER(1)",
+        "PvP_JumpPad_SUPER(2)",
+        "PvP_JumpPad_SUPER(3)",
+        "PvP_JumpPad_SUPER(4)",
+        "Activate_Auric",
+        "Moneybags_end",
+        "Auric_store",
+        "MoneyBags Temp_Teleporter",
+        "Ship_part_2(1)",
+        "214_Final_Island_IGC",
     ],
 )];
 
@@ -5719,6 +5785,66 @@ mod tests {
                 guac_script::Listed::Every,
                 "{script}"
             );
+        }
+    }
+
+    /// openspec AS.97, AS.98: Setup_004B, Setup_005 and the way to the
+    /// second ship part on level 214's listing by name, on no other's; its
+    /// fights' placements walked, what the closets let out walked as clones,
+    /// the way on listed and never walked.
+    #[test]
+    fn level_214s_second_islands_end_is_listed_by_name() {
+        let files = Files::default();
+        let l214 = level_config(Mode::Play, &files, 4, "level_214_tutotial_2");
+        let other = level_config(Mode::Play, &files, 4, "level_212");
+        let e = encounter("level_214_tutotial_2").unwrap();
+        for name in [
+            "Setup_004B_Controller",
+            "Enemy_Elf_Lobber(13)",
+            "ClosetMesh_0_Intact(1)",
+            "ClosetMesh_0_Intact(2)",
+            "Enemy_Chompy(4)",
+            "Enemy_Chompy(12)",
+            "Setup_005_Controller",
+            "Setup_005_NPC",
+            "Enemy_Chompy(41)",
+            "Enemy_Chompy(45)",
+            "Setup_005_Trigger(2)",
+            "Setup_005_Controller_Helper",
+            "Enemy_TreeRex(3)",
+            "Enemy_Elf_Near_S2(1)",
+            "Enemy_Elf_Lobber(1)",
+            "Enemy_Elf_Lobber(2)",
+            "Enemy_Elf_Lobber(3)",
+            "Enemy_Chompy(13)",
+            "Enemy_Chompy(17)",
+        ] {
+            assert!(l214.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+            assert!(!other.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+            assert!(e.placements.contains(&name), "{name} walked");
+        }
+        for name in ["Enemy_Elf_Near_S2(0)", "Enemy_Elf_Lobber(0)"] {
+            assert!(l214.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+            assert!(e.clones.contains(&name), "{name}'s clones walked");
+        }
+        for name in [
+            "Gate_Openner_camera_Swing",
+            "Jumpad_Activator_Second_Island(1)",
+            "Jumpad_Activator_Second_Island(2)",
+            "PvP_JumpPad_SUPER(1)",
+            "PvP_JumpPad_SUPER(2)",
+            "PvP_JumpPad_SUPER(3)",
+            "PvP_JumpPad_SUPER(4)",
+            "Activate_Auric",
+            "Moneybags_end",
+            "Auric_store",
+            "MoneyBags Temp_Teleporter",
+            "Ship_part_2(1)",
+            "214_Final_Island_IGC",
+        ] {
+            assert!(l214.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+            assert!(!other.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+            assert!(!e.placements.contains(&name), "{name} never walked");
         }
     }
 

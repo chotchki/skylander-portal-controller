@@ -50,6 +50,13 @@
 //!   unfought behind him, and nothing on the second island stands on them,
 //!   so from the ship on the level is as a walk leaves it: Setup_003's
 //!   trigger off the gangplank, Setup_004 past the locked door.
+//! - Door 2 (openspec AS.97): level 214 past its second locked door: once
+//!   he's settled, set down short of `Setup_004B_Trigger`
+//!   ([`PAST_THE_SECOND_DOOR`]), for Setup_004B and what follows it. What's
+//!   behind him stays unfought and the door shut, and nothing past it stands
+//!   on them (its controller, Setup_005's and the way on read none of it),
+//!   so from there on the level is as a walk leaves it, bar his health and
+//!   experience.
 //! - Interior (openspec AS.96): any level's interior by its controller's
 //!   name (`{"anchor": "interior", "interior": "<name>"}`, or
 //!   `GUAC_DEV_ENTRY=interior:<name>`): once he's settled, set down at the
@@ -106,6 +113,9 @@ pub(crate) enum Anchor {
     /// Level 214's first ship part (openspec AS.84): set down by it on its
     /// ledge, for the second island.
     Part,
+    /// Level 214 past its second locked door (openspec AS.97): set down
+    /// short of Setup_004B's trigger.
+    Door2,
     /// Any level's interior, by its controller's name (openspec AS.96):
     /// set down outside its door ([`guacamole::interiors::door`]).
     Interior,
@@ -121,6 +131,7 @@ impl Anchor {
             "pods" => Some(Anchor::Pods),
             "elves" => Some(Anchor::Elves),
             "part" => Some(Anchor::Part),
+            "door2" => Some(Anchor::Door2),
             "interior" => Some(Anchor::Interior),
             _ => None,
         }
@@ -196,6 +207,9 @@ pub(crate) const ELVES_WOKEN: u32 = 60;
 /// By level 214's first ship part on its ledge (metres), where the jump
 /// pad's flight lands him (openspec AS.75), facing it.
 pub(crate) const BY_THE_PART: ([f32; 3], f32) = ([29.45, -6.92, 56.37], 0.0);
+/// Past level 214's second locked door, short of `Setup_004B_Trigger`
+/// (metres), facing it.
+pub(crate) const PAST_THE_SECOND_DOOR: ([f32; 3], f32) = ([-242.0, -22.3, 722.4], 90.0);
 
 impl Plan {
     pub(crate) fn of(anchor: Anchor) -> Self {
@@ -279,6 +293,22 @@ impl Plan {
                 anchor,
                 settle: SETTLE,
                 set_downs: vec![(0, Vec3::from_array(BY_THE_PART.0), BY_THE_PART.1)],
+                creatures_at: u32::MAX,
+                creatures: Vec::new(),
+                f0: 1,
+                first_alert: None,
+                loot: None,
+                view: None,
+                wake: Vec::new(),
+            },
+            Anchor::Door2 => Plan {
+                anchor,
+                settle: SETTLE,
+                set_downs: vec![(
+                    0,
+                    Vec3::from_array(PAST_THE_SECOND_DOOR.0),
+                    PAST_THE_SECOND_DOOR.1,
+                )],
                 creatures_at: u32::MAX,
                 creatures: Vec::new(),
                 f0: 1,
@@ -470,7 +500,7 @@ impl Plugin for DevEntryPlugin {
         if env.is_some() && at_start.is_none() {
             warn!(
                 value = ?env,
-                "GUAC_DEV_ENTRY isn't `b`, `start`, `end`, `pods`, `elves`, `part` or `interior:<name>`: no entry"
+                "GUAC_DEV_ENTRY isn't `b`, `start`, `end`, `pods`, `elves`, `part`, `door2` or `interior:<name>`: no entry"
             );
         }
         if let Some(a) = &at_start {
@@ -848,6 +878,15 @@ mod tests {
         assert_eq!(part.set_downs, [(0, Vec3::new(29.45, -6.92, 56.37), 0.0)]);
         assert_eq!((part.settle, part.f0), (SETTLE, 1));
         assert!(part.creatures.is_empty() && part.wake.is_empty());
+        // Level 214 past its second door (openspec AS.97).
+        assert_eq!(anchor("door2"), Some(Anchor::Door2));
+        let door2 = Plan::of(Anchor::Door2);
+        assert_eq!(
+            door2.set_downs,
+            [(0, Vec3::new(-242.0, -22.3, 722.4), 90.0)]
+        );
+        assert_eq!((door2.settle, door2.f0), (SETTLE, 1));
+        assert!(door2.creatures.is_empty() && door2.wake.is_empty());
         // Any level's interior by its controller's name (openspec AS.96):
         // `interior:<name>` asks it, a bare `interior` names none.
         let at_door = asked_at_start(true, Some("interior: Interior_controller_Cave")).unwrap();
