@@ -5748,9 +5748,11 @@ const READ_BY: u32 = 12;
 /// How a press is made (openspec AU.10), each by an env of its own: the
 /// steps it's held (`AH29_HELD`, [`HELD`] a tap), the steps its window runs
 /// (`AH29_WINDOW`, [`WINDOW`]), a second tap that many steps into it
-/// (`AH29_AGAIN`), the stick held forward through it (`AH29_WALK`), and taps
+/// (`AH29_AGAIN`), the stick held forward through it (`AH29_WALK`), taps
 /// of another position (`AH29_THEN`, `<position>:<step>` comma-separated: the
-/// first attack once the second has put him in a form or a mode).
+/// first attack once the second has put him in a form or a mode), and the
+/// target that many metres further off (`AH29_FAR`). `AH29_TRACE` prints
+/// where he, the target and each new clone stand at the window's end.
 #[derive(Debug, Clone)]
 struct PressShape {
     held: u32,
@@ -5758,6 +5760,7 @@ struct PressShape {
     again: Option<u32>,
     walk: bool,
     then: Vec<(usize, u32)>,
+    far: f32,
 }
 
 impl PressShape {
@@ -5776,6 +5779,10 @@ impl PressShape {
                     Some((a.parse::<usize>().ok()?.checked_sub(1)?, s.parse().ok()?))
                 })
                 .collect(),
+            far: std::env::var("AH29_FAR")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.0),
         }
     }
 
@@ -5974,7 +5981,8 @@ fn fight_presses(l: &Level, load: &str, actions: &[usize], out: &mut Fought) -> 
         let mut along = anchor - at;
         along.y = 0.0;
         let along = along.normalize_or_zero();
-        let spot = Vec3::new(at.x, anchor.y, at.z) + along * (radius + 1.0);
+        let spot =
+            Vec3::new(at.x, anchor.y, at.z) + along * (radius + 1.0 + PressShape::read().far);
         w.world.place(
             target,
             spot,
