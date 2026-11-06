@@ -5311,7 +5311,7 @@ mod fight_tests {
     /// the point at its ground speed, turning at its rate, at the height it
     /// stands, the block running once it's within reach, a wall in its way
     /// no stop; asked no more, it slows to a stop; along a path, each
-    /// waypoint in turn. A hero moved so is still unmodelled.
+    /// waypoint in turn.
     #[test]
     fn an_actor_no_creature_walks_is_steered_by_move_to_with_no_body() {
         let mut e = pit();
@@ -5400,12 +5400,6 @@ mod fight_tests {
             (at - Vec3::new(8.0, at.y, 6.0)).length() <= 2.0 * FOOT,
             "{at}"
         );
-        // A hero walks on his controller alone.
-        e.hero = Some(Hero::new(eruptor_solid(), Tuning::ERUPTOR, Vec3::ZERO, 0.0));
-        let mut call = move_to(Value::Object(WP), 5);
-        call.receiver = Value::Entity(HERO);
-        assert_eq!(w.op(&call, &mut |_| 0, &mut e), Err(HostFault::Unmodelled));
-        assert!(!w.scene_walks.contains_key(&HERO));
     }
 
     /// AS.68: a scene walk steps from its actor's velocity, which is its

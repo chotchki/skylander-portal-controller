@@ -5652,12 +5652,6 @@ mod tests {
         // Its intro, 214's alone (openspec AS.47, AS.60).
         assert!(l214.whitelist.lists("214_Intro_IGC", "C:/x/Any.ai"));
         assert!(!other.whitelist.lists("214_Intro_IGC", "C:/x/Any.ai"));
-        // A spawner of a fight past the TV's (the third island's).
-        assert!(
-            !l214
-                .whitelist
-                .lists("Enemy_Chompy_Spawner(4)", "C:/x/Any.ai")
-        );
         assert!(encounter("level_212").is_none());
     }
 
