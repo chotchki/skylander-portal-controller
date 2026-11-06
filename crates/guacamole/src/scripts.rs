@@ -1206,13 +1206,14 @@ impl ScriptWorld {
         out
     }
 
-    /// The people the TV draws unwalked ([`HUB_PEOPLE`], openspec AU.28,
-    /// and [`LEVEL_PEOPLE`], AS.98): each placement whose script is one of
-    /// theirs, by its actor, in handle order; whether its script runs is the
-    /// caller's to check.
+    /// The people the TV draws unwalked: each placement whose script is one
+    /// of [`HUB_PEOPLE`]'s (openspec AU.28) or whose name is one of
+    /// [`LEVEL_PEOPLE`]'s (AS.98), by its actor, in handle order; whether its
+    /// script runs is the caller's to check.
     pub fn people(&self) -> Vec<Handle> {
-        let person = |s: &str| {
-            is_hub_person(s) || LEVEL_PEOPLE.iter().any(|(_, script)| s.ends_with(script))
+        let person = |p: &Placed| {
+            p.script.as_deref().is_some_and(is_hub_person)
+                || LEVEL_PEOPLE.iter().any(|(_, name)| *name == p.name)
         };
         let mut out: Vec<Handle> = self
             .actors
@@ -1221,7 +1222,6 @@ impl ScriptWorld {
                 a.walker.is_none()
                     && a.obj
                         .and_then(|o| self.templates.get(&o))
-                        .and_then(|p| p.script.as_deref())
                         .is_some_and(person)
             })
             .map(|(h, _)| *h)
@@ -2688,12 +2688,12 @@ pub const HUB_SCRIPTS: [&str; 11] = [
 pub const HUB_PEOPLE: [&str; 2] = ["/Flynn.ai", "/Cali.ai"];
 
 /// A level's own people the TV draws as it does the hub's (openspec AS.98),
-/// by level and script, never walked for the same reason: Auric in his scene
-/// on level 214 (`Moneybags_end`), whose `turn to` a walk's steering never
-/// ends on his turn rate of 0, and at his stall after it (`Auric_store`).
+/// by level and placement, never walked for the same reason: Auric in his
+/// scene on level 214, whose `turn to` a walk's steering never ends on his
+/// turn rate of 0, and at his stall after it.
 pub const LEVEL_PEOPLE: [(&str, &str); 2] = [
-    ("level_214_tutotial_2", "/214_Meet_Auric_IGC.ai"),
-    ("level_214_tutotial_2", "/Auric.ai"),
+    ("level_214_tutotial_2", "Moneybags_end"),
+    ("level_214_tutotial_2", "Auric_store"),
 ];
 
 /// Whether a placement whose script is `script` is one of the hub's
@@ -2702,12 +2702,10 @@ pub fn is_hub_person(script: &str) -> bool {
     HUB_PEOPLE.iter().any(|p| script.ends_with(p))
 }
 
-/// Whether a placement of the level whose archive is `level`, running
-/// `script`, is one of its own people ([`LEVEL_PEOPLE`]).
-pub fn is_level_person(level: &str, script: &str) -> bool {
-    LEVEL_PEOPLE
-        .iter()
-        .any(|(l, s)| *l == level && script.ends_with(s))
+/// Whether the placement `name` of the level whose archive is `level` is
+/// one of its own people ([`LEVEL_PEOPLE`]).
+pub fn is_level_person(level: &str, name: &str) -> bool {
+    LEVEL_PEOPLE.iter().any(|(l, n)| *l == level && *n == name)
 }
 
 /// Whether the level whose archive is `level` is a hub stage.
@@ -5961,11 +5959,10 @@ mod tests {
         )));
     }
 
-    /// openspec AS.98: a level's own people are its placements running
-    /// their scripts, by their actors, unwalked: Auric's on level 214, on
-    /// no other level as a level's person.
+    /// openspec AS.98: a level's own people are its placements by name, by
+    /// their actors, unwalked: Auric's on level 214, on no other level.
     #[test]
-    fn level_214s_auric_is_one_of_its_people_by_his_scripts() {
+    fn level_214s_auric_is_one_of_its_people_by_name() {
         let dir = "C:/tfb/Content/Levels/Level_214";
         let obj = |index| Obj { unit: 3, index };
         let files = Files {
@@ -5990,8 +5987,8 @@ mod tests {
             (10..13).map(|i| (obj(i), 0x100 + u64::from(i))).collect();
         let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
         assert_eq!(world.people(), [0x10A, 0x10B]);
-        assert!(is_level_person("level_214_tutotial_2", "C:/x/Auric.ai"));
-        assert!(!is_level_person("level_201", "C:/x/Auric.ai"));
+        assert!(is_level_person("level_214_tutotial_2", "Auric_store"));
+        assert!(!is_level_person("level_201", "Auric_store"));
         world.walk(0x10A);
         assert_eq!(world.people(), [0x10B], "a walked one isn't");
     }

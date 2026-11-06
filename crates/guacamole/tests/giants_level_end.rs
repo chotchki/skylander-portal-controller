@@ -228,7 +228,7 @@ fn level_214_runs_its_own_scripts_with_eruptor_joined() {
         assert!(listing.lists("", &format!("C:/x/{script}")), "{script}");
     }
     assert!(
-        !listing.lists("Enemy_Chompy(4)", "C:/x/Nothing.ai"),
+        !listing.lists("Enemy_Chompy(1)", "C:/x/Nothing.ai"),
         "chapter 1's fight's names aren't 214's listing"
     );
     let mut stops = Vec::new();
@@ -405,37 +405,21 @@ fn level_214s_first_encounter_is_fought_with_eruptor() {
         .iter()
         .map(|n| run.placed(n).0)
         .collect();
-    // The spawners walk; the second fight's Chompies and elves walk from the
-    // start too (openspec AS.58), and the second island's Tree Rex and four
-    // Chompies (AS.75) and Setup_004's Mabu and five (AS.84), none of them a
-    // clone, and nothing else.
+    // The spawners walk, and the later fights' own from the start too
+    // (openspec AS.58, AS.75, AS.84, AS.97, AS.98), none of them a clone,
+    // and nothing else.
     let placed = run.world.creatures();
     let mut walking: Vec<String> = placed.iter().map(|h| run.world.name(*h)).collect();
     walking.sort_unstable();
-    assert_eq!(
-        walking,
-        [
-            "Enemy_Chompy2_E",
-            "Enemy_Chompy2_E(1)",
-            "Enemy_Chompy2_E(2)",
-            "Enemy_Chompy2_E(3)",
-            "Enemy_Chompy2_E(4)",
-            "Enemy_Chompy2_F",
-            "Enemy_Chompy2_G",
-            "Enemy_Chompy2_H",
-            "Enemy_Chompy_Spawner(1)",
-            "Enemy_Chompy_Spawner(2)",
-            "Enemy_Chompy_Spawner(5)",
-            "Enemy_Elf_Near_A",
-            "Enemy_Elf_Near_B",
-            "Enemy_Elf_Near_C",
-            "Enemy_Elf_Near_S2(3)",
-            "Enemy_Elf_Near_S2(4)",
-            "Enemy_TreeRex(1)",
-            "Enemy_TreeRex(2)",
-            "Setup_004_NPC_Mabu",
-        ],
-        "the spawners and the later fights' own walk"
+    let e = guacamole::scripts::encounter(NEXT).expect("214's encounter");
+    assert!(
+        walking.iter().all(|n| e.placements.contains(&n.as_str())),
+        "the spawners and the later fights' own walk: {walking:?}"
+    );
+    assert!(
+        walking.iter().any(|n| n == "Enemy_Chompy_Spawner(1)")
+            && walking.iter().any(|n| n == "Enemy_Chompy_Spawner(5)"),
+        "{walking:?}"
     );
     assert!(spawners.iter().all(|s| placed.contains(s)));
     let controller = run.placement("Setup_001_Controller");

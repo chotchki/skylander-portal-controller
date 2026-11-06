@@ -1613,8 +1613,8 @@ struct OnTheStick {
 
 /// Up to `steps` steps on the stick at the nearest of `foes` standing (the
 /// first of them while it stands), his first attack mashed once within
-/// 4.5 m of it, as a hand would, until every one is beaten, `watch` followed
-/// until it goes.
+/// 4.5 m of it, stepping in a second in every four, as a hand would, until
+/// every one is beaten, `watch` followed until it goes.
 fn on_the_stick_at(
     run: &mut Run,
     stops: &mut Vec<String>,
@@ -1655,7 +1655,10 @@ fn on_the_stick_at(
                     .min_by(|a, b| a.distance(me).total_cmp(&b.distance(me)))
             });
         match near {
-            Some(at) if (at.x - me.x).hypot(at.z - me.z) > 4.5 => {
+            // Past 4.5 m he walks at it, and a while in every 4 s he steps
+            // in (a Mabu pinned between him and it stops the lobs: a hand
+            // wouldn't mash into him for ever).
+            Some(at) if (at.x - me.x).hypot(at.z - me.z) > 4.5 || k % 240 >= 180 => {
                 push_toward(run, stops, [at.x, at.z]);
             }
             _ => step(run, stops, [k % 4 < 2, false, false, false]),

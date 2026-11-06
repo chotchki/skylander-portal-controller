@@ -121,17 +121,17 @@ pub fn skinned_models(
             .find(|a| a.name == *name)
             .and_then(|a| a.model.clone())
     });
-    // A hub's people (openspec AU.28) and a level's own (AS.98), by their
-    // placements' scripts.
+    // A hub's people by their placements' scripts (openspec AU.28), a
+    // level's own by their names (AS.98).
     let people = placements
         .actors
         .iter()
         .filter(|a| {
-            a.script.as_deref().is_some_and(|s| {
-                crate::scripts::is_level_person(&placements.level, s)
-                    || (crate::scripts::is_hub(&placements.level)
-                        && crate::scripts::is_hub_person(s))
-            })
+            crate::scripts::is_level_person(&placements.level, &a.name)
+                || (crate::scripts::is_hub(&placements.level)
+                    && a.script
+                        .as_deref()
+                        .is_some_and(crate::scripts::is_hub_person))
         })
         .filter_map(|a| a.model.clone());
     for path in named
