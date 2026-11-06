@@ -76,11 +76,26 @@ On level 214 a hero within 10 ft across and 8 ft up or down of a spawner's bomb 
 - **THEN** the bomb flies, the wall falls in pieces and he walks through to the fight
 
 ### Requirement: Level 214's second island plays to its second ship part
-Past level 214's second locked door its scripts SHALL run on foot to the second ship part: Setup_004B's lobber comes down off his ledge and its closets' eight waves come on; Setup_005's Chompies chase the Mabu into his house; the key in the room under it readies the helper's fight; the jump pads carry a hero up to the second key; the door of two locks opens to both; Auric's scene wakes the part, and taking it starts the sail to the third island.
+Past level 214's second locked door its scripts SHALL run on foot to the second ship part: Setup_004B's lobber comes down off his 12 m ledge and its closets' eight waves come on; Setup_005's Chompies chase the Mabu into his house; the key in the room under it readies the helper's fight; the jump pads carry a hero up to the second key; the door of two locks opens to both; Auric's scene wakes the part, and taking it starts the sail to the third island.
 
 #### Scenario: From the second door to the sail
 - **WHEN** a hero walks on from the second locked door, beats what comes at him, takes both keys and turns them in the door of two locks
 - **THEN** Auric's scene plays, the ship part wakes, a press by it takes it and the sail plays, no script stopped
+
+#### Scenario: Short of a key at the door of two locks
+- **WHEN** a hero comes within 20 ft of the door's pan short of a key
+- **THEN** he's held while a pan shows each key he lacks, 5.6 s for both and 2.5 s for one, and let go, the door shut
+
+### Requirement: A level's food heals a hero
+Every level's food SHALL run its own scripts: a hero within 8 ft eats it at any health and it goes, healing him by 100 at the default difficulty, and it stops no one. A beaten enemy worth over 5 experience counts the combat system's food counter down, 9 to 15 kills at a time at the default skill, and at 0 leaves one of the level's food set where it fell, which rises, lands and waits. A pie its script ties to a later adventure takes itself off until that's done.
+
+#### Scenario: A hurt hero walks into food
+- **WHEN** a hero at 100 of 290 walks into a placed food
+- **THEN** he reads 200, the food is gone and no script stopped
+
+#### Scenario: A kill drops food
+- **WHEN** the food counter reaches 0 at a kill
+- **THEN** one of the level's food set lands by it and heals a hero who walks to it as placed food does
 
 ### Requirement: Level 214's intro hands the hero over on its ship
 Level 214's intro SHALL hold until a hero's minion is in, then play its ten scenes to their end (52.9 s, Flynn and Cali in them, its ten lines whole) or end on a player's △ past its first second, and hand him over on the ship's deck at (-9.14, -12.58, 18.10), 4.3 m from the level's start marker, every placement it took off back as its file has it and the ship's engine, masthead and roof standing once each, nothing stopped.

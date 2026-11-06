@@ -79,11 +79,12 @@ use crate::tuning::{FOOT, NOMINAL_STEP, Tuning};
 use crate::walk::{Footing, Walk, turn_facing};
 
 /// What a steered actor's fall presses into the ground past, ft/s, to be
-/// taken off as it lands ([`Hero::step_steered`]): over the 30 ft/s every
-/// landing up to Setup_004B comes to, a Chompy's off its pod, a knockback's,
-/// and under the 42-85 of its lobber's drop and its closets' jumps, so only
-/// those reach it. A hero's own frame never comes here. A hypothesis; no
-/// recording has an enemy's fall (stand-in ledger: `hard-landing`).
+/// taken off as it lands ([`Hero::step_steered`]): over the 35 ft/s every
+/// other landing the suites hold comes to, a Chompy's off its pod, a
+/// knockback's, and under the 47-89 of Setup_004B's lobber's drop and its
+/// closets' jumps, so only those reach it. A hero's own frame never comes
+/// here. A hypothesis; no recording has an enemy's fall (stand-in ledger:
+/// `hard-landing`).
 pub const HARD_LANDING: f32 = 40.0;
 
 /// Passes [`Hero::push_out`] takes off the walls he's in before it falls
