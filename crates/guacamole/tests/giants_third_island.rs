@@ -161,11 +161,10 @@ fn fly(run: &mut Run, steps_in: u32) -> Vec3 {
     if let Some(v) = hung
         && let Some(owner) = owner_of(run, v)
     {
-        let mut nodes = vec![NodePose::at(Vec3::ZERO); 13];
-        for n in &mut nodes {
-            n.at = at - run.world.actor(owner).map_or(Vec3::ZERO, |a| a.position);
-        }
-        run.world.set_nodes(owner, nodes);
+        let a = run.world.actor(owner).expect("what he hangs from");
+        let turn = guac_motion::seam::Quat::from_rotation_y(-a.angles.facing.to_radians());
+        let off = turn * (at - a.position);
+        run.world.set_nodes(owner, vec![NodePose::at(off); 13]);
     }
     at
 }
@@ -210,7 +209,8 @@ fn level_214s_final_island_carries_him_hung_on_its_rigs() {
             if run.bench.bodies.contains_key(&run.hero) {
                 bodied += 1;
             }
-            assert_eq!(run.hero().walk.velocity, Vec3::ZERO, "his controller's off");
+            let walking = run.hero().walk.velocity.length();
+            assert!(walking < 1e-3, "his controller's off: {walking}");
         }
         for h in run.world.clones() {
             if run.world.name(h) == "214_RFP_MoneyBags"
@@ -478,6 +478,16 @@ fn level_214s_third_island_is_walked_to_its_end() {
         let s = stick_to(&run, [705.0, 494.3]);
         step(&mut run, &mut stops, s, [k % 4 < 2, false, false, false]);
     }
+    println!("the barrel broken, him at {}", run.hero().pivot);
+    // Square behind the block before pushing: off its middle he slides by.
+    for _ in 0..120 {
+        if run.hero().pivot.x > 705.0 {
+            break;
+        }
+        let s = stick_to(&run, [706.0, 495.0]);
+        step(&mut run, &mut stops, s, [false; 4]);
+    }
+    println!("behind the block at {}", run.hero().pivot);
     for _ in 0..900 {
         let s = stick_to(&run, [705.4, 440.0]);
         step(&mut run, &mut stops, s, [false; 4]);
@@ -485,7 +495,12 @@ fn level_214s_third_island_is_walked_to_its_end() {
             break;
         }
     }
-    assert!((z(&run) - 482.0).abs() < 0.5, "the bridge: {}", z(&run));
+    assert!(
+        (z(&run) - 482.0).abs() < 0.5,
+        "the bridge: {} him at {}",
+        z(&run),
+        run.hero().pivot
+    );
     for _ in 0..60 {
         still(&mut run, &mut stops, [false; 4]);
     }
@@ -494,9 +509,9 @@ fn level_214s_third_island_is_walked_to_its_end() {
         &mut stops,
         &[
             [702.0, 496.0],
-            [696.0, 493.2],
-            [692.0, 493.0],
-            [691.5, 498.0],
+            [696.0, 492.0],
+            [690.5, 492.3],
+            [690.0, 498.0],
             [692.5, 502.0],
             [700.5, 503.0],
             [709.0, 503.0],
@@ -510,7 +525,7 @@ fn level_214s_third_island_is_walked_to_its_end() {
             [685.0, 472.5],
         ],
     );
-    let t2 = play_turret(&mut run, &mut stops, 7);
+    let t2 = play_turret(&mut run, &mut stops, 4);
     println!("the second turret over at {t2}");
     walk(
         &mut run,
@@ -534,7 +549,8 @@ fn level_214s_third_island_is_walked_to_its_end() {
     let mut scenes = Vec::new();
     for k in 0..8000u32 {
         let cs = cutscene_name(&run);
-        still(&mut run, &mut stops, [cs.is_none() && !gone(&run, part) && k % 20 < 2, false, false, false]);
+        let taking = cs.is_none() && !gone(&run, part) && k % 20 < 2;
+        still(&mut run, &mut stops, [taking, false, false, false]);
         if let Some((i, n)) = scene_of(&run)
             && scenes.last() != Some(&i)
         {

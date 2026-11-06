@@ -15,6 +15,9 @@ use crate::scripts::ScriptWorld;
 /// size, so a pointer on one takes it (ours: stand-in ledger `turret-pick`).
 pub const PICK_REACH: f32 = 1.5;
 
+/// The string a turret's calibration shows on the PS3.
+pub const CALIBRATION_LINE: &str = "PointAtTarget_360/PS3";
+
 /// What a turret's shots are named from: each element's template.
 pub const SHOTS: &str = "New_Turret_Projectile";
 
@@ -98,9 +101,11 @@ pub fn view(vm: &Vm, world: &ScriptWorld) -> Option<TurretView> {
             }
             _ => None,
         });
+    // The line this platform's screen shows; what the data remembers is the
+    // Wii's, whatever it put up.
     let message = calibrating
-        .and_then(|c| vm.field(c, "remembered calibration message"))
-        .and_then(|m| world.text_of(vm.value(m)));
+        .and_then(|_| vm.program().object_named(CALIBRATION_LINE))
+        .and_then(|o| world.text_of(Value::Object(o)));
     let hits = vm
         .program()
         .global_named("DBG_Lockhit")
