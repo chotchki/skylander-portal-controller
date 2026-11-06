@@ -603,7 +603,7 @@ fn gone(run: &Run, h: Handle) -> bool {
         || run.vm.placement_of(h).is_none_or(|id| run.vm.removed(id))
 }
 
-/// Up to `steps` steps of a fight with `foes`: every 20 steps the hero set
+/// Up to `steps` steps of a fight with `foes`: every 23 steps the hero set
 /// down 1.5 m short of the nearest standing, facing it, his first attack
 /// pulsed two steps in four (a hand mashing South), until every one is
 /// beaten. The step each was beaten at; a foe standing shapeless (a dead
@@ -611,9 +611,10 @@ fn gone(run: &Run, h: Handle) -> bool {
 fn fight(run: &mut Run, stops: &mut Vec<String>, foes: &[Handle], steps: u32) -> Vec<Option<u32>> {
     let mut beaten: Vec<Option<u32>> = vec![None; foes.len()];
     for k in 0..steps {
-        // Off his attack's own cycle: set down every 20 steps, the same
-        // lob missed one Chompy for good once AS.115's hang in the intro
-        // moved his clips' phase.
+        // 23, off his attack's own cycle: set down every 20, the same lob
+        // flies over a Chompy standing to nip him, on some of the session's
+        // number streams for good (AS.115's review: 2 of 8 seeds, the four
+        // gone by 1,376 on all 16 runs at 23).
         if k % 23 == 0 {
             let me = run.hero().pivot;
             let near = foes

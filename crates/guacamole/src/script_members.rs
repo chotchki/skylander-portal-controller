@@ -1940,7 +1940,9 @@ impl ScriptWorld {
                 // (openspec AS.115); another's ground carries nobody here.
                 let carried = v != Value::Null
                     && !matches!(self.object(Some(v)), Some(Object::Facet(_, Facet::Ground)));
-                if let Some(hero) = engine.hero(h) {
+                if let Some(hero) = engine.hero(h)
+                    && hero.hung != carried
+                {
                     hero.hung = carried;
                     hero.walk.velocity = Vec3::ZERO;
                 }
@@ -2669,6 +2671,7 @@ impl ScriptWorld {
         let walk = self.scene_walks.entry(mover).or_default();
         walk.aim = aim;
         walk.along = along;
+        walk.own = call.placement == mover;
         Ok(if done {
             Answer::Run {
                 receiver: None,
@@ -2735,14 +2738,20 @@ impl ScriptWorld {
     /// scene walk's speed, on what's under him, facing where he goes. One
     /// further from where he's going than any scene walks him starts there:
     /// what he hung on let him go where its clip didn't pose it (level 201's
-    /// landing pod, stand-in ledger: `scene-walk`).
+    /// landing pod, stand-in ledger: `scene-walk`). His own script's walk is
+    /// [`ScriptWorld::move_hero_own_walk`]'s.
     fn move_hero_walk(&mut self, h: Handle, dt: f32, engine: &mut dyn Engine) {
         let Some(walk) = self.scene_walks.get_mut(&h) else {
             return;
         };
         let Aim::To(to) = std::mem::take(&mut walk.aim) else {
+            walk.speed = 0.0;
             return;
         };
+        if walk.own {
+            self.move_hero_own_walk(h, to, dt, engine);
+            return;
+        }
         let Some(at) = engine.hero(h).map(|hero| hero.pivot) else {
             return;
         };
@@ -2768,6 +2777,45 @@ impl ScriptWorld {
         if let Some(hero) = engine.hero(h) {
             hero.pivot = Vec3::new(next.x, ground.unwrap_or(next.y), next.z);
             hero.facing = crate::script_engine::heading_of(across);
+        }
+    }
+
+    /// A step of a hero's own script's walk (openspec AU.9: Sunburn's
+    /// teleport hands `Movement - Move To` his destination while he plays):
+    /// up to his movement numbers as his scripts left them (200 ft/s, 999
+    /// ft/s² for the teleport; a scene walk's speed with none set) straight
+    /// at it, through his controller, so a wall stops him and past a ledge
+    /// the ground isn't under him. The walk his scripts left him is his
+    /// again after it. What carries him in the original is AU.9's to read
+    /// (stand-in ledger: `scene-walk`).
+    fn move_hero_own_walk(&mut self, h: Handle, to: Vec3, dt: f32, engine: &mut dyn Engine) {
+        let Some(mut body) = engine.hero(h).cloned() else {
+            return;
+        };
+        let across = Vec3::new(to.x - body.pivot.x, 0.0, to.z - body.pivot.z);
+        let far = across.length();
+        if far < 1e-4 {
+            return;
+        }
+        let numbers = self.actors.get(&h).map(|a| a.physics).unwrap_or_default();
+        let Some(walk) = self.scene_walks.get_mut(&h) else {
+            return;
+        };
+        walk.speed = if numbers.ground_acceleration > 0.0 {
+            (walk.speed + numbers.ground_acceleration * dt).min(numbers.ground_max_speed)
+        } else {
+            SCENE_WALK_SPEED
+        };
+        // No further than it is: the step ends on it, not past it.
+        let speed = walk.speed.min(far / (METRES_PER_FOOT * dt));
+        let left = body.walk.velocity;
+        body.walk.velocity = across / far * speed;
+        let own: Vec<BodyId> = engine.body(h).into_iter().collect();
+        body.step_engine(engine.seam(), dt, &own, Surfaces::NONE);
+        body.walk.velocity = left;
+        body.facing = crate::script_engine::heading_of(across);
+        if let Some(hero) = engine.hero(h) {
+            *hero = body;
         }
     }
 
@@ -4580,6 +4628,104 @@ mod tests {
             far,
             "too far to walk: he's there"
         );
+    }
+
+    /// openspec AU.9: a hero's own script walking him goes through his
+    /// controller: a wall stops him short of where he's going, and with
+    /// nothing in the way he gets there on his own numbers; let go, his
+    /// walk's what his scripts left it.
+    #[test]
+    fn a_heros_own_walk_stops_at_a_wall() {
+        let floor = Body {
+            id: BodyId(1),
+            kind: BodyKind::Static,
+            pose: Pose::at(Vec3::new(0.0, -0.5, 0.0)),
+            collider: Collider::Convex(Shape::Box {
+                half_extents: Vec3::new(40.0, 0.5, 40.0),
+                margin: 0.0,
+            }),
+        };
+        let wall = Body {
+            id: BodyId(2),
+            kind: BodyKind::Static,
+            pose: Pose::at(Vec3::new(0.0, 2.0, 5.0)),
+            collider: Collider::Convex(Shape::Box {
+                half_extents: Vec3::new(10.0, 2.0, 0.2),
+                margin: 0.0,
+            }),
+        };
+        let walked = |wall: Option<Body>, to: Vec3| {
+            let mut bodies = vec![floor.clone()];
+            bodies.extend(wall);
+            let mut e = Bench {
+                world: ParryWorld::new(&bodies).unwrap(),
+                hero: None,
+            };
+            let mut w = world();
+            let mut hero = Actor::blank();
+            hero.physics.ground_max_speed = 200.0;
+            hero.physics.ground_acceleration = 999.0;
+            w.actors.insert(HERO, hero);
+            let start = Vec3::new(0.0, 0.01, 0.0);
+            let mut h = Hero::new(eruptor_solid(), Tuning::ERUPTOR, start, 0.0);
+            h.settle(&e.world, &[]);
+            h.walk.velocity = Vec3::new(0.0, 0.0, 2.0);
+            e.hero = Some(h);
+            let call = OpCall {
+                placement: HERO,
+                receiver: Value::Null,
+                class: Class::MoveTo,
+                operands: Vec::new(),
+                words: Vec::new(),
+                sets: Vec::new(),
+            };
+            for _ in 0..30 {
+                w.scene_move(HERO, &call, None, to, (true, false, true), &mut e)
+                    .unwrap();
+                w.move_scene_walks(1.0 / 60.0, &mut e);
+            }
+            e.hero.unwrap()
+        };
+        let to = Vec3::new(0.0, 0.0, 10.0);
+        let clear = walked(None, to);
+        assert!((clear.pivot.z - 10.0).abs() < 1e-3, "{}", clear.pivot);
+        assert_eq!(
+            clear.walk.velocity,
+            Vec3::new(0.0, 0.0, 2.0),
+            "his scripts'"
+        );
+        let stopped = walked(Some(wall), to);
+        assert!(
+            stopped.pivot.z < 4.8 && stopped.pivot.z > 3.0,
+            "{}",
+            stopped.pivot
+        );
+    }
+
+    /// openspec AS.115: only a change of what carries him stops his walk:
+    /// a character's attacks write a null over a null on him (Gill Grunt's,
+    /// Spyro's, the shell's), which leaves his walk as his scripts set it.
+    #[test]
+    fn writing_nothing_over_nothing_leaves_his_walk() {
+        let mut e = bench();
+        let pivot = Vec3::new(1.0, 0.0, 1.0);
+        e.hero = Some(Hero::new(eruptor_solid(), Tuning::ERUPTOR, pivot, 0.0));
+        e.hero.as_mut().unwrap().walk.velocity = Vec3::X;
+        let mut w = world();
+        w.actors.insert(HERO, Actor::blank());
+        w.set_member(
+            &at(
+                "abstractplacement",
+                "attach node",
+                Some(Value::Entity(HERO)),
+                None,
+            ),
+            Member::AttachNode,
+            Value::Null,
+            &mut e,
+        )
+        .unwrap();
+        assert_eq!(e.hero.as_ref().unwrap().walk.velocity, Vec3::X);
     }
 
     /// AH.50's hand: an actor hung on his node 7 sits there; posed again,
