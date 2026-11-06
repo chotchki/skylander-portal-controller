@@ -5748,13 +5748,16 @@ const READ_BY: u32 = 12;
 /// How a press is made (openspec AU.10), each by an env of its own: the
 /// steps it's held (`AH29_HELD`, [`HELD`] a tap), the steps its window runs
 /// (`AH29_WINDOW`, [`WINDOW`]), a second tap that many steps into it
-/// (`AH29_AGAIN`), and the stick held forward through it (`AH29_WALK`).
-#[derive(Debug, Clone, Copy)]
+/// (`AH29_AGAIN`), the stick held forward through it (`AH29_WALK`), and taps
+/// of another position (`AH29_THEN`, `<position>:<step>` comma-separated: the
+/// first attack once the second has put him in a form or a mode).
+#[derive(Debug, Clone)]
 struct PressShape {
     held: u32,
     window: u32,
     again: Option<u32>,
     walk: bool,
+    then: Vec<(usize, u32)>,
 }
 
 impl PressShape {
@@ -5765,7 +5768,23 @@ impl PressShape {
             window: n("AH29_WINDOW").unwrap_or(WINDOW),
             again: n("AH29_AGAIN"),
             walk: std::env::var("AH29_WALK").is_ok(),
+            then: std::env::var("AH29_THEN")
+                .unwrap_or_default()
+                .split(',')
+                .filter_map(|t| {
+                    let (a, s) = t.split_once(':')?;
+                    Some((a.parse::<usize>().ok()?.checked_sub(1)?, s.parse().ok()?))
+                })
+                .collect(),
         }
+    }
+
+    /// The other positions down at `step`.
+    fn others(&self, step: u32) -> impl Iterator<Item = usize> + '_ {
+        self.then
+            .iter()
+            .filter(move |(_, s)| (*s..*s + HELD).contains(&step))
+            .map(|(a, _)| *a)
     }
 
     fn down(&self, step: u32) -> bool {
@@ -6001,6 +6020,9 @@ fn fight_presses(l: &Level, load: &str, actions: &[usize], out: &mut Fought) -> 
             }
             let mut actions = [false; 4];
             actions[action] = shape.down(s);
+            for other in shape.others(s) {
+                actions[other] = true;
+            }
             w.bench.pads[0] = Pad {
                 stick: shape.stick(),
                 actions,
@@ -6059,6 +6081,26 @@ fn fight_presses(l: &Level, load: &str, actions: &[usize], out: &mut Fought) -> 
         }
         press.clones.sort();
         press.clones.dedup();
+        if std::env::var("AH29_TRACE").is_ok() {
+            let target_at = w.world.actor(target).map(|a| a.position);
+            println!(
+                "    at the window's end: hero {:?}, the target {target_at:?}",
+                w.hero().pivot
+            );
+            for h in w.world.clones() {
+                if clones_before.contains(&h) || w.world.name(h).is_empty() {
+                    continue;
+                }
+                let a = w.world.actor(h);
+                println!(
+                    "    {} at {:?} active {:?} behaviour {:?}",
+                    w.world.name(h),
+                    a.map(|a| a.position),
+                    a.map(|a| a.active),
+                    w.vm.placement_of(h).and_then(|id| w.vm.behaviour(id))
+                );
+            }
+        }
         for h in &w.halts[seen_halts..] {
             let at = StopAt {
                 member: match &h.reason {

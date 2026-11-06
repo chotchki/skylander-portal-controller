@@ -2,9 +2,9 @@
 //! the enemy intro's card, its name in a band low on the screen where the
 //! original's slides up, and the hints, each in a box at the top, read off
 //! the run ([`guacamole::announcements`]) and laid out in the TV's own look
-//! (design decision 2's rule for what has no art of ours yet). The scripts
-//! own when each shows; a portal alert takes the screen whole and they wait
-//! under it, as the held band does.
+//! (stand-in ledger: `level-words`). The scripts own when each shows; a
+//! portal alert takes the screen whole and they wait under it, as the held
+//! band does.
 
 use bevy::prelude::*;
 use guacamole::announcements::{Line, enemy_card, hints};
