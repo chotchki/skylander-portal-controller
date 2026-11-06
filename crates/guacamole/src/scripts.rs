@@ -1213,10 +1213,15 @@ impl ScriptWorld {
         out
     }
 
-    /// The hub's people ([`HUB_PEOPLE`], openspec AU.28): each placement
-    /// whose script is one of theirs, by its actor, unwalked, in handle
-    /// order; whether its script runs is the caller's to check.
+    /// The people the TV draws unwalked: each placement whose script is one
+    /// of [`HUB_PEOPLE`]'s (openspec AU.28) or whose name is one of
+    /// [`LEVEL_PEOPLE`]'s (AS.98), by its actor, in handle order; whether its
+    /// script runs is the caller's to check.
     pub fn people(&self) -> Vec<Handle> {
+        let person = |p: &Placed| {
+            p.script.as_deref().is_some_and(is_hub_person)
+                || LEVEL_PEOPLE.iter().any(|(_, name)| *name == p.name)
+        };
         let mut out: Vec<Handle> = self
             .actors
             .iter()
@@ -1224,8 +1229,7 @@ impl ScriptWorld {
                 a.walker.is_none()
                     && a.obj
                         .and_then(|o| self.templates.get(&o))
-                        .and_then(|p| p.script.as_deref())
-                        .is_some_and(is_hub_person)
+                        .is_some_and(person)
             })
             .map(|(h, _)| *h)
             .collect();
@@ -2089,7 +2093,12 @@ impl ScriptWorld {
                         .and_then(|k| k.obj)
                     && let Some(p) = self.templates.get(&o)
                 {
+                    // What the engine walked it walks again (openspec AS.98).
+                    let walked = self.actors.get(&h).is_some_and(|k| k.walker.is_some());
                     self.actors.insert(h, actor_of(p));
+                    if walked {
+                        self.walk(h);
+                    }
                     self.revived.push((h, o));
                     return Ok(Answer::Done);
                 }
@@ -2524,7 +2533,14 @@ pub struct Encounter {
 /// who runs his waypoints to the house by the yard and goes in, and sets
 /// the elves on the hero, its third wakes its Tree Rex and Chompy spawner)
 /// and the five it wakes, its Mabu walked as a creature (his capsule meets
-/// the level).
+/// the level); then Setup_004B past the second door (AS.97), whose
+/// controller queues its lobber down off his ledge at its trigger, plays
+/// his enemy intro and lets out its two closets' eight waves, each on the
+/// last's landing, its Chompies at the hero, the closets' clones walked; its
+/// end wakes the gate to Setup_005's yard, whose controller (AS.98) sets
+/// its five Chompies chasing the Mabu into the house off the yard, and whose
+/// helper, once the key in that house's room is taken, wakes the Tree Rex,
+/// the Elf Near and the lobbers on the ledges past the yard.
 pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
     level: "level_214_tutotial_2",
     placements: &[
@@ -2556,8 +2572,45 @@ pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
         "Enemy_Elf_Near_C",
         "Enemy_TreeRex(1)",
         "Enemy_Chompy_Spawner(2)",
+        // Setup_004B, past the second locked door (openspec AS.97).
+        "Setup_004B_Controller",
+        "Enemy_Elf_Lobber(13)",
+        "ClosetMesh_0_Intact(1)",
+        "ClosetMesh_0_Intact(2)",
+        "Enemy_Chompy(4)",
+        "Enemy_Chompy(5)",
+        "Enemy_Chompy(7)",
+        "Enemy_Chompy(9)",
+        "Enemy_Chompy(10)",
+        "Enemy_Chompy(11)",
+        "Enemy_Chompy(12)",
+        // Setup_005, the yard past its gate (openspec AS.98).
+        "Setup_005_Controller",
+        "Setup_005_NPC",
+        "Enemy_Chompy(41)",
+        "Enemy_Chompy(42)",
+        "Enemy_Chompy(43)",
+        "Enemy_Chompy(44)",
+        "Enemy_Chompy(45)",
+        "Setup_005_Trigger(2)",
+        "Setup_005_Controller_Helper",
+        "Enemy_TreeRex(3)",
+        "Enemy_Elf_Near_S2(1)",
+        "Enemy_Elf_Lobber(1)",
+        "Enemy_Elf_Lobber(2)",
+        "Enemy_Elf_Lobber(3)",
+        "Enemy_Chompy(13)",
+        "Enemy_Chompy(14)",
+        "Enemy_Chompy(15)",
+        "Enemy_Chompy(16)",
+        "Enemy_Chompy(17)",
     ],
-    clones: &["_Template_Undead_Chompy"],
+    clones: &[
+        "_Template_Undead_Chompy",
+        // What Setup_004B's closets let out (openspec AS.97).
+        "Enemy_Elf_Near_S2(0)",
+        "Enemy_Elf_Lobber(0)",
+    ],
     steered: &["TreeRex_special_homing_actor"],
 }];
 
@@ -2675,10 +2728,28 @@ pub const HUB_SCRIPTS: [&str; 11] = [
 /// AU.6; unwalked, the host turns it at once, as the headless runs do).
 pub const HUB_PEOPLE: [&str; 2] = ["/Flynn.ai", "/Cali.ai"];
 
+/// A level's own people the TV draws as it does the hub's (openspec AS.98),
+/// by level and placement, never walked: Auric in his scene on level 214
+/// and at his stall after it, Flynn and Cali on its third ship (AS.142).
+/// Walked, his scene never ended (a reading: its `Turn to Target` left to
+/// the walk's steering, as Cali's was at AU.6).
+pub const LEVEL_PEOPLE: [(&str, &str); 4] = [
+    ("level_214_tutotial_2", "Moneybags_end"),
+    ("level_214_tutotial_2", "Auric_store"),
+    ("level_214_tutotial_2", "Flynn_Island_3"),
+    ("level_214_tutotial_2", "Cali_Island_3"),
+];
+
 /// Whether a placement whose script is `script` is one of the hub's
 /// people ([`HUB_PEOPLE`]).
 pub fn is_hub_person(script: &str) -> bool {
     HUB_PEOPLE.iter().any(|p| script.ends_with(p))
+}
+
+/// Whether the placement `name` of the level whose archive is `level` is
+/// one of its own people ([`LEVEL_PEOPLE`]).
+pub fn is_level_person(level: &str, name: &str) -> bool {
+    LEVEL_PEOPLE.iter().any(|(l, n)| *l == level && *n == name)
 }
 
 /// Whether the level whose archive is `level` is a hub stage.
@@ -2829,6 +2900,14 @@ pub const START_PROPS: [&str; 23] = [
     "Boulder_Chunks.ai",
     "StoneWall_Piece.ai",
 ];
+
+/// The levels' food (openspec AS.133, design decision 2's whitelist), every
+/// tick, by script, on every level: `FoodInit.ai` hands the level's food set
+/// to the combat system, whose experience balls drop one of its templates at
+/// a kill once enough kills have counted down, and `Healing_Food.ai` is each
+/// food, placed or dropped: it heals a hero who comes within 8 ft and goes,
+/// and turns its solid off, so a hero walks through it.
+pub const FOOD_SCRIPTS: [&str; 2] = ["/Healing_Food.ai", "/FoodInit.ai"];
 
 /// The Titan boulders' script, its first tick alone (openspec AG.60): its
 /// STARTUP makes each boulder's solid the original's cylinder and lays its
@@ -3327,6 +3406,7 @@ pub fn smash_config(mode: Mode) -> Config {
         placements.extend(PICKUPS.iter().map(|s| (*s).to_owned()));
         placements.extend(BREAKABLES.iter().map(|s| (*s).to_owned()));
         scripts.extend(START_PROPS.iter().map(|s| (*s).to_owned()));
+        scripts.extend(FOOD_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(CAMERA_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(GOAT_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(ROUTE_SCRIPTS.iter().map(|s| (*s).to_owned()));
@@ -3696,7 +3776,14 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
 /// a press, the part goes and wakes the sail (`214_Recover_First_Part_IGC`),
 /// whose cutscene, played to its end since AS.82 (or skipped by a
 /// player's △), sets him down on the second island's ship; Setup_003 waits
-/// for it.
+/// for it. From the second island to its second ship part (AS.98): Setup_005's
+/// Tree Rex and Elf Near beaten, its first activator pans to the yard's jump
+/// pad and wakes it; its lobber beaten, the second the ledge's, up to the
+/// second key; a hero at the door with two locks short of a key is panned
+/// to the keys he lacks; the door open, a hero near Auric sets off his scene
+/// (`Moneybags_end`, woken in the south room by `Activate_Auric`), which wakes
+/// his teleporter, which wakes the part (`Ship_part_2(1)`), whose shutdown
+/// wakes the sail to the third island (`214_Final_Island_IGC`).
 pub const PASSAGES: [(&str, &[&str]); 1] = [(
     "level_214_tutotial_2",
     &[
@@ -3704,15 +3791,32 @@ pub const PASSAGES: [(&str, &[&str]); 1] = [(
         "PvP_JumpPad_NORMAL(2)",
         "Ship_part_1(1)",
         "214_Recover_First_Part_IGC",
+        // Past Setup_004B, the camera's swing to the gate it opens; past
+        // Setup_005 the jump pads to the second key, then Auric's scene
+        // and what it wakes (openspec AS.98).
+        "Gate_Openner_camera_Swing",
+        "Jumpad_Activator_Second_Island(1)",
+        "Jumpad_Activator_Second_Island(2)",
+        "PvP_JumpPad_SUPER(1)",
+        "PvP_JumpPad_SUPER(2)",
+        "PvP_JumpPad_SUPER(3)",
+        "PvP_JumpPad_SUPER(4)",
+        "PAN- Show Key_2(1)",
+        "Activate_Auric",
+        "Moneybags_end",
+        "Auric_store",
+        "MoneyBags Temp_Teleporter",
+        "Ship_part_2(1)",
+        "214_Final_Island_IGC",
     ],
 )];
 
 /// What takes the way on through level 214's third island (openspec
 /// AS.76), by placement name, listed and never walked:
-/// - the second ship part (`Ship_part_2(1)`, on the second island past
-///   Auric, AS.98) wakes the final island's cutscene, which carries the
-///   players on the ship's rigs to the third island's ship (AS.115) and
-///   brings `Island_3`'s placements back;
+/// - the second ship part and the final island's cutscene it wakes are
+///   [`PASSAGES`]' (AS.98); the cutscene carries the players on the ship's
+///   rigs to the third island's ship (AS.115) and brings `Island_3`'s
+///   placements back;
 /// - Flynn sends them to Persephone (`Flynn_Island_3`, a pan to her door,
 ///   `Door_Persephone's_Room(3)`), whose room is an interior; her first
 ///   visit's cutscene (`Persephone_214`) is what lets the drawbridge down
@@ -3730,9 +3834,7 @@ pub const PASSAGES: [(&str, &[&str]); 1] = [(
 ///   (`ChainedGate_Controller`), Setup_007's lobbers coming from past it;
 /// - past that gate the third ship part (`Ship_part_3`) clones the outro
 ///   (`214_Outro_IGC`), whose `Game - Level End` names the village.
-pub const THIRD_ISLAND_WAY: [&str; 43] = [
-    "Ship_part_2(1)",
-    "214_Final_Island_IGC",
+pub const THIRD_ISLAND_WAY: [&str; 41] = [
     "Flynn_Island_3",
     "Cali_Island_3",
     "Door_Persephone's_Room(3)",
@@ -5648,7 +5750,7 @@ mod tests {
                 "{name}"
             );
         }
-        assert!(!l214.whitelist.lists("Enemy_Chompy(4)", "C:/x/Any.ai"));
+        assert!(!l214.whitelist.lists("Enemy_Chompy(1)", "C:/x/Any.ai"));
         // Its intro, 214's alone (openspec AS.47, AS.60).
         assert!(l214.whitelist.lists("214_Intro_IGC", "C:/x/Any.ai"));
         assert!(!other.whitelist.lists("214_Intro_IGC", "C:/x/Any.ai"));
@@ -5847,11 +5949,11 @@ mod tests {
                 && !e.clones.contains(&"TreeRex_special_homing_actor"),
             "never walked"
         );
-        // A Tree Rex of a fight past the TV's (Setup_005's yard).
+        // Its template's name, which the TV's listing doesn't hold.
         assert!(
             !l214
                 .whitelist
-                .lists("Enemy_TreeRex(3)", "C:/x/S2_Enemy_TreeRex.ai")
+                .lists("Enemy_TreeRex", "C:/x/S2_Enemy_TreeRex.ai")
         );
     }
 
@@ -5923,6 +6025,92 @@ mod tests {
                 other.whitelist.listing("a clone", &path),
                 guac_script::Listed::Every,
                 "{script}"
+            );
+        }
+    }
+
+    /// openspec AS.97, AS.98: Setup_004B, Setup_005 and the way to the
+    /// second ship part on level 214's listing by name, on no other's; its
+    /// fights' placements walked, what the closets let out walked as clones,
+    /// the way on listed and never walked.
+    #[test]
+    fn level_214s_second_islands_end_is_listed_by_name() {
+        let files = Files::default();
+        let l214 = level_config(Mode::Play, &files, 4, "level_214_tutotial_2");
+        let other = level_config(Mode::Play, &files, 4, "level_212");
+        let e = encounter("level_214_tutotial_2").unwrap();
+        for name in [
+            "Setup_004B_Controller",
+            "Enemy_Elf_Lobber(13)",
+            "ClosetMesh_0_Intact(1)",
+            "ClosetMesh_0_Intact(2)",
+            "Enemy_Chompy(4)",
+            "Enemy_Chompy(12)",
+            "Setup_005_Controller",
+            "Setup_005_NPC",
+            "Enemy_Chompy(41)",
+            "Enemy_Chompy(45)",
+            "Setup_005_Trigger(2)",
+            "Setup_005_Controller_Helper",
+            "Enemy_TreeRex(3)",
+            "Enemy_Elf_Near_S2(1)",
+            "Enemy_Elf_Lobber(1)",
+            "Enemy_Elf_Lobber(2)",
+            "Enemy_Elf_Lobber(3)",
+            "Enemy_Chompy(13)",
+            "Enemy_Chompy(17)",
+        ] {
+            assert!(l214.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+            assert!(!other.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+            assert!(e.placements.contains(&name), "{name} walked");
+        }
+        for name in ["Enemy_Elf_Near_S2(0)", "Enemy_Elf_Lobber(0)"] {
+            assert!(l214.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+            assert!(e.clones.contains(&name), "{name}'s clones walked");
+        }
+        for name in [
+            "Gate_Openner_camera_Swing",
+            "Jumpad_Activator_Second_Island(1)",
+            "Jumpad_Activator_Second_Island(2)",
+            "PvP_JumpPad_SUPER(1)",
+            "PvP_JumpPad_SUPER(2)",
+            "PvP_JumpPad_SUPER(3)",
+            "PvP_JumpPad_SUPER(4)",
+            "PAN- Show Key_2(1)",
+            "Activate_Auric",
+            "Moneybags_end",
+            "Auric_store",
+            "MoneyBags Temp_Teleporter",
+            "Ship_part_2(1)",
+            "214_Final_Island_IGC",
+        ] {
+            assert!(l214.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+            assert!(!other.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+            assert!(!e.placements.contains(&name), "{name} never walked");
+        }
+    }
+
+    /// openspec AS.133: the food's two scripts on every level's listing, by
+    /// file, the wizard's own `018_Healing_Food.ai` off it.
+    #[test]
+    fn the_levels_food_is_listed_by_script_on_every_level() {
+        let files = Files::default();
+        let food = "C:/tfb/Content/Levels/Includes/GameElement_Food/scripts";
+        for level in [
+            guac_extract::levels::FIRST_RUN[0],
+            "level_214_tutotial_2",
+            "level_201",
+        ] {
+            let c = level_config(Mode::Play, &files, 4, level);
+            for script in ["Healing_Food.ai", "FoodInit.ai"] {
+                assert!(
+                    c.whitelist.lists("", &format!("{food}/{script}")),
+                    "{level}: {script}"
+                );
+            }
+            assert!(
+                !c.whitelist.lists("", "C:/x/018_Healing_Food.ai"),
+                "{level}"
             );
         }
     }
@@ -6019,6 +6207,42 @@ mod tests {
         assert!(!is_hub_person(&format!(
             "{dir}/Cutscenes/Scripts/CS_Flynn.ai"
         )));
+    }
+
+    /// openspec AS.98: a level's own people are its placements by name, by
+    /// their actors, unwalked: Auric's on level 214, on no other level.
+    #[test]
+    fn level_214s_auric_is_one_of_its_people_by_name() {
+        let dir = "C:/tfb/Content/Levels/Level_214";
+        let obj = |index| Obj { unit: 3, index };
+        let files = Files {
+            placed: vec![
+                Placed::named(
+                    obj(10),
+                    "Moneybags_end",
+                    Some(&format!("{dir}/cutscenes/scripts/214_Meet_Auric_IGC.ai")),
+                    4,
+                ),
+                Placed::named(
+                    obj(11),
+                    "Auric_store",
+                    Some("C:/tfb/Content/Levels/Includes/Store/Scripts/Auric.ai"),
+                    4,
+                ),
+                Placed::named(obj(12), "Mabu", Some(&format!("{dir}/Scripts/Mabu.ai")), 4),
+            ],
+            ..Files::default()
+        };
+        let handles: HashMap<Obj, Handle> =
+            (10..13).map(|i| (obj(i), 0x100 + u64::from(i))).collect();
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        assert_eq!(world.people(), [0x10A, 0x10B]);
+        assert!(is_level_person("level_214_tutotial_2", "Auric_store"));
+        assert!(is_level_person("level_214_tutotial_2", "Flynn_Island_3"));
+        assert!(is_level_person("level_214_tutotial_2", "Cali_Island_3"));
+        assert!(!is_level_person("level_201", "Auric_store"));
+        world.walk(0x10A);
+        assert_eq!(world.people(), [0x10B], "a walked one isn't");
     }
 
     /// openspec AS.46, AS.47: a hub stage's sky, its stage's controller and
@@ -6449,6 +6673,25 @@ mod tests {
             "where its file has it"
         );
         assert_eq!(w.revived, [(grunt, GRUNT)]);
+        assert!(w.actor(grunt).unwrap().walker.is_none(), "walked by none");
+    }
+
+    /// AS.98: a placement the engine walks stays walked through a take-off
+    /// and a reset (level 214's intro takes placements off and resets them).
+    #[test]
+    fn a_reset_placement_the_engine_walks_stays_walked() {
+        let (mut w, grunt, _) = world();
+        w.walk(grunt);
+        for class in [Class::Remove, Class::Reset] {
+            w.op(
+                &call(class, Some(Value::Entity(grunt))),
+                &mut |_| 0,
+                &mut NoEngine,
+            )
+            .unwrap();
+        }
+        assert!(!w.removed(grunt), "back on");
+        assert!(w.actor(grunt).unwrap().walker.is_some(), "still walked");
     }
 
     /// AS.67: a clone's reset of itself stands it again as it was made: at

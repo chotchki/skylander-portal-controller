@@ -235,15 +235,17 @@ fn texel(prompt: Prompt, p: (f32, f32)) -> [u8; 3] {
     c
 }
 
-/// `prompt`'s face as an sRGB image, opaque, the letter upright with its
-/// rows top first as the disc's textures keep theirs.
+/// `prompt`'s face as an sRGB image, opaque, its rows bottom first, as the
+/// disc's own map keeps its △ (the apex in its last rows), so it stands
+/// upright on the model: `ButtonIcons_wii_c.mdl`'s v runs up the disc, its
+/// top at v 0.85 and its bottom at 0.15 (openspec AG.368).
 pub(crate) fn prompt_image(prompt: Prompt) -> Image {
     let mut data = Vec::with_capacity((SIZE * SIZE * 4) as usize);
     for y in 0..SIZE {
         for x in 0..SIZE {
             let p = (
                 (x as f32 + 0.5) / SIZE as f32,
-                (y as f32 + 0.5) / SIZE as f32,
+                1.0 - (y as f32 + 0.5) / SIZE as f32,
             );
             let [r, g, b] = texel(prompt, p);
             data.extend([r, g, b, 255]);
@@ -309,6 +311,25 @@ mod tests {
         assert_eq!(texel(Prompt::Position(Face::North), (0.5, 0.76)), DOT);
         // Past the disc, its rim's grey.
         assert_eq!(texel(Prompt::Letter("A"), (0.02, 0.02)), RIM);
+    }
+
+    /// AG.368: the image's rows run up the disc, as its model's v does: the
+    /// top position's dot in the image's lower half stands at the disc's
+    /// top, and a Y's stem, under its arms on the disc, in its upper half.
+    #[test]
+    fn the_prompts_rows_run_up_the_disc_as_its_own_map_does() {
+        let at = |prompt: Prompt, x: f32, y: f32| {
+            let image = prompt_image(prompt);
+            let data = image.data.unwrap();
+            let (x, y) = ((x * SIZE as f32) as usize, (y * SIZE as f32) as usize);
+            let i = (y * SIZE as usize + x) * 4;
+            [data[i], data[i + 1], data[i + 2]]
+        };
+        let green = |c: [u8; 3]| c[1] > c[0] + 80;
+        assert!(green(at(Prompt::Position(Face::North), 0.5, 0.76)));
+        assert_eq!(at(Prompt::Position(Face::North), 0.5, 0.24), DOT);
+        assert!(green(at(Prompt::Letter("Y"), 0.5, 0.25)), "the stem");
+        assert_eq!(at(Prompt::Letter("Y"), 0.5, 0.75), GREY, "between the arms");
     }
 
     /// An opaque card on neutral tints, its colour map `colour`.

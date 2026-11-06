@@ -705,8 +705,10 @@ impl ScriptWorld {
         // Asleep, a placement has no corpus (AG.7's INACTIVE) and so no
         // ground: its ground's type reads -1, which the destructibles
         // system shuts a breakable down by and wakes it on (openspec AH.21;
-        // a hypothesis, no oracle read has a sleeping one's ground).
-        if a.managed && !a.active {
+        // a hypothesis, no oracle read has a sleeping one's ground). Taken
+        // off, it has none either: Setup_004B's waves count their clones
+        // left standing by their ground's type (openspec AS.97).
+        if a.removed || (a.managed && !a.active) {
             return None;
         }
         let at = a.position;
@@ -2214,22 +2216,30 @@ impl ScriptWorld {
             }
             Member::Palette => {
                 // The running placement's, as the static member reads it;
-                // with none of its own, a clone's it tells (openspec AS.52:
-                // a cutscene's own actors, cloned from their templates, on
-                // which the game systems' placement starts each scene's
-                // animations). A file's placement told so reads nothing
-                // still: the pit's intro, which tells `Enemy_Chompy(1)` its
-                // three clips, runs AH.8's 449 frames that way and 64 more
-                // with them played (AS.80; stand-in ledger: `told-palette`).
+                // with none of its own, the actor it tells: a clone (openspec
+                // AS.52: a cutscene's own actors, cloned from their
+                // templates, on which the game systems' placement starts
+                // each scene's animations), or a file's placement told by
+                // anything but the game systems' (AS.97: the enemy system's
+                // action queue, whose jump plays the enemy's own clips and
+                // waits on them; a setup controller's Mabu). Told by the
+                // game systems a file's placement reads nothing still: the
+                // pit's intro, which tells `Enemy_Chompy(1)` its three clips,
+                // runs AH.8's 449 frames that way and 64 more with them
+                // played (AS.80; stand-in ledger: `told-palette`).
                 let of = |w: &Self, h: Handle| {
                     let t = w.template_of(h)?;
                     w.palettes.get(&t).map(|p| (t, p.len()))
                 };
+                let scene = self.is_game_systems(at.placement);
                 let lengths = of(self, at.placement).or_else(|| {
                     self.actor_of(Some(self.told))
                         .filter(|&h| {
                             h != at.placement
-                                && self.actors.get(&h).is_some_and(|a| a.obj.is_none())
+                                && self
+                                    .actors
+                                    .get(&h)
+                                    .is_some_and(|a| a.obj.is_none() || !scene)
                         })
                         .and_then(|h| of(self, h))
                 });
@@ -2320,6 +2330,17 @@ impl ScriptWorld {
                 .copied()
                 .unwrap_or_default(),
         )
+    }
+
+    /// Whether `h` is the game systems' placement, on which a cutscene's
+    /// steps run (openspec AS.52), by its script.
+    fn is_game_systems(&self, h: Handle) -> bool {
+        self.actors
+            .get(&h)
+            .and_then(|a| a.obj)
+            .and_then(|o| self.templates.get(&o))
+            .and_then(|p| p.script.as_deref())
+            .is_some_and(|s| s.ends_with("GameSystems.ai"))
     }
 
     /// A play of the sequence at `i` on `actor` (openspec AH.184): refused
@@ -6152,6 +6173,21 @@ mod fight_tests {
         assert_eq!(type_under(&mut w, &mut e, C1), Value::Int(-1));
     }
 
+    /// AS.97: a creature taken off has no ground, standing over the floor
+    /// or not, as one asleep has none: Setup_004B's waves count the clones
+    /// left standing by their ground's type.
+    #[test]
+    fn a_creature_taken_off_has_no_ground() {
+        let mut e = pit();
+        let mut w = world();
+        let mut stands = chompy(Vec3::new(0.0, 1.0, 0.0), 0.0);
+        stands.active = true;
+        w.actors.insert(C1, stands);
+        assert!(w.ground(C1, &mut e).is_some(), "on the floor");
+        w.actors.get_mut(&C1).unwrap().removed = true;
+        assert!(w.ground(C1, &mut e).is_none(), "off, none");
+    }
+
     /// A follow actor at rest has every point remembered through a
     /// reference to it on the recorded one, and no other actor's moves.
     #[test]
@@ -7213,15 +7249,21 @@ mod animation_tests {
         assert!(now[0].1 > 2.5 * STEP, "never started again: {now:?}");
     }
 
-    /// AS.52: the static palette is the running placement's; one with none
-    /// of its own reads the clone its tell's block tells (a cutscene's game
-    /// systems' placement starting an animation on each of its actors),
+    /// AS.52, AS.97: the static palette is the running placement's; one
+    /// with none of its own reads the actor its tell's block tells (a
+    /// cutscene's game systems' placement starting an animation on each of
+    /// its clones; the enemy system's queue a jump's clips on its enemy),
     /// never its own again, and nothing outside a tell; a file's placement
-    /// told so reads nothing yet (AS.80).
+    /// the game systems tell reads nothing yet (AS.80).
     #[test]
     fn a_static_palette_under_a_tell_is_the_told_actors_with_none_of_its_own() {
         const SYSTEMS: Handle = 0x6100_0040;
         const FILES: Handle = 0x6100_0041;
+        const ENEMIES: Handle = 0x6100_0042;
+        const SYSTEMS_OBJ: Obj = Obj {
+            unit: 1,
+            index: 901,
+        };
         let (mut w, mut e) = (world(), pit());
         let clips = palette(&mut w);
         // C1 a clone of the template; FILES a placement of its own file.
@@ -7231,8 +7273,20 @@ mod animation_tests {
         let mut placed = chompy(Vec3::ZERO, 0.0);
         placed.obj = Some(TEMPLATE);
         w.actors.insert(FILES, placed);
+        let mut systems = crate::script_engine::Actor::blank();
+        systems.obj = Some(SYSTEMS_OBJ);
+        w.actors.insert(SYSTEMS, systems);
+        w.templates.insert(
+            SYSTEMS_OBJ,
+            crate::scripts::Placed::named(
+                SYSTEMS_OBJ,
+                "Macros_GameSystems",
+                Some("C:/tfb/Content/Global/GameSystems.ai"),
+                4,
+            ),
+        );
         w.actors
-            .insert(SYSTEMS, crate::script_engine::Actor::blank());
+            .insert(ENEMIES, crate::script_engine::Actor::blank());
         let static_palette = Access {
             placement: SYSTEMS,
             receiver: None,
@@ -7253,7 +7307,22 @@ mod animation_tests {
         assert_eq!(
             w.elements(&static_palette, &mut e),
             Err(HostFault::Nothing),
-            "a file's placement told: nothing yet"
+            "a file's placement the game systems tell: nothing yet"
+        );
+        let enemies = Access {
+            placement: ENEMIES,
+            ..static_palette
+        };
+        assert_eq!(
+            w.elements(&enemies, &mut e).unwrap(),
+            clips,
+            "a file's placement anything else tells: its own"
+        );
+        w.told = Value::Entity(ENEMIES);
+        assert_eq!(
+            w.elements(&enemies, &mut e),
+            Err(HostFault::Nothing),
+            "telling itself is no tell"
         );
         // One with a palette of its own reads its own, told or not.
         let mine = Access {
