@@ -611,7 +611,10 @@ fn gone(run: &Run, h: Handle) -> bool {
 fn fight(run: &mut Run, stops: &mut Vec<String>, foes: &[Handle], steps: u32) -> Vec<Option<u32>> {
     let mut beaten: Vec<Option<u32>> = vec![None; foes.len()];
     for k in 0..steps {
-        if k % 20 == 0 {
+        // Off his attack's own cycle: set down every 20 steps, the same
+        // lob missed one Chompy for good once AS.115's hang in the intro
+        // moved his clips' phase.
+        if k % 23 == 0 {
             let me = run.hero().pivot;
             let near = foes
                 .iter()

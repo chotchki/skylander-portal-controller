@@ -407,8 +407,8 @@ fn level_214s_first_encounter_is_fought_with_eruptor() {
         .collect();
     // The spawners walk; the second fight's Chompies and elves walk from the
     // start too (openspec AS.58), and the second island's Tree Rex and four
-    // Chompies (AS.75) and Setup_004's Mabu and five (AS.84), none of them a
-    // clone, and nothing else.
+    // Chompies (AS.75), Setup_004's Mabu and five (AS.84) and the third
+    // island's (AS.76), none of them a clone, and nothing else.
     let placed = run.world.creatures();
     let mut walking: Vec<String> = placed.iter().map(|h| run.world.name(*h)).collect();
     walking.sort_unstable();
@@ -425,14 +425,24 @@ fn level_214s_first_encounter_is_fought_with_eruptor() {
             "Enemy_Chompy2_H",
             "Enemy_Chompy_Spawner(1)",
             "Enemy_Chompy_Spawner(2)",
+            "Enemy_Chompy_Spawner(4)",
             "Enemy_Chompy_Spawner(5)",
+            "Enemy_Elf_Lobber(4)",
+            "Enemy_Elf_Lobber(6)",
+            "Enemy_Elf_Lobber(7)",
             "Enemy_Elf_Near_A",
             "Enemy_Elf_Near_B",
             "Enemy_Elf_Near_C",
             "Enemy_Elf_Near_S2(3)",
             "Enemy_Elf_Near_S2(4)",
+            "Enemy_Elf_Near_S2(5)",
+            "Enemy_Elf_Near_S2(6)",
+            "Enemy_Elf_Near_S2(7)",
+            "Enemy_Elf_Near_S2(8)",
             "Enemy_TreeRex(1)",
             "Enemy_TreeRex(2)",
+            "Enemy_TreeRex(4)",
+            "Enemy_TreeRex(5)",
             "Setup_004_NPC_Mabu",
         ],
         "the spawners and the later fights' own walk"
