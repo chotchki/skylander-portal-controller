@@ -79,9 +79,12 @@ use crate::tuning::{FOOT, NOMINAL_STEP, Tuning};
 use crate::walk::{Footing, Walk, turn_facing};
 
 /// What a steered actor's fall presses into the ground past, ft/s, to be
-/// taken off as it lands ([`Hero::step_steered`]): a drop of about a foot.
-/// A hypothesis; no recording has an enemy's fall.
-pub const HARD_LANDING: f32 = 20.0;
+/// taken off as it lands ([`Hero::step_steered`]): over the 30 ft/s every
+/// landing up to Setup_004B comes to, a Chompy's off its pod, a knockback's,
+/// and under the 42-85 of its lobber's drop and its closets' jumps, so only
+/// those reach it. A hero's own frame never comes here. A hypothesis; no
+/// recording has an enemy's fall (stand-in ledger: `hard-landing`).
+pub const HARD_LANDING: f32 = 40.0;
 
 /// Passes [`Hero::push_out`] takes off the walls he's in before it falls
 /// back on the search.
@@ -488,8 +491,8 @@ impl Hero {
     /// [`HARD_LANDING`], loses what pressed in, as the proxy's solve takes
     /// it (openspec AS.97: kept, the next frame's walk along the ground
     /// turned a 12 m fall's 83 ft/s into a skid across Setup_004B's yard).
-    /// The dips of a knockback over the ground stay as the walk turns them
-    /// (AH.10's run holds a Chompy's slide's speeds).
+    /// Any landing under it stays as the walk turns it, a knockback's dips
+    /// among them (AH.10's run holds a Chompy's slide's speeds).
     pub fn step_steered(
         &mut self,
         seam: &dyn PhysicsSeam,

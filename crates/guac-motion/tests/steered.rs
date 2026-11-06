@@ -275,6 +275,31 @@ fn a_fall_lands_without_turning_into_a_skid() {
     assert!(fastest <= 5.01, "no skid: {fastest} ft/s");
 }
 
+/// A landing under `HARD_LANDING` keeps its walk as every steered fall did
+/// before AS.97: the 30 ft/s a Chompy lands at off its pod, which the next
+/// frame lays along the ground.
+#[test]
+fn a_landing_under_the_hard_landing_keeps_its_walk() {
+    let world = open();
+    let mut c = settled(&world, Vec3::new(0.0, 1.0, 0.0), 0.0);
+    let floor = c.pivot.y;
+    c.pivot.y += 0.2;
+    c.footing.supported = false;
+    c.walk.velocity = Vec3::new(0.0, -30.0, 5.0);
+    let physics = Physics {
+        air_deceleration: 0.0,
+        ..Physics::CHOMPY
+    };
+    for _ in 0..60 {
+        c.step_steered(&world, &physics, Aim::Still, DT, &[], Surfaces::NONE);
+        if c.footing.supported {
+            break;
+        }
+    }
+    assert!(c.footing.supported && (c.pivot.y - floor).abs() < 0.05);
+    assert!(c.walk.velocity.y < -25.0, "kept: {}", c.walk.velocity);
+}
+
 /// Moving from a point, a Chompy backed into another's body stands against
 /// it as one walking to a point does (openspec AH.232: any destination's
 /// walk is the move's, solved).
