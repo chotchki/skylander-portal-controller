@@ -6116,6 +6116,9 @@ mod tests {
                     "{stage} {script}"
                 );
             }
+            for screen in crate::prompt::SCREENS {
+                assert!(c.answered.iter().any(|m| m == screen), "{stage} {screen}");
+            }
             // Flynn's and Cali's own scripts, not their cutscene templates'.
             for template in ["CS_Flynn.ai", "CS_Cali.ai"] {
                 assert_eq!(
