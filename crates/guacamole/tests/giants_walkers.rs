@@ -6122,9 +6122,9 @@ fn sweep_one(l: &Level, load: &str) -> Fought {
 /// many characters stop on each. A hit is a Chompy's health falling in the
 /// press's window, whatever took it. Run whole, it holds AU.2's measure:
 /// every character attacking, every first attack hitting, the second on at
-/// least 45 (AU.10 has the rest), Sunburn's `move to` the one stop of his
-/// (AU.9) and none of the level's (Hot Head's attack stopped the UI's
-/// keyframer before AU.2's reference to a number). `AH29_ONLY` (comma-separated load files) runs those alone,
+/// least 45 (AU.10 has the rest), no stop of his, Sunburn's `move to` riding
+/// AS.113's walk on a hero (AU.9), and none of the level's (Hot Head's
+/// attack stopped the UI's keyframer before AU.2's reference to a number). `AH29_ONLY` (comma-separated load files) runs those alone,
 /// `AH29_ACTIONS` ([`presses_alone`]) those positions alone, and either
 /// checks only Eruptor; `AH29_TABLE` (a path outside the tree) gets the
 /// table as JSON.
@@ -6255,8 +6255,8 @@ fn every_modelled_character_attacks_or_is_listed() {
         .collect();
     assert_eq!(
         stops,
-        BTreeSet::from([("008_FireDragon", "movementUpdate.ai", 129)]),
-        "Sunburn's `move to` the one stop (AU.9)"
+        BTreeSet::new(),
+        "no stop: Sunburn's `move to` rides AS.113's walk on a hero (AU.9)"
     );
     let level: Vec<(&str, &String)> = table
         .iter()

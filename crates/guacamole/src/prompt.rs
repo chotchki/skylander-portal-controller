@@ -509,9 +509,12 @@ mod tests {
         Arc::new(Program::link(&[unit]).unwrap())
     }
 
+    /// What [`cutscene_menu`] reads.
+    type Menu = Option<(Value, Value)>;
+
     /// The fixture's STARTUP run: what [`cutscene_menu`] reads then, whether
     /// [`back_out_of_menu`] backed out and what it reads after.
-    fn run_scene(held: bool) -> (Option<(Value, Value)>, bool, Option<(Value, Value)>) {
+    fn run_scene(held: bool) -> (Menu, bool, Menu) {
         let program = scene_menu(held);
         let files = Files {
             placed: vec![Placed::named(FILE, "Macros_GameSystems", Some(PATH), 4)],
