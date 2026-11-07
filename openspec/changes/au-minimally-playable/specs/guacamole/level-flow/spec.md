@@ -76,7 +76,7 @@ Every hub stage SHALL hold the people the original's holds at that point of the 
 
 ### Requirement: A chest opens, pays and stays opened
 
-A treasure chest on any level SHALL rise for a hero within its reach, ask him to mash, open after three seconds of it and fling out its level's value in treasure to walk up, each piece paying the figure that takes it; opened, it SHALL stay gone on a restart and in later sessions.
+A treasure chest on any level SHALL rise for a hero within 18 ft (a Giant 30) and 5 ft of its height, ask him to mash, open after three seconds of it (a Giant one) and fling out its level's value in treasure, 63 on chapter 1, every piece to walk up, one past a rim brought back, each paying the figure that takes it; opened, it SHALL stay gone on a restart and in later sessions.
 
 #### Scenario: Opening chapter 1's first chest
 
@@ -93,6 +93,15 @@ A hat box SHALL shake open the same way and its hat SHALL be kept in the story s
 - **WHEN** a hero mashes a hat box open
 - **THEN** the hat's name shows, the box runs to its end and he walks on
 - **AND** that box isn't there on a restart
+
+### Requirement: Every hero walks elemental ground
+
+A level's elemental ground SHALL carry any hero, whatever his element. A surface's type is the top six bits of its collision byte, elemental grounds 40 to 47, and only a type of 50 or over SHALL stop a walk.
+
+#### Scenario: Eruptor on chapter 1's air ground
+
+- **WHEN** a fire hero walks up to `Chest(2)` on its air ground
+- **THEN** he walks, and the chest rises for him
 
 ### Requirement: The hub's doors open by the story
 

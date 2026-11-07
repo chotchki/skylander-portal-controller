@@ -552,9 +552,28 @@ fn words(
     }
 }
 
+/// What the atlas's glyph bodies read as in the TV's light: the disc's font
+/// holds them mid-grey (0x80, in sRGB) and its fragment program doubles a
+/// tinted texel (`guac_interface::draw::shade`), so a white tint draws
+/// white.
+const GLYPH_BODY: f32 = 0.2158;
+
+/// The tint that draws a glyph's body in `color`: Bevy's UI multiplies in
+/// linear light and doesn't double, so a tint of `color` itself leaves it at
+/// the atlas's grey (openspec AU.29's review).
+fn glyph_tint(color: Color) -> Color {
+    let c = color.to_linear();
+    Color::LinearRgba(LinearRgba::new(
+        c.red / GLYPH_BODY,
+        c.green / GLYPH_BODY,
+        c.blue / GLYPH_BODY,
+        c.alpha,
+    ))
+}
+
 /// `text` in the bitmap font, one image node a glyph cut from its atlas,
 /// laid out by the interface's measure (`guac_interface::text::glyphs`),
-/// `size` design pixels for the font's own height.
+/// `size` design pixels for the font's own height, its bodies in `color`.
 pub(crate) fn bitmap_text(
     parent: &mut ChildSpawnerCommands,
     art: &Art,
@@ -562,6 +581,7 @@ pub(crate) fn bitmap_text(
     size: f32,
     color: Color,
 ) {
+    let tint = glyph_tint(color);
     let units: Vec<u16> = text.encode_utf16().collect();
     let m = Metrics::new(&art.font);
     let quads = glyphs(&m, f32::MAX, Justify::Left, &units);
@@ -587,7 +607,7 @@ pub(crate) fn bitmap_text(
                         ..default()
                     },
                     ImageNode {
-                        color,
+                        color: tint,
                         rect: Some(Rect::new(
                             q.uv[0] * atlas.x,
                             q.uv[1] * atlas.y,
@@ -1204,6 +1224,25 @@ mod tests {
         assert_eq!(tally(&r.objectives[2]).as_deref(), Some("0/3"));
         assert_eq!(tally(&r.objectives[0]), None);
         assert_eq!(clock(3601.0), "60:01");
+    }
+
+    /// openspec AU.29's review: the font's bodies are the disc's 0x80 grey,
+    /// and a glyph's tint draws them in the colour asked for, its alpha kept.
+    #[test]
+    fn a_glyphs_body_draws_in_the_colour_asked_for() {
+        let grey = Color::srgb_u8(0x80, 0x80, 0x80).to_linear();
+        assert!((grey.red - GLYPH_BODY).abs() < 1e-3);
+        for c in [
+            Color::WHITE,
+            Color::srgb(0.03, 0.05, 0.16),
+            Color::srgba(1.0, 0.8, 0.2, 0.7),
+        ] {
+            let (want, tint) = (c.to_linear(), glyph_tint(c).to_linear());
+            assert!((tint.red * GLYPH_BODY - want.red).abs() < 1e-5, "{c:?}");
+            assert!((tint.green * GLYPH_BODY - want.green).abs() < 1e-5);
+            assert!((tint.blue * GLYPH_BODY - want.blue).abs() < 1e-5);
+            assert_eq!(tint.alpha, want.alpha);
+        }
     }
 
     fn template(name: &str, tex: &str) -> Template {

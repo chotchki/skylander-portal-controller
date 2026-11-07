@@ -159,7 +159,9 @@ fn arith_of(precision: Precision, operator: u32, a: Value, b: Value) -> Option<V
             ))
         }
         // A colour's bytes, each on its own and held to 0-255 (openspec
-        // AH.21: a pot's particle tint, white less the tint).
+        // AH.21: a pot's particle tint, white less the tint; the menu's
+        // focus, a text colour times `color mult two`), a byte divided by 0
+        // left as it is.
         (Value::Color(x), Value::Color(y)) => {
             let mut out = 0u32;
             for at in [24, 16, 8, 0] {
@@ -167,6 +169,9 @@ fn arith_of(precision: Precision, operator: u32, a: Value, b: Value) -> Option<V
                 let r = match operator {
                     0 => p + q,
                     1 => p - q,
+                    2 => p * q,
+                    3 if q == 0 => p,
+                    3 => p / q,
                     _ => return None,
                 };
                 out |= (r.clamp(0, 0xFF) as u32) << at;
@@ -324,8 +329,30 @@ mod tests {
     /// (openspec AH.21): the particle tinter's white less a pot's tint is
     /// the tint's complement byte by byte, a generator's colour less that
     /// stops at 0 where it would go under, and a sum stops at 255. A colour
-    /// times or over anything stops unsupported, as does a colour with a
-    /// number.
+    /// with a number stops unsupported.
+    /// A colour's bytes multiply and divide each on its own too, as the
+    /// original's evaluators do: a product stops at 255, a byte over 0 stays
+    /// as it was. What a menu button's focus does: white times `color mult
+    /// two` stays white in the bytes it doubles and its alpha.
+    #[test]
+    fn a_colours_bytes_multiply_and_divide_each_on_its_own() {
+        let two = Value::Color(0x0202_0201);
+        assert_eq!(
+            arith(2, Value::Color(0xFFFF_FFFF), two),
+            Ok(Value::Color(0xFFFF_FFFF))
+        );
+        assert_eq!(
+            arith(2, Value::Color(0x1040_8003), two),
+            Ok(Value::Color(0x2080_FF03)),
+            "each byte stops at 255"
+        );
+        assert_eq!(
+            arith(3, Value::Color(0x1040_8003), Value::Color(0x0200_0403)),
+            Ok(Value::Color(0x0840_2001)),
+            "a byte over 0 stays"
+        );
+    }
+
     #[test]
     fn a_colours_bytes_add_and_subtract_each_held_to_0_255() {
         let white = Value::Color(0xFFFF_FFFF);
@@ -341,8 +368,6 @@ mod tests {
             Ok(Value::Color(0xFFFF_0406)),
             "each byte stops at 255"
         );
-        assert_eq!(arith(2, white, tint), Err(ArithFault::Unsupported));
-        assert_eq!(arith(3, white, tint), Err(ArithFault::Unsupported));
         assert_eq!(arith(0, white, Value::Int(1)), Err(ArithFault::Unsupported));
     }
 

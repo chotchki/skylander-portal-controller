@@ -6,7 +6,7 @@
 //! `cargo test -p guacamole --profile disc --test giants_chests -- --ignored --nocapture --test-threads=1`
 
 use guac_motion::seam::Vec3;
-use guac_motion::stick::Stick;
+use guac_motion::stick::{DEAD_ZONE, Stick};
 use guac_script::{Handle, Mode, Value};
 use guac_server::saves::SaveValues;
 use guacamole::announcements;
@@ -184,9 +184,7 @@ fn open(s: &mut Story, chest: Handle, at: Vec3) -> u32 {
 }
 
 /// The chest's treasure in play, each with what it's worth: `lootinplay`'s
-/// entries `Loot - Init Loot` made from a chest. A piece that flies out over
-/// nothing the UI's tick takes out of play and it falls away, as its scripts
-/// have it (`UI.ai` #2094: no ground under it).
+/// entries `Loot - Init Loot` made from a chest.
 fn treasure(s: &Story) -> Vec<(Handle, Vec3, i32)> {
     let vm = &s.run.vm;
     let ui = guacamole::scripts::running(vm, &s.run.world, "/UI.ai").unwrap();
@@ -294,6 +292,13 @@ fn a_chest_opens_pays_and_stays_opened() {
     let gold = s.gold();
     println!("the chest paid {gold}");
     assert_eq!(gold as i32, before as i32 + worth);
+    // Its count runs a piece's worth and one more a piece until it passes
+    // the level's value, and every piece of it is walked up: one thrown past
+    // the ledge's rim comes back (`already corrected trajectory`).
+    let thrown = s.local(chest, "loot counter").and_then(|v| v.as_i32());
+    let thrown = thrown.expect("the pieces thrown");
+    println!("{thrown} pieces thrown");
+    assert!(gold as i32 + thrown >= 63, "{gold} of {thrown} pieces");
     let flags = s.flags();
     println!("flags {flags:?}");
     assert_eq!(flags[1], ("chest 1", 1));
@@ -381,9 +386,41 @@ fn first_ranged(s: &Story, script: &str) -> Option<(Handle, Vec3, String)> {
     ))
 }
 
+/// Where to set a hero down beside a placement at `at`: the first of eight
+/// bearings 2 m off that drops him at its height. A chest on a ledge's rim
+/// has ground on one side only (level 209's first hangs him over nothing
+/// from the east, 6.5 ft over its ground, out of its 5 ft), and level 210's
+/// hat box has a prop to its north he'd stand on.
+fn beside(s: &mut Story, at: Vec3) -> Vec3 {
+    let spots = (0..8)
+        .map(|k| (k as f32 * 45.0).to_radians())
+        .map(|a| at + Vec3::new(a.sin() * 2.0, 1.0, a.cos() * 2.0));
+    for spot in spots {
+        s.run.put(spot, 0.0);
+        if (s.run.hero().pivot.y - at.y).abs() < 1.5 {
+            return spot;
+        }
+    }
+    at + Vec3::new(2.0, 1.0, 0.0)
+}
+
+/// Steps until the level's intro is over: it takes the hero where its own
+/// scene ends (level 201's landing), whatever set him down before it.
+fn past_the_intro(s: &mut Story) {
+    let cutscene = s.run.vm.program().global_named("Cutscene State").unwrap();
+    for _ in 0..3600 {
+        let v = s.run.vm.global_peek(cutscene).map(|v| s.run.vm.value(v));
+        if v.and_then(|v| v.as_i32()) == Some(0) {
+            return;
+        }
+        s.step([false; 4]);
+    }
+}
+
 /// Mashes by `h` until it's gone or `steps` have run: the steps it took.
 fn mash_off(s: &mut Story, h: Handle, at: Vec3, steps: u32) -> Option<u32> {
-    s.run.put(at + Vec3::new(2.0, 1.0, 0.0), 0.0);
+    let by = beside(s, at);
+    s.run.put(by, 0.0);
     let start = s.run.steps;
     while !s.run.world.removed(h) {
         let k = s.run.steps - start;
@@ -408,10 +445,12 @@ fn every_levels_chest_and_hat_box_run_clean() {
     for level in [CHAPTER_1, LEVEL_214].into_iter().chain(LEVELS) {
         let t = std::time::Instant::now();
         let mut s = Story::joined(level, Session::new(Some(HOST.into())));
+        past_the_intro(&mut s);
         let chest = first_ranged(&s, "/Chest.ai");
         let (mut opened, mut value, mut taken) = (None, None, None);
         if let Some((h, at, _)) = &chest {
-            s.run.put(*at + Vec3::new(2.0, 1.0, 0.0), 0.0);
+            let by = beside(&mut s, *at);
+            s.run.put(by, 0.0);
             for _ in 0..4 {
                 s.step([false; 4]);
             }
@@ -438,9 +477,7 @@ fn every_levels_chest_and_hat_box_run_clean() {
         assert!(taken.is_some(), "{level}: its hat box stayed");
     }
     assert!(bad.is_empty(), "{bad:#?}");
-    // Two chests stand out of a set-down's reach of their height (a hero
-    // landing past the 5 ft the chest asks): neither stops, neither rises.
-    assert_eq!(unopened, ["level_201", "level_209_giantrobot"]);
+    assert!(unopened.is_empty(), "{unopened:?}");
     println!(
         "{:.1} s, load at end: {}",
         started.elapsed().as_secs_f64(),
@@ -449,6 +486,55 @@ fn every_levels_chest_and_hat_box_run_clean() {
 }
 
 const HAT_BOX: &str = "HatBox_Pickup(1)_wind_Area";
+
+/// The stick along `heading`, past the dead zone per axis, against a view
+/// looking along `view`.
+fn stick_for(view: f32, heading: f32) -> Stick {
+    let d = (heading - view).to_radians();
+    let raw = |a: f32| {
+        if a.abs() < 1e-4 {
+            0.0
+        } else {
+            a.signum() * (DEAD_ZONE + (1.0 - DEAD_ZONE) * a.abs())
+        }
+    };
+    Stick::new(raw(-d.sin()), raw(d.cos()))
+}
+
+/// openspec AS.152: chapter 1's air ground, under `Chest(2)` and the first
+/// hat box, is walked on. Its material byte reads surface 42, an elemental
+/// surface, not one of the 50 and over a walk stops at, and the hero on it
+/// is Eruptor, no air hero: on any element's ground every hero walks.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_hero_walks_chapter_1s_elemental_ground_to_its_chest() {
+    let mut s = Story::joined(CHAPTER_1, Session::new(Some(HOST.into())));
+    let (chest, at) = s.run.placed("Chest(2)");
+    let from = at + Vec3::new(0.0, 1.0, -7.0);
+    s.run.put(from, 0.0);
+    for _ in 0..10 {
+        s.step([false; 4]);
+    }
+    let start = s.run.hero().pivot;
+    let view = s.run.bench.view;
+    for _ in 0..120 {
+        s.run.bench.pads[0] = Pad {
+            stick: stick_for(view, 0.0),
+            actions: [false; 4],
+            connected: true,
+        };
+        let stops = s.run.step_play().unwrap();
+        s.stops.extend(stops.iter().map(ToString::to_string));
+        if s.behaviour(chest).as_deref() != Some(WAITING) {
+            break;
+        }
+    }
+    let walked = (s.run.hero().pivot - start).length();
+    println!("walked {walked} m to {:?}", s.behaviour(chest));
+    assert!(walked > 1.0, "he turned and stood");
+    assert_ne!(s.behaviour(chest).as_deref(), Some(WAITING), "out of reach");
+    assert!(s.stops.is_empty(), "{:#?}", s.stops);
+}
 
 /// openspec AU.39: chapter 1's first hat box. Mashed open, its hat is taken:
 /// the box runs to its end with nothing to press (its report's continue and
@@ -519,6 +605,54 @@ fn a_hat_box_gives_its_hat_and_stays_taken() {
         again.step([false; 4]);
     }
     assert!(again.run.world.removed(hat), "a box again on a restart");
+
+    // A session on: the quit's save read back from the store's row, the hat
+    // still in the collection for AK.
+    let mut session = s.session.clone();
+    {
+        let run = &mut s.run;
+        let mut spawn = guacamole::scripts::headless_spawner(1 << 50);
+        let mut engine = guacamole::script_engine::NoEngine;
+        let mut host = guacamole::scripts::WorldHost {
+            world: &mut run.world,
+            engine: &mut engine,
+            generator: &mut run.generator,
+            spawn: &mut spawn,
+        };
+        assert!(story_save::quit_save_run(
+            &mut run.vm,
+            &mut host,
+            &mut session
+        ));
+    }
+    let (_, layout, saved) = session.take_write().expect("the quit's save");
+    let mut later = Session::new(Some(HOST.into()));
+    later.stored = Some((layout, saved));
+    let mut again = Story::joined(CHAPTER_1, later);
+    assert_eq!(again.session.report.start.as_deref(), Some("stored"));
+    assert_eq!(collected(&mut again, id), Some(1), "lost a session on");
+    let (hat, at) = again.run.placed(HAT_BOX);
+    again.run.put(at + Vec3::new(2.0, 1.0, 0.0), 0.0);
+    for _ in 0..30 {
+        again.step([false; 4]);
+    }
+    assert!(again.run.world.removed(hat), "a box again a session on");
+
+    // The level's hats objective counts the one taken of its three.
+    let (_, r) = clear(again.session.clone(), false);
+    let counts: Vec<_> = r
+        .objectives
+        .iter()
+        .filter(|o| o.category == 2)
+        .map(|o| (o.kind, o.status, o.count, o.total))
+        .collect();
+    println!("the collection: {counts:?}");
+    assert!(
+        counts
+            .iter()
+            .any(|c| c.0 == ObjectiveKind::Count && c.2 == 1.0 && c.3 == 3.0),
+        "{counts:?}"
+    );
     println!(
         "{:.1} s, load at end: {}",
         started.elapsed().as_secs_f64(),

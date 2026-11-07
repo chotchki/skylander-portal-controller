@@ -6,10 +6,13 @@
 //!   long as he stays within 28 ft (40). Mashing his fourth action (△, the
 //!   gesture manager's alternate gesture: a press within the last 0.25 s)
 //!   shakes it, the two locks popping at 0.4 and 0.75 and the master lock at
-//!   1 after 3 s of it (a second for a Giant). It flings out the level's
-//!   chest value (`Loot - Set Treasure Chest Value`: 63 on chapter 1) in
-//!   treasure pieces, each worth what its own template's id says, for him to
-//!   walk up, sets its slot of the level's saved flags (`chest 1` to `chest
+//!   1 after 3 s of it (a second for a Giant). It flings out treasure
+//!   pieces, each worth what its own template's id says, in batches until
+//!   its count, a piece's worth and one more a piece, passes the level's
+//!   chest value (`Loot - Set Treasure Chest Value`: 63 on chapter 1, so
+//!   62-72 gold in 10-12 pieces), for him to walk up, one past a rim brought
+//!   back by its own `already corrected trajectory`,
+//!   sets its slot of the level's saved flags (`chest 1` to `chest
 //!   4`, by its id) and takes itself off; a chest whose flag reads set takes
 //!   itself off at its start. It's drawn as the hub's people are
 //!   ([`is_treasure`]), a skinned model of the level's, unwalked.

@@ -332,6 +332,24 @@ pub fn is_trigger(name: &str) -> bool {
             .any(|p| name.starts_with(p))
 }
 
+/// The attach nodes of the models in a level's `nodes` part whose nodes all
+/// stand on the model's own origin, by path (the au-chests review): a static
+/// prop has no joints to pose, so its nodes are its list's offsets. A hat
+/// box's lid hangs 1.8 m up its `Lid` node, its bow and ribbon on the lid's.
+pub fn origin_nodes(part: &guac_ir::nodes::LevelNodes) -> HashMap<String, Vec<NodePose>> {
+    part.models
+        .iter()
+        .filter(|m| m.nodes.iter().all(|n| n.joint.is_none()))
+        .map(|m| {
+            let nodes = m.nodes.iter().map(|n| NodePose {
+                at: Vec3::from_array(n.offset.translation),
+                turn: guac_motion::seam::Quat::from_array(n.offset.rotation),
+            });
+            (m.load_file.clone(), nodes.collect())
+        })
+        .collect()
+}
+
 /// Whether a managed placement is awake (openspec AH.18, AG.7's rule with
 /// the buffer read as the original's hysteresis): one with an activation
 /// range is awake while a hero is within it (3D, feet, from his pivot) and
@@ -415,6 +433,9 @@ pub struct ScriptWorld {
     pub(crate) objects: HashMap<Obj, Handle>,
     /// Every file placement's data, to make a clone of it from.
     pub(crate) templates: HashMap<Obj, Placed>,
+    /// The attach nodes each model holds on its own origin, by its path
+    /// ([`ScriptWorld::set_origin_nodes`]).
+    pub(crate) origin_nodes: HashMap<String, Vec<NodePose>>,
     /// Every placed light's values (openspec AH.65): a light placement's
     /// members read and write these; a clone of one copies them.
     pub(crate) light_templates: HashMap<Obj, Light>,
@@ -837,6 +858,7 @@ impl ScriptWorld {
             actors,
             objects: handles.iter().map(|(o, h)| (*o, *h)).collect(),
             templates,
+            origin_nodes: HashMap::new(),
             light_templates: files.lights.clone(),
             emitters: files.emitters.clone(),
             points: files.points.clone(),
@@ -1688,6 +1710,13 @@ impl ScriptWorld {
     /// as its node (AH.60).
     pub fn set_nodes(&mut self, actor: Handle, nodes: Vec<NodePose>) {
         self.nodes.insert(actor, nodes);
+    }
+
+    /// The attach nodes on each model's own origin, by its path
+    /// ([`origin_nodes`]): where a static prop's nodes stand, nothing posing
+    /// them.
+    pub fn set_origin_nodes(&mut self, nodes: HashMap<String, Vec<NodePose>>) {
+        self.origin_nodes = nodes;
     }
 
     /// `actor`'s attach nodes as last set, in its own frame.

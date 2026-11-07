@@ -374,8 +374,17 @@
 //!   specialization's frame. Any other parameter on a path (an after-return
 //!   read of what a call returned) reads the frame of the definition it
 //!   binds into (its `_macroDef`, a stub followed), or of the nearest open
-//!   call's specialization of that definition, down the open calls, so one
-//!   read binding a nested call's arguments still finds it (openspec AS.139).
+//!   call of its family, down the open calls, so one read binding a nested
+//!   call's arguments still finds it (openspec AS.139). That's the
+//!   original's own binding, read: a use points its family's INTERFACE
+//!   parameters at the callee, and a use block's close points them at the
+//!   nearest frame of the family down the return chain, else the base.
+//!   Run beside the VM over 710 million reads of the disc suites, those two
+//!   hooks parted from it only inside a specialization's own body (the rule
+//!   above) and on 481 reads of the family's after-return read; the rule
+//!   this replaced, the top call alone, read an empty base frame on five
+//!   parameters: a check's struct, a menu page, a next adventure's data and
+//!   an item animation's keyframer among them (the au-chests review).
 //! - A variable holds a number (dynamically an integer or a float: a write
 //!   takes the type it's given), a reference, a set, a reference to a set or
 //!   a structure, as its declaration says. Writing anything but a number or a
@@ -550,10 +559,12 @@
 //!   member takes it.
 //! - A screen position's halves are 12.4 fixed point: `+` and `-` work on
 //!   each half, `*` multiplies each and shifts the four fraction bits back,
-//!   every half held to 16 bits signed. A colour's `+` and `-` work on
-//!   each byte, held to 0-255 (AH.21: the particle tinter's white less a
-//!   pot's tint). Screen division and a colour's `*` and `/` stop as
-//!   unsupported until a script reaches them.
+//!   every half held to 16 bits signed. A colour's `+`, `-`, `*` and `/`
+//!   work on each byte, held to 0-255, a byte divided by 0 left as it is
+//!   (AH.21: the particle tinter's white less a pot's tint; the review of
+//!   AS.139: a menu button's focus, its text colour times `color mult two`,
+//!   the original's own evaluators read). Screen division stops as
+//!   unsupported until a script reaches it.
 //! - An expression is `a <op> b` (+ - * /) or `a` alone, read left side
 //!   first, nested as the data nests it: the order written is the order
 //!   computed, which single precision makes observable.
