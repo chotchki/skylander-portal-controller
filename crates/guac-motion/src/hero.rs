@@ -980,6 +980,84 @@ mod catch {
         }
     }
 
+    /// A seam with one plane, facing +x, that stops a cast going at it at
+    /// once under `below` and that the contact query never holds: AG.61's
+    /// twin as a falling hero meets it.
+    struct Snag {
+        below: f32,
+    }
+
+    impl PhysicsSeam for Snag {
+        fn cast(
+            &self,
+            _: &crate::seam::Shape,
+            from: crate::seam::Pose,
+            motion: Vec3,
+            _: f32,
+            _: &[BodyId],
+        ) -> Option<crate::seam::Cast> {
+            (from.position.y < self.below && motion.x < -1e-6).then(|| crate::seam::Cast {
+                fraction: 0.0,
+                distance: 0.0,
+                planes: vec![crate::seam::ContactPlane {
+                    body: BodyId(1),
+                    triangle: Some(1),
+                    material: Some(0),
+                    normal: Vec3::X,
+                    point: from.position,
+                    distance: 0.0,
+                }],
+            })
+        }
+
+        fn contacts(
+            &self,
+            _: &crate::seam::Shape,
+            _: crate::seam::Pose,
+            _: f32,
+            _: &[BodyId],
+        ) -> Vec<crate::seam::ContactPlane> {
+            Vec::new()
+        }
+
+        fn ray(&self, _: Vec3, _: Vec3, _: f32, _: &[BodyId]) -> Option<crate::seam::RayHit> {
+            None
+        }
+
+        fn overlaps(
+            &self,
+            _: &crate::seam::Shape,
+            _: crate::seam::Pose,
+            _: &[BodyId],
+        ) -> Vec<BodyId> {
+            Vec::new()
+        }
+    }
+
+    /// AS.159: in the air a plane the contact query doesn't hold stops him
+    /// for the step he meets it, as AG.16's replays have it, however fast
+    /// he came, and the next he goes on along it: the stop is his one step's,
+    /// where it used to be every step's.
+    #[test]
+    fn a_falling_hero_stops_on_a_twin_plane_for_a_step_alone() {
+        let solid = eruptor_solid();
+        let start = Vec3::new(0.0, 1.0, 0.0);
+        let seam = Snag {
+            below: start.y + solid.centre.y - 0.01,
+        };
+        let mut h = Hero::new(solid, Tuning::ERUPTOR, start, 0.0);
+        h.walk.velocity = Vec3::new(-10.0, -10.0, 0.0);
+        let step = 1.0 / 60.0;
+        h.step_engine(&seam, step, &[], Surfaces::NONE);
+        let met = h.pivot;
+        assert!(met.y < start.y && met.x < start.x, "free to it: {met}");
+        h.step_engine(&seam, step, &[], Surfaces::NONE);
+        assert_eq!(h.pivot, met, "his one step's stop");
+        h.step_engine(&seam, step, &[], Surfaces::NONE);
+        assert!(h.pivot.y < met.y, "on down it: {}", h.pivot);
+        assert!(h.pivot.x >= met.x, "none of it into the plane: {}", h.pivot);
+    }
+
     /// AS.155: a hero with ground under his pivot, however far, within the
     /// walkable check's reach isn't on a lip: the walk's own check finds it,
     /// and he walks off. Past 225 ft, or none, he is; off the ground he isn't.
