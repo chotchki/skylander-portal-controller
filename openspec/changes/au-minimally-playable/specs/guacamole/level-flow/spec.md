@@ -144,3 +144,10 @@ A bomb whose count runs out while a hero carries it SHALL burst and stand back o
 #### Scenario: The workshop after a bomb left to run out
 - **WHEN** a hero carries a bomb until it bursts over him and walks to another spawner
 - **THEN** that spawner's bomb stands there and he takes it
+
+### Requirement: A legendary treasure pays out
+A level's legendary treasure SHALL be collected as a hero comes within 15 ft of it, in a scene of its own: it spins up over him, its name shows, it pays the gold its definition holds and goes, the story save keeping it collected so it's gone at every start after. A hero's way on SHALL be his again as it ends.
+
+#### Scenario: Chapter 1's Eagle Paint
+- **WHEN** a hero walks up to the Eagle Paint on chapter 1
+- **THEN** he's paid 100 gold and it's gone, on a restart and a session on

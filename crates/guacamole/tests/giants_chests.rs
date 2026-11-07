@@ -575,6 +575,24 @@ fn a_hat_box_gives_its_hat_and_stays_taken() {
     println!("taken and off {} steps on", s.run.steps - start);
     assert!(named, "its name never read");
     assert!(s.stops.is_empty(), "{:#?}", s.stops);
+    // Its hat is nothing the TV draws, never the hero (openspec AS.158): the
+    // box's `Remove` of it took him off, the stick dead for good.
+    let minion = s.run.minion.expect("the hero left the portal");
+    assert!(!s.run.vm.removed(minion), "the box took the hero off");
+    assert!(s.run.health().is_some(), "the hero's health gone");
+    let from = s.run.hero().pivot;
+    for _ in 0..120 {
+        s.run.bench.pads[0] = Pad {
+            stick: stick_for(s.run.bench.view, 0.0),
+            actions: [false; 4],
+            connected: true,
+        };
+        let stops = s.run.step_play().unwrap();
+        s.stops.extend(stops.iter().map(ToString::to_string));
+    }
+    let walked = (s.run.hero().pivot - from).length();
+    println!("the stick walks him {walked:.2} after the box");
+    assert!(walked > 1.0, "the stick dead after the box: {walked}");
     let collected = |s: &mut Story, id: i32| {
         s.run.with_host(|vm, host| {
             let (_, back) = vm
@@ -744,6 +762,98 @@ fn a_dare_met_is_saved_met_and_reads_done_on_the_next_clear() {
         s.dare_flags(),
         [("achieved target time", 0), ("achieved no lives lost", 1)]
     );
+    println!(
+        "{:.1} s, load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
+
+/// openspec AS.151: chapter 1's Eagle Paint. Walked up to, it takes itself
+/// into the collection, spins up through its scene, pays its definition's
+/// 100 gold past its report and goes; collected, it's gone at the next
+/// start, on the words carried and a session on.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_legendary_treasure_pays_out_and_stays_collected() {
+    const TREASURE: &str = "Legendary_Treasure_Eagle_Paint(2)";
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let mut s = Story::joined(CHAPTER_1, Session::new(Some(HOST.into())));
+    let (treasure, at) = s.run.placed(TREASURE);
+    assert!(!s.run.world.removed(treasure));
+    s.run.put(at + Vec3::new(0.0, 1.0, -7.0), 0.0);
+    let (start, gold) = (s.run.steps, s.gold());
+    let mut named = false;
+    while !s.run.world.removed(treasure) {
+        assert!(s.run.steps < start + 900, "{:?}", s.behaviour(treasure));
+        let view = s.run.bench.view;
+        let near = s.run.hero().pivot.distance(at) < 3.0;
+        s.run.bench.pads[0] = Pad {
+            stick: match near {
+                true => Stick::new(0.0, 0.0),
+                false => stick_for(view, 0.0),
+            },
+            actions: [false; 4],
+            connected: true,
+        };
+        let stops = s.run.step_play().unwrap();
+        s.stops.extend(stops.iter().map(ToString::to_string));
+        let lines = announcements::hat_reports(&s.run.vm, &s.run.world);
+        named |= lines.iter().any(|l| l.text.is_some());
+    }
+    println!(
+        "collected {} steps on, {} gold",
+        s.run.steps - start,
+        s.gold() - gold
+    );
+    assert_eq!(s.gold() - gold, 100, "its definition's gold");
+    assert!(named, "its name never read");
+    assert!(s.stops.is_empty(), "{:#?}", s.stops);
+    let cutscene = s.run.vm.program().global_named("Cutscene State").unwrap();
+    for _ in 0..120 {
+        s.step([false; 4]);
+    }
+    let held = s.run.vm.global_peek(cutscene).map(|v| s.run.vm.value(v));
+    assert_eq!(held.and_then(|v| v.as_i32()), Some(0), "the hero left held");
+
+    let mut again = Story::joined(CHAPTER_1, s.session.clone());
+    assert_eq!(again.session.report.start.as_deref(), Some("carried"));
+    let (treasure, _) = again.run.placed(TREASURE);
+    again.run.put(at + Vec3::new(0.0, 1.0, -7.0), 0.0);
+    for _ in 0..30 {
+        again.step([false; 4]);
+    }
+    assert!(again.run.world.removed(treasure), "back on a restart");
+
+    let mut session = s.session.clone();
+    {
+        let run = &mut s.run;
+        let mut spawn = guacamole::scripts::headless_spawner(1 << 50);
+        let mut engine = guacamole::script_engine::NoEngine;
+        let mut host = guacamole::scripts::WorldHost {
+            world: &mut run.world,
+            engine: &mut engine,
+            generator: &mut run.generator,
+            spawn: &mut spawn,
+        };
+        assert!(story_save::quit_save_run(
+            &mut run.vm,
+            &mut host,
+            &mut session
+        ));
+    }
+    let (_, layout, saved) = session.take_write().expect("the quit's save");
+    let mut later = Session::new(Some(HOST.into()));
+    later.stored = Some((layout, saved));
+    let mut again = Story::joined(CHAPTER_1, later);
+    assert_eq!(again.session.report.start.as_deref(), Some("stored"));
+    let (treasure, _) = again.run.placed(TREASURE);
+    again.run.put(at + Vec3::new(0.0, 1.0, -7.0), 0.0);
+    for _ in 0..30 {
+        again.step([false; 4]);
+    }
+    assert!(again.run.world.removed(treasure), "back a session on");
     println!(
         "{:.1} s, load at end: {}",
         started.elapsed().as_secs_f64(),

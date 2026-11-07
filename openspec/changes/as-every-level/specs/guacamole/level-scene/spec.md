@@ -272,3 +272,18 @@ A camera's rig SHALL hold the pose its last clip reached once none plays, what h
 #### Scenario: A cut between two shots
 - **WHEN** a shot's new rig is made and isn't drawn yet
 - **THEN** the view and what hangs on the rig stay where the last rig left them until it's posed, and no frame stands at the rig's origin
+
+### Requirement: An elemental area opens for its element
+A level's elemental wall SHALL stand solid until a hero of its element comes within 20 ft of one of its nodes, then go for good with what it holds shut, the unlock counted. Any hero SHALL walk an area's ground once its wall is gone. On his own element's ground a hero SHALL mend 5 health every 4 s, the first 2 s on; on another's nothing SHALL happen to him.
+
+#### Scenario: Another element at the wall
+- **WHEN** a hero of another element walks at a wall
+- **THEN** it rises as he nears, shows its hint, and stops him, however long he pushes
+
+#### Scenario: A swap inside an open area
+- **WHEN** a hero of a wall's element has taken it down, gone in and been swapped off the portal for a hero of another element
+- **THEN** the next hero walks and rides the area's pads out as he came, the wall gone for the rest of the run
+
+#### Scenario: The story past a wall
+- **WHEN** chapter 1 or level 214 is played by a hero no wall opens for
+- **THEN** every wall stays shut and the level plays to its end

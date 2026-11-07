@@ -486,6 +486,9 @@ pub fn step(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<Option<Ended>, 
     if crate::prompt::quit_card_game(vm, host.world) {
         info!("a card game the TV doesn't draw: quit");
     }
+    if crate::treasure::answer_hat_load(vm, host)? {
+        info!("a hat's stream the TV doesn't read: its outfit registered empty");
+    }
     if crate::treasure::answer_hats(vm, host.world) > 0 {
         info!("a hat the TV can't put on: kept, and left off");
     }

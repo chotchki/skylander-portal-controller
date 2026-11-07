@@ -540,6 +540,8 @@ pub struct ScriptWorld {
     pub streams: std::collections::VecDeque<Option<String>>,
     /// The cutscene [`crate::level_end`] last skipped, so it skips each once.
     pub(crate) skipped_cutscene: Option<Value>,
+    /// A hat's outfit registered for this run (`treasure::answer_hat_load`).
+    pub(crate) hat_load_answered: bool,
     /// Whether [`crate::level_end`] skips any cutscene in play as it skips a
     /// listed one: a dev entry's settle on a level with an intro, so its
     /// anchor sets him down past the intro as before AS.81 played it.
@@ -917,6 +919,7 @@ impl ScriptWorld {
             level_change: None,
             streams: Default::default(),
             skipped_cutscene: None,
+            hat_load_answered: false,
             skip_cutscenes: false,
             level_end_asked: false,
             level_end_movie: None,
@@ -3163,6 +3166,39 @@ pub const BOMB_HINTS: [&str; 2] = ["0_Hint_Use_Bombs", "0_Hint_Use_Bombs(1)"];
 /// (the death stars).
 pub const EFFECT_SCRIPTS: [&str; 2] = ["LevelUp.ai", "MinionDeathActor.ai"];
 
+/// The elemental areas (openspec AS.153): each area's wall controller and
+/// its symbol, the surface definitions that dress a level's walls and define
+/// its elemental ground, what a hero walking his own element's ground spawns
+/// on him and the bubble its definition names. A controller's own solid is
+/// the wall (`ElementalWallController.ai` takes itself and its `collision
+/// actors` off for a hero of its element), so an area stands shut until its
+/// element comes. What level 214's earth area holds past its wall comes with
+/// them: its rocks, for bombs and Giants, and its candlesticks.
+pub const ELEMENTAL_SCRIPTS: [&str; 22] = [
+    "/ElementalWallController.ai",
+    "/Elemental_Symbol_Hints.ai",
+    "/BubbleManager.ai",
+    "/DefineAirSurface.ai",
+    "/DefineDeathSurface.ai",
+    "/DefineEarthSurface.ai",
+    "/DefineFireSurface.ai",
+    "/DefineLifeSurface.ai",
+    "/DefineMagicSurface.ai",
+    "/DefineTechSurface.ai",
+    "/DefineWaterSurface.ai",
+    "/AirWalkingParticle.ai",
+    "/DeathWalkingParticle.ai",
+    "/EarthWalkingParticle.ai",
+    "/FireWalkingParticle.ai",
+    "/LifeWalkingParticle.ai",
+    "/MagicWalkingParticle.ai",
+    "/TechWalkingParticle.ai",
+    "/WaterWalkingParticle.ai",
+    "/Breakable_Rock.ai",
+    "/Super_hard_Rock.ai",
+    "/Candlestick.ai",
+];
+
 /// The levels' music, every tick, by script. Chapter 1's (openspec AR.11,
 /// AR.4's reading): the level's music controller, which plays its intro
 /// track at its start, its tracks through the level's transitions and the
@@ -3545,6 +3581,11 @@ pub fn smash_config(mode: Mode) -> Config {
                 .map(|s| (*s).to_owned()),
         );
         scripts.extend(crate::treasure::HAT_SCRIPTS.iter().map(|s| (*s).to_owned()));
+        scripts.extend(
+            crate::treasure::LEGENDARY_SCRIPTS
+                .iter()
+                .map(|s| (*s).to_owned()),
+        );
         scripts.extend(CAMERA_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(GOAT_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(ROUTE_SCRIPTS.iter().map(|s| (*s).to_owned()));
@@ -3555,6 +3596,8 @@ pub fn smash_config(mode: Mode) -> Config {
         scripts.extend(DOOR_SCRIPTS.iter().map(|s| (*s).to_owned()));
         // The interiors on every level (openspec AS.96).
         scripts.extend(INTERIOR_SCRIPTS.iter().map(|s| (*s).to_owned()));
+        // The elemental areas on every level (openspec AS.153).
+        scripts.extend(ELEMENTAL_SCRIPTS.iter().map(|s| (*s).to_owned()));
         // Level 214's ship (openspec AS.60).
         placements.extend(SHIP.iter().map(|s| (*s).to_owned()));
         scripts.extend(EFFECT_SCRIPTS.iter().map(|s| (*s).to_owned()));

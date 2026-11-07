@@ -369,3 +369,81 @@ fn no_knock_at_214s_rims_kills_the_stick() {
     assert!(tally.dead.is_empty(), "{:#?}", tally.dead);
     assert_eq!(tally.rested, 0, "resting on a rim: {tally:?}");
 }
+
+/// The knocks that came to rest on a lip before the fix, on chapter 1: a rim,
+/// off it, a strength and a run-up.
+const LIPS: [([f32; 3], f32, i32, f32); 5] = [
+    ([-90.07951, -139.60721, 306.2678], 90.0, 50, 1.0),
+    ([-90.07951, -139.60721, 306.2678], 90.0, 75, 0.6),
+    ([-90.07951, -139.60721, 306.2678], 90.0, 75, 1.2),
+    ([-90.07951, -139.60721, 306.2678], 90.0, 100, 1.0),
+    ([-33.591026, -153.50325, 301.00708], 247.5, 50, 0.6),
+];
+
+/// openspec AS.155: those knocks, each from where the sweep found it. The
+/// hero comes off the rim now: nothing leaves him held by it at rest.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_knock_onto_a_lip_doesnt_leave_him_on_it() {
+    let t = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let mut run = joined(CHAPTER_1);
+    let (mut held, mut knocks) = (0, 0);
+    for (edge, heading, strength, back) in LIPS {
+        let rim = Rim {
+            edge: Vec3::from_array(edge),
+            heading,
+        };
+        let from = rim.edge - along(rim.heading) * back + Vec3::Y * 0.5;
+        run.put(from, rim.heading);
+        pad(&mut run, Stick::new(0.0, 0.0));
+        for _ in 0..6 {
+            run.step_play().unwrap();
+        }
+        for _ in 0..600 {
+            if knock_left(&run) <= 0.0 {
+                break;
+            }
+            run.step_play().unwrap();
+        }
+        scene_out(&mut run);
+        let at = run.hero().pivot;
+        println!("set down at {at}");
+        knock(&mut run, rim.heading, strength);
+        knocks += 1;
+        let mut still = 0;
+        let mut on_it = 0;
+        for _ in 0..600 {
+            let stops = run.step_play().unwrap();
+            assert!(stops.is_empty(), "{stops:#?}");
+            on_it += u32::from(run.hero().on_a_lip());
+            still = match run.hero().velocity.length() < 0.01 {
+                true => still + 1,
+                false => 0,
+            };
+            if still >= 45 {
+                break;
+            }
+        }
+        held += u32::from(on_it > 0);
+        println!(
+            "{strength} from {back} at {edge:?}: {on_it} steps on it, {:.2} m on at {}",
+            run.hero().pivot.distance(at),
+            run.hero().pivot
+        );
+        if run.hero().on_a_lip() {
+            scene_out(&mut run);
+            let reach = stick_reach(&mut run);
+            panic!(
+                "at rest on a rim: {}, the stick walking him {reach} m",
+                run.hero().pivot
+            );
+        }
+    }
+    println!(
+        "{knocks} knocks, {held} reached one, {:.1} s, load {}",
+        t.elapsed().as_secs_f32(),
+        load()
+    );
+    assert!(held > 0, "none reached a lip");
+}
