@@ -150,6 +150,12 @@ pub(crate) enum Member {
     Blend,
     /// `animationinfo.is layered`.
     IsLayered,
+    /// `animationinfo.walk` and `animationinfo.run`, read only: the clip a
+    /// `turn to` or `move to` plays on the way. Nothing yet: what asks it on
+    /// chapter 1 (the Giant's turn to the cracked floor) turns as well
+    /// without one, and AS.39 reads the actor's own (stand-in ledger:
+    /// `locomotion-clip`).
+    LocomotionClip,
     /// `animationinfo.type`, read only.
     ClipKind,
     Distance,
@@ -442,6 +448,8 @@ impl Member {
         add("animationinfo", "blend percent", Member::Blend);
         add("animationinfo", "is layered", Member::IsLayered);
         add("animationinfo", "type", Member::ClipKind);
+        add("animationinfo", "walk", Member::LocomotionClip);
+        add("animationinfo", "run", Member::LocomotionClip);
         add("positionmeasurement", "distance", Member::Distance);
         add("positionmeasurement", "heading", Member::Heading);
         add("positionmeasurement", "pitch", Member::Pitch);
@@ -1406,6 +1414,7 @@ impl ScriptWorld {
                 }
                 _ => return Err(HostFault::Nothing),
             })),
+            Member::LocomotionClip => Value::Null,
             Member::Distance => {
                 let (a, b) = (me(self, engine)?, other(self, engine)?);
                 let d = a - b;
@@ -3323,6 +3332,9 @@ impl ScriptWorld {
                         body: None,
                         aim: Aim::Still,
                         along: 0,
+                        wedged: 0,
+                        first: None,
+                        carried: Vec3::ZERO,
                     }));
                 }
                 true
@@ -3402,6 +3414,9 @@ impl ScriptWorld {
             a.position = p;
             a.angles.facing = f;
             a.velocity = v;
+            if let Some(at) = wedged_step(w, p, v, physics.ground_max_speed, dt) {
+                a.position = at;
+            }
         }
     }
 }
@@ -3445,6 +3460,48 @@ fn turned_by(angles: Angles, m: Member, by: f32) -> Angles {
 }
 
 /// An actor's movement numbers as the engine's steering reads them.
+/// How far from where it first stood a creature counts as out of it, metres.
+const WEDGED_REACH: f32 = 1.0;
+/// How fast its walk must ask to go for it to count as held there, ft/s.
+const WEDGED_WALK: f32 = 1.0;
+/// Steps it's held before it's carried on.
+pub const WEDGED_STEPS: u32 = 30;
+/// Steps it's carried: 3 m at a Chompy's 20 ft/s, out of what held it.
+const CARRIED_STEPS: u32 = 30;
+
+/// Where a creature held where it first stood goes this step, if it's
+/// carried: straight along its walk, through what holds it, at its ground
+/// speed. Chapter 1's second cave lets its Chompies out through mouths whose
+/// fronts face the arena: a reading, that the original's mesh stops a body
+/// from that side alone. Ours stops it from both, so eight of Setup_002's
+/// twenty stood in the mouth for good and its gate never opened (openspec
+/// AU.33; stand-in ledger: `wedged-walker`). One that has left where it first
+/// stood is a creature pressed into a wall, and walks as ever.
+fn wedged_step(walker: &mut Walker, at: Vec3, velocity: Vec3, speed: f32, dt: f32) -> Option<Vec3> {
+    let first = *walker.first.get_or_insert(at);
+    let walk = Vec3::new(velocity.x, 0.0, velocity.z);
+    if walker.wedged < WEDGED_STEPS {
+        if (at - first).length() > WEDGED_REACH {
+            walker.wedged = 0;
+            return None;
+        }
+        walker.wedged = if walk.length() > WEDGED_WALK {
+            walker.wedged + 1
+        } else {
+            0
+        };
+        if walker.wedged == WEDGED_STEPS {
+            walker.carried = walk.normalize_or_zero();
+        }
+        return None;
+    }
+    walker.wedged += 1;
+    if walker.wedged >= WEDGED_STEPS + CARRIED_STEPS {
+        walker.wedged = 0;
+    }
+    Some(at + walker.carried * (speed * METRES_PER_FOOT * dt))
+}
+
 fn steer_physics(p: &crate::script_engine::Physics) -> SteerPhysics {
     SteerPhysics {
         ground_max_speed: p.ground_max_speed,
@@ -5355,6 +5412,9 @@ mod fight_tests {
             body: None,
             aim: guac_motion::steer::Aim::Still,
             along: 0,
+            wedged: 0,
+            first: None,
+            carried: Vec3::ZERO,
         }));
         a
     }

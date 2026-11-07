@@ -2114,6 +2114,13 @@ impl ScriptWorld {
                 }
                 if let Some(k) = target.and_then(|h| self.actors.get_mut(&h)) {
                     k.buffer = k.buffer_loaded;
+                    // Its range as its file has it (openspec AU.33: chapter
+                    // 1's vista takes the quarry's placements' ranges to 0 at
+                    // its STARTUP and resets them at its SHUTDOWN; left at 0,
+                    // the jump pad on the way to the second post never woke).
+                    if let Some(p) = k.obj.and_then(|o| self.templates.get(&o)) {
+                        k.range = p.range;
+                    }
                     // A light the point-light manager took off goes back
                     // on with its template's values (openspec AH.65: the
                     // manager removes a light it returns to its pool and
@@ -2154,6 +2161,9 @@ impl ScriptWorld {
                 body: None,
                 aim: guac_motion::steer::Aim::Still,
                 along: 0,
+                wedged: 0,
+                first: None,
+                carried: Vec3::ZERO,
             })
         });
         if let Some(p) = k.obj.and_then(|o| self.templates.get(&o)) {
@@ -2265,6 +2275,9 @@ impl ScriptWorld {
                 body: None,
                 aim: guac_motion::steer::Aim::Still,
                 along: 0,
+                wedged: 0,
+                first: None,
+                carried: Vec3::ZERO,
             }));
         }
         self.actors.insert(h, a);
@@ -2823,6 +2836,7 @@ pub fn encounters(level: &str) -> impl Iterator<Item = &'static Encounter> {
     ENCOUNTERS
         .iter()
         .chain(std::iter::once(&THIRD_ISLAND))
+        .chain(std::iter::once(&crate::chapter_1::WAY))
         .filter(move |e| e.level == level)
 }
 
@@ -3752,6 +3766,11 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
     if let Whitelist::Only { placements, .. } = &mut config.whitelist {
         placements.extend(passages(name).iter().map(|s| (*s).to_owned()));
         placements.extend(third_island_way(name).iter().map(|s| (*s).to_owned()));
+        placements.extend(
+            crate::chapter_1::passage(name)
+                .iter()
+                .map(|s| (*s).to_owned()),
+        );
     }
     // A hub stage's sky, its stage's controller, its background and its
     // way on (openspec AS.46, AS.47, AU.6); the filter cells Cali's dialogue

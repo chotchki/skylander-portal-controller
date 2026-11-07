@@ -9,6 +9,7 @@
 
 pub mod anchors;
 pub mod census;
+pub mod chapter_1;
 pub mod character;
 pub mod creature_models;
 pub mod figure;
