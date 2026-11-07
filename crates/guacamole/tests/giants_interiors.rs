@@ -354,12 +354,16 @@ fn the_caves_zones_switch_under_its_darkness_and_the_part_holds_them() {
     let cave = handle(&run, "Interior_controller_Cave");
     run.put(Vec3::new(11.0, 22.4, -28.5), 105.0);
     let mut zones: Vec<(i32, f32)> = Vec::new();
+    let mut under_way = Vec::new();
     let mut seen = |run: &Run| {
         let now = atmospherics::read(&run.vm).expect("the manager's zone");
         atmospherics::lit(&part, &now).unwrap_or_else(|e| panic!("{e}"));
         let dark = guacamole::interiors::darkness(&run.vm, &run.world);
         if zones.last().is_none_or(|z| z.0 != now.to) {
             zones.push((now.to, dark));
+        }
+        if let Some(from) = now.from {
+            under_way.push((from, now.to, now.remaining));
         }
     };
     for _ in 0..10 {
@@ -373,9 +377,20 @@ fn the_caves_zones_switch_under_its_darkness_and_the_part_holds_them() {
         k += 1;
         assert!(k < 900, "into the room");
     }
-    println!("zones {zones:?} after {k} steps; load at end: {}", load());
+    println!(
+        "zones {zones:?}, the transition {under_way:?}, after {k} steps; load at end: {}",
+        load()
+    );
     assert_eq!(zones.first().map(|z| z.0), Some(0), "the exterior's");
     assert!(zones.len() >= 2, "the room's own: {zones:?}");
+    assert!(
+        under_way.len() >= 2 && under_way.iter().all(|t| t.0 == 0 && t.1 == 2),
+        "from the one to the other over the manager's transition: {under_way:?}"
+    );
+    assert!(
+        under_way.windows(2).all(|w| w[1].2 <= w[0].2),
+        "what's left of it only falls: {under_way:?}"
+    );
     assert!(
         zones[1..].iter().all(|z| z.1 >= 0.5),
         "under the darkness: {zones:?}"

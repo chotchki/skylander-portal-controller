@@ -3,8 +3,10 @@
 //! with the lock written as `Game - Cutscene` leaves it: `Cutscene State` and
 //! a toy on `portal control data`'s `need keep`.
 
+use bevy::input::gamepad::GamepadButton;
 use bevy::prelude::*;
 use guac_script::Value;
+use guac_server::progress::ProgressSink;
 use guacamole::scripts::ScriptRuntime;
 use skylander_core::SlotIndex;
 use skylander_rpcs3_control::{FigureProgress, PlacementOwner};
@@ -14,7 +16,13 @@ use crate::driver::PortalChange;
 use crate::hero_scripts::HeroRun;
 use crate::hero_scripts::Join;
 use crate::play::{Alert, DEFEAT_BACKSTOP, HELD_SWAP_BACKSTOP, Mode, Play, same_toy};
-use crate::test_support::play::{ERUPTOR, ONE, clear, joined_eruptor, mode, place, until};
+use crate::progress::{Earning, ProgressOut};
+use crate::test_support::level::{lights, write_level};
+use crate::test_support::play::{
+    ERUPTOR, ONE, clear, join, joined_eruptor, level_state, mode, place, play_app, until,
+    write_attack_parts, write_figure_rows,
+};
+use crate::test_support::test_pad;
 use crate::test_support::turntable::{placed, set};
 
 fn alert(app: &App) -> Option<Alert> {
@@ -146,7 +154,6 @@ fn a_figure_lifted_under_a_scenes_lock_holds_him_until_its_back() {
         SlotIndex::new(4).unwrap(),
         "his run on the new slot"
     );
-    assert!(!run.figure_off);
     assert_eq!(
         app.world().resource::<Play>().hero_slot(),
         Some(SlotIndex::new(4).unwrap())
@@ -158,6 +165,54 @@ fn a_figure_lifted_under_a_scenes_lock_holds_him_until_its_back() {
         alert(a) == Some(Alert::PlaceSkylander)
     });
     assert_eq!(hero(&app), None);
+}
+
+/// What a scene pays him with his figure off the portal is his own, with
+/// Bob's figure stood in his slot: the step's read-back goes to Alice's row
+/// and leaves the slot's new occupant as he came.
+#[test]
+fn what_a_scene_pays_him_off_the_portal_stays_on_his_own_figure() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut app, tx) = play_app(tmp.path());
+    write_attack_parts(tmp.path());
+    write_figure_rows(tmp.path());
+    let sink = ProgressSink::new();
+    app.insert_resource(ProgressOut(sink.clone()));
+    tx.send(write_level(tmp.path(), &lights())).unwrap();
+    let pad = test_pad::connect(&mut app, None, None);
+    until(&mut app, "the level and its scripts", |a| {
+        level_state(a) == "ready" && a.world().contains_resource::<ScriptRuntime>()
+    });
+    put(&mut app, owned(0, "alice", 0));
+    until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+    test_pad::press(&mut app, pad, GamepadButton::East);
+    until(&mut app, "his scripts", |a| {
+        join(a).as_deref() == Some("joined")
+    });
+    lock(&mut app);
+    clear(&mut app, 0);
+    until(&mut app, "the put-back", |a| {
+        alert(a) == Some(Alert::PutBack)
+    });
+    put(&mut app, bobs(0));
+    until(&mut app, "the scene on", |a| mode(a) == Mode::Level);
+    assert!(lifted(&app));
+    let _ = sink.waiting();
+    test_pad::press(&mut app, pad, GamepadButton::RightTrigger);
+    frames(&mut app, 3);
+    let waiting = sink.waiting();
+    assert!(
+        waiting
+            .iter()
+            .any(|(profile, _, sent)| profile == "alice" && sent.progress.xp == 1),
+        "the award on his row: {waiting:?}"
+    );
+    let earning = app.world().resource::<Earning>();
+    assert_eq!(
+        earning.slots[0].as_ref().map(|e| e.progress.xp),
+        Some(0),
+        "Bob's earned nothing"
+    );
 }
 
 /// Nothing changes with no lock: a scene that lets switching through (the

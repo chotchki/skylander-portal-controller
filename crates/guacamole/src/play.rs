@@ -1447,20 +1447,16 @@ fn let_go(
     }
 }
 
-/// His run on the slot his figure stands in now, and told when it's lifted
-/// (openspec AS.112): what his figure's words hold after a step goes by it.
+/// His run on the slot his figure stands in now (openspec AS.112): what his
+/// figure's words hold after a step goes by it.
 fn follow_hero_slot(play: Res<Play>, mut runs: Query<&mut HeroRun>) {
     let Some((hero, slot, _)) = play.hero_placement() else {
         return;
     };
-    let Ok(mut run) = runs.get_mut(hero) else {
-        return;
-    };
-    if run.slot != slot {
+    if let Ok(mut run) = runs.get_mut(hero)
+        && run.slot != slot
+    {
         run.slot = slot;
-    }
-    if run.figure_off != play.lifted() {
-        run.figure_off = play.lifted();
     }
 }
 

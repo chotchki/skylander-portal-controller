@@ -100,10 +100,8 @@ pub struct Earning {
     held: HashMap<(String, FigureId), FigureProgress>,
     /// Each (profile or none, figure)'s serial for the session.
     serials: HashMap<(Option<String>, FigureId), u32>,
-    /// Who last left each slot, an owned figure's key: a hero whose figure
-    /// came off under a scene's lock still earns on it (openspec AS.112).
-    left: [Option<(String, FigureId)>; SLOT_COUNT],
-    /// What such a hero earned, to hand the server next.
+    /// What a hero whose figure came off under a scene's lock earned, to
+    /// hand the server next (openspec AS.112).
     earned_off: Vec<(String, FigureId, FigureProgress)>,
 }
 
@@ -120,9 +118,7 @@ impl Earning {
         if let Some(out) = out {
             out.send_final(&profile_id, &e.figure_id, e.progress);
         }
-        let key = (profile_id, e.figure_id);
-        self.left[slot] = Some(key.clone());
-        self.held.insert(key, e.progress);
+        self.held.insert((profile_id, e.figure_id), e.progress);
     }
 
     fn arrive(&mut self, slot: usize, placement: &Placement) {
@@ -171,22 +167,23 @@ impl Earning {
         }
     }
 
-    /// [`Earning::earned`] for a hero whose figure came off `slot` under a
-    /// scene's lock and stands in the level still (openspec AS.112): onto
-    /// what's kept for that figure, whoever stands in the slot now, so what
-    /// the scene pays him reaches his own row and his figure put back carries
-    /// on from it. False, and nothing changed, under another generation or
-    /// for a figure no profile owns.
-    pub fn earned_off(&mut self, slot: usize, values: Values, generation: i64) -> bool {
-        let Some(key) = self.left.get(slot).and_then(Option::as_ref) else {
+    /// [`Earning::earned`] for a hero whose figure, `placement`, came off
+    /// under a scene's lock and who stands in the level still (openspec
+    /// AS.112): onto what's kept for that figure, whoever stands in his slot
+    /// now, so what the scene pays him reaches his own row and his figure
+    /// put back carries on from it. False, and nothing changed, under
+    /// another generation or for a figure no profile owns.
+    pub fn earned_off(&mut self, placement: &Placement, values: Values, generation: i64) -> bool {
+        let Some(owner) = &placement.owner else {
             return false;
         };
-        match self.held.get_mut(key) {
+        let key = (owner.profile_id.clone(), placement.figure_id.clone());
+        match self.held.get_mut(&key) {
             Some(held) if held.generation == generation => {
                 if (held.xp, held.gold) != (values.xp, values.gold) {
                     held.xp = values.xp;
                     held.gold = values.gold;
-                    self.earned_off.push((key.0.clone(), key.1.clone(), *held));
+                    self.earned_off.push((key.0, key.1, *held));
                 }
                 true
             }
@@ -583,18 +580,25 @@ mod tests {
     #[test]
     fn a_lifted_heros_earnings_are_his_own_not_his_slots_next() {
         let mut tv = tv();
-        tv.place(0, eruptor(Some(("alice", row(5, 3)))));
+        let alice = eruptor(Some(("alice", row(5, 3))));
+        tv.place(0, alice.clone());
+        tv.clear(0);
+        // Bob's in, off and in again on her slot: hers stays hers.
+        tv.place(0, eruptor(Some(("bob", row(1, 0)))));
         tv.clear(0);
         tv.place(0, eruptor(Some(("bob", row(1, 0)))));
-        let earning = &mut tv.app.world_mut().resource_mut::<Earning>();
+        let mut earning = tv.app.world_mut().resource_mut::<Earning>();
         let values = |xp| Values {
             xp,
             gold: 12,
             playtime_secs: 0,
         };
-        assert!(!earning.earned_off(0, values(70), 4), "another generation");
-        assert!(earning.earned_off(0, values(77), 3));
-        assert!(earning.earned_off(0, values(77), 3), "the same again");
+        assert!(
+            !earning.earned_off(&alice, values(70), 4),
+            "another generation"
+        );
+        assert!(earning.earned_off(&alice, values(77), 3));
+        assert!(earning.earned_off(&alice, values(77), 3), "the same again");
         assert_eq!(
             earning.slots[0].as_ref().unwrap().progress.xp,
             1,
@@ -608,15 +612,19 @@ mod tests {
                 .any(|(profile, sent)| profile == "alice" && sent.progress.xp == 77),
             "{waiting:?}"
         );
-        tv.place(1, eruptor(Some(("alice", row(5, 3)))));
+        tv.place(1, alice);
         let back = &tv.app.world().resource::<Earning>().slots[1];
         assert_eq!(back.as_ref().map(|e| e.progress.xp), Some(77));
 
         let mut tv = self::tv();
-        tv.place(0, eruptor(None));
+        let nobodys = eruptor(None);
+        tv.place(0, nobodys.clone());
         tv.clear(0);
         let mut earning = tv.app.world_mut().resource_mut::<Earning>();
-        assert!(!earning.earned_off(0, values(5), 0), "owned by no one");
+        assert!(
+            !earning.earned_off(&nobodys, values(5), 0),
+            "owned by no one"
+        );
     }
 
     #[test]
