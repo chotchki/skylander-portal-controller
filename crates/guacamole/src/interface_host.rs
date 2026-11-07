@@ -446,6 +446,15 @@ impl ScriptWorld {
 
 #[cfg(test)]
 mod tests {
+    /// AS.99: a glyph takes its letter's colour over its sprite's, 0x80 a
+    /// letter's channel at full, and its sprite's alpha.
+    #[test]
+    fn a_glyph_tints_its_sprites_colour_by_its_letters() {
+        let sprite = [200, 100, 50, 70];
+        assert_eq!(tinted(sprite, guac_interface::LETTER), sprite);
+        assert_eq!(tinted(sprite, [0x40, 0, 0xFF, 0xFF]), [100, 0, 99, 70]);
+    }
+
     use std::collections::HashMap;
 
     use guac_formats::script::Class;

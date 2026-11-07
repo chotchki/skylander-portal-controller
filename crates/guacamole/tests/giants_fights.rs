@@ -259,6 +259,7 @@ fn level_214s_carried_bomb_counts_down_over_him() {
     let mut timers: Vec<Timer> = Vec::new();
     let mut burst = None;
     let mut drawn: BTreeMap<i32, (u32, u32, u8)> = BTreeMap::new();
+    let mut off: f32 = 0.0;
     for k in 0..1000u32 {
         push_toward(&mut run, &mut stops, ends[((k / 150) % 2) as usize]);
         let b = run.world.actor(bomb).map(|a| a.position);
@@ -313,9 +314,17 @@ fn level_214s_carried_bomb_counts_down_over_him() {
             d.2 = d.2.min(q.colour[3]);
             assert_eq!(q.sprite, "Bomb_Counter");
             assert!(q.rect[2] > q.rect[0] && q.rect[3] > q.rect[1], "{q:?}");
-            // Over its timer on the screen, not at the frame's corner where
-            // the model starts it: the follow's update ran.
-            assert!((100.0..1180.0).contains(&q.rect[0]), "{q:?}");
+            // Over its timer on the screen: the follow's update keeps it
+            // there as it moves, a step behind at most, 20 units across.
+            let timer = run.world.clones().into_iter().find(|h| {
+                run.world.name(*h) == "Bomb_Timer"
+                    && run.world.actor(*h).is_some_and(|a| a.id == q.value as i32 && !a.removed)
+            });
+            if let Some(a) = timer.and_then(|h| run.world.actor(h))
+                && let Some((x, _)) = run.world.viewport().project(a.position)
+            {
+                off = off.max((q.rect[0] - (x + 20.0)).abs());
+            }
         }
         let by_count = quads.iter().fold(HashMap::new(), |mut m, q| {
             *m.entry(q.value as i32).or_insert(0usize) += 1;
@@ -333,7 +342,8 @@ fn level_214s_carried_bomb_counts_down_over_him() {
     let burst = burst.expect("the bomb burst in his hands");
     let mut counts_drawn: Vec<i32> = drawn.keys().copied().collect();
     counts_drawn.sort_unstable();
-    println!("drawn {drawn:?}");
+    println!("drawn {drawn:?}, at most {off:.1} px off its timer");
+    assert!(off < 30.0, "{off}");
     assert_eq!(
         counts_drawn,
         (1..=11).collect::<Vec<_>>(),
