@@ -1595,6 +1595,16 @@ impl Vm {
         (self.cells[c as usize].kind == CellKind::Value).then_some(Value::Cell(c))
     }
 
+    /// `element` added to the set `set` holds or names, as a `combine` adds
+    /// it (a member already there isn't added twice). False when `set` holds
+    /// no set.
+    pub fn set_add(&mut self, set: Value, element: Value) -> bool {
+        let Value::Set(s) = self.peek(set) else {
+            return false;
+        };
+        self.combine(s, element, 0).is_ok()
+    }
+
     /// Sets a number field of the structure `v` holds or names: how an
     /// embedder puts a recorded state's shared numbers in (the combat
     /// manager's next alert at an anchor). False when the structure has no
@@ -4003,7 +4013,12 @@ impl Vm {
     /// arguments and in a nested call's after-return code (a
     /// specialization's own parameters name the base). Any other reads the
     /// definition it binds into (a stub followed), or the open call's
-    /// specialization of it (an after-return read of what a call returned).
+    /// specialization of it, the nearest down the open calls: an after-return
+    /// read of what a call returned, while a nested call binds its arguments
+    /// among them (openspec AS.139: `System - Check Level Objective
+    /// Completed` hands its check macro's parameter on to the on-complete
+    /// macro from the check's after-return code, the check's use still open
+    /// under the new one's).
     fn param_frame(&self, program: &Program, op: OpId, p: &Param) -> Option<DefId> {
         let base_of = |d: DefId| {
             program.defs[d as usize]
@@ -4025,13 +4040,13 @@ impl Vm {
             return Some(running);
         }
         let def = p.def.and_then(|d| program.resolve(d))?;
-        if let Some(top) = self.run.calls.last()
-            && top.def != def
-            && base_of(top.def) == Some(def)
-        {
-            return Some(top.def);
-        }
-        Some(def)
+        let open = self
+            .run
+            .calls
+            .iter()
+            .rev()
+            .find(|c| c.def == def || base_of(c.def) == Some(def));
+        Some(open.map_or(def, |c| c.def))
     }
 
     fn next_spot(

@@ -332,6 +332,24 @@ pub fn is_trigger(name: &str) -> bool {
             .any(|p| name.starts_with(p))
 }
 
+/// The attach nodes of the models in a level's `nodes` part whose nodes all
+/// stand on the model's own origin, by path (the au-chests review): a static
+/// prop has no joints to pose, so its nodes are its list's offsets. A hat
+/// box's lid hangs 1.8 m up its `Lid` node, its bow and ribbon on the lid's.
+pub fn origin_nodes(part: &guac_ir::nodes::LevelNodes) -> HashMap<String, Vec<NodePose>> {
+    part.models
+        .iter()
+        .filter(|m| m.nodes.iter().all(|n| n.joint.is_none()))
+        .map(|m| {
+            let nodes = m.nodes.iter().map(|n| NodePose {
+                at: Vec3::from_array(n.offset.translation),
+                turn: guac_motion::seam::Quat::from_array(n.offset.rotation),
+            });
+            (m.load_file.clone(), nodes.collect())
+        })
+        .collect()
+}
+
 /// Whether a managed placement is awake (openspec AH.18, AG.7's rule with
 /// the buffer read as the original's hysteresis): one with an activation
 /// range is awake while a hero is within it (3D, feet, from his pivot) and
@@ -415,6 +433,9 @@ pub struct ScriptWorld {
     pub(crate) objects: HashMap<Obj, Handle>,
     /// Every file placement's data, to make a clone of it from.
     pub(crate) templates: HashMap<Obj, Placed>,
+    /// The attach nodes each model holds on its own origin, by its path
+    /// ([`ScriptWorld::set_origin_nodes`]).
+    pub(crate) origin_nodes: HashMap<String, Vec<NodePose>>,
     /// Every placed light's values (openspec AH.65): a light placement's
     /// members read and write these; a clone of one copies them.
     pub(crate) light_templates: HashMap<Obj, Light>,
@@ -548,6 +569,10 @@ pub struct ScriptWorld {
     /// [`crate::story_save`]): a save or load asked reads active until
     /// guacamole's store has done it.
     pub save: crate::story_save::SaveState,
+    /// The run's story save is in (openspec AU.39: [`crate::story_save`]'s
+    /// start): what a chest's or hat box's STARTUP reads, so neither wakes
+    /// before it.
+    pub(crate) story_started: bool,
     /// The placements the VM leaves inert, off the whitelist (design
     /// decision 6): a script waking one is logged and listed in `woken`.
     pub(crate) inert: std::collections::HashSet<Handle>,
@@ -851,6 +876,7 @@ impl ScriptWorld {
             actors,
             objects: handles.iter().map(|(o, h)| (*o, *h)).collect(),
             templates,
+            origin_nodes: HashMap::new(),
             light_templates: files.lights.clone(),
             emitters: files.emitters.clone(),
             points: files.points.clone(),
@@ -902,6 +928,7 @@ impl ScriptWorld {
             level_end: None,
             achievements: Vec::new(),
             save: Default::default(),
+            story_started: false,
             inert: Default::default(),
             woken: Vec::new(),
             fired: Vec::new(),
@@ -1146,6 +1173,7 @@ impl ScriptWorld {
     pub fn activity_at(&mut self, heroes: &[Vec3]) -> Vec<(Handle, bool)> {
         self.activity_from = heroes.to_vec();
         let mut out = Vec::new();
+        let (templates, started) = (&self.templates, self.story_started);
         for (&h, a) in &mut self.actors {
             if !a.managed || a.removed {
                 continue;
@@ -1154,7 +1182,8 @@ impl ScriptWorld {
                 .iter()
                 .map(|p| (*p - a.position).length() * crate::script_engine::FEET_PER_METRE)
                 .reduce(f32::min);
-            a.active = awake(a.range, a.buffer, a.active, d);
+            a.active = awake(a.range, a.buffer, a.active, d)
+                && (started || !crate::treasure::waits_for_the_save(templates, a));
             out.push((h, a.active));
         }
         out.sort_unstable_by_key(|k| k.0);
@@ -1179,6 +1208,9 @@ impl ScriptWorld {
                 continue;
             };
             if !a.managed || a.removed || a.active {
+                continue;
+            }
+            if !self.story_started && crate::treasure::waits_for_the_save(&self.templates, a) {
                 continue;
             }
             let d = self
@@ -1242,12 +1274,15 @@ impl ScriptWorld {
     }
 
     /// The people the TV draws unwalked: each placement whose script is one
-    /// of [`HUB_PEOPLE`]'s (openspec AU.28) or whose name is one of
+    /// of [`HUB_PEOPLE`]'s (openspec AU.28) or a chest's (AU.39,
+    /// [`crate::treasure::is_treasure`]) or whose name is one of
     /// [`LEVEL_PEOPLE`]'s (AS.98), by its actor, in handle order; whether its
     /// script runs is the caller's to check.
     pub fn people(&self) -> Vec<Handle> {
         let person = |p: &Placed| {
-            p.script.as_deref().is_some_and(is_hub_person)
+            p.script
+                .as_deref()
+                .is_some_and(|s| is_hub_person(s) || crate::treasure::is_treasure(s))
                 || LEVEL_PEOPLE.iter().any(|(_, name)| *name == p.name)
         };
         let mut out: Vec<Handle> = self
@@ -1736,6 +1771,13 @@ impl ScriptWorld {
             self.rig_holder = Some(actor);
         }
         self.nodes.insert(actor, nodes);
+    }
+
+    /// The attach nodes on each model's own origin, by its path
+    /// ([`origin_nodes`]): where a static prop's nodes stand, nothing posing
+    /// them.
+    pub fn set_origin_nodes(&mut self, nodes: HashMap<String, Vec<NodePose>>) {
+        self.origin_nodes = nodes;
     }
 
     /// `actor`'s attach nodes as last set, in its own frame.
@@ -2828,6 +2870,15 @@ pub const HUB_PEOPLE: [&str; 14] = [
     "/CardPirate_Template.ai",
 ];
 
+/// The hub's utilities and doors (openspec AS.138), by their scripts, on
+/// every stage. `_Utilities_Controller` takes `Hatterson(Orbit)` off, bobs
+/// the camera, hangs the ship parts the hub's load brought on the ship and
+/// holds `Galley_Blocker` until the Dragon Engine hangs there. Each door and
+/// hatch (`Hub2_Door.ai`) clones its art and, its `unlock value` over the
+/// adventures done, takes its room's interior controller off and stays
+/// shut, else it swings open as a hero comes near.
+pub const HUB_DOORS: [&str; 2] = ["/Utilities_Controller.ai", "/Hub2_Door.ai"];
+
 /// A level's own people the TV draws as it does the hub's (openspec AS.98),
 /// by level and placement, never walked: Auric in his scene on level 214
 /// and at his stall after it, Flynn and Cali on its third ship (AS.142).
@@ -2971,11 +3022,8 @@ pub const BREAKABLES: [&str; 3] = [
 /// makes itself a combat target), the cannon's rubble wall, the sliding
 /// rocks and the global reference the chests share; then the scripts of
 /// what those spawn. The Titan boulders run their first tick alone
-/// ([`START_PROPS_FIRST_TICK`]). Off: the chest's (`Chest.ai` and its
-/// locks'), a creature's
-/// left out as the creatures are: undrawn, it took `Active_Collectable` and
-/// stopped on `clonedsequence.clones` (its triggered sound's, unmodelled) the
-/// moment he came within 18 ft (the AG.60 review).
+/// ([`START_PROPS_FIRST_TICK`]). The chest's and the hat box's are
+/// [`crate::treasure`]'s (AU.39).
 pub const START_PROPS: [&str; 23] = [
     "Scale.ai",
     "Windmill_Rotate.ai",
@@ -3508,6 +3556,13 @@ pub fn smash_config(mode: Mode) -> Config {
         placements.extend(BREAKABLES.iter().map(|s| (*s).to_owned()));
         scripts.extend(START_PROPS.iter().map(|s| (*s).to_owned()));
         scripts.extend(FOOD_SCRIPTS.iter().map(|s| (*s).to_owned()));
+        // The chests and hat boxes off the way (openspec AU.39).
+        scripts.extend(
+            crate::treasure::CHEST_SCRIPTS
+                .iter()
+                .map(|s| (*s).to_owned()),
+        );
+        scripts.extend(crate::treasure::HAT_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(CAMERA_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(GOAT_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(ROUTE_SCRIPTS.iter().map(|s| (*s).to_owned()));
@@ -3868,6 +3923,7 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
     {
         scripts.extend(HUB_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(HUB_PEOPLE.iter().map(|s| (*s).to_owned()));
+        scripts.extend(HUB_DOORS.iter().map(|s| (*s).to_owned()));
     }
     with_level(config, files, level)
 }
@@ -6461,6 +6517,8 @@ mod tests {
             assert!(is_hub(stage));
             let c = level_config(Mode::Play, &files, 4, stage);
             for script in [
+                "Utilities_Controller.ai",
+                "Hub2_Door.ai",
                 "SkyDome_Controller.ai",
                 "Hub2_Stage_1_Controller.ai",
                 "Hub2_Stage_4_Controller.ai",
@@ -7593,15 +7651,17 @@ mod tests {
             "Breakable_Stone_Wall_Castle_206(1)",
             "C:/tfb/Content/Levels/Includes/GameElement_Breakable_Wall/Scripts/Breakable_Wall_213.ai",
         ));
-        // The chest is a creature: its script and its locks' stay off.
+        // A chest and its locks run on every level (openspec AU.39), a
+        // script merely named like one stays off.
         for (name, script) in [
             ("Chest(1)", "Spyro_GenericStuff/scripts/Chest.ai"),
             ("Chest_Lock", "Treasure_Chest/Chest_Lock.ai"),
             ("Lock_Flash", "Treasure_Chest/Lock_Flash.ai"),
         ] {
             let path = format!("C:/tfb/Content/Levels/Includes/{script}");
-            assert!(!c.whitelist.lists(name, &path), "{name}");
+            assert!(c.whitelist.lists(name, &path), "{name}");
         }
+        assert!(!c.whitelist.lists("Other", "C:/x/Not_A_Chest.ai"));
         assert_eq!(
             c.whitelist.listing(
                 "Titan_CarriableObject_Boulder_v3_(4)",

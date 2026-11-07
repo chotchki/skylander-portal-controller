@@ -264,10 +264,17 @@ fn hash(line: &str) -> u64 {
     h.finish()
 }
 
+/// How long a question stays up before its answer, steps: a player reads
+/// it, and the menu's own tick runs meanwhile (the au-chests review: its
+/// focus stopped the UI on a colour's multiply 40 steps in, which an answer
+/// on the first step never reached).
+const READING: u32 = 90;
+
 /// The hero set down at `at`, then the talk button pressed every 20 steps
 /// until a cutscene starts, and the steps run until it ends (or the run
 /// changes level), each question answered by `answer` (its string's name to
-/// yes or no) as the TV's modal answers it ([`guacamole::prompt::answer`]).
+/// yes or no) as the TV's modal answers it ([`guacamole::prompt::answer`]),
+/// [`READING`] steps on.
 fn talk(
     run: &mut Run,
     stops: &mut Vec<guac_script::Halt>,
@@ -279,6 +286,7 @@ fn talk(
         stops.extend(run.step_play().unwrap());
     }
     let mut out = Talk::default();
+    let mut read = 0;
     for k in 0..3600u32 {
         talk_button(run, out.cutscene.is_none() && k % 20 == 0);
         stops.extend(run.step_play().unwrap());
@@ -287,6 +295,11 @@ fn talk(
             out.cutscene = Some((run.steps, cs.clone()));
         }
         if let Some(p) = guacamole::prompt::up(&run.vm, &run.world) {
+            read += 1;
+            if read < READING {
+                continue;
+            }
+            read = 0;
             let id = match p.question {
                 Value::Object(o) => run.vm.program().name_of(o).map(str::to_owned),
                 _ => None,

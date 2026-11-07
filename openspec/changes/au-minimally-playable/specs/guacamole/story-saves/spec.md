@@ -44,3 +44,18 @@ A save whose layout the running build doesn't read SHALL be kept unchanged and n
 #### Scenario: A layout the build doesn't read
 - **WHEN** a profile's save was written by a build with a different save layout
 - **THEN** the log names it, the profile starts at chapter 1, and the save is still there for a build that reads it
+
+### Requirement: A dare met stays met
+
+A level's dare met on a clear SHALL be saved, and SHALL read done from before on the next clear of that level. A dare missed SHALL stay open.
+
+#### Scenario: Clearing chapter 1 in time, then again
+
+- **WHEN** chapter 1 is cleared inside its time with no life lost, and cleared again on that save
+- **THEN** the first clear reads both dares newly done and the next reads them done
+
+#### Scenario: Clearing it late
+
+- **WHEN** chapter 1 is cleared past its time
+- **THEN** its time dare stays open and unsaved, its other dare met
+

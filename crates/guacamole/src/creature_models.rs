@@ -80,7 +80,8 @@ pub fn creature_model(prop: &guac_ir::level::Prop, identity: DumpIdentity) -> Op
 /// chapter 1, or a later level's first encounter's placements and clones'
 /// templates (openspec AS.54, [`crate::scripts::encounter`]), a hub's
 /// people (openspec AU.28, [`crate::scripts::HUB_PEOPLE`]), a level's own
-/// (AS.98, [`crate::scripts::LEVEL_PEOPLE`]) and the level's
+/// (AS.98, [`crate::scripts::LEVEL_PEOPLE`]), its chests (AU.39,
+/// [`crate::treasure::is_treasure`]) and the level's
 /// templates whose clones draw ([`clones_draw`], openspec AS.63) name,
 /// once, by its path, the fight's first, each in its list's order (the
 /// people and the templates in the file's), as [`creature_model`] makes
@@ -120,12 +121,15 @@ pub fn skinned_models(
             .and_then(|a| a.model.clone())
     });
     // A hub's people by their placements' scripts (openspec AU.28), a
-    // level's own by their names (AS.98).
+    // level's own by their names (AS.98), any level's chests (AU.39).
     let people = placements
         .actors
         .iter()
         .filter(|a| {
             crate::scripts::is_level_person(&placements.level, &a.name)
+                || a.script
+                    .as_deref()
+                    .is_some_and(crate::treasure::is_treasure)
                 || (crate::scripts::is_hub(&placements.level)
                     && a.script
                         .as_deref()
@@ -432,6 +436,50 @@ mod tests {
             ["banker.mdl", "tortoise.mdl"]
         );
         assert_eq!(models("level_201"), ["tortoise.mdl"]);
+    }
+
+    /// openspec AU.39: every level's chests draw on their placements' skinned
+    /// model; a script merely ending like one's doesn't, nor a static one.
+    #[test]
+    fn a_levels_chests_draw_their_own_model() {
+        let scripted = |name: &str, model: &str, script: &str| Placement {
+            script: Some(format!("C:/tfb/Content/Levels/Includes/{script}")),
+            ..placed(name, Some(model))
+        };
+        let placements = Placements {
+            identity: identity(),
+            level: "level_206".into(),
+            actors: vec![
+                scripted(
+                    "Chest(1)",
+                    "chest.mdl",
+                    "Spyro_GenericStuff/scripts/Chest.ai",
+                ),
+                scripted(
+                    "Chest(2)",
+                    "chest.mdl",
+                    "Spyro_GenericStuff/scripts/Chest.ai",
+                ),
+                scripted("A prop", "prop.mdl", "Other/Not_A_Chest.ai"),
+                scripted("A hat", "box.mdl", "Hats/scripts/Hat_Pickup.ai"),
+            ],
+            waypoints: Vec::new(),
+        };
+        let props = Props {
+            identity: identity(),
+            level: "level_206".into(),
+            props: vec![
+                prop("chest.mdl", true),
+                prop("prop.mdl", true),
+                prop("box.mdl", false),
+            ],
+            refused: Vec::new(),
+        };
+        let models: Vec<_> = skinned_models(&placements, &props, &identity())
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect();
+        assert_eq!(models, ["chest.mdl"]);
     }
 
     /// The models the first fight's placements name, each once, in their

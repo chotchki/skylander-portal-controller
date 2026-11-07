@@ -750,6 +750,63 @@ fn adventure_of(vm: &Vm, world: &ScriptWorld, level: &str) -> Option<Value> {
     })
 }
 
+/// What `System - Set Up Level Objectives`' last loop reads of the save, read
+/// again now it's in (openspec AS.139): the original's load comes before a
+/// level's definition, so a dare met on an earlier clear is among the
+/// `objectives complete` at the level's start and reads done, not newly
+/// done, here the definition ran a step before the save. Each objective
+/// through its `override already complete check macro`, else its check
+/// macro, as that loop does.
+fn objectives_done_before(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<(), Halt> {
+    let Some(lcd) = global(vm, "level control data").map(|v| vm.value(v)) else {
+        return Ok(());
+    };
+    let Some(objectives) = vm.field(lcd, "level objectives").map(|v| vm.value(v)) else {
+        return Ok(());
+    };
+    let all: Vec<Value> = vm
+        .field(objectives, "all objectives")
+        .and_then(|s| vm.set(s).map(<[_]>::to_vec))
+        .unwrap_or_default();
+    let Some(complete) = vm.field(objectives, "objectives complete") else {
+        return Ok(());
+    };
+    for objective in all {
+        let objective = vm.value(objective);
+        let check = ["override already complete check macro", "check macro"]
+            .iter()
+            .find_map(|f| match vm.field(objective, f).map(|v| vm.value(v)) {
+                Some(Value::Object(o)) => vm.program().def_of(o),
+                _ => None,
+            })
+            .map(|d| vm.program().defs[d as usize].display.clone());
+        let Some(check) = check else {
+            continue;
+        };
+        let (_, back) = vm.call_with(
+            None,
+            &check,
+            &[
+                ("cur level placement data", lcd),
+                ("objective check struct", objective),
+                ("objective complete", Value::Int(0)),
+            ],
+            &["objective complete"],
+            host,
+        )?;
+        let done = back
+            .first()
+            .copied()
+            .flatten()
+            .and_then(|v| int_of(vm, v))
+            .is_some_and(|v| v > 0);
+        if done {
+            vm.set_add(complete, objective);
+        }
+    }
+    Ok(())
+}
+
 /// A run's start (the module docs): once its init has defined the save, the
 /// title's part (the system activated; the save loaded from the last run's
 /// words, else the host's stored save, else marked in use as a new game;
@@ -826,6 +883,8 @@ pub fn start_run(
         "fresh"
     };
     session.report.start = Some(start.to_owned());
+    // What waited to read it (openspec AU.39): the chests and hat boxes.
+    host.world.story_started = true;
     // The title's fill: each adventure's `complete` off its flags.
     for ad in adventures(vm) {
         let mut args: Vec<(&str, Value)> = vec![("input adventure data", ad)];
@@ -892,6 +951,7 @@ pub fn start_run(
             }
         }
     }
+    objectives_done_before(vm, host)?;
     // The level initializer's save: slot and header, the percent complete
     // worked out first.
     let slot = global(vm, "Current_SaveGame_Slot").unwrap_or(Value::Int(0));

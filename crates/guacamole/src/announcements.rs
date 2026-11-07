@@ -16,6 +16,11 @@
 //!   holds are the HUD's (stand-in ledger: `hud`). A scene that hides the
 //!   interface hides them with it, as `UI - Adjust UI Visibility` leaves
 //!   the announce container's `hide state` over 0, and their stay waits.
+//! - **A gesture's prompt** (openspec AU.39: `UI_Controller_Prompt.ai`, what
+//!   tells a player to mash at a chest): each manager on `GestureData` holds
+//!   its words in `wiimote prompt text ref` and shows them while its `show
+//!   sprite` holds and its box is made. On the TV it's a hint, on the same
+//!   box (stand-in ledger: `level-words`).
 
 use guac_script::{Value, Vm};
 
@@ -86,6 +91,55 @@ pub fn hints(vm: &Vm, world: &ScriptWorld) -> Vec<Line> {
         .into_iter()
         .filter(|n| field(vm, *n, "is a hint?").and_then(|h| h.as_i32()) > Some(0))
         .filter_map(|n| field(vm, n, "associated text"))
+        .filter(|s| *s != Value::Null)
+        .map(|string| Line {
+            string,
+            text: world.text_of(string),
+        })
+        .collect()
+}
+
+/// The hats a box is reporting (openspec AU.39), each by its name, in place
+/// of the report's bar ([`crate::treasure::hats_shown`]).
+pub fn hat_reports(vm: &Vm, world: &ScriptWorld) -> Vec<Line> {
+    crate::treasure::hats_shown(vm, world)
+        .into_iter()
+        .map(|string| Line {
+            string,
+            text: world.text_of(string),
+        })
+        .collect()
+}
+
+/// The gesture prompts that show now, by each manager on `GestureData`,
+/// their box made (`main loop`) and `show sprite` set; hidden with the
+/// hints.
+pub fn gesture_prompts(vm: &Vm, world: &ScriptWorld) -> Vec<Line> {
+    if hidden(vm) {
+        return Vec::new();
+    }
+    let Some(data) = global(vm, "GestureData") else {
+        return Vec::new();
+    };
+    prompts_of(vm, world, data)
+}
+
+fn prompts_of(vm: &Vm, world: &ScriptWorld, managers: Value) -> Vec<Line> {
+    elements(vm, managers)
+        .into_iter()
+        .filter_map(|g| field(vm, g, "attached actor"))
+        .filter_map(|a| match a {
+            Value::Entity(h) => vm.placement_of(h),
+            _ => None,
+        })
+        .filter(|id| vm.behaviour(*id) == Some("main loop"))
+        .filter(|id| {
+            vm.local(*id, "show sprite")
+                .and_then(|v| vm.value(v).as_i32())
+                .is_some_and(|s| s > 0)
+        })
+        .filter_map(|id| vm.local(id, "wiimote prompt text ref"))
+        .map(|v| vm.value(v))
         .filter(|s| *s != Value::Null)
         .map(|string| Line {
             string,
@@ -339,5 +393,138 @@ mod tests {
             (Some("the name".to_owned()), Vec::new()),
             "hidden"
         );
+    }
+
+    /// openspec AU.39: a gesture manager's words show while it's in its main
+    /// loop with `show sprite` set, under no hide; a manager still making
+    /// its box, hidden or hiding, none.
+    #[test]
+    fn a_gesture_prompt_shows_while_its_manager_shows_it() {
+        let (vm, world, _, managers) = gesture_manager("initialize");
+        assert_eq!(
+            prompts_of(&vm, &world, managers).len(),
+            0,
+            "its box isn't made"
+        );
+        let (mut vm, world, id, managers) = gesture_manager("main loop");
+        assert_eq!(prompts_of(&vm, &world, managers).len(), 1);
+        assert!(vm.set_local(id, "show sprite", Value::Int(0)));
+        assert_eq!(prompts_of(&vm, &world, managers).len(), 0, "hidden");
+    }
+
+    /// A manager in the original's shape, our ops, at `behaviour`, attached
+    /// to its placement on a set of managers.
+    fn gesture_manager(behaviour: &str) -> (Vm, ScriptWorld, guac_script::PlacementId, Value) {
+        const PROMPT: &str =
+            "C:/tfb/Content/Levels/Includes/UI_Controller_Prompt/Scripts/UI_Controller_Prompt.ai";
+        const PROMPT_FILE: Obj = Obj {
+            unit: 0,
+            index: 0x7000,
+        };
+        const MANAGER: u64 = 0x31;
+        let mut b = IgzBuilder::new();
+        {
+            let mut w = Writer::new(&mut b);
+            let w = &mut w;
+            let data_ty = w.op(Class::DefineStructure, "Gesture Data");
+            let attached = w.variable("attached actor", "ScriptReference", None);
+            let holder_ty = w.op(Class::DefineStructure, "Gesture Holder");
+            let managers = w.variable("the managers", "ScriptSet", None);
+            w.refer(managers, 0x24, data_ty);
+            let one = w.variable("the data", "ScriptStructure", None);
+            w.refer(one, 0x24, data_ty);
+            let holder = w.b.object(0, "ScriptStructure", 0x20);
+            w.text(holder, 0x08, "the holder");
+            w.refer(holder, 0x1C, holder_ty);
+            let show = w.variable("show sprite", "ValueInfo", Some("IntMeasurement"));
+            let words = w.variable("wiimote prompt text ref", "ScriptReference", None);
+            let line = w.op(Class::DefineMacro, "the words");
+            let main = w.op(Class::UserBehavior, "main loop");
+            let waits = w.op(Class::UserBehavior, "initialize");
+            let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+            let (start, _) = w.open(Class::StartUp, "STARTUP");
+            let l = w.value(&[El::Local(words)]);
+            let r = w.reference(&[El::Local(line)], None);
+            let o = w.op(Class::SetReference, "setref||=");
+            w.refer(o, 0x1C, l);
+            w.refer(o, 0x20, r);
+            w.push(o);
+            let on = w.int(1);
+            w.set(&[El::Local(show)], on);
+            let set = w.stack(StackClass::Set, &[El::Local(holder), El::Local(managers)]);
+            let element = w.group(&[El::Local(holder), El::Local(one)], None);
+            let o = w.op(Class::ChangeMembership, "set [set]||to");
+            w.refer(o, 0x1C, set);
+            w.word(o, 0x20, 0);
+            w.refer(o, 0x24, element);
+            w.push(o);
+            w.set_behavior(if behaviour == "main loop" {
+                main
+            } else {
+                waits
+            });
+            w.end_block(start);
+            let (shut, _) = w.open(Class::ShutDown, "SHUTDOWN");
+            w.end_block(shut);
+            let (section, _) = w.open(Class::MacroSection, "MACROS");
+            let p = w.open_macro(line, &[]);
+            w.end_block(p);
+            w.end_block(section);
+            let (types, _) = w.open(Class::StructureSection, "STRUCTURES");
+            for (ty, vars) in [(data_ty, vec![attached]), (holder_ty, vec![managers, one])] {
+                let p = w.push(ty);
+                for v in vars {
+                    w.push(v);
+                }
+                w.end_block(p);
+            }
+            w.end_block(types);
+            w.end_block(pre);
+            for k in [main, waits] {
+                let p = w.push(k);
+                w.end_block(p);
+            }
+            w.end(PROMPT);
+        }
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = Unit {
+            name: "global",
+            role: Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        let program = Arc::new(Program::link(&[unit]).unwrap());
+        let files = Files {
+            placed: vec![Placed::named(
+                PROMPT_FILE,
+                "UI_Controller_Prompt",
+                Some(PROMPT),
+                4,
+            )],
+            ..Files::default()
+        };
+        let handles = HashMap::from([(PROMPT_FILE, MANAGER)]);
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let mut config = Config::new(Mode::Strict);
+        config.whitelist = Whitelist::only(&[], &["UI_Controller_Prompt.ai"]);
+        let sid = program.script_named("UI_Controller_Prompt.ai").unwrap();
+        let mut vm = Vm::new(program, config);
+        let id = vm.add_at(MANAGER, "UI_Controller_Prompt", sid, PROMPT_FILE);
+        let mut generator = Generator::seeded(1);
+        vm.step(&mut WorldHost {
+            world: &mut world,
+            engine: &mut NoEngine,
+            generator: &mut generator,
+            spawn: &mut headless_spawner(0x1000),
+        })
+        .unwrap();
+        let holder = global(&vm, "the holder").unwrap();
+        let managers = field(&vm, holder, "the managers").unwrap();
+        let manager = elements(&vm, managers)[0];
+        assert!(vm.set_reference(manager, "attached actor", Value::Entity(MANAGER)));
+        assert_eq!(vm.behaviour(id), Some(behaviour));
+        (vm, world, id, managers)
     }
 }

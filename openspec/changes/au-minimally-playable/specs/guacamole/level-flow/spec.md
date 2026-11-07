@@ -74,6 +74,44 @@ Every hub stage SHALL hold the people the original's holds at that point of the 
 - **WHEN** the kid talks to Persephone
 - **THEN** she says her line, her upgrade menu backs out to its no branch, the scene ends and she idles
 
+### Requirement: A chest opens, pays and stays opened
+
+A treasure chest on any level SHALL rise for a hero within 18 ft (a Giant 30) and 5 ft of its height, ask him to mash, open after three seconds of it (a Giant one) and fling out its level's value in treasure, 63 on chapter 1, every piece to walk up, one past a rim brought back, each paying the figure that takes it; opened, it SHALL stay gone on a restart and in later sessions.
+
+#### Scenario: Opening chapter 1's first chest
+
+- **WHEN** a hero stands by chapter 1's first chest and mashes the fourth action for three seconds
+- **THEN** it opens, its treasure lands around it and pays him as he walks it up
+- **AND** after Restart chapter, and after a quit and a new session, the chest isn't there
+
+### Requirement: A hat box gives its hat
+
+A hat box SHALL shake open the same way and its hat SHALL be kept in the story save, the box gone from then on. Until hats are worn, a taken hat SHALL be named on the TV and worn by no one, and nothing SHALL hold the hero after it.
+
+#### Scenario: Taking a hat
+
+- **WHEN** a hero mashes a hat box open
+- **THEN** the hat's name shows, the box runs to its end and he walks on
+- **AND** that box isn't there on a restart
+
+### Requirement: Every hero walks elemental ground
+
+A level's elemental ground SHALL carry any hero, whatever his element. A surface's type is the top six bits of its collision byte, elemental grounds 40 to 47, and only a type of 50 or over SHALL stop a walk.
+
+#### Scenario: Eruptor on chapter 1's air ground
+
+- **WHEN** a fire hero walks up to `Chest(2)` on its air ground
+- **THEN** he walks, and the chest rises for him
+
+### Requirement: The hub's doors open by the story
+
+Each door on the hub SHALL draw and swing open for a hero near it, and a room whose door asks for more adventures than are done SHALL stay shut. Flynn and Cali SHALL stay reachable on every stage.
+
+#### Scenario: Stage 1 after level 214
+
+- **WHEN** a hero walks stage 1 with two adventures done
+- **THEN** Cali's door opens for him and the crane deck's and gun deck's stay shut
+
 ### Requirement: Chapter 1 played to its end on foot
 A new game SHALL play chapter 1 from its spawn to its outro with nothing but the pads: the cave and its Giant, the cracked floor he breaks, the second cave's Chompies and Arkeyan, its jump pads to the quarry, the three posts whose chains hold the robot, each breaking under the hero's attacks, and the fights between them.
 

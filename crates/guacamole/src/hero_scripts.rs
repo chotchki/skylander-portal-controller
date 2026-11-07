@@ -93,7 +93,7 @@
 //! running on; the hero who comes in where he stood joins that run as the
 //! first did.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use bevy::camera::visibility::RenderLayers;
@@ -376,6 +376,23 @@ pub(crate) struct Part {
 
 /// Installs the run over a linked part (the level's load), keeping the part
 /// to install it again when the TV leaves the level.
+/// The level's attach nodes on its models' own origins, off its `nodes`
+/// part; none where that doesn't read, what hangs on a prop's node standing
+/// at its pivot.
+fn origin_nodes(source: &ScriptSource) -> HashMap<String, Vec<guacamole::script_engine::NodePose>> {
+    let Some((dir, ir)) = source.extract() else {
+        return HashMap::new();
+    };
+    let path = dir.join(ir.level_path(source.level(), guac_extract::levels::NODES));
+    match crate::turntable::read_ir::<guac_ir::nodes::LevelNodes>(*ir, &path) {
+        Ok(part) => scripts::origin_nodes(&part),
+        Err(why) => {
+            warn!(reason = %why, "the level's nodes didn't read: what hangs on a prop stands at its pivot");
+            HashMap::new()
+        }
+    }
+}
+
 pub(crate) fn install(world: &mut World, part: Part) {
     let source = ScriptSource {
         program: part.program,
@@ -474,6 +491,8 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     if let Some(i) = &source.interface {
         script_world.set_interface(i.keeper.clone());
     }
+    // Where a static prop's attach nodes stand (the au-chests review).
+    script_world.set_origin_nodes(origin_nodes(source));
     // What a script's request is held against (openspec AS.15).
     script_world.set_levels(source.levels.clone());
     // The level end's movie, which the TV plays before the level it names

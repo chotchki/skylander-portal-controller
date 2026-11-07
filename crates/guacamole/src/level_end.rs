@@ -486,6 +486,9 @@ pub fn step(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<Option<Ended>, 
     if crate::prompt::quit_card_game(vm, host.world) {
         info!("a card game the TV doesn't draw: quit");
     }
+    if crate::treasure::answer_hats(vm, host.world) > 0 {
+        info!("a hat the TV can't put on: kept, and left off");
+    }
     crate::turret::step(vm, host.world);
     if let Some((current, name, time)) = cutscene(vm)
         && time > 0.0

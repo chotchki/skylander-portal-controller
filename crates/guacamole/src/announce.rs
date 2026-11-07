@@ -7,7 +7,7 @@
 //! band does.
 
 use bevy::prelude::*;
-use guacamole::announcements::{Line, enemy_card, hints};
+use guacamole::announcements::{Line, enemy_card, gesture_prompts, hat_reports, hints};
 use guacamole::scripts::{ScriptRuntime, ScriptWorld};
 use serde::Serialize;
 
@@ -77,7 +77,12 @@ fn show(
     mut shown: Local<Option<((Option<String>, Vec<String>), Vec<Entity>)>>,
 ) {
     let (card, lines) = match (runtime.as_deref(), world.as_deref()) {
-        (Some(rt), Some(w)) => (enemy_card(&rt.vm, w), hints(&rt.vm, w)),
+        (Some(rt), Some(w)) => {
+            let mut lines = hints(&rt.vm, w);
+            lines.extend(gesture_prompts(&rt.vm, w));
+            lines.extend(hat_reports(&rt.vm, w));
+            (enemy_card(&rt.vm, w), lines)
+        }
         _ => (None, Vec::new()),
     };
     let want = wanted(

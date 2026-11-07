@@ -18,9 +18,13 @@
 //! where it ends (within [`TOUCH`]).
 //!
 //! Hypotheses here, each a reading the oracle hasn't settled:
-//! - `contactinfo.type` is the triangle's collision material byte, -1 with
-//!   no ground found (level 213's reachable ground is material 1, AG.7,
-//!   which no surface handler's type matches);
+//! - `contactinfo.type` is the top six bits of the triangle's collision
+//!   material byte, -1 with no ground found (openspec AS.152: a surface's
+//!   type runs 0-63, the scripts' own top; an elemental surface's is 40 plus
+//!   its element, so `HatBox_Pickup_water`'s 164 reads 41, `_lava`'s 180 45
+//!   and chapter 1's `_wind_Area`'s 168 42, which is what the portal manager
+//!   gives water's, fire's and air's heroes; what the low two bits say isn't
+//!   read); a hero's own reads 0, his footing keeping no material;
 //! - `positionmeasurement.separation` from a point is the vertical gap from
 //!   the bottom of the actor's solid (its pivot with none; a hero's, his
 //!   controller's pivot) down to it, in feet, never under 0; from his own
@@ -62,6 +66,10 @@ use crate::scripts::{ClipInfo, ClipState, HeroWrite, ScriptWorld, Spawner};
 /// weights, blends whole (AH.50's recordings hold every throw at 100), and
 /// the locomotion writes each of its own every tick (openspec AH.49).
 const FULL_BLEND: f32 = 100.0;
+
+/// A collision material byte to the surface type the scripts read (the
+/// module docs).
+const SURFACE_SHIFT: u8 = 2;
 
 /// What a member answers, by what it reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -791,11 +799,25 @@ impl ScriptWorld {
             );
         }
         let pivot = self.position_within(a, engine, depth)?;
-        let Some(off) = self.nodes.get(&a).and_then(|n| n.get(i as usize)) else {
+        let posed = self.nodes.get(&a).and_then(|n| n.get(i as usize));
+        let Some(off) = posed.copied().or_else(|| self.origin_node(a, i)) else {
             return Some(pivot);
         };
         let facing = self.angles(a, engine).map_or(0.0, |g| g.facing);
         Some(pivot + Quat::from_rotation_y(facing.to_radians()) * off.at)
+    }
+
+    /// Attach node `i` of a model nothing poses, off its list at the actor's
+    /// scale ([`ScriptWorld::set_origin_nodes`]).
+    fn origin_node(&self, a: Handle, i: u32) -> Option<crate::script_engine::NodePose> {
+        let actor = self.actors.get(&a)?;
+        let placed = actor.template.or(actor.obj)?;
+        let model = self.templates.get(&placed)?.model.as_deref()?;
+        let node = self.origin_nodes.get(model)?.get(i as usize)?;
+        Some(crate::script_engine::NodePose {
+            at: node.at * Vec3::from_array(actor.scale) / 100.0,
+            turn: node.turn,
+        })
     }
 
     /// Attach node `i` of actor `a`'s turn in the level, where the embedder
@@ -805,7 +827,8 @@ impl ScriptWorld {
         if self.rig_unposed(a) {
             return self.rig_held.get(i as usize).map(|(_, turn)| *turn);
         }
-        let node = self.nodes.get(&a)?.get(i as usize)?;
+        let posed = self.nodes.get(&a).and_then(|n| n.get(i as usize));
+        let node = posed.copied().or_else(|| self.origin_node(a, i))?;
         let facing = self
             .angles_within(a, engine, depth)
             .map_or(0.0, |g| g.facing);
@@ -1318,13 +1341,15 @@ impl ScriptWorld {
             },
             Member::ContactType => {
                 let (_, m, found) = self.contact(object, engine).ok_or(HostFault::Nothing)?;
-                // An awake actor with no solid touches nothing, so a ground
-                // it hasn't is no reason to read -1 (openspec AG.28: the
-                // camera's target is one, dropped from `New CameraTargets
-                // Set` by `Camera - Clean Up Targets` on that reading where
-                // the level's mesh ends under it, which AG.13's corridor
-                // recordings never do; a hypothesis, the ground facet of such
-                // an actor not read). Nor a hero over nothing on his own feet
+                // An awake actor reads 0 over nothing: the original's ground
+                // finder, on a miss, leaves its ground far under and its
+                // type 0, and -1 is an actor with no corpus, what the
+                // scripts' `type >= 0` tests ask for (openspec AG.28: the
+                // camera's target, dropped from `New CameraTargets Set` on a
+                // -1 where the level's mesh ends under it; the au-chests
+                // review: a chest's treasure past a ledge's rim, taken out of
+                // play by `UI.ai` before its trajectory's correction could
+                // bring it back). A hero over nothing on his own feet too
                 // (openspec AS.146): the mover update takes a mover reading
                 // under 0 off for gone, every step, so his stick and his
                 // gravity died there and stayed dead on any ground he came
@@ -1338,12 +1363,12 @@ impl ScriptWorld {
                         None => self
                             .actors
                             .get(&h)
-                            .is_some_and(|a| a.havok().is_none() && !(a.managed && !a.active)),
+                            .is_some_and(|a| !a.removed && !(a.managed && !a.active)),
                     },
                     _ => false,
                 };
                 Value::Int(match (found, free) {
-                    (true, _) => i32::from(m.unwrap_or(0)),
+                    (true, _) => i32::from(m.unwrap_or(0) >> SURFACE_SHIFT),
                     (false, true) => 0,
                     (false, false) => -1,
                 })
@@ -3646,8 +3671,9 @@ const HUNG_DEPTH: u8 = 8;
 
 /// How many attach nodes an actor's set holds: the scripts index up to 13
 /// on a hero. A node sits where [`ScriptWorld::set_nodes`] put it (a hero's
-/// off his model's attach list, AH.50), else at the actor's pivot
-/// (stand-in ledger: `nodes`).
+/// off his model's attach list, AH.50), else off its model's list
+/// ([`ScriptWorld::set_origin_nodes`]), else at the actor's pivot (stand-in
+/// ledger: `nodes`).
 pub const NODES: u32 = 32;
 
 #[cfg(test)]
@@ -5557,12 +5583,12 @@ mod fight_tests {
     use guac_formats::script::Class;
     use guac_motion::hero::Hero;
     use guac_motion::parry::ParryWorld;
-    use guac_motion::seam::{Body, BodyKind, Collider, PhysicsSeam};
+    use guac_motion::seam::{Body, BodyKind, Collider, Mesh, PhysicsSeam};
     use guac_motion::tuning::{FOOT, Tuning, eruptor_solid};
     use guac_script::{Answer, MemberId, Obj, OpCall};
 
     use super::*;
-    use crate::script_engine::{Actor, Pad, Physics, Solid, Walker};
+    use crate::script_engine::{Actor, NodePose, Pad, Physics, Solid, Walker};
     use crate::scripts::{Files, headless_objects};
 
     pub(super) const C1: Handle = 0x6100_0001;
@@ -6545,12 +6571,13 @@ mod fight_tests {
         assert!((world_up - Vec3::Y * foot).length() < 1e-5, "{world_up}");
     }
 
-    /// The type of the ground under an awake actor with no solid and none
-    /// found reads 0, not -1 (openspec AG.28: the camera's target, a clone
-    /// of `Generic_FollowActor`, over the edge of the level's mesh); with a
-    /// solid, or asleep, -1 stays.
+    /// The type of the ground under an awake actor with none found reads 0,
+    /// not -1 (openspec AG.28: the camera's target, a clone of
+    /// `Generic_FollowActor`, over the edge of the level's mesh; the
+    /// au-chests review: a chest's treasure in flight past a ledge's rim, a
+    /// solid of its own); asleep or taken off, -1 stays.
     #[test]
-    fn a_solidless_actor_with_no_ground_found_reads_a_type_of_0() {
+    fn an_awake_actor_with_no_ground_found_reads_a_type_of_0() {
         let mut e = pit();
         let mut w = world();
         let type_under = |w: &mut ScriptWorld, e: &mut Pit, h: Handle| {
@@ -6613,9 +6640,109 @@ mod fight_tests {
         e.hero.as_mut().unwrap().footing.supported = true;
         assert_eq!(over(&mut w, &mut e, "separation"), 0.0);
         e.hero = None;
-        // A creature with a solid, far over the floor: still none.
-        w.actors.insert(C1, chompy(Vec3::new(0.0, 500.0, 0.0), 0.0));
+        // With a solid, far over the floor: the same.
+        let mut solid = chompy(Vec3::new(0.0, 500.0, 0.0), 0.0);
+        solid.active = true;
+        w.actors.insert(C1, solid);
+        assert_eq!(type_under(&mut w, &mut e, C1), Value::Int(0));
+        // Asleep it has no corpus, and taken off none either.
+        let mut asleep = chompy(Vec3::new(0.0, 500.0, 0.0), 0.0);
+        asleep.active = false;
+        w.actors.insert(C1, asleep);
         assert_eq!(type_under(&mut w, &mut e, C1), Value::Int(-1));
+        let mut off = Actor::blank();
+        off.position = Vec3::new(0.0, 500.0, 0.0);
+        off.removed = true;
+        w.actors.insert(C2, off);
+        assert_eq!(type_under(&mut w, &mut e, C2), Value::Int(-1));
+    }
+
+    /// The au-chests review: a static prop's attach nodes stand where its
+    /// model's list has them, turned by its facing and at its scale, and a
+    /// clone's by its template's model: a hat box's lid hangs on its `Lid`
+    /// node, not at its feet. One posed goes by its pose, one with no list
+    /// stands at its pivot.
+    #[test]
+    fn a_static_props_attach_nodes_stand_on_its_models_list() {
+        let mut e = pit();
+        let mut w = world();
+        const BOX: Obj = Obj { unit: 3, index: 7 };
+        let mut template =
+            crate::scripts::Placed::named(BOX, "HatBox_Pickup", Some("C:/x/Hat_Pickup.ai"), 5);
+        template.model = Some("box.mdl".into());
+        w.templates.insert(BOX, template);
+        w.set_origin_nodes(HashMap::from([(
+            "box.mdl".to_owned(),
+            vec![NodePose::at(Vec3::new(0.0, 1.8, 0.0))],
+        )]));
+        let mut clone = Actor::blank();
+        clone.position = Vec3::new(2.0, 0.0, 0.0);
+        clone.template = Some(BOX);
+        clone.scale = [50.0; 3];
+        w.actors.insert(C1, clone);
+        let at = w.node(C1, 0, &mut e).unwrap();
+        assert!(at.distance(Vec3::new(2.0, 0.9, 0.0)) < 1e-5, "{at}");
+        assert_eq!(w.node(C1, 1, &mut e), Some(Vec3::new(2.0, 0.0, 0.0)));
+        w.set_nodes(C1, vec![NodePose::at(Vec3::new(0.0, 0.1, 0.0))]);
+        let at = w.node(C1, 0, &mut e).unwrap();
+        assert!(at.distance(Vec3::new(2.0, 0.1, 0.0)) < 1e-5, "{at}");
+    }
+
+    /// openspec AS.152: a surface's type is its material byte's top six
+    /// bits, so the disc's elemental grounds read 40 plus their element and
+    /// stay under the 50 a walk stops at, its plain ground's bytes 0 and 1
+    /// read 0, and only its top surfaces (252 and 253, type 63) stop him.
+    #[test]
+    fn a_surfaces_type_is_its_materials_top_six_bits() {
+        for (material, surface) in [
+            (0u8, 0),
+            (1, 0),
+            (40, 10),
+            (120, 30),
+            (164, 41),
+            (168, 42),
+            (172, 43),
+            (180, 45),
+            (188, 47),
+            (252, 63),
+            (253, 63),
+        ] {
+            let mesh = Mesh::new(
+                vec![
+                    Vec3::new(-10.0, 0.0, -10.0),
+                    Vec3::new(10.0, 0.0, -10.0),
+                    Vec3::new(0.0, 0.0, 10.0),
+                ],
+                vec![[0, 2, 1]],
+                vec![material],
+            )
+            .unwrap();
+            let ground = Body {
+                id: BodyId(22),
+                kind: BodyKind::Static,
+                pose: Pose::at(Vec3::Y),
+                collider: Collider::Mesh(std::sync::Arc::new(mesh)),
+            };
+            let mut e = pit();
+            e.world = ParryWorld::new(&[ground]).unwrap();
+            let mut w = world();
+            let mut over = Actor::blank();
+            over.position = Vec3::new(0.0, 2.0, 0.0);
+            w.actors.insert(C2, over);
+            let ground = get(&mut w, &mut e, "abstractplacement", "ground", C2, C2);
+            let read = w.get(
+                &Access {
+                    placement: C2,
+                    receiver: Some(ground),
+                    member: MemberId::named("contactinfo", "type"),
+                    other_point: None,
+                    via: None,
+                    op: None,
+                },
+                &mut e,
+            );
+            assert_eq!(read.unwrap(), Value::Int(surface), "byte {material}");
+        }
     }
 
     /// AS.97: a creature taken off has no ground, standing over the floor
