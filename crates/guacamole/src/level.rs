@@ -51,7 +51,7 @@
 //! while the level does (Start's overlay, the controller message, an intro)
 //! lands on the level, in `GlobalZIndex` order as anywhere else on the TV.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -759,25 +759,126 @@ fn walker_tolerant<T>(
     }
 }
 
-/// The extract's spawn part (AH.22): every model each spawn archive's
-/// placements name, as props draw them, every walker's archive's among
-/// them (openspec AU.1).
+/// The extract's spawn part (AH.22): every model the base's spawn archives'
+/// placements name, as props draw them. A walker's are built when he's
+/// placed ([`Level::ask_figure`], openspec AU.19): no level pays for figures
+/// nobody put on the portal.
 fn read_spawns(source: &LevelSource) -> Result<Vec<guacamole::props::PropModel>, String> {
-    let base = guac_extract::scripts::spawn_archives();
     let mut out = Vec::new();
-    for archive in guac_extract::scripts::spawn_archives_with(&listed_walkers(source)) {
-        let rel = source.ir.spawn_path(&archive);
-        let read = read_ir::<guac_ir::spawn::SpawnModels>(source.ir, &source.dir.join(&rel))
-            .and_then(|spawns| match spawns.identity == source.identity {
-                true => Ok(spawns),
-                false => Err(format!("{rel} is another dump's")),
-            });
-        let Some(spawns) = walker_tolerant(&archive, &base, &rel, read)? else {
-            continue;
-        };
-        out.extend(guacamole::props::spawn_models(&spawns).map_err(|e| format!("{rel}: {e}"))?);
+    for archive in guac_extract::scripts::spawn_archives() {
+        out.extend(read_spawn_archive(source, &archive)?);
     }
     Ok(out)
+}
+
+/// One spawn archive's models.
+fn read_spawn_archive(
+    source: &LevelSource,
+    archive: &str,
+) -> Result<Vec<guacamole::props::PropModel>, String> {
+    let rel = source.ir.spawn_path(archive);
+    let spawns = read_ir::<guac_ir::spawn::SpawnModels>(source.ir, &source.dir.join(&rel))?;
+    if spawns.identity != source.identity {
+        return Err(format!("{rel} is another dump's"));
+    }
+    guacamole::props::spawn_models(&spawns).map_err(|e| format!("{rel}: {e}"))
+}
+
+/// What a placed walker's attacks draw, read on a task (openspec AU.19):
+/// his archive's models as the level's load would have built them, handed
+/// over a share a frame into the loaded level.
+struct FigureRead {
+    drawn: guacamole::level_scene::Drawn,
+    /// Each model's path and its segments, by index into `meshes`.
+    models: Vec<(String, Vec<(usize, u16)>)>,
+    meshes: VecDeque<Mesh>,
+    images: VecDeque<(ImageKey, Image)>,
+    depth_bias: Vec<f32>,
+}
+
+/// Reads `load_file`'s spawn archive into what the renderer takes.
+fn read_figure(
+    source: &LevelSource,
+    load_file: &str,
+    formats: CompressedImageFormats,
+) -> Result<FigureRead, String> {
+    let archive = guac_extract::scripts::character_archive(load_file);
+    let models = read_spawn_archive(source, &archive)?;
+    let (mut drawn, ranges) = guacamole::props::models_drawn(&models);
+    let parts = models
+        .iter()
+        .zip(&ranges)
+        .map(|(model, r)| {
+            let parts = r.clone().map(|i| (i, drawn.segments[i].material)).collect();
+            (model.path.clone(), parts)
+        })
+        .collect();
+    let mut images: Vec<(ImageKey, Image)> = Vec::new();
+    for (material, slot) in drawn
+        .materials
+        .iter()
+        .flat_map(|m| m.textures.iter().map(move |slot| (m, slot)))
+    {
+        let srgb = remaster::samples_srgb(material, slot.role);
+        let key = (slot.texture.clone(), srgb, slot.sampler);
+        if images.iter().any(|(k, _)| *k == key) {
+            continue;
+        }
+        if !plain(&slot.texture) {
+            return Err(format!(
+                "a spawn model names a texture outside the extract: {}",
+                slot.texture
+            ));
+        }
+        let ktx2 = std::fs::read(source.dir.join(&slot.texture))
+            .map_err(|e| format!("{}: {e}", slot.texture))?;
+        let image = remaster::texture_view(&ktx2, srgb, &slot.sampler, formats)
+            .map_err(|e| format!("{}: {e}", slot.texture))?;
+        images.push((key, image));
+    }
+    let meshes = drawn
+        .segments
+        .iter()
+        .map(|s| static_mesh(s).map_err(|e| format!("a spawn model's segment {}: {e}", s.source)))
+        .collect::<Result<VecDeque<_>, _>>()?;
+    let depth_bias = arithmetic::depth_biases(&drawn);
+    drawn
+        .segments
+        .iter_mut()
+        .for_each(|s| *s = empty(s.material));
+    Ok(FigureRead {
+        drawn,
+        models: parts,
+        meshes,
+        images: images.into(),
+        depth_bias,
+    })
+}
+
+/// How far a placed walker's draws have got in the level that's loaded.
+enum FigureDraws {
+    /// Asked, the level not loaded yet, or a new one since.
+    Asked,
+    Reading(Task<Result<FigureRead, String>>),
+    /// Going to the renderer, a share a frame.
+    Uploading {
+        read: Box<FigureRead>,
+        image_handles: Vec<(ImageKey, Handle<Image>)>,
+        mesh_handles: Vec<Handle<Mesh>>,
+    },
+    /// In the level's spawn models, or nothing to draw.
+    Ready,
+}
+
+impl FigureDraws {
+    fn name(&self) -> &'static str {
+        match self {
+            FigureDraws::Asked => "asked",
+            FigureDraws::Reading(_) => "reading",
+            FigureDraws::Uploading { .. } => "uploading",
+            FigureDraws::Ready => "ready",
+        }
+    }
 }
 
 /// The extract's particle part (AH.87): every emitter each spawn archive
@@ -876,6 +977,9 @@ fn watch_residency(
 /// What `/api/_test/tv` reports of the level.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub(crate) struct LevelReport {
+    /// Each walker placed and how far what his attacks draw has got here
+    /// (openspec AU.19).
+    pub(crate) figures: Vec<(String, &'static str)>,
     /// `idle` (no level yet), `reading`, `uploading`, `waiting` (on the
     /// renderer and the warm), `ready`, `shown` (the dev entry) or `failed`.
     pub state: String,
@@ -1413,6 +1517,11 @@ pub(crate) struct Level {
     /// The level last asked for by name (openspec AS.13), kept from one load
     /// to the next.
     asked: Option<crate::level_choice::AskedReport>,
+    /// Each walker placed, by load file, and how far what his attacks draw
+    /// has got in this level (openspec AU.19). Asked again in the next.
+    figures: BTreeMap<String, FigureDraws>,
+    /// The formats a figure's images are read for, once a load has known.
+    formats: Option<CompressedImageFormats>,
 }
 
 impl Level {
@@ -1430,7 +1539,29 @@ impl Level {
             sounds_landed: false,
             sounds_again: None,
             asked: None,
+            figures: BTreeMap::new(),
+            formats: None,
         }
+    }
+
+    /// What `load_file`'s attacks draw, asked for this level and the next:
+    /// he's been placed (openspec AU.19). The base's are the load's.
+    pub(crate) fn ask_figure(&mut self, load_file: &str) {
+        if !guac_extract::scripts::spawn_archives()
+            .contains(&guac_extract::scripts::character_archive(load_file))
+        {
+            self.figures
+                .entry(load_file.to_owned())
+                .or_insert(FigureDraws::Asked);
+        }
+    }
+
+    /// Whether what `load_file`'s attacks draw is in the level loaded: true
+    /// for one the level's load read itself (openspec AU.19).
+    pub(crate) fn figure_ready(&self, load_file: &str) -> bool {
+        self.figures
+            .get(load_file)
+            .is_none_or(|f| matches!(f, FigureDraws::Ready))
     }
 
     /// The level last asked for by name and how far it's got (openspec
@@ -1812,6 +1943,11 @@ fn receive_level(
     let formats = device.map_or(CompressedImageFormats::BC, |d| {
         CompressedImageFormats::from_features(d.features())
     });
+    // What the walkers placed draw goes in again once this level's loaded.
+    level.formats = Some(formats);
+    for f in level.figures.values_mut() {
+        *f = FigureDraws::Asked;
+    }
     let task = {
         let source = source.clone();
         AsyncComputeTaskPool::get().spawn(async move { read_level(&source, formats) })
@@ -2060,6 +2196,7 @@ pub(crate) struct LevelSpawner<'w, 's> {
 fn step_level(mut level: ResMut<Level>, mut warm: ResMut<Warm>, mut s: LevelSpawner) {
     let level = &mut *level;
     poll_scripts(level, &mut s.commands);
+    step_figures(level, &mut s);
     match std::mem::replace(&mut level.stage, Stage::Idle) {
         Stage::Reading(mut task) => match check_ready(&mut task) {
             None => level.stage = Stage::Reading(task),
@@ -2153,6 +2290,152 @@ fn step_level(mut level: ResMut<Level>, mut warm: ResMut<Warm>, mut s: LevelSpaw
         other => level.stage = other,
     }
     level.report.state = level.stage.name().into();
+}
+
+/// What each placed walker's attacks draw, on its way into the loaded level
+/// (openspec AU.19): read on a task, handed over a share a frame, its models
+/// then the scripts' clones' to draw. One whose file doesn't read draws
+/// nothing, as a part that doesn't read does, and his join goes on.
+fn step_figures(level: &mut Level, s: &mut LevelSpawner) {
+    if level.figures.is_empty() || level.stage.loaded().is_none() {
+        return;
+    }
+    let (Some(source), Some(formats)) = (level.source.clone(), level.formats) else {
+        return;
+    };
+    level.report.figures = level
+        .figures
+        .iter()
+        .map(|(load, f)| (load.clone(), f.name()))
+        .collect();
+    let mut bytes = 0;
+    for (load_file, state) in &mut level.figures {
+        match state {
+            FigureDraws::Ready => {}
+            FigureDraws::Asked => {
+                let (source, load) = (source.clone(), load_file.clone());
+                *state = FigureDraws::Reading(
+                    AsyncComputeTaskPool::get()
+                        .spawn(async move { read_figure(&source, &load, formats) }),
+                );
+            }
+            FigureDraws::Reading(task) => match check_ready(task) {
+                None => {}
+                Some(Err(why)) => {
+                    warn!(load_file, reason = %why, "a walker's spawn models didn't read: what his attacks spawn draws nothing");
+                    *state = FigureDraws::Ready;
+                }
+                Some(Ok(read)) => {
+                    *state = FigureDraws::Uploading {
+                        read: Box::new(read),
+                        image_handles: Vec::new(),
+                        mesh_handles: Vec::new(),
+                    };
+                }
+            },
+            FigureDraws::Uploading {
+                read,
+                image_handles,
+                mesh_handles,
+            } => {
+                while bytes < UPLOAD_BYTES {
+                    if let Some((key, image)) = read.images.pop_front() {
+                        bytes += image.data.as_ref().map_or(0, Vec::len);
+                        image_handles.push((key, s.images.add(image)));
+                    } else if let Some(mesh) = read.meshes.pop_front() {
+                        bytes += mesh_bytes(&mesh);
+                        mesh_handles.push(s.meshes.add(mesh));
+                    } else {
+                        break;
+                    }
+                }
+                if !read.images.is_empty() || !read.meshes.is_empty() {
+                    continue;
+                }
+                if let Some(loaded) = level.stage.loaded_mut() {
+                    let drawn = figure_materials(read, image_handles, mesh_handles, loaded, s);
+                    info!(
+                        load_file,
+                        models = drawn,
+                        "a walker's spawn models are in the level"
+                    );
+                }
+                *state = FigureDraws::Ready;
+            }
+        }
+    }
+}
+
+/// `read`'s materials made as the level's are, in its scene, and its models
+/// put among the level's spawn models. How many.
+fn figure_materials(
+    read: &FigureRead,
+    image_handles: &[(ImageKey, Handle<Image>)],
+    mesh_handles: &[Handle<Mesh>],
+    loaded: &mut Loaded,
+    s: &mut LevelSpawner,
+) -> usize {
+    let scene = world_scene(&loaded.lights, &loaded.lit_fog);
+    let handles: Vec<Handle<CharacterMaterial>> = read
+        .drawn
+        .materials
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let texture = |t: &model::TextureSlot| -> Handle<Image> {
+                let key = (
+                    t.texture.clone(),
+                    remaster::samples_srgb(m, t.role),
+                    t.sampler,
+                );
+                image_handles
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, h)| h.clone())
+                    .unwrap_or_default()
+            };
+            match CharacterMaterial::from_ir(m, &scene, texture) {
+                Ok(mut material) => {
+                    material.uniform = level_uniform(material.uniform);
+                    if let Some(effect) = read.drawn.effect(i) {
+                        effect.apply(&mut material);
+                    }
+                    material.scene_lights = LEVEL_LIGHTS;
+                    material.depth_bias = read.depth_bias[i];
+                    s.materials.add(material)
+                }
+                Err(e) => {
+                    warn!(material = %m.name, reason = %e, "a spawn model's material didn't build");
+                    Handle::default()
+                }
+            }
+        })
+        .collect();
+    for (m, handle) in read.drawn.materials.iter().zip(&handles) {
+        let at = loaded.materials.len();
+        loaded.materials.push(handle.clone());
+        loaded.reference.push(
+            reference_material(m)
+                .ok()
+                .map(|r| (r, m.states.alpha_test.unwrap_or(0.0))),
+        );
+        if !m.scrolls.is_empty() {
+            loaded.scrolling.push((at, m.scrolls.clone()));
+        }
+    }
+    for (path, parts) in &read.models {
+        let parts = parts
+            .iter()
+            .map(|&(mesh, material)| {
+                (
+                    mesh_handles[mesh].clone(),
+                    handles[usize::from(material)].clone(),
+                )
+            })
+            .collect();
+        loaded.spawns.entry(path.clone()).or_insert(parts);
+    }
+    read.models.len()
 }
 
 /// The script part's task, reported once it's done: what linked and what
@@ -3050,12 +3333,14 @@ mod tests {
     use guacamole::level_scene::level_lights;
     use std::path::Path;
 
-    /// AU.1: the spawn and particle parts read every walker's file the
-    /// scripts part lists beside the base's; a walker's that doesn't read
-    /// leaves his alone out (what his attacks spawn draws nothing), the
-    /// base's still read, where a base file missing fails the part.
+    /// AU.1, AU.19: the particle part reads every walker's file the scripts
+    /// part lists beside the base's, a walker's that doesn't read leaving his
+    /// alone out, the base's still read, where a base file missing fails the
+    /// part; the spawn models are the base's alone at a level's load, a
+    /// walker's read by himself once he's placed (one that doesn't read an
+    /// error of his own).
     #[test]
-    fn a_walkers_spawn_files_read_beside_the_bases_and_a_missing_one_alone_is_left_out() {
+    fn a_levels_load_reads_no_walkers_spawn_models_and_a_placed_one_reads_his_own() {
         use guac_ir::particle::Emitters;
         use guac_ir::spawn::SpawnModels;
         let tmp = tempfile::tempdir().unwrap();
@@ -3134,7 +3419,12 @@ mod tests {
             .into_iter()
             .map(|m| m.path)
             .collect();
-        assert_eq!(paths, ["base_0.mdl", "base_1.mdl", "spyro_fireball.mdl"]);
+        assert_eq!(paths, ["base_0.mdl", "base_1.mdl"]);
+        let formats = CompressedImageFormats::BC;
+        let read = read_figure(&source, "016_Spyro", formats).ok().unwrap();
+        assert_eq!(read.models.len(), 1);
+        assert_eq!(read.models[0].0, "spyro_fireball.mdl");
+        assert!(read_figure(&source, "112_TitanLife", formats).is_err());
         let emitters = read_particles(&source).unwrap();
         assert_eq!(
             emitters
@@ -3168,6 +3458,62 @@ mod tests {
         tx.send(source).unwrap();
         app.insert_resource(feed);
         app
+    }
+
+    /// AU.19: a walker placed has his draws read into the level that's up,
+    /// held not ready until they're in, a base figure's the load's already;
+    /// a level left asks them again in the next.
+    #[test]
+    fn a_placed_walkers_models_go_into_the_level_and_again_into_the_next() {
+        use guac_ir::spawn::SpawnModels;
+        let tmp = tempfile::tempdir().unwrap();
+        let source = write_level(tmp.path(), &lights());
+        let spyro = guac_extract::scripts::character_archive("016_Spyro");
+        let rel = tmp.path().join(IrFormat::Ron.spawn_path(&spyro));
+        std::fs::create_dir_all(rel.parent().unwrap()).unwrap();
+        let spawns = SpawnModels {
+            identity: source.identity.clone(),
+            archive: spyro,
+            props: vec![guac_ir::level::Prop {
+                path: "spyro_fireball.mdl".into(),
+                skeleton: None,
+                materials: Vec::new(),
+                segments: Vec::new(),
+                idle: None,
+            }],
+            refused: Vec::new(),
+        };
+        std::fs::write(rel, guac_ir::to_ron(&spawns).unwrap()).unwrap();
+        let mut app = level_app(tmp.path(), source.clone(), false);
+        until(&mut app, &["ready"], |_| {});
+        fn level(app: &App) -> &Level {
+            app.world().resource::<Level>()
+        }
+        assert!(level(&app).figure_ready("009_Eruptor"), "the load's");
+        app.world_mut()
+            .resource_mut::<Level>()
+            .ask_figure("009_Eruptor");
+        assert!(
+            level(&app).figure_ready("009_Eruptor"),
+            "the base asks nothing"
+        );
+        assert!(level(&app).figure_ready("016_Spyro"), "not asked yet");
+        app.world_mut()
+            .resource_mut::<Level>()
+            .ask_figure("016_Spyro");
+        assert!(!level(&app).figure_ready("016_Spyro"), "on its way");
+        let drawn = |app: &App| {
+            level(app)
+                .spawn_models()
+                .is_some_and(|m| m.contains_key("spyro_fireball.mdl"))
+        };
+        assert!(!drawn(&app));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !level(&app).figure_ready("016_Spyro") {
+            assert!(Instant::now() < deadline, "his draws never came");
+            app.update();
+        }
+        assert!(drawn(&app), "in the level by the time he's ready");
     }
 
     fn state(app: &App) -> String {

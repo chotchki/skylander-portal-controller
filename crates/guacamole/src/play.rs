@@ -1524,12 +1524,21 @@ pub(crate) fn key_scene() -> Scene {
     }
 }
 
+/// Whether what `load_file`'s attacks draw is compiled (openspec AU.19): the
+/// census's walker keys, for any figure past the base's.
+fn walker_keys_warm(warm: &Warm, load_file: &str) -> bool {
+    let base = guac_extract::scripts::spawn_archives()
+        .contains(&guac_extract::scripts::character_archive(load_file));
+    base || warm.covers(guacamole::census::walker_keys().iter())
+}
+
 /// The hero's model off the shelf, on a task; then what it draws with
 /// compiled, the warm asked for any key it hasn't.
 fn load_hero(
     mut play: ResMut<Play>,
     turntables: Res<Turntables>,
     mut warm: ResMut<Warm>,
+    mut level: ResMut<Level>,
     device: Option<Res<RenderDevice>>,
 ) {
     let Some(c) = play.candidate.as_mut() else {
@@ -1564,6 +1573,14 @@ fn load_hero(
                     if !warm.covers(keys.iter().map(|(k, _)| k)) {
                         warm.ask_hero(&read.loaded.model, &keys, Arc::new(key_scene()));
                     }
+                    // What his attacks draw (openspec AU.19): the keys are
+                    // every walker's, asked once; his models are his own.
+                    level.ask_figure(&c.load_file);
+                    if !guac_extract::scripts::spawn_archives()
+                        .contains(&guac_extract::scripts::character_archive(&c.load_file))
+                    {
+                        warm.ask_census(crate::prepare::walker_census());
+                    }
                     info!(
                         load_file = %c.load_file,
                         keys = keys.len(),
@@ -1580,7 +1597,9 @@ fn load_hero(
                 }
             },
         },
-        Model3d::Compiling { keys, .. } if warm.covers(keys.iter()) => {
+        Model3d::Compiling { keys, .. }
+            if warm.covers(keys.iter()) && walker_keys_warm(&warm, &c.load_file) =>
+        {
             let Model3d::Compiling { model, .. } =
                 std::mem::replace(&mut c.model, Model3d::Shelfless)
             else {
@@ -1773,7 +1792,12 @@ fn would_enter(
         .is_some_and(|c| matches!(c.model, Model3d::Ready(_)));
     let preparing = prepare.is_some_and(|p| p.preparing());
     let intros = queue.is_some_and(|q| q.playing().is_some() || q.queued().next().is_some());
-    ready && !preparing && !intros && level.walkable().is_some()
+    // What his attacks draw is in the level before he is (openspec AU.19).
+    let drawn = play
+        .candidate
+        .as_ref()
+        .is_some_and(|c| level.figure_ready(&c.load_file));
+    ready && drawn && !preparing && !intros && level.walkable().is_some()
 }
 
 /// The portal's alert ([`judge`]) on the portal view and over the level, and
