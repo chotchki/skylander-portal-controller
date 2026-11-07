@@ -248,9 +248,21 @@ fn chapter_1s_cave_is_entered_and_left_on_foot() {
     assert!((facing - 290.0).abs() < 0.01, "{facing}");
     assert_eq!(out.landed_at.unwrap() - out.dark_at.unwrap(), 42);
     // The exterior's zone again (openspec AS.127), as it was before the way
-    // in.
+    // in, once the manager's transition back has run its way.
     let zone = guacamole::atmospherics::read(&run.vm).expect("the manager's zone");
-    assert_eq!((zone.to, zone.from), (0, None));
+    assert_eq!(zone.to, 0, "on the way back to the exterior's zone");
+    let mut back = 0;
+    while guacamole::atmospherics::read(&run.vm)
+        .and_then(|z| z.from)
+        .is_some()
+        && back < 600
+    {
+        step(&mut run, &mut stops, None, [false; 4]);
+        back += 1;
+    }
+    let zone = guacamole::atmospherics::read(&run.vm).expect("the manager's zone");
+    println!("the exterior's zone {back} steps on");
+    assert_eq!((zone.to, zone.from), (0, None), "after {back} steps");
     println!(
         "dark {dark}, landed {landed}, waiting {done}; out: {out:?}; {:.1} s; load at end: {}",
         started.elapsed().as_secs_f64(),
