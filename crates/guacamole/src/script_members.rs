@@ -3465,7 +3465,9 @@ impl ScriptWorld {
             a.position = p;
             a.angles.facing = f;
             a.velocity = v;
-            if w.carries && let Some(at) = wedged_step(w, p, v, physics.ground_max_speed, dt) {
+            if w.carries
+                && let Some(at) = wedged_step(w, p, v, physics.ground_max_speed, dt)
+            {
                 a.position = at;
             }
         }

@@ -307,8 +307,9 @@ fn the_fights_parts_extract_whole_and_resume() {
     // no model: the creatures' palettes stayed eight until AS.52's outro
     // Mabu (three), AS.78's camera rigs (four), all of the level's own
     // scripts (none a walker's: AU.1's run found no chapter 1 placement
-    // running one), took them to fifteen.
-    assert_eq!(owners.len(), 15, "{owners:?}");
+    // running one), took them to fifteen; AU.33's every skinned model a
+    // placement names, its way past the pit waiting on its clips, to 36.
+    assert_eq!(owners.len(), 36, "{owners:?}");
     // AG.177's jumping goats add `Sheep_1` and `Sheep_3`'s, by
     // `Goat_Jumping_Pit.ai`: without it the TV's goats have no clip lengths.
     assert!(
