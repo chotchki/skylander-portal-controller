@@ -797,16 +797,10 @@ fn an_embedder_adds_to_a_set_as_a_combine_does() {
     // Openspec AS.139: once, and only to a set.
     let p = program(|w| {
         let things = w.variable("things", "ScriptSet", None);
-        frame(
+        idle(
             w,
             |_| {},
-            |_| {},
-            |_| {},
-            |w| {
-                let b = w.behaviour("idle");
-                add_to(w, things, &[El::Named("SpriteInfo", "A")]);
-                w.end_block(b);
-            },
+            |w| add_to(w, things, &[El::Named("SpriteInfo", "A")]),
         );
     });
     let mut vm = Vm::new(p, Config::new(Mode::Strict));
