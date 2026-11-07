@@ -1299,15 +1299,6 @@ impl ScriptWorld {
             .collect();
         for &h in &walkers {
             self.walk(h);
-            // Chapter 1's way alone: its second cave clones Chompies into a
-            // closet the seam doesn't let them out of (stand-in ledger:
-            // `wedged-walker`). The pit's and level 214's Tree Rex stand
-            // where they first stood and mean it.
-            if encounter.level == crate::chapter_1::WAY.level
-                && let Some(w) = self.actors.get_mut(&h).and_then(|a| a.walker.as_mut())
-            {
-                w.carries = true;
-            }
         }
         let templates: Vec<Obj> = self
             .templates
@@ -2215,10 +2206,6 @@ impl ScriptWorld {
                 body: None,
                 aim: guac_motion::steer::Aim::Still,
                 along: 0,
-                wedged: 0,
-                carries: false,
-                first: None,
-                carried: Vec3::ZERO,
             })
         });
         if let Some(p) = k.obj.and_then(|o| self.templates.get(&o)) {
@@ -2330,10 +2317,6 @@ impl ScriptWorld {
                 body: None,
                 aim: guac_motion::steer::Aim::Still,
                 along: 0,
-                wedged: 0,
-                carries: false,
-                first: None,
-                carried: Vec3::ZERO,
             }));
         }
         self.actors.insert(h, a);

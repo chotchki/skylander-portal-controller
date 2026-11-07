@@ -1916,6 +1916,11 @@ fn enter(
     else {
         return;
     };
+    // What his attacks draw is in the level before he is (openspec AU.19),
+    // a replacement's too: the level held for him stays held.
+    if !level.figure_ready(load_file) {
+        return;
+    }
     // Measured numbers, or his own scripts' (AG.27) over his solid as the
     // disc authors it.
     let walker = match who {
@@ -3099,6 +3104,44 @@ mod tests {
             .resource_mut::<Level>()
             .stall_figures(formats);
         until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+    }
+
+    /// AU.19's review: a walker swapped in mid-level waits on them too, past
+    /// his card's time, the level held with no hero: his entry's gate was the
+    /// first entry's alone.
+    #[test]
+    fn a_replacement_walker_comes_in_once_what_his_attacks_draw_is_in() {
+        use guac_formats::script::builder::WalkerFault;
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = walker_app(tmp.path(), WalkerFault::None);
+        until(&mut app, "the level", |a| {
+            a.world().resource::<Level>().walkable().is_some()
+        });
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "Eruptor in", |a| {
+            a.world().resource::<Play>().hero().is_some()
+        });
+        clear(&mut app, 0);
+        until(&mut app, "the call", |a| {
+            alert(a) == Some(Alert::PlaceSkylander)
+        });
+        let formats = app.world_mut().resource_mut::<Level>().stall_figures(None);
+        place(&mut app, 2, WALKER_TOY, "Synthetic");
+        until(&mut app, "his card done", |a| !arrived(a).is_empty());
+        for _ in 0..60 {
+            app.update();
+            assert!(
+                app.world().resource::<Play>().hero().is_none(),
+                "held for his draws"
+            );
+            assert_eq!(mode(&app), Mode::Held);
+        }
+        app.world_mut()
+            .resource_mut::<Level>()
+            .stall_figures(formats);
+        until(&mut app, "the walker in", |a| {
+            a.world().resource::<Play>().hero().is_some()
+        });
     }
 
     /// AU.19: every walker's attack keys wait for his model, the base's the

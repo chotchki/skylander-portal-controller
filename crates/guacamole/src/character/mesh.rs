@@ -107,7 +107,7 @@ fn mesh(segment: &Segment, skinned: bool) -> Result<Mesh, MeshError> {
         RenderAssetUsages::RENDER_WORLD,
     );
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, segment.positions.clone());
-    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, segment.normals.clone());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, whole_normals(segment));
     let sets = [Mesh::ATTRIBUTE_UV_0, Mesh::ATTRIBUTE_UV_1, ATTRIBUTE_UV_2];
     for (attribute, uv) in sets.into_iter().zip(&segment.uvs) {
         mesh.insert_attribute(attribute, uv.clone());
@@ -133,6 +133,36 @@ fn mesh(segment: &Segment, skinned: bool) -> Result<Mesh, MeshError> {
     }
     mesh.insert_indices(Indices::U16(segment.indices.clone()));
     Ok(mesh)
+}
+
+/// `segment`'s normals, each one the disc stores as nothing given its faces':
+/// a zero one normalizes to NaN in the vertex shader, and a NaN takes the
+/// whole triangle black, its texels' alpha with it (2,115 of chapter 1's
+/// scene's vertices, the vine leaves of `leaf3` among them, and 189 of level
+/// 214's; openspec AU.40). Up where it's on no face.
+fn whole_normals(segment: &Segment) -> Vec<[f32; 3]> {
+    let zero = |n: &[f32; 3]| n[0] * n[0] + n[1] * n[1] + n[2] * n[2] < 1e-12;
+    if !segment.normals.iter().any(zero) {
+        return segment.normals.clone();
+    }
+    let mut sums = vec![Vec3::ZERO; segment.positions.len()];
+    for t in segment.indices.as_chunks::<3>().0 {
+        let [a, b, c] = t.map(usize::from);
+        let [pa, pb, pc] = [a, b, c].map(|i| Vec3::from_array(segment.positions[i]));
+        let face = (pb - pa).cross(pc - pa);
+        for v in [a, b, c] {
+            sums[v] += face;
+        }
+    }
+    segment
+        .normals
+        .iter()
+        .zip(sums)
+        .map(|(n, sum)| match zero(n) {
+            true => sum.try_normalize().unwrap_or(Vec3::Y).to_array(),
+            false => *n,
+        })
+        .collect()
 }
 
 /// Each joint's inverse joint, in joint order: what a skin influence's
@@ -317,6 +347,23 @@ mod tests {
             weights: vec![[204, 51, 0, 0]; 3],
             indices: vec![0, 1, 2],
         }
+    }
+
+    /// AU.40: a normal the disc stores as nothing is its faces', the rest
+    /// as stored: a zero one draws the triangle black.
+    #[test]
+    fn a_zero_normal_is_given_its_faces() {
+        let mut s = segment();
+        s.normals[1] = [0.0; 3];
+        s.normals[2] = [0.6, 0.0, 0.8];
+        let got = whole_normals(&s);
+        assert_eq!(got, [[0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.6, 0.0, 0.8]]);
+        // On no face, up.
+        s.positions.push([9.0, 9.0, 9.0]);
+        s.normals.push([0.0; 3]);
+        assert_eq!(whole_normals(&s)[3], [0.0, 1.0, 0.0]);
+        // None to give: the stored ones.
+        assert_eq!(whole_normals(&segment()), segment().normals);
     }
 
     #[test]

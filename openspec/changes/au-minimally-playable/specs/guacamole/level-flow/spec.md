@@ -81,16 +81,24 @@ A new game SHALL play chapter 1 from its spawn to its outro with nothing but the
 - **WHEN** a hero beats the pit's four Chompies and walks into the cave
 - **THEN** its cutscene frees the Giant, the Giant breaks the floor as the hero nears him, and falling through it takes the hero to the second cave
 
+#### Scenario: The second cave's mouths
+- **WHEN** Setup_002 wakes its Chompies, each a 3 ft sphere in a mouth narrower than it
+- **THEN** every one comes out into the arena, jumping and falling along the walls that squeeze it
+
 #### Scenario: The last chain
 - **WHEN** the third post gives
 - **THEN** its cutscene plays, the screen fades, the outro plays and the level end names level 214
 
 ### Requirement: A hero over nothing comes back
-A hero with no ground under him who has fallen far past the last ground, or who hardly moves for a second, SHALL come back to where he stood on the ground a moment before, his walk gone, so no fall or edge leaves a kid stuck under or beside a level.
+A hero with no ground under him SHALL fall at his gravity to his 120 ft/s with the stick still his, and past the 225 ft the minion's own check reads SHALL come back on his safe point trail, the stick moving him on, so no fall leaves a kid stuck under or beside a level.
 
-#### Scenario: Held on a chasm's rim
-- **WHEN** a knock leaves the hero over a chasm, held on its rim
-- **THEN** within a second or so he stands on the ground he left, the stick moving him again
+#### Scenario: Knocked over a gap
+- **WHEN** a hero stands on level 214's first island and is put over the gap beside it, no mesh under him
+- **THEN** he falls 69 m and stands on the ground he left, the stick walking him
+
+#### Scenario: Held there by a scene
+- **WHEN** a scene or a hook holds the hero over nothing
+- **THEN** he stays where it holds him until it lets him go
 
 ### Requirement: A bomb run out in his hands is his no more
 A bomb whose count runs out while a hero carries it SHALL burst and stand back on its spawner carried by no one, so every other spawner on the level clones its own and a Giant can lift again.

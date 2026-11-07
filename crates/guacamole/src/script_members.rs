@@ -1322,11 +1322,15 @@ impl ScriptWorld {
                 // Set` by `Camera - Clean Up Targets` on that reading where
                 // the level's mesh ends under it, which AG.13's corridor
                 // recordings never do; a hypothesis, the ground facet of such
-                // an actor not read).
+                // an actor not read). Nor a hero over nothing (openspec
+                // AS.146): the mover update takes a mover reading under 0 off
+                // for gone, every step, so his stick and his gravity died
+                // there and stayed dead on any ground he came back to.
+                // Stand-in ledger: `fall-reset`.
                 let free = match object {
                     Some(Object::Facet(h, Facet::Ground)) => {
-                        engine.hero(h).is_none()
-                            && self
+                        engine.hero(h).is_some()
+                            || self
                                 .actors
                                 .get(&h)
                                 .is_some_and(|a| a.havok().is_none() && !(a.managed && !a.active))
@@ -1459,14 +1463,14 @@ impl ScriptWorld {
                     && self.object(Some(o)) == Some(Object::Facet(h, Facet::Ground))
                     && let Some(hero) = engine.hero(h)
                 {
+                    if hero.footing.supported {
+                        return Ok(Value::Float(0.0));
+                    }
                     // With none under him, how far he's fallen: gravity acts
                     // on him, and the minion's fall check sets him back on
                     // his trail once it's past its 225 ft (openspec AS.146).
                     if let Some(fallen) = hero.fallen() {
                         return Ok(Value::Float((fallen * FEET_PER_METRE).max(1.0)));
-                    }
-                    if hero.footing.supported {
-                        return Ok(Value::Float(0.0));
                     }
                 }
                 // From another actor's body: the gap between the two solids
@@ -3390,10 +3394,6 @@ impl ScriptWorld {
                         body: None,
                         aim: Aim::Still,
                         along: 0,
-                        wedged: 0,
-                        carries: false,
-                        first: None,
-                        carried: Vec3::ZERO,
                     }));
                 }
                 true
@@ -3484,11 +3484,6 @@ impl ScriptWorld {
             a.position = p;
             a.angles.facing = f;
             a.velocity = v;
-            if w.carries
-                && let Some(at) = wedged_step(w, p, v, physics.ground_max_speed, dt)
-            {
-                a.position = at;
-            }
         }
     }
 }
@@ -3533,55 +3528,13 @@ fn turned_by(angles: Angles, m: Member, by: f32) -> Angles {
 
 /// An actor's movement numbers as the engine's steering reads them.
 /// Where a hero with no ground under him reads his ground: under him by how
-/// far he's fallen, at least a foot, so the mover update's gravity, which
-/// asks how far over his ground he is, acts on him (openspec AS.146).
+/// far he's fallen, past the 5 ft the safe point trail asks to be within, so
+/// no place over nothing goes on the trail he's set back on (openspec
+/// AS.146).
 /// Stand-in ledger: `fall-reset`.
 fn fall_point(hero: &Hero) -> Option<Vec3> {
     let fallen = hero.fallen()?;
-    Some(hero.pivot - Vec3::Y * fallen.max(METRES_PER_FOOT))
-}
-
-/// How far from where it first stood a creature counts as out of it, metres.
-const WEDGED_REACH: f32 = 1.0;
-/// How fast its walk must ask to go for it to count as held there, ft/s.
-const WEDGED_WALK: f32 = 1.0;
-/// Steps it's held before it's carried on.
-pub const WEDGED_STEPS: u32 = 30;
-/// Steps it's carried: 3 m at a Chompy's 20 ft/s, out of what held it.
-const CARRIED_STEPS: u32 = 30;
-
-/// Where a creature held where it first stood goes this step, if it's
-/// carried: straight along its walk, through what holds it, at its ground
-/// speed. Chapter 1's second cave lets its Chompies out through mouths whose
-/// fronts face the arena: a reading, that the original's mesh stops a body
-/// from that side alone. Ours stops it from both, so eight of Setup_002's
-/// twenty stood in the mouth for good and its gate never opened (openspec
-/// AU.33). One that has left where it first stood is a creature pressed into
-/// a wall, and walks as ever.
-/// Stand-in ledger: `wedged-walker`.
-fn wedged_step(walker: &mut Walker, at: Vec3, velocity: Vec3, speed: f32, dt: f32) -> Option<Vec3> {
-    let first = *walker.first.get_or_insert(at);
-    let walk = Vec3::new(velocity.x, 0.0, velocity.z);
-    if walker.wedged < WEDGED_STEPS {
-        if (at - first).length() > WEDGED_REACH {
-            walker.wedged = 0;
-            return None;
-        }
-        walker.wedged = if walk.length() > WEDGED_WALK {
-            walker.wedged + 1
-        } else {
-            0
-        };
-        if walker.wedged == WEDGED_STEPS {
-            walker.carried = walk.normalize_or_zero();
-        }
-        return None;
-    }
-    walker.wedged += 1;
-    if walker.wedged >= WEDGED_STEPS + CARRIED_STEPS {
-        walker.wedged = 0;
-    }
-    Some(at + walker.carried * (speed * METRES_PER_FOOT * dt))
+    Some(hero.pivot - Vec3::Y * fallen.max(6.0 * METRES_PER_FOOT))
 }
 
 fn steer_physics(p: &crate::script_engine::Physics) -> SteerPhysics {
@@ -3735,72 +3688,6 @@ mod tests {
         };
         let handles = HashMap::new();
         ScriptWorld::new(&files, &handles, headless_objects(&handles))
-    }
-
-    /// AU.33: a creature held where it first stood is carried on along its
-    /// walk once it's been held long enough, through what holds it.
-    #[test]
-    fn a_creature_held_where_it_first_stood_is_carried_on() {
-        let mut w = Walker {
-            body: None,
-            aim: Aim::Still,
-            along: 0,
-            wedged: 0,
-            carries: false,
-            first: None,
-            carried: Vec3::ZERO,
-        };
-        let at = Vec3::new(1.0, 2.0, 3.0);
-        let walk = Vec3::new(-82.0, -120.0, 0.0);
-        for _ in 0..WEDGED_STEPS {
-            assert_eq!(wedged_step(&mut w, at, walk, 20.0, 1.0 / 60.0), None);
-        }
-        let on = wedged_step(&mut w, at, walk, 20.0, 1.0 / 60.0).expect("carried");
-        assert!((on.x - (at.x - 20.0 * METRES_PER_FOOT / 60.0)).abs() < 1e-5);
-        assert_eq!(
-            (on.y, on.z),
-            (at.y, at.z),
-            "along its walk, across the ground"
-        );
-        // Its way holds as it's carried, and it's let go after.
-        let mut there = on;
-        let mut steps = 1;
-        while let Some(next) = wedged_step(&mut w, there, Vec3::ZERO, 20.0, 1.0 / 60.0) {
-            there = next;
-            steps += 1;
-        }
-        assert_eq!(steps, CARRIED_STEPS);
-        assert!(there.x < on.x);
-    }
-
-    /// AU.33: one still that asks no walk, and one that has left where it
-    /// first stood, pressed into a wall chasing a hero, stay as they are.
-    #[test]
-    fn a_creature_pressed_into_a_wall_past_where_it_stood_walks_as_ever() {
-        let blank = || Walker {
-            body: None,
-            aim: Aim::Still,
-            along: 0,
-            wedged: 0,
-            carries: false,
-            first: None,
-            carried: Vec3::ZERO,
-        };
-        let at = Vec3::new(1.0, 2.0, 3.0);
-        let mut still = blank();
-        for _ in 0..WEDGED_STEPS * 3 {
-            assert_eq!(
-                wedged_step(&mut still, at, Vec3::ZERO, 20.0, 1.0 / 60.0),
-                None
-            );
-        }
-        let mut left = blank();
-        assert_eq!(wedged_step(&mut left, at, Vec3::X, 20.0, 1.0 / 60.0), None);
-        let wall = at + Vec3::new(5.0, 0.0, 0.0);
-        for _ in 0..WEDGED_STEPS * 3 {
-            let v = Vec3::new(20.0, 0.0, 0.0);
-            assert_eq!(wedged_step(&mut left, wall, v, 20.0, 1.0 / 60.0), None);
-        }
     }
 
     /// AU.33: `animationinfo.walk` and `run` read as nothing, so a `turn to`
@@ -5652,10 +5539,6 @@ mod fight_tests {
             body: None,
             aim: guac_motion::steer::Aim::Still,
             along: 0,
-            wedged: 0,
-            carries: false,
-            first: None,
-            carried: Vec3::ZERO,
         }));
         a
     }
@@ -6565,6 +6448,19 @@ mod fight_tests {
         free.position = Vec3::new(0.0, 500.0, 0.0);
         w.actors.insert(C2, free);
         assert_eq!(type_under(&mut w, &mut e, C2), Value::Int(0));
+        // A hero over nothing, his ground found by nothing (openspec AS.146):
+        // under 0 the mover update takes him off its movers.
+        let mut hero = Hero::new(
+            guac_motion::tuning::eruptor_solid(),
+            guac_motion::tuning::Tuning::ERUPTOR,
+            Vec3::new(0.0, 500.0, 0.0),
+            0.0,
+        );
+        hero.footing.ground = None;
+        e.hero = Some(hero);
+        w.actors.insert(HERO, Actor::blank());
+        assert_eq!(type_under(&mut w, &mut e, HERO), Value::Int(0));
+        e.hero = None;
         // A creature with a solid, far over the floor: still none.
         w.actors.insert(C1, chompy(Vec3::new(0.0, 500.0, 0.0), 0.0));
         assert_eq!(type_under(&mut w, &mut e, C1), Value::Int(-1));

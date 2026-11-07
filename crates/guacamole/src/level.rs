@@ -3561,6 +3561,17 @@ mod tests {
         }
         assert!(drawn(&app), "in the level by the time he's ready");
         assert!(sparks(&app), "his emitters with them");
+        // One whose files don't read holds nobody up: he's ready with
+        // nothing drawn (the review: a card that never ended was the risk).
+        app.world_mut()
+            .resource_mut::<Level>()
+            .ask_figure("999_Nobody");
+        assert!(!level(&app).figure_ready("999_Nobody"), "asked");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !level(&app).figure_ready("999_Nobody") {
+            assert!(Instant::now() < deadline, "a read that fails ends");
+            app.update();
+        }
         // The next level reads them again, the portal's figures going into
         // it as they stood, and he isn't ready until they're in it.
         let next = tempfile::tempdir().unwrap();

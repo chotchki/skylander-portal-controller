@@ -101,14 +101,10 @@ pub const SEARCH_DOWN: f32 = 3.0 * FOOT;
 /// pass leaves him on the keep, give or take the float's noise.
 pub const IN_A_WALL: f32 = 1e-4;
 
-/// How far below the last ground under him a fall ends, metres: the 225 ft
-/// the minion script's own fall check reads.
-pub const FALL_DEPTH: f32 = 225.0 * FOOT;
-/// Steps a hero with no ground under him may go on hardly moving.
-pub const FALL_STUCK_STEPS: u32 = 60;
-/// How far he must have got over those steps to count as going anywhere,
-/// metres: a launch or a fall goes further, a sink down a crease doesn't.
-pub const FALL_STUCK_REACH: f32 = 1.2;
+/// How far below the last ground under him a fall ends, metres, with no
+/// script to end it: past the 225 ft the minion's own check reads, and past
+/// the seconds its trail's timer can hold that check off at his 120 ft/s.
+pub const FALL_DEPTH: f32 = 1000.0 * FOOT;
 /// Steps between one safe place and the next: he's set back where he stood
 /// this long ago at least, not on the edge he went off.
 pub const FALL_SAFE_STEPS: u32 = 30;
@@ -122,9 +118,6 @@ pub struct FallCatch {
     next: Option<Vec3>,
     /// Steps since then, on the ground.
     ground_steps: u32,
-    /// Where the window of steps over nothing began, and its steps.
-    from: Option<Vec3>,
-    steps: u32,
 }
 
 /// What [`Hero::push_out`] did.
@@ -615,22 +608,19 @@ impl Hero {
         }
     }
 
-    /// The catch for a hero with nowhere to go (openspec AS.146; a catch, not
-    /// the cause), stand-in ledger: `fall-reset`. With no ground under him,
-    /// past [`FALL_DEPTH`] below the last, or for [`FALL_STUCK_STEPS`] hardly
-    /// moving, he's set back where he stood on the ground, walk gone. The
-    /// original's minion script does as much by its safe point trail, and
-    /// reads a ground we can't: level 214's third island's chasm held Sunburn
-    /// on its rim and sank him for good. True when it set him back. A hung
-    /// hero's place is his rig's.
+    /// The catch under the minion's own fall check (openspec AS.146): falling
+    /// past [`FALL_DEPTH`] with no ground under him, he's set back where he
+    /// stood on the ground, walk gone. Only a hero no script ends a fall for
+    /// gets this far (one fallen back on the controller). True when it set
+    /// him back. A hung hero's place is his rig's, and one not falling is
+    /// where a scene or a hook holds him, however deep.
+    /// Stand-in ledger: `fall-reset`.
     pub fn catch_fall(&mut self) -> bool {
         if self.hung {
             return false;
         }
         let c = &mut self.catch;
         if self.footing.ground.is_some() {
-            c.from = None;
-            c.steps = 0;
             if self.footing.supported {
                 c.ground_steps += 1;
                 if c.next.is_none() || c.ground_steps >= FALL_SAFE_STEPS {
@@ -641,24 +631,16 @@ impl Hero {
             }
             return false;
         }
-        let from = *c.from.get_or_insert(self.pivot);
-        c.steps += 1;
-        let deep = self
-            .last_ground
-            .is_some_and(|y| y - self.pivot.y > FALL_DEPTH);
-        let stuck = c.steps >= FALL_STUCK_STEPS && self.pivot.distance(from) < FALL_STUCK_REACH;
-        if c.steps >= FALL_STUCK_STEPS {
-            c.from = None;
-            c.steps = 0;
-        }
-        let Some(safe) = c.safe.filter(|_| deep || stuck) else {
+        let deep = self.walk.velocity.y < 0.0
+            && self
+                .last_ground
+                .is_some_and(|y| y - self.pivot.y > FALL_DEPTH);
+        let Some(safe) = c.safe.filter(|_| deep) else {
             return false;
         };
         self.pivot = safe;
         self.walk.velocity = Vec3::ZERO;
         self.up = Vec3::Y;
-        self.catch.from = None;
-        self.catch.steps = 0;
         true
     }
 
@@ -687,10 +669,7 @@ impl Hero {
         // on the ground (the walk not leaving it) ends supported.
         let near = matches!((found, height),
             (Some(g), Some(h)) if h < SNAP_REACH && g.normal.y > MAX_SLOPE_COS);
-        // Nothing under him is no support, whatever he's pressed against:
-        // a crease of two faces with no floor let him sink a step of gravity
-        // at a time for good (openspec AS.146).
-        let supported = (checked && found.is_some()) || (near && walking);
+        let supported = checked || (near && walking);
         if let Some(g) = found {
             self.last_ground = Some(g.point.y);
         }
@@ -778,45 +757,44 @@ mod catch {
         h
     }
 
-    /// AS.146: over nothing, hardly moving, he's set back where he stood a
-    /// while ago, his walk gone.
+    /// AS.146: a fall past the depth ends where he stood a while ago, his
+    /// walk gone; short of it, it goes on.
     #[test]
-    fn a_hero_stuck_over_nothing_is_set_back_on_the_ground() {
+    fn a_long_fall_ends_where_he_stood() {
         let world = floor();
         let mut h = walked(&world, 90);
         let stood = h.pivot;
-        h.pivot = Vec3::new(50.0, -1.0, 0.0);
-        h.walk.velocity = Vec3::new(1.0, -1.0, 0.0);
-        let mut steps = 0;
-        loop {
-            h.footing.ground = None;
-            steps += 1;
-            if h.catch_fall() {
-                break;
-            }
-            assert!(steps < FALL_STUCK_STEPS + 2, "never caught");
-        }
-        assert_eq!(steps, FALL_STUCK_STEPS);
+        h.last_ground = Some(0.0);
+        h.footing.ground = None;
+        h.walk.velocity = Vec3::new(1.0, -120.0, 0.0);
+        h.pivot = Vec3::new(9.0, -FALL_DEPTH + 0.1, 0.0);
+        assert!(!h.catch_fall(), "short of the depth");
+        h.pivot = Vec3::new(9.0, -FALL_DEPTH - 0.1, 0.0);
+        assert!(h.catch_fall());
         assert_eq!((h.pivot, h.walk.velocity), (stood, Vec3::ZERO));
     }
 
-    /// AS.146: a flight over nothing (a jump pad's) goes on; a fall past the
-    /// depth doesn't.
+    /// AS.146: where a scene or a hook holds him he isn't falling, however
+    /// far under the last ground, and a hung hero's place is his rig's: the
+    /// outro of level 214 stood him over nothing and the first catch took
+    /// him back across it.
     #[test]
-    fn a_flight_goes_on_and_a_long_fall_ends() {
+    fn one_held_over_nothing_is_left_there() {
         let world = floor();
         let mut h = walked(&world, 90);
-        let stood = h.pivot;
-        for k in 0..FALL_STUCK_STEPS * 3 {
-            h.footing.ground = None;
-            h.pivot = Vec3::new(k as f32 * 0.1, 3.0, 0.0);
-            assert!(!h.catch_fall(), "step {k}");
-        }
+        let at = Vec3::new(9.0, -FALL_DEPTH - 1.0, 0.0);
         h.last_ground = Some(0.0);
         h.footing.ground = None;
-        h.pivot = Vec3::new(9.0, -FALL_DEPTH - 0.1, 0.0);
-        assert!(h.catch_fall());
-        assert_eq!(h.pivot, stood);
+        h.pivot = at;
+        h.walk.velocity = Vec3::ZERO;
+        for _ in 0..300 {
+            assert!(!h.catch_fall());
+        }
+        assert_eq!(h.pivot, at);
+        h.walk.velocity = Vec3::new(0.0, -120.0, 0.0);
+        h.hung = true;
+        assert!(!h.catch_fall());
+        assert_eq!(h.pivot, at);
     }
 
     /// AS.146: where he's set back is behind him, not the edge he left.
@@ -834,48 +812,9 @@ mod catch {
         assert_eq!(h.catch.safe, Some(first), "a step behind");
     }
 
-    /// AS.146: in a crease of two steep faces with a slit under him, the
-    /// faces' planes sum to up but no ground lies under his pivot: no
-    /// support, so gravity isn't taken off him a step at a time.
+    /// AS.146: his fall is measured from the last ground, none under him.
     #[test]
-    fn a_crease_with_no_floor_is_no_support() {
-        let face = |id: u32, x: f32, turn: f32| Body {
-            id: BodyId(id),
-            kind: BodyKind::Static,
-            collider: Collider::Convex(crate::seam::Shape::Box {
-                half_extents: Vec3::new(1.0, 4.0, 5.0),
-                margin: 0.0,
-            }),
-            pose: crate::seam::Pose::new(
-                Vec3::new(x, 3.2, 0.0),
-                Quat::from_rotation_z(turn.to_radians()),
-            ),
-        };
-        let world = ParryWorld::new(&[face(1, 2.8, -25.0), face(2, -2.8, 25.0)]).unwrap();
-        let mut h = Hero::new(
-            eruptor_solid(),
-            Tuning::ERUPTOR,
-            Vec3::new(0.0, 1.2, 0.0),
-            0.0,
-        );
-        let mut touched = false;
-        for _ in 0..120 {
-            h.walk.velocity = Vec3::new(0.0, -2.0, 0.0);
-            h.step_engine(&world, 1.0 / 60.0, &[], Surfaces::NONE);
-            touched |= !h
-                .proxy(&world, &[], Surfaces::NONE)
-                .planes(h.pivot, h.up, SUPPORT_GAP)
-                .is_empty();
-            assert_eq!(h.footing.ground, None);
-            assert!(!h.footing.supported, "held at {}", h.pivot);
-        }
-        assert!(touched, "the crease never met him");
-    }
-
-    /// AS.146: nothing under him is no support, whatever he's pressed
-    /// against, and his fall is measured from the last ground.
-    #[test]
-    fn nothing_under_him_is_no_support() {
+    fn a_fall_is_measured_from_the_last_ground() {
         let world = floor();
         let mut h = walked(&world, 30);
         assert_eq!(h.fallen(), None);
@@ -884,6 +823,39 @@ mod catch {
         h.step_engine(&world, 1.0 / 60.0, &[], Surfaces::NONE);
         assert!(!h.footing.supported);
         assert!(h.fallen().unwrap() > 2.9);
+    }
+
+    /// AS.146's review: over nothing with his shape on the lip he stands, as
+    /// on any ledge, a floor under his pivot or none: the support check is
+    /// the planes at his shape, the ground finder its own.
+    #[test]
+    fn a_lip_with_nothing_under_his_pivot_holds_him() {
+        let world = floor();
+        let mut over = walked(&world, 30);
+        let r = match over.solid().shape {
+            crate::seam::Shape::Capsule { radius, .. } | crate::seam::Shape::Sphere { radius } => {
+                radius
+            }
+            ref s => panic!("{s:?}"),
+        };
+        over.pivot = Vec3::new(5.0 + r * 0.3, over.pivot.y, 0.0);
+        // Gravity brings him onto the lip and sleeps there, as the mover
+        // update's does: it asks his separation, 0 once he's supported.
+        let mut settled = 0;
+        for _ in 0..60 {
+            over.walk.velocity = match over.footing.supported {
+                true => Vec3::ZERO,
+                false => Vec3::new(0.0, -1.667, 0.0),
+            };
+            over.step_engine(&world, 1.0 / 60.0, &[], Surfaces::NONE);
+            settled = if over.footing.supported {
+                settled + 1
+            } else {
+                0
+            };
+        }
+        assert_eq!(over.footing.ground, None, "no floor under his pivot");
+        assert!(settled >= 30, "his shape on the lip: {}", over.pivot);
     }
 }
 

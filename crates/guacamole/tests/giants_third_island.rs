@@ -205,6 +205,82 @@ fn owner_of(run: &Run, v: Value) -> Option<Handle> {
 /// the node with his controller off, no body of his in the seam, and he's
 /// handed back at the detach and set down on the third island's ship.
 /// MoneyBags reads his 120 %. Nothing stops.
+/// openspec AS.146's review: over a gap with no mesh under him he falls at
+/// his gravity to his 120 ft/s, the minion's own check sets him back on his
+/// safe point trail, and the stick walks him on. Until then the mover
+/// update read his ground's type as -1 and took him off its movers every
+/// step: he hung there, gravity and stick gone, and stayed so on any ground a
+/// catch brought him back to (`Hero::catch_fall`, below all this now).
+#[test]
+#[ignore = "reads the Giants dump"]
+fn off_the_edge_he_falls_and_his_own_scripts_set_him_back() {
+    let t = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, _) = run_on_level(Mode::Play, LEVEL_214, setup());
+    let mut stops = Vec::new();
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+    }
+    run.join().unwrap();
+    stops.extend(skip_214s_intro(&mut run).iter().map(ToString::to_string));
+    let floor = guac_motion::ground::find(
+        guacamole::script_engine::Engine::seam(&run.bench),
+        Vec3::new(34.0, 60.0, 6.0),
+        &[],
+    )
+    .expect("the first island");
+    run.put(floor.point + Vec3::Y * 0.5, 180.0);
+    for _ in 0..300 {
+        still(&mut run, &mut stops, [false; 4]);
+    }
+    let stood = run.hero().pivot;
+    assert!(run.hero().footing.supported, "on the island");
+    // Knocked over the gap west of here, past the wall a walk stops at.
+    run.hero_mut().pivot = Vec3::new(16.0, stood.y, 6.0);
+    let edge = run.hero().pivot;
+    let (mut fastest, mut lowest, mut back) = (0.0f32, edge.y, None);
+    for k in 0..1200u32 {
+        still(&mut run, &mut stops, [false; 4]);
+        let h = run.hero();
+        fastest = fastest.min(h.walk.velocity.y);
+        lowest = lowest.min(h.pivot.y);
+        if h.footing.supported {
+            back = Some(k);
+            break;
+        }
+    }
+    println!(
+        "over nothing at {edge}, fell to y {lowest:.1} at {fastest:.1} ft/s, back after \
+         {back:?} at {}",
+        run.hero().pivot
+    );
+    assert!((fastest + 120.0).abs() < 0.5, "his gravity: {fastest}");
+    assert!(back.is_some(), "set back");
+    assert!(
+        edge.y - lowest > 225.0 / 3.28084,
+        "fell {}",
+        edge.y - lowest
+    );
+    assert!(
+        run.hero().pivot.distance(stood) < 15.0,
+        "where he'd walked: {}",
+        run.hero().pivot
+    );
+    let from = run.hero().pivot;
+    for _ in 0..60 {
+        let s = stick_to(&run, [40.0, 6.0]);
+        step(&mut run, &mut stops, s, [false; 4]);
+    }
+    let walked = run.hero().pivot.distance(from);
+    println!(
+        "walked {walked:.2} m on, {:.1} s, load at end: {}",
+        t.elapsed().as_secs_f32(),
+        load()
+    );
+    assert!(walked > 3.0, "the stick moves him: {walked}");
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
 #[test]
 #[ignore = "reads the Giants dump"]
 fn level_214s_final_island_carries_him_hung_on_its_rigs() {

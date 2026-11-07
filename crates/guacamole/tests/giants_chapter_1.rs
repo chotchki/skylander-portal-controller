@@ -233,9 +233,10 @@ fn through_the_first_cave(w: &mut Walk) {
     );
 }
 
-/// The second cave: Setup_002's twenty Chompies, eight of them out of the
-/// mouth they'd stand in for good uncarried (stand-in ledger:
-/// `wedged-walker`), its Arkeyan, the gate, the pads to the exit.
+/// The second cave: Setup_002's twenty Chompies, out of the two mouths their
+/// 3 ft spheres are wider than (a solve that gave up left eight stood there
+/// for good: `a_shape_wider_than_the_gap_goes_on_along_it`), its Arkeyan, the
+/// gate, the pads to the exit.
 fn through_the_second_cave(w: &mut Walk) {
     w.still(800);
     let mut names: Vec<String> = (11..31).map(|n| format!("Enemy_Chompy({n})")).collect();
