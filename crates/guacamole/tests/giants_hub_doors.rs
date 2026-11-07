@@ -81,7 +81,7 @@ fn every_stages_doors_stand_by_their_unlock_values() {
     let started = std::time::Instant::now();
     println!("load at start: {}", load());
     for (i, level) in STAGES.into_iter().enumerate() {
-        let (run, stops) = joined(level);
+        let (mut run, stops) = joined(level);
         println!(
             "{level}: {:?} done, {} clones",
             int_global(&run, "Levels_Completed"),
@@ -95,9 +95,6 @@ fn every_stages_doors_stand_by_their_unlock_values() {
         for room in FIRST_ROOMS {
             assert!(!run.world.removed(run.placed(room).0), "{level}: {room}");
         }
-        let crane = run.placed("Door_Crane_Deck").0;
-        let want = if i == 0 { "locked" } else { OPENS };
-        assert_eq!(behaviour(&run, crane).as_deref(), Some(want), "{level}");
         let cali = run.placed("Door_Cali's_Room").0;
         assert_eq!(behaviour(&run, cali).as_deref(), Some(OPENS), "{level}");
         // Its art: a door's own clone, standing.
@@ -118,6 +115,21 @@ fn every_stages_doors_stand_by_their_unlock_values() {
             !run.world.removed(run.placed("Galley_Blocker").0),
             "{level}"
         );
+        // The crane deck's stands far off the deck, asleep past stage 2's
+        // range: a hero by it wakes it.
+        let (crane, at) = run.placed("Door_Crane_Deck");
+        run.put(at + guac_motion::seam::Vec3::new(0.0, 1.0, 3.0), 0.0);
+        for _ in 0..30 {
+            run.step_play().unwrap();
+        }
+        let now = behaviour(&run, crane);
+        match i {
+            0 => assert_eq!(now.as_deref(), Some("locked"), "{level}"),
+            _ => assert!(
+                matches!(now.as_deref(), Some(OPENS | CLOSES)),
+                "{level}: {now:?}"
+            ),
+        }
     }
     println!(
         "{:.1} s; load at end: {}",

@@ -312,7 +312,7 @@ fn a_chest_opens_pays_and_stays_opened() {
     let (chest, _) = again.run.placed("Chest(1)");
     assert!(again.run.world.removed(chest), "open again on a restart");
     let (other, at) = again.run.placed("Chest(2)");
-    again.run.put(at + Vec3::new(7.0, 1.0, 0.0), 0.0);
+    again.run.put(at + Vec3::new(0.0, 1.0, -7.0), 0.0);
     again.step([false; 4]);
     again.step([false; 4]);
     assert_eq!(again.behaviour(other).as_deref(), Some(WAITING));
