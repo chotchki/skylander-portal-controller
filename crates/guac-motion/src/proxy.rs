@@ -57,11 +57,11 @@
 //! by triangle alone it limited nothing and pinned him on the clearing's
 //! crease); off the ground it still stops the step there, as AG.16's
 //! replays have it (one of AG.39's landings comes a record early without
-//! that), but only for one step; over [`INSIDE`] into a plane a cast that
-//! stops him at once with no plane against the motion gives way to the
-//! recovery alone; and a cast answered at once by a solid the motion only
-//! slides along or leaves goes on past it (openspec AS.159, all three a
-//! reading: no recording has a hero in a cliff or pinned on a Chompy).
+//! that), but only for one step; inside a triangle a cast that stops him at
+//! once with no plane against the motion brings him out of it first, at the
+//! recovery's speed at most; and one a solid answers so goes on past it
+//! (openspec AS.159, all three a reading: no recording has a hero in a cliff
+//! or pinned on a Chompy).
 
 use std::collections::BTreeMap;
 
@@ -272,6 +272,7 @@ impl Proxy<'_> {
         // up as he moves (AG.61).
         let mut met: Vec<(BodyId, Option<u32>)> = Vec::new();
         let mut met_away: Vec<ContactPlane> = Vec::new();
+        let mut recovered = false;
         for cast in 0..MAX_CASTS {
             if remaining <= MIN_TIME {
                 break;
@@ -355,21 +356,28 @@ impl Proxy<'_> {
                 0.0
             };
             let travel = (hit.distance - back).clamp(0.0, len);
-            // Stopped at once with no plane the motion runs into: a cast
-            // from deep in a triangle answers from inside it, whichever way
-            // he goes, so no solve moves him and he hangs where he is for
-            // good, stick and all (openspec AS.159: a knock put Eruptor 0.39
-            // m into level 214's cliff). He leaves by the recovery alone,
-            // straight out of the plane he's deepest in.
+            // Stopped at once with no plane the motion runs into: a cast from
+            // inside a triangle answers from there whichever way he goes, the
+            // motion sliding along it or leaving, so no solve moves him and he
+            // hangs where he is for good, stick and all (openspec AS.159: a
+            // knock put Eruptor 0.39 m into level 214's cliff, and a Chompy
+            // held Tree Rex's fall a hair into the pit's wall). He comes
+            // straight out of the plane he's deepest in, at the recovery's
+            // speed at most, once a step, and the rest of it goes on.
             if travel <= 0.0
                 && squarest.is_none()
-                && let Some(deepest) = seen
+                && !recovered
+                && let Some((normal, depth)) = hit
+                    .planes
                     .iter()
-                    .filter(|p| p.distance < -INSIDE)
-                    .min_by(|a, b| a.distance.total_cmp(&b.distance))
+                    .map(|p| (p.normal, -p.distance))
+                    .chain(seen.iter().map(|p| (p.normal, -p.distance - KEEP)))
+                    .filter(|(_, depth)| *depth > 0.0)
+                    .max_by(|a, b| a.1.total_cmp(&b.1))
             {
-                pos += deepest.normal * (RECOVERY * remaining);
-                break;
+                pos += normal * (depth + KEEP).min(RECOVERY * remaining);
+                recovered = true;
+                continue;
             }
             if travel <= 0.0
                 && let Some(p) = squarest
@@ -808,11 +816,11 @@ mod tests {
         }
     }
 
-    /// A touch stays what it was: a cast stopped at once with him barely in
-    /// the plane is the step's end, as the replays have it.
+    /// A hair in he comes out to his keep off it and no further.
     #[test]
-    fn a_hero_barely_in_a_plane_stops_as_ever() {
-        assert_eq!(inside(INSIDE * 0.5, false), Vec3::ZERO);
+    fn a_hero_barely_in_a_plane_comes_out_to_his_keep() {
+        let out = inside(0.002, false);
+        assert!((out.z + 0.002 + KEEP).abs() < 1e-6, "{out}");
     }
 
     /// A seam with one solid, its plane facing +x, a hair into his shape, that
