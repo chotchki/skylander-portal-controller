@@ -816,27 +816,40 @@ mod tests {
     }
 
     /// A seam with one solid, its plane facing +x, a hair into his shape, that
-    /// stops every cast at once unless it's left out of it.
-    struct AtASolid;
+    /// stops every cast at once unless it's left out of it; `held` when the
+    /// contact query holds it too, so the solve sees it.
+    struct AtASolid {
+        held: bool,
+    }
 
-    impl PhysicsSeam for AtASolid {
-        fn cast(&self, _: &Shape, _: Pose, _: Vec3, _: f32, exclude: &[BodyId]) -> Option<Cast> {
-            (!exclude.contains(&BodyId(2))).then(|| Cast {
-                fraction: 0.0,
-                distance: 0.0,
-                planes: self.contacts(&Shape::Sphere { radius: 1.0 }, Pose::IDENTITY, 0.0, &[]),
-            })
-        }
-
-        fn contacts(&self, _: &Shape, _: Pose, _: f32, _: &[BodyId]) -> Vec<ContactPlane> {
-            vec![ContactPlane {
+    impl AtASolid {
+        fn plane() -> ContactPlane {
+            ContactPlane {
                 body: BodyId(2),
                 triangle: None,
                 material: None,
                 normal: Vec3::X,
                 point: Vec3::ZERO,
                 distance: -0.005,
-            }]
+            }
+        }
+    }
+
+    impl PhysicsSeam for AtASolid {
+        fn cast(&self, _: &Shape, _: Pose, _: Vec3, _: f32, exclude: &[BodyId]) -> Option<Cast> {
+            (!exclude.contains(&BodyId(2))).then(|| Cast {
+                fraction: 0.0,
+                distance: 0.0,
+                planes: vec![Self::plane()],
+            })
+        }
+
+        fn contacts(&self, _: &Shape, _: Pose, _: f32, _: &[BodyId]) -> Vec<ContactPlane> {
+            if self.held {
+                vec![Self::plane()]
+            } else {
+                Vec::new()
+            }
         }
 
         fn ray(&self, _: Vec3, _: Vec3, _: f32, _: &[BodyId]) -> Option<crate::seam::RayHit> {
@@ -848,9 +861,10 @@ mod tests {
         }
     }
 
-    fn at_a_solid(walk: Vec3) -> Vec3 {
+    fn at_a_solid(held: bool, walk: Vec3) -> Vec3 {
+        let seam = AtASolid { held };
         let proxy = Proxy {
-            seam: &AtASolid,
+            seam: &seam,
             shape: Shape::Sphere { radius: 0.5 },
             centre: Vec3::new(0.0, 0.5, 0.0),
             rotation: Quat::IDENTITY,
@@ -864,13 +878,13 @@ mod tests {
 
     /// openspec AS.159: a solid at his side doesn't hold him up: he falls on
     /// down it, where its cast answering at once left him there for good.
-    /// Into it the solve still stops him.
+    /// A cast running into it still stops him.
     #[test]
     fn a_solid_at_his_side_doesnt_stop_his_fall() {
-        let down = at_a_solid(Vec3::new(0.0, -36.0, 0.0));
+        let down = at_a_solid(true, Vec3::new(0.0, -36.0, 0.0));
         assert!((down.y + 0.6).abs() < 1e-5, "{down}");
-        let into = at_a_solid(Vec3::new(-6.0, 0.0, 0.0));
-        assert!(into.x >= 0.0, "{into}");
+        let into = at_a_solid(false, Vec3::new(-6.0, 0.0, 0.0));
+        assert_eq!(into, Vec3::ZERO);
     }
 
     #[test]
