@@ -483,6 +483,9 @@ pub fn step(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<Option<Ended>, 
     if crate::prompt::back_out_of_menu(vm) {
         info!("a cutscene's menu the TV doesn't draw: backed out of");
     }
+    if crate::prompt::quit_card_game(vm, host.world) {
+        info!("a card game the TV doesn't draw: quit");
+    }
     crate::turret::step(vm, host.world);
     if let Some((current, name, time)) = cutscene(vm)
         && time > 0.0

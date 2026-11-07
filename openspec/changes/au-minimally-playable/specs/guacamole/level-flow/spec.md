@@ -24,6 +24,10 @@ When a level's own end-of-level sequencing runs, the TV SHALL show its completio
 - **WHEN** a figure placed during the completion screen raises the portal's alert
 - **THEN** the screen steps aside under the alert and a continue press there goes nowhere; once the alert clears the screen is back on the tab it was on
 
+#### Scenario: The time dare's clock
+- **WHEN** a level's completion screen shows its time dare
+- **THEN** its time is the level's play outside its cutscenes, and a level that took longer than the target leaves the dare open
+
 #### Scenario: The screen's art isn't extracted yet
 - **WHEN** a level ends on an extract that doesn't hold the screen's art
 - **THEN** the screen still shows the level's results in the TV's own style, and the TV's report says the art is missing
@@ -50,6 +54,25 @@ When a level's end names the hub, the TV SHALL take the hero there and draw it w
 #### Scenario: A question on the hub
 - **WHEN** a person on the hub asks the kid a yes-or-no question, and a figure goes onto the portal while it's up
 - **THEN** the TV shows the question with Yes and No, the focus where the original's starts, steps aside for the portal's message until it's gone, and the answer takes the branch the original's answer takes
+
+### Requirement: The hub's people
+Every hub stage SHALL hold the people the original's holds at that point of the story, each drawn on its model on its own scripts, standing, walking or flying where they put it, and those that stand SHALL stop the hero. A talk that leads to a screen the TV doesn't have yet SHALL end with nothing shown, and every other talk SHALL still work after it.
+
+#### Scenario: Walking into Flynn
+- **WHEN** the hero walks straight at Flynn or Cali
+- **THEN** he stops against them and doesn't come out the far side, Eruptor 2.2 m from Flynn's pivot and 1.8 m from Cali's, the giants at 120 % up to 4.4 m and 4.0 m, inside the 25 ft and 15 ft a talk starts from
+
+#### Scenario: A store's yes
+- **WHEN** the kid answers yes to Auric's or Hatterson's question, or Brock's or Cali's
+- **THEN** the talk ends with nothing shown, his own talk and Flynn's still start after it, and the run holds what a no leaves
+
+#### Scenario: Dreadbeard's yes
+- **WHEN** the kid answers yes to Dreadbeard's question
+- **THEN** the game reads as quit: he says his quit line, nothing is won or lost, and his talk comes back
+
+#### Scenario: Persephone's upgrades
+- **WHEN** the kid talks to Persephone
+- **THEN** she says her line, her upgrade menu backs out to its no branch, the scene ends and she idles
 
 ### Requirement: Chapter 1 played to its end on foot
 A new game SHALL play chapter 1 from its spawn to its outro with nothing but the pads: the cave and its Giant, the cracked floor he breaks, the second cave's Chompies and Arkeyan, its jump pads to the quarry, the three posts whose chains hold the robot, each breaking under the hero's attacks, and the fights between them.

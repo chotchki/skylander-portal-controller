@@ -8,6 +8,7 @@
 //! and driver worker on its own tokio thread.
 
 mod alert;
+mod announce;
 mod arrival;
 mod button_prompt;
 mod card_motion;
@@ -548,6 +549,7 @@ fn run_tv(
             completion::CompletionPlugin,
             // AS.88: the header's band over a held level.
             held_band::HeldBandPlugin,
+            announce::AnnouncePlugin,
             // AS.76: a turret's pointer over the level.
             turret_hud::TurretHudPlugin,
             slow_frames::SlowFramesPlugin,

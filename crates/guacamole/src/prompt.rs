@@ -21,6 +21,25 @@
 //! modal of its own and runs the answer, in place of the menu system drawing
 //! the confirmation prompt's page and taking its accept press (the host
 //! feeds no menu buttons, and the interface draws nothing yet).
+//!
+//! The hub's people offer screens the TV doesn't have (openspec AU.34), and
+//! none may leave the player stuck under it:
+//!
+//! - **A cutscene's menu** (`Cutscene - Add Scene - Show Menu`: Persephone's
+//!   upgrade pre-menu, the disc's only one on the hub and level 214) holds
+//!   its scene until a button picks a branch, and the menu system the TV
+//!   doesn't run never puts its page up. [`back_out_of_menu`] picks the
+//!   branch the menu's back button picks the step it waits (stand-in ledger:
+//!   `cutscene-menu`).
+//! - **A screen a yes brings up** (Auric's and Hatterson's stores, Brock's
+//!   arenas, Cali's challenges, Dreadbeard's cards: [`SCREENS`]): each queues
+//!   a screen on the update macros the TV doesn't run, and every dialogue
+//!   refuses its talk button from then on, Flynn's way on among them. The
+//!   macro is answered with nothing shown ([`answer_screen`]; stand-in
+//!   ledger: `hub-screens`). Only the card pirate waits on what his screen
+//!   would have done, his game's end: he's told it's quit
+//!   ([`quit_card_game`]), which plays his quit scene and gives his talk
+//!   back, nothing won, lost or saved.
 
 use guac_script::{Halt, Value, Vm};
 
@@ -37,6 +56,22 @@ pub const YES: i32 = 2;
 pub const YES_ACTION: &str = "Dialogue - Yes Action";
 pub const NO_ACTION: &str = "Dialogue - No Action";
 pub const CLOSE_MENU: &str = "Menu - Close Menu Immediately";
+
+/// The macros a yes on the hub calls for a screen the TV doesn't have:
+/// answered by the host ([`answer_screen`]).
+pub const SCREENS: [&str; 4] = [
+    "System - Store UI - Show Menu",
+    "Arena UI - Show Arena Select UI",
+    "System - Show Heroic Challenge Select UI",
+    "Card Game - Start Card Game",
+];
+
+/// The card game among [`SCREENS`], whose pirate waits on its end.
+const CARD_GAME: &str = "Card Game - Start Card Game";
+/// The pirate's variable the card game ends by writing, and what a game
+/// quit leaves in it.
+const WIN_VALUE: &str = "win val";
+const GAME_QUIT: i32 = -2;
 
 /// The game systems' script, in whose name the answer runs.
 const GAME_SYSTEMS: &str = "GameSystems.ai";
@@ -137,6 +172,40 @@ pub fn answer(
         host,
     )?;
     Ok(true)
+}
+
+/// Whether `name` is one of [`SCREENS`].
+fn is_screen(name: &str) -> bool {
+    SCREENS.iter().any(|s| name.eq_ignore_ascii_case(s))
+}
+
+/// Whether `name` is one of [`SCREENS`], which the host answers with
+/// nothing shown (the module docs; stand-in ledger: `hub-screens`), a card
+/// game's left for [`quit_card_game`].
+pub fn answer_screen(world: &mut ScriptWorld, name: &str) -> bool {
+    world.card_game_answered |= name.eq_ignore_ascii_case(CARD_GAME);
+    is_screen(name)
+}
+
+/// A card game answered with nothing shown, quit as a player quitting would
+/// (the module docs): the game's result the pirate waits on, in his `win
+/// val`, set to the quit the card game's end would leave there. Whether a
+/// pirate was told.
+pub fn quit_card_game(vm: &mut Vm, world: &mut ScriptWorld) -> bool {
+    if !std::mem::take(&mut world.card_game_answered) {
+        return false;
+    }
+    let pirates: Vec<_> = world
+        .people()
+        .into_iter()
+        .filter_map(|h| vm.placement_of(h))
+        .filter(|id| vm.local(*id, WIN_VALUE).is_some())
+        .collect();
+    let mut told = false;
+    for id in pirates {
+        told |= vm.set_local(id, WIN_VALUE, Value::Int(GAME_QUIT));
+    }
+    told
 }
 
 /// What a cutscene's menu scene waits on (openspec AS.76): a scene made by
@@ -553,6 +622,84 @@ mod tests {
         assert!(backed);
         assert_eq!(after, None, "its branch picked");
         assert_eq!(run_scene(false), (None, false, None));
+    }
+
+    /// openspec AU.34: a card game answered tells its pirate it's quit,
+    /// once; a store's answered, or none, leaves him as he is.
+    #[test]
+    fn a_card_game_answered_is_quit_once() {
+        const PIRATE: &str = "C:/tfb/Content/Levels/Includes/GameElement_CardGame_Sky2/Scripts/CardPirate_Template.ai";
+        let mut b = IgzBuilder::new();
+        {
+            let mut w = Writer::new(&mut b);
+            let w = &mut w;
+            let win = w.variable(WIN_VALUE, "ValueInfo", Some("IntMeasurement"));
+            let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
+            let (start, _) = w.open(Class::StartUp, "STARTUP");
+            let zero = w.int(0);
+            w.set(&[El::Local(win)], zero);
+            w.end_block(start);
+            let (shut, _) = w.open(Class::ShutDown, "SHUTDOWN");
+            w.end_block(shut);
+            w.end_block(pre);
+            w.end(PIRATE);
+        }
+        let bytes = b.build();
+        let igz = Igz::parse(&bytes).unwrap();
+        let graph = Graph::read(&igz).unwrap();
+        let unit = Unit {
+            name: "global",
+            role: Role::Other,
+            igz: &igz,
+            graph: &graph,
+        };
+        let program = Arc::new(Program::link(&[unit]).unwrap());
+        let files = Files {
+            placed: vec![Placed::named(FILE, "Dreadbeard", Some(PIRATE), 4)],
+            ..Files::default()
+        };
+        let handles = HashMap::from([(FILE, HANDLE)]);
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let mut config = Config::new(Mode::Strict);
+        config.whitelist = Whitelist::only(&[], &["CardPirate_Template.ai"]);
+        let sid = program.script_named("CardPirate_Template.ai").unwrap();
+        let mut vm = Vm::new(program, config);
+        let id = vm.add_at(HANDLE, "Dreadbeard", sid, FILE);
+        let mut generator = Generator::seeded(1);
+        let mut engine = NoEngine;
+        let mut spawn = headless_spawner(0x1000);
+        vm.step(&mut WorldHost {
+            world: &mut world,
+            engine: &mut engine,
+            generator: &mut generator,
+            spawn: &mut spawn,
+        })
+        .unwrap();
+        let win = |vm: &Vm| vm.local(id, WIN_VALUE).map(|v| vm.value(v));
+        assert_eq!(win(&vm), Some(Value::Int(0)));
+        assert!(!quit_card_game(&mut vm, &mut world), "none answered");
+        assert!(answer_screen(&mut world, SCREENS[0]));
+        assert!(!quit_card_game(&mut vm, &mut world), "a store answered");
+        assert_eq!(win(&vm), Some(Value::Int(0)));
+        assert!(answer_screen(&mut world, &CARD_GAME.to_ascii_lowercase()));
+        assert!(quit_card_game(&mut vm, &mut world));
+        assert_eq!(win(&vm), Some(Value::Int(GAME_QUIT)));
+        assert!(vm.set_local(id, WIN_VALUE, Value::Int(0)));
+        assert!(!quit_card_game(&mut vm, &mut world), "told once");
+        assert_eq!(win(&vm), Some(Value::Int(0)));
+    }
+
+    /// openspec AU.34: the screens a yes on the hub calls for are answered
+    /// (any case, as the VM's names come), and nothing else is.
+    #[test]
+    fn the_hubs_screens_are_answered_and_nothing_else() {
+        for s in SCREENS {
+            assert!(is_screen(s), "{s}");
+            assert!(is_screen(&s.to_ascii_lowercase()), "{s}");
+        }
+        assert!(SCREENS.contains(&CARD_GAME));
+        assert!(!is_screen("Portal - Warp Player to Location"));
+        assert!(!is_screen(""));
     }
 
     /// openspec AU.6: a dialogue UI at its asking state with its status

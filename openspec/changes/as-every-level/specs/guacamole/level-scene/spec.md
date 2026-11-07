@@ -226,6 +226,13 @@ A hero walking into an interior's box on any level SHALL be taken to its room: t
 - **WHEN** the hero walks into the house the Mabu ran into, takes its room's bomb and walks into its exit's box
 - **THEN** he stands outside its door with the bomb still over him, which opens the wall before the second key
 
+### Requirement: An enemy's intro names him
+When a level's scripts play an enemy's intro with a name card, the TV SHALL show the enemy's name for as long as the scripts hold it, in the TV's own look, and any hint the scripts queue for after the scene for its stay. Neither SHALL show under a portal alert, nor a hint while a scene hides the interface, and neither SHALL cover the pause overlay, the completion screen or a modal.
+
+#### Scenario: The lobber's intro
+- **WHEN** the hero sets off Setup_004B on level 214
+- **THEN** the lobber's name shows over his intro for 2.2 s, and once the scene ends the hint shows for about 4 s
+
 ### Requirement: Level 214's third island
 The third island SHALL play from the second ship part to the level's end on the original's own scripts: the flight with the hero riding the ship, Flynn sending him to Persephone, the drawbridge dropping once she's been visited, Setup_006's fight, each turret shot from by the stick with its calibration and padlocks, the pad, the block bridge, the second gate, the third ship part and its outro.
 

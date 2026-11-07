@@ -627,10 +627,12 @@ impl W {
         self.vm.set_tick_seconds(dt);
         let mut pads = self.bench.pads;
         // As the TV's `step_scripts`: the attack buttons reach his scripts
-        // only while he's joined and on them (openspec AU.1).
-        if self.minion.is_none() || self.off.is_some() {
-            pads[0].actions = [false; 4];
-        }
+        // only while he's joined and on them (openspec AU.1), less what it
+        // holds back of his (AU.10).
+        pads[0].actions = match self.minion.is_none() || self.off.is_some() {
+            true => [false; 4],
+            false => walkers::held_back(&self.walk.load_file, pads[0].actions),
+        };
         self.world.read_pads(pads);
         self.vm.set_activity(&self.world.activity(&mut self.bench));
         // Off his scripts he's off the player loop's joined run, as on the
@@ -5674,6 +5676,8 @@ struct Press {
     hung: u32,
     travel: f32,
     left_hung: bool,
+    /// How far he walked once the window was out (`AH29_STUCK`), metres.
+    moved: Option<f32>,
 }
 
 impl Press {
@@ -5750,6 +5754,71 @@ const WINDOW: u32 = 180;
 const HELD: u32 = 6;
 const QUIET: u32 = 30;
 const READ_BY: u32 = 12;
+
+/// How a press is made (openspec AU.10), each by an env of its own: the
+/// steps it's held (`AH29_HELD`, [`HELD`] a tap), the steps its window runs
+/// (`AH29_WINDOW`, [`WINDOW`]), a second tap that many steps into it
+/// (`AH29_AGAIN`), the stick held forward through it (`AH29_WALK`), taps
+/// of another position (`AH29_THEN`, `<position>:<step>` comma-separated: the
+/// first attack once the second has put him in a form or a mode), and the
+/// target that many metres further off (`AH29_FAR`). `AH29_TRACE` prints
+/// where he, the target and each new clone stand at the window's end, with
+/// the minion's locals and the run's globals `AH29_LOCALS` and
+/// `AH29_GLOBALS` name (comma-separated); `AH29_STUCK` walks him after each
+/// window and prints how far he got.
+#[derive(Debug, Clone)]
+struct PressShape {
+    held: u32,
+    window: u32,
+    again: Option<u32>,
+    walk: bool,
+    then: Vec<(usize, u32)>,
+    far: f32,
+}
+
+impl PressShape {
+    fn read() -> Self {
+        let n = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<u32>().ok());
+        Self {
+            held: n("AH29_HELD").unwrap_or(HELD),
+            window: n("AH29_WINDOW").unwrap_or(WINDOW),
+            again: n("AH29_AGAIN"),
+            walk: std::env::var("AH29_WALK").is_ok(),
+            then: std::env::var("AH29_THEN")
+                .unwrap_or_default()
+                .split(',')
+                .filter_map(|t| {
+                    let (a, s) = t.split_once(':')?;
+                    Some((a.parse::<usize>().ok()?.checked_sub(1)?, s.parse().ok()?))
+                })
+                .collect(),
+            far: std::env::var("AH29_FAR")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0.0),
+        }
+    }
+
+    /// The other positions down at `step`.
+    fn others(&self, step: u32) -> impl Iterator<Item = usize> + '_ {
+        self.then
+            .iter()
+            .filter(move |(_, s)| (*s..*s + HELD).contains(&step))
+            .map(|(a, _)| *a)
+    }
+
+    fn down(&self, step: u32) -> bool {
+        step < self.held || self.again.is_some_and(|a| (a..a + HELD).contains(&step))
+    }
+
+    fn stick(&self) -> Stick {
+        if self.walk {
+            Stick::new(0.0, 1.0)
+        } else {
+            Stick::CENTRED
+        }
+    }
+}
 
 impl W {
     /// The handle of the level's placement `name`.
@@ -5925,7 +5994,8 @@ fn fight_presses(l: &Level, load: &str, actions: &[usize], out: &mut Fought) -> 
         let mut along = anchor - at;
         along.y = 0.0;
         let along = along.normalize_or_zero();
-        let spot = Vec3::new(at.x, anchor.y, at.z) + along * (radius + 1.0);
+        let spot =
+            Vec3::new(at.x, anchor.y, at.z) + along * (radius + 1.0 + PressShape::read().far);
         w.world.place(
             target,
             spot,
@@ -5965,14 +6035,18 @@ fn fight_presses(l: &Level, load: &str, actions: &[usize], out: &mut Fought) -> 
         let mut stopped_in = false;
         let mut read_by = None;
         let from = w.hero().pivot;
-        for s in 0..WINDOW {
+        let shape = PressShape::read();
+        for s in 0..shape.window {
             if s == READ_BY {
                 read_by = Some(w.world.start_count());
             }
             let mut actions = [false; 4];
-            actions[action] = s < HELD;
+            actions[action] = shape.down(s);
+            for other in shape.others(s) {
+                actions[other] = true;
+            }
             w.bench.pads[0] = Pad {
-                stick: Stick::CENTRED,
+                stick: shape.stick(),
                 actions,
                 connected: true,
             };
@@ -5995,6 +6069,26 @@ fn fight_presses(l: &Level, load: &str, actions: &[usize], out: &mut Fought) -> 
             if w.off.is_some() {
                 stopped_in = true;
             }
+        }
+        // Whether he can still walk once the press's window is out (openspec
+        // AU.10): the stick held aside, how far he got. `AH29_STUCK` turns it
+        // on: it moves him, so the sweep's own count runs without it.
+        if std::env::var("AH29_STUCK").is_ok() {
+            let from = w.hero().pivot;
+            for _ in 0..45 {
+                w.bench.pads[0] = Pad {
+                    stick: Stick::new(0.7, -0.7),
+                    connected: true,
+                    ..Pad::default()
+                };
+                if let Err(h) = w.step() {
+                    press.stops.push(named(&h.to_string()));
+                    break;
+                }
+            }
+            let moved = w.hero().pivot.distance(from);
+            println!("    action {}: walked {moved:.2} m after it", action + 1);
+            press.moved = Some(moved);
         }
         let early: Vec<usize> = match read_by {
             Some(by) => {
@@ -6032,6 +6126,42 @@ fn fight_presses(l: &Level, load: &str, actions: &[usize], out: &mut Fought) -> 
         }
         press.clones.sort();
         press.clones.dedup();
+        if std::env::var("AH29_TRACE").is_ok() {
+            let target_at = w.world.actor(target).map(|a| a.position);
+            println!(
+                "    at the window's end: hero {:?}, the target {target_at:?}",
+                w.hero().pivot
+            );
+            if let Some(id) = w.minion {
+                for name in std::env::var("AH29_LOCALS").unwrap_or_default().split(',') {
+                    println!(
+                        "    {name}: {:?}",
+                        w.vm.local(id, name).map(|v| w.vm.value(v))
+                    );
+                }
+            }
+            for name in std::env::var("AH29_GLOBALS").unwrap_or_default().split(',') {
+                if let Some(g) = w.vm.program().global_named(name) {
+                    println!(
+                        "    {name}: {:?}",
+                        w.vm.global_peek(g).map(|v| w.vm.value(v))
+                    );
+                }
+            }
+            for h in w.world.clones() {
+                if clones_before.contains(&h) || w.world.name(h).is_empty() {
+                    continue;
+                }
+                let a = w.world.actor(h);
+                println!(
+                    "    {} at {:?} active {:?} behaviour {:?}",
+                    w.world.name(h),
+                    a.map(|a| a.position),
+                    a.map(|a| a.active),
+                    w.vm.placement_of(h).and_then(|id| w.vm.behaviour(id))
+                );
+            }
+        }
         for h in &w.halts[seen_halts..] {
             let at = StopAt {
                 member: match &h.reason {
@@ -6120,6 +6250,46 @@ fn sweep_one(l: &Level, load: &str) -> Fought {
     out
 }
 
+/// openspec AU.10: Pop Fizz and his red press their second attack and walk
+/// on. It reaches his beast, whose clips the TV doesn't hold, so his script
+/// would wait on a slide that never starts and leave him frozen for good;
+/// the TV holds the attack back (`walkers::HELD_ATTACKS`) until AU.37.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn pop_fizz_walks_on_after_his_second_attack_is_pressed() {
+    let l = Level::open();
+    let o = Opts {
+        fight: true,
+        ..PLAY
+    };
+    for load in ["108_Alchemist", "108_Alchemist_Red"] {
+        let mut w =
+            W::joined(&l, load, o, 120).unwrap_or_else(|b| panic!("{load}: {}: {}", b.1, b.2));
+        for s in 0..300 {
+            let mut actions = [false; 4];
+            actions[1] = s < HELD;
+            w.bench.pads[0] = Pad {
+                actions,
+                connected: true,
+                ..Pad::default()
+            };
+            w.step().unwrap_or_else(|h| panic!("{load}: {h}"));
+        }
+        let from = w.hero().pivot;
+        for _ in 0..45 {
+            w.bench.pads[0] = Pad {
+                stick: Stick::new(0.7, -0.7),
+                connected: true,
+                ..Pad::default()
+            };
+            w.step().unwrap_or_else(|h| panic!("{load}: {h}"));
+        }
+        let moved = w.hero().pivot.distance(from);
+        println!("{load}: walked {moved:.2} m after it, load {:.2}", load1());
+        assert!(moved > 2.0, "{load}: {moved} m");
+    }
+}
+
 /// AH.29's sweep (openspec AU.1's routing, AU.2's measure): every modelled
 /// character joined at chapter 1's start in play mode on the TV's listing,
 /// his attack scripts on it where `WalkerScripts::attack_scripts` lists
@@ -6137,8 +6307,8 @@ fn sweep_one(l: &Level, load: &str) -> Fought {
 /// level's (Hot Head's attack stopped the UI's keyframer before AU.2's
 /// reference to a number). `AH29_ONLY` (comma-separated load files) runs those alone,
 /// `AH29_ACTIONS` ([`presses_alone`]) those positions alone, and either
-/// checks only Eruptor; `AH29_TABLE` (a path outside the tree) gets the
-/// table as JSON.
+/// checks only Eruptor; [`PressShape`] makes each press otherwise (AU.10);
+/// `AH29_TABLE` (a path outside the tree) gets the table as JSON.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP, writes the extract under GUAC_EXTRACT_DIR; run on the Mac"]
 fn every_modelled_character_attacks_or_is_listed() {

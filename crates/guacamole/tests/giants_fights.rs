@@ -2059,11 +2059,31 @@ fn level_214s_second_door_opens_to_the_key_a_bomb_from_the_house_frees() {
     for _ in 0..30 {
         step(&mut run, &mut stops, [false; 4]);
     }
-    assert_eq!(
-        walk(&mut run, &mut stops, &TO_THE_SECOND_DOOR),
-        Ok(()),
-        "to the door"
-    );
+    // Setup_004's spawner's Chompies come after him, and on some of the
+    // session's number streams two stand in the gap by the door: he fights
+    // them as a kid would (the au-hub-people review: the notifications'
+    // queue's draws put them there on this run's stream).
+    if let Err(at) = walk(&mut run, &mut stops, &TO_THE_SECOND_DOOR) {
+        let in_the_way: Vec<Handle> = run
+            .world
+            .creatures()
+            .into_iter()
+            .filter(|h| !gone(&run, *h))
+            .filter(|h| {
+                run.world
+                    .actor(*h)
+                    .is_some_and(|a| a.position.distance(at) < 6.0)
+            })
+            .collect();
+        assert!(!in_the_way.is_empty(), "to the door: stopped at {at:?}");
+        let beaten = fight(&mut run, &mut stops, &in_the_way, 1200);
+        assert!(beaten.iter().all(Option::is_some), "{beaten:?}");
+        assert_eq!(
+            walk(&mut run, &mut stops, &TO_THE_SECOND_DOOR),
+            Ok(()),
+            "to the door, past them"
+        );
+    }
     let mut done = None;
     for k in 0..600u32 {
         step(&mut run, &mut stops, [false, false, false, k % 20 < 2]);

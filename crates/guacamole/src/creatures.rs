@@ -674,6 +674,19 @@ pub(crate) struct CreaturesReport {
     /// How many creatures and skinned clones the TV draws now (openspec
     /// AS.54: a level's encounter drawn as chapter 1's fight is).
     pub drawn: usize,
+    /// The people ([`ScriptWorld::people`]) whose script runs, each as a
+    /// creature's reported, with whether it draws now (openspec AU.34).
+    pub people: Vec<PersonShot>,
+}
+
+/// One of the people as `/api/_test/tv` reports it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct PersonShot {
+    #[serde(flatten)]
+    pub at: CreatureShot,
+    pub drawn: bool,
+    #[serde(skip)]
+    pub handle: Handle,
 }
 
 /// The creatures' part of `/api/_test/tv` (openspec AQ.8).
@@ -704,6 +717,12 @@ impl CreatureShots<'_, '_> {
                     .and_then(|e| self.clones.get(e).ok())
                     .is_some_and(|(_, c)| c.draws);
         }
+        for p in &mut out.people {
+            p.drawn = self
+                .drawn
+                .as_ref()
+                .is_some_and(|d| d.0.contains_key(&p.handle));
+        }
         Some(out)
     }
 }
@@ -712,21 +731,31 @@ impl CreatureShots<'_, '_> {
 /// the fight woke past its own, and each clone still on, off `vm` and
 /// `world` as the step left them.
 pub(crate) fn report(vm: &guac_script::Vm, world: &ScriptWorld) -> CreaturesReport {
-    let creatures = world
-        .creatures()
+    let shot = |h: Handle| {
+        let a = world.actor(h)?;
+        let id = vm.placement_of(h);
+        Some(CreatureShot {
+            name: world.name(h),
+            behaviour: id.and_then(|id| vm.behaviour(id)).map(str::to_owned),
+            health: id.and_then(|id| health(vm, id)),
+            position: a.position.to_array(),
+            facing: a.angles.facing.rem_euclid(360.0),
+            awake: a.active,
+            gone: a.removed,
+            body: world.embodied.iter().any(|(e, _)| *e == h),
+        })
+    };
+    let creatures = world.creatures().into_iter().filter_map(shot).collect();
+    let inert = vm.inert();
+    let people = world
+        .people()
         .into_iter()
-        .filter_map(|h| {
-            let a = world.actor(h)?;
-            let id = vm.placement_of(h);
-            Some(CreatureShot {
-                name: world.name(h),
-                behaviour: id.and_then(|id| vm.behaviour(id)).map(str::to_owned),
-                health: id.and_then(|id| health(vm, id)),
-                position: a.position.to_array(),
-                facing: a.angles.facing.rem_euclid(360.0),
-                awake: a.active,
-                gone: a.removed,
-                body: world.embodied.iter().any(|(e, _)| *e == h),
+        .filter(|h| vm.placement_of(*h).is_some() && !inert.contains(h))
+        .filter_map(|handle| {
+            Some(PersonShot {
+                at: shot(handle)?,
+                drawn: false,
+                handle,
             })
         })
         .collect();
@@ -766,6 +795,7 @@ pub(crate) fn report(vm: &guac_script::Vm, world: &ScriptWorld) -> CreaturesRepo
         orbs,
         orbs_drawn: 0,
         drawn: 0,
+        people,
     }
 }
 

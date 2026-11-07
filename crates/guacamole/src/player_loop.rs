@@ -48,11 +48,14 @@
 //! the ones [`UPDATES`] names, each once in the set's order (openspec AH.21:
 //! the destructibles system waking a breakable in range as a target and
 //! shutting a broken one down for its loot, the actor remover taking its
-//! debris 1.5 s on); then, once a hero has joined, its orbs (`Xp Balls - Xp
-//! Ball Control`): the orbs popping out two a frame, coming down and
-//! bouncing. The rest of that tick (its other update macros, which run the
-//! encounter's camera pans and the difficulty tracking, and the playtime)
-//! isn't run.
+//! debris 1.5 s on); then the level's `playtime` (openspec AU.31: a frame's
+//! time added while no cutscene runs and the portal's past its boot mode,
+//! what the completion screen's time dare reads); then, once a hero has
+//! joined, its orbs (`Xp Balls - Xp Ball Control`): the orbs popping out two
+//! a frame, coming down and bouncing; then the frame's time kept for the
+//! next step's playtime. The rest of that tick (its other update macros,
+//! which run the encounter's camera pans and the difficulty tracking) isn't
+//! run.
 //!
 //! Not run: the HUD's banners' drawing (stepped by [`crate::hud_messages`];
 //! stand-in ledger: `hud-messages`) and its low-health warning (the HUD is
@@ -117,9 +120,10 @@ impl Places {
 /// one broken shut down, the bounce and a delayed effect) and the actor
 /// remover's (debris gone 1.5 s on), and a level's end-of-level sequencing
 /// once its `Game - Level End` adds it (openspec AS.53: the fanfare, the
-/// completion screen's stream, the movie, the level switch). The set's
-/// other update macros (the encounter's camera pans, the HUD's) stay off.
-pub const UPDATES: [&str; 11] = [
+/// completion screen's stream, the movie, the level switch), and the
+/// notifications' queue (openspec AS.131: a hint's stay). The set's other
+/// update macros (the encounter's camera pans, the HUD's) stay off.
+pub const UPDATES: [&str; 12] = [
     "Destructibles - System Update",
     "Destructibles - Bounce",
     "Destructibles - Delayed Particle",
@@ -129,6 +133,7 @@ pub const UPDATES: [&str; 11] = [
     "Dialogue Internal - Update Dialogue Wrapper",
     "Gesture - Update",
     "System - End of Level Sequencing",
+    "Notification - Manage Queue",
     // A turret (openspec AS.76): waiting for its activation, then its game.
     "New Turret - Wait for Turret Activation",
     "New Turret - Update Turret",
@@ -163,6 +168,12 @@ pub struct PlayerLoop {
     /// The game systems' script and its tick's `Xp Balls - Xp Ball
     /// Control`: the orbs popping out, coming down and bouncing.
     pub orbs: Option<(ScriptId, Range<u32>)>,
+    /// The game systems' script's tick's statement adding the frame's time
+    /// to the level's `playtime` (openspec AU.31).
+    pub playtime: Option<Range<u32>>,
+    /// Its tick's `set $script time last frame = system.script timer`, the
+    /// time `playtime` measures the next frame from.
+    pub playtime_frame: Option<Range<u32>>,
     /// The music controller's script and its tick's statement calling
     /// `Sound - System Update` (openspec AR.11): what starts a sound played
     /// with a delay once its time comes (a track waiting on the bar or the
@@ -189,6 +200,24 @@ pub fn called(program: &Program, op: u32) -> Option<&str> {
     };
     let def = program.resolve(def).unwrap_or(def);
     Some(program.defs.get(def as usize)?.display.as_str())
+}
+
+/// Whether the op at `op` sets a variable named `name`, as the last step of
+/// its left side's path.
+fn sets(program: &Program, op: u32, name: &str) -> bool {
+    let Some(Ins::SetValue { lhs: Some(lhs), .. }) = program.ops.get(op as usize) else {
+        return false;
+    };
+    let Some(Operand::Path { elems, .. }) = program.operands.get(*lhs as usize) else {
+        return false;
+    };
+    match elems.last() {
+        Some(Elem::Op(o)) => matches!(
+            program.ops.get(*o as usize),
+            Some(Ins::Variable { name: n, .. }) if program.sym(*n) == name
+        ),
+        _ => false,
+    }
 }
 
 /// The end of the statement at `p` of `ops`: its op and block, and with an
@@ -310,7 +339,15 @@ impl PlayerLoop {
         let mut out = PlayerLoop::default();
         if let Some(gs) = program.script_named(GAME_SYSTEMS) {
             let ops = &program.scripts[gs as usize].ops;
-            out.orbs = tick_body(program, ops)
+            let body = tick_body(program, ops);
+            let setting = |name: &str| {
+                body.iter()
+                    .find(|r| (r.start..r.end).any(|q| sets(program, ops[q as usize], name)))
+                    .cloned()
+            };
+            out.playtime = setting("playtime");
+            out.playtime_frame = setting("script time last frame");
+            out.orbs = body
                 .into_iter()
                 .find(|r| {
                     called(program, ops[r.start as usize]) == Some("Xp Balls - Xp Ball Control")
@@ -617,9 +654,10 @@ impl PlayerLoop {
     /// The game systems' tick as the loop runs it, for `gs` in its own
     /// place (ahead of the UI's and the portal manager's, AH.59's
     /// recordings; `global.bld` lists it after them, which isn't the order
-    /// it runs in): the update macros the loop runs ([`UPDATES`]), then once
-    /// a hero has joined its orbs; its clock counted each step, as its own
-    /// tick would. Nothing until its own first tick has run.
+    /// it runs in): the update macros the loop runs ([`UPDATES`]), the
+    /// level's playtime, once a hero has joined its orbs, then the frame's
+    /// time kept; its clock counted each step, as its own tick would.
+    /// Nothing until its own first tick has run.
     pub fn game_systems_tick(
         &self,
         vm: &mut Vm,
@@ -631,7 +669,13 @@ impl PlayerLoop {
             return Ok(());
         }
         run_updates(vm, host, gs)?;
+        if let Some(r) = &self.playtime {
+            vm.run_span(gs, r.start, r.end, host)?;
+        }
         if joined && let Some((_, r)) = &self.orbs {
+            vm.run_span(gs, r.start, r.end, host)?;
+        }
+        if let Some(r) = &self.playtime_frame {
             vm.run_span(gs, r.start, r.end, host)?;
         }
         vm.count_tick(gs);
@@ -1398,6 +1442,11 @@ mod tests {
             let w = &mut w;
             let controls_ty = w.op(Class::DefineStructure, "Update Controls");
             let updates = w.variable("update while unpaused macros", "ScriptSet", None);
+            let cutscene = w.variable("cutscene", "ValueInfo", Some(FLOAT));
+            let playtime = w.variable("playtime", "ValueInfo", Some(FLOAT));
+            let scratch = w.variable("scratch", "ValueInfo", Some(FLOAT));
+            let last = w.variable("script time last frame", "ValueInfo", Some(FLOAT));
+            let clock = || El::Member("system", "script timer");
             let controls = w.b.object(0, "ScriptStructure", 0x20);
             w.text(controls, 0x08, "System Update Controls");
             w.refer(controls, 0x1C, controls_ty);
@@ -1447,6 +1496,22 @@ mod tests {
             w.push(updates);
             w.end_block(p);
             w.end_block(types);
+            // The tick's playtime and the frame's time (openspec AU.31), in
+            // the original's shape: the else of `if cutscene > 0`.
+            let zero = w.int(0);
+            let c = w.check(&[El::Local(cutscene)], 4, zero);
+            let e = w.otherwise(c);
+            let now = w.rhs(FLOAT, &[clock()]);
+            let then = w.rhs(FLOAT, &[El::Local(last)]);
+            let frame = w.expr(now, Some((1, then)));
+            w.set(&[El::Local(scratch)], frame);
+            let so_far = w.rhs(FLOAT, &[El::Local(playtime)]);
+            let frame = w.rhs(FLOAT, &[El::Local(scratch)]);
+            let sum = w.expr(so_far, Some((0, frame)));
+            w.set(&[El::Local(playtime)], sum);
+            w.close(e);
+            let now = w.rhs(FLOAT, &[clock()]);
+            w.set(&[El::Local(last)], now);
             w.end_block(pre);
             w.end(GS_PATH);
         }
@@ -1504,6 +1569,35 @@ mod tests {
         }
         assert_eq!(update_calls(&vm), [10, 0, 0]);
         assert_eq!(update_macros(&mut vm), ["Destructibles - System Update"]);
+    }
+
+    /// openspec AU.31: the level's playtime takes each step's time while no
+    /// cutscene runs and none under one, and the steps under a cutscene
+    /// aren't owed to it after, the frame's time kept through them.
+    #[test]
+    fn the_playtime_adds_a_steps_time_and_none_under_a_cutscene() {
+        let (mut vm, mut world, player_loop, gs) = game_systems_run(false);
+        assert!(player_loop.playtime.is_some() && player_loop.playtime_frame.is_some());
+        let mut generator = Generator::seeded(1);
+        let playtime = |vm: &Vm| vm.local(gs, "playtime").unwrap().as_f32().unwrap();
+        game_systems_step(&mut vm, &mut world, &player_loop, &mut generator);
+        let start = playtime(&vm);
+        for _ in 0..30 {
+            game_systems_step(&mut vm, &mut world, &player_loop, &mut generator);
+        }
+        let played = playtime(&vm) - start;
+        assert!((played - 0.5).abs() < 1e-4, "{played}");
+        vm.set_local(gs, "cutscene", Value::Float(1.0));
+        for _ in 0..60 {
+            game_systems_step(&mut vm, &mut world, &player_loop, &mut generator);
+        }
+        assert_eq!(playtime(&vm) - start, played, "none under a cutscene");
+        vm.set_local(gs, "cutscene", Value::Float(0.0));
+        for _ in 0..30 {
+            game_systems_step(&mut vm, &mut world, &player_loop, &mut generator);
+        }
+        let played = playtime(&vm) - start;
+        assert!((played - 1.0).abs() < 1e-4, "{played}");
     }
 
     /// [`game_systems`]' file on a VM of its own, in strict mode with its
