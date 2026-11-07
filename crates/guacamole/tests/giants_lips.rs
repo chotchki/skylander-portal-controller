@@ -595,6 +595,45 @@ fn a_hero_a_hair_in_the_third_islands_bank_slides_off_it() {
         assert!(h.pivot.y < -22.0, "off the bank: {}", h.pivot);
         *run.hero_mut() = start;
     }
+    // And through it: off its top along the way `runs/s1` went, at a run,
+    // from a spread of places and headings, his lean with him, his fall the
+    // mover update's.
+    let world = &run.bench.world;
+    let (mut walked, mut stood) = (0, 0);
+    for k in 0..48 {
+        let (x, turn) = (652.0 + (k % 12) as f32, (k / 12) as f32 * 15.0 - 22.5);
+        let mut h = run.hero().clone();
+        h.pivot = Vec3::new(x, -14.0, 480.0);
+        h.up = Vec3::Y;
+        h.walk.velocity = Vec3::ZERO;
+        h.settle(world, &[HERO_BODY]);
+        if !h.footing.supported || h.pivot.y < -17.0 {
+            continue;
+        }
+        let run_at = Vec3::new(turn.to_radians().sin(), 0.0, turn.to_radians().cos()) * 21.0;
+        let mut still = 0;
+        for _ in 0..300u32 {
+            let off = h.pivot.y < -17.0;
+            if h.footing.supported && !off {
+                h.walk.velocity = run_at;
+            } else if !h.footing.supported || h.on_a_lip() {
+                h.walk.velocity.y = (h.walk.velocity.y - 136.21 / 60.0).max(-120.0);
+            }
+            h.step_engine(world, 1.0 / 60.0, &[HERO_BODY], Surfaces::NONE);
+            still = match !h.footing.supported && h.velocity.length() < 1.0e-3 {
+                true => still + 1,
+                false => 0,
+            };
+            stood = stood.max(still);
+            if off && h.footing.supported {
+                break;
+            }
+        }
+        walked += 1;
+    }
+    println!("{walked} walks off its top, the longest stood in the air {stood} steps");
+    assert!(stood < 30, "{stood}");
+    assert!(walked >= 12, "{walked}");
 }
 
 /// The AS.159 review: behind chapter 1's faces, where a hero the level's
