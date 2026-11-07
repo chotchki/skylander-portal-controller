@@ -826,6 +826,8 @@ pub fn start_run(
         "fresh"
     };
     session.report.start = Some(start.to_owned());
+    // What waited to read it (openspec AU.39): the chests and hat boxes.
+    host.world.story_started = true;
     // The title's fill: each adventure's `complete` off its flags.
     for ad in adventures(vm) {
         let mut args: Vec<(&str, Value)> = vec![("input adventure data", ad)];
