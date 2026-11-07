@@ -193,8 +193,10 @@ impl Run {
         scripts::add_scripted(&mut self.vm, &mut self.world);
         let report = r?;
         assert!(report.stopped.is_empty(), "strict mode stops by halting");
-        for hero in self.bench.heroes.values_mut() {
-            hero.step_engine(&self.bench.world, dt, &[], Surfaces::NONE);
+        let push = self.bench.pads[0].stick.push(self.bench.view);
+        for (h, hero) in &mut self.bench.heroes {
+            self.world
+                .step_scripted(*h, hero, &self.bench.world, push, dt, &[], Surfaces::NONE);
         }
         self.world.advance(dt, &mut self.bench);
         self.steps += 1;

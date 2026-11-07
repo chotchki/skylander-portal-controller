@@ -499,6 +499,9 @@ impl W {
         }) {
             world.set_palette_of(template, &palette);
         }
+        if let Ok(rigs) = level_scripts::spawn_rigs(&l.dir, load, IrFormat::Ron) {
+            world.set_rigs(&l.files, unit, &rigs);
+        }
         // The level's placements' palettes by their models.
         for p in l.files.placed.iter().filter(|p| p.obj.unit == l.level_unit) {
             if let Some(model) = &p.model
@@ -627,12 +630,10 @@ impl W {
         self.vm.set_tick_seconds(dt);
         let mut pads = self.bench.pads;
         // As the TV's `step_scripts`: the attack buttons reach his scripts
-        // only while he's joined and on them (openspec AU.1), less what it
-        // holds back of his (AU.10).
-        pads[0].actions = match self.minion.is_none() || self.off.is_some() {
-            true => [false; 4],
-            false => walkers::held_back(&self.walk.load_file, pads[0].actions),
-        };
+        // only while he's joined and on them (openspec AU.1).
+        if self.minion.is_none() || self.off.is_some() {
+            pads[0].actions = [false; 4];
+        }
         self.world.read_pads(pads);
         self.vm.set_activity(&self.world.activity(&mut self.bench));
         // Off his scripts he's off the player loop's joined run, as on the
@@ -683,7 +684,15 @@ impl W {
         let input = guac_motion::hero::Input::stick(self.bench.pads[0].stick, self.bench.view);
         for hero in self.bench.heroes.values_mut() {
             match self.off {
-                None => hero.step_engine(&self.bench.world, dt, &[HERO_BODY], Surfaces::NONE),
+                None => self.world.step_scripted(
+                    self.hero,
+                    hero,
+                    &self.bench.world,
+                    input.stick.push(input.view_heading),
+                    dt,
+                    &[HERO_BODY],
+                    Surfaces::NONE,
+                ),
                 Some(_) => {
                     hero.step_among(&self.bench.world, &input, dt, &[HERO_BODY], Surfaces::NONE)
                 }
@@ -841,6 +850,9 @@ impl W {
                 .map(|p| p.obj)
         }) {
             self.world.set_palette_of(template, &palette);
+        }
+        if let Ok(rigs) = level_scripts::spawn_rigs(&l.dir, load, IrFormat::Ron) {
+            self.world.set_rigs(&l.files, unit, &rigs);
         }
         let walk = if load == "009_Eruptor" {
             Walk::measured(walkers::walker(load).unwrap())
@@ -6252,13 +6264,64 @@ fn sweep_one(l: &Level, load: &str) -> Fought {
     out
 }
 
-/// openspec AU.10: Pop Fizz and his red press their second attack and walk
-/// on. It reaches his beast, whose clips the TV doesn't hold, so his script
-/// would wait on a slide that never starts and leave him frozen for good;
-/// the TV holds the attack back (`walkers::HELD_ATTACKS`) until AU.37.
+/// His beast's clone while it stands (openspec AU.37).
+fn beast(w: &W) -> Option<Handle> {
+    w.world
+        .clones()
+        .into_iter()
+        .find(|&h| !w.world.removed(h) && w.world.name(h).contains("Hulk_Form"))
+}
+
+/// One step of the pad: `stick` held, `action` down if any.
+fn pad_step(w: &mut W, stick: Stick, action: Option<usize>) {
+    let mut actions = [false; 4];
+    if let Some(a) = action {
+        actions[a] = true;
+    }
+    w.bench.pads[0] = Pad {
+        stick,
+        actions,
+        connected: true,
+    };
+    w.step().unwrap_or_else(|h| panic!("{h}"));
+}
+
+/// The stick round the compass for `steps`, what he walked; his first attack
+/// thrown every second with `punching`.
+fn walks(w: &mut W, steps: u32, punching: bool) -> f32 {
+    let (mut walked, mut at) = (0.0, w.hero().pivot);
+    for s in 0..steps {
+        let stick = match (s / 90) % 2 {
+            0 => Stick::new(0.7, -0.7),
+            _ => Stick::new(-0.7, 0.7),
+        };
+        let press = (punching && s % 60 < HELD).then_some(0);
+        pad_step(w, stick, press);
+        walked += w.hero().pivot.distance(at);
+        at = w.hero().pivot;
+    }
+    walked
+}
+
+/// Into the beast: his second attack pressed, until its clone stands.
+fn into_beast(w: &mut W, load: &str) {
+    for s in 0..180 {
+        pad_step(w, Stick::CENTRED, (s < HELD).then_some(1));
+        if beast(w).is_some() {
+            return;
+        }
+    }
+    panic!("{load}: no beast");
+}
+
+/// openspec AU.37: Pop Fizz and his red go into the beast on their second
+/// attack, walk and throw punches in it on the stick, its clone reading its
+/// own clips, and come back and walk on, with or without a punch cut short by
+/// the meter running out (which leaves him off the scripts' movers, the
+/// engine walking him: `ScriptWorld::engine_walk`, the review's 0.00 m).
 #[test]
 #[ignore = "reads the Giants dump"]
-fn pop_fizz_walks_on_after_his_second_attack_is_pressed() {
+fn pop_fizz_goes_into_his_beast_and_back_and_walks_on() {
     let l = Level::open();
     let o = Opts {
         fight: true,
@@ -6267,29 +6330,92 @@ fn pop_fizz_walks_on_after_his_second_attack_is_pressed() {
     for load in ["108_Alchemist", "108_Alchemist_Red"] {
         let mut w =
             W::joined(&l, load, o, 120).unwrap_or_else(|b| panic!("{load}: {}: {}", b.1, b.2));
-        for s in 0..300 {
-            let mut actions = [false; 4];
-            actions[1] = s < HELD;
-            w.bench.pads[0] = Pad {
-                actions,
-                connected: true,
-                ..Pad::default()
-            };
-            w.step().unwrap_or_else(|h| panic!("{load}: {h}"));
+        for punching in [false, true] {
+            into_beast(&mut w, load);
+            let clone = beast(&w).unwrap();
+            let template = w.world.actor(clone).and_then(|a| a.template);
+            let lengths = template.and_then(|t| w.world.palette(t)).map(<[f32]>::len);
+            assert_eq!(lengths, Some(118), "{load}: its palette");
+            // The change itself, the controller off, then the stick his.
+            let mut started = 0;
+            while w.world.actor(w.hero).map(|a| a.tint & 0xff) != Some(0) {
+                pad_step(&mut w, Stick::CENTRED, None);
+                started += 1;
+                assert!(started < 240, "{load}: no change");
+            }
+            for _ in 0..150 {
+                pad_step(&mut w, Stick::CENTRED, None);
+            }
+            let in_it = walks(&mut w, 150, punching);
+            println!(
+                "{load}, punching {punching}: {in_it:.2} m in it, {} clips on it, load {:.2}",
+                w.world
+                    .sequences()
+                    .iter()
+                    .filter(|s| s.actor == clone && s.plays())
+                    .count(),
+                load1()
+            );
+            assert!(in_it > 3.0, "{load}, punching {punching}: {in_it} m in it");
+            let mut lasts = 0;
+            while beast(&w).is_some() {
+                walks(&mut w, 1, punching);
+                lasts += 1;
+                assert!(lasts < 900, "{load}: the beast never ended");
+            }
+            assert_eq!(
+                w.world.actor(w.hero).map(|a| a.tint & 0xff),
+                Some(0xff),
+                "{load}: himself again"
+            );
+            let after = walks(&mut w, 180, false);
+            println!("{load}, punching {punching}: {after:.2} m after it");
+            assert!(after > 3.0, "{load}, punching {punching}: {after} m after");
+            let thrown = walks(&mut w, 180, true);
+            assert!(
+                thrown > 1.0,
+                "{load}, punching {punching}: {thrown} m throwing"
+            );
+            // The meter fills back.
+            for _ in 0..720 {
+                pad_step(&mut w, Stick::CENTRED, None);
+            }
         }
-        let from = w.hero().pivot;
-        for _ in 0..45 {
-            w.bench.pads[0] = Pad {
-                stick: Stick::new(0.7, -0.7),
-                connected: true,
-                ..Pad::default()
-            };
-            w.step().unwrap_or_else(|h| panic!("{load}: {h}"));
-        }
-        let moved = w.hero().pivot.distance(from);
-        println!("{load}: walked {moved:.2} m after it, load {:.2}", load1());
-        assert!(moved > 2.0, "{load}: {moved} m");
     }
+}
+
+/// openspec AU.37: his figure off the portal while he's the beast takes the
+/// beast off with him, and the next hero in, then him again, go on.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn pop_fizz_swapped_out_as_the_beast_leaves_no_beast_standing() {
+    let l = Level::open();
+    let o = Opts {
+        fight: true,
+        ..PLAY
+    };
+    let load = "108_Alchemist";
+    let mut w = W::joined(&l, load, o, 120).unwrap_or_else(|b| panic!("{load}: {}: {}", b.1, b.2));
+    into_beast(&mut w, load);
+    for _ in 0..240 {
+        pad_step(&mut w, Stick::CENTRED, None);
+    }
+    w.swap_in(&l, "000_AirDragon")
+        .unwrap_or_else(|h| panic!("{h}"));
+    for _ in 0..120 {
+        pad_step(&mut w, Stick::CENTRED, None);
+    }
+    assert_eq!(beast(&w), None, "a beast standing with nobody in it");
+    let next = walks(&mut w, 120, false);
+    assert!(next > 2.0, "the next hero: {next} m");
+    w.swap_in(&l, load).unwrap_or_else(|h| panic!("{h}"));
+    for _ in 0..120 {
+        pad_step(&mut w, Stick::CENTRED, None);
+    }
+    let back = walks(&mut w, 120, false);
+    assert!(back > 2.0, "him again: {back} m");
+    into_beast(&mut w, load);
+    println!("into the beast again; load {:.2}", load1());
 }
 
 /// AH.29's sweep (openspec AU.1's routing, AU.2's measure): every modelled

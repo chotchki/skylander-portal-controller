@@ -119,6 +119,9 @@ pub enum Aim {
     From(Vec3),
     /// `turn to`: a facing, degrees, to turn toward this frame.
     Face(f32),
+    /// A stick's push: a heading, degrees, at a strength, 0 to 1 (openspec
+    /// AU.37: a hero off the scripts' movers, whom the engine walks).
+    Along { heading: f32, strength: f32 },
 }
 
 /// Within this of the destination on both axes, the input's heading is the
@@ -159,6 +162,7 @@ pub fn input(aim: Aim, at: Vec3, facing: f32) -> (f32, f32, f32) {
     match aim {
         Aim::Still => (facing, 0.0, facing),
         Aim::Face(f) => (facing, 0.0, f),
+        Aim::Along { heading, strength } => (heading, strength, facing),
         Aim::To(p) | Aim::From(p) => {
             let (mut dx, mut dz) = (p.x - at.x, p.z - at.z);
             if dx.abs() > AT_DESTINATION || dz.abs() > AT_DESTINATION {
@@ -356,6 +360,32 @@ mod tests {
         assert_eq!((h, s), (30.0, 1.0));
         assert_eq!(input(Aim::Still, at, 30.0), (30.0, 0.0, 30.0));
         assert_eq!(input(Aim::Face(120.0), at, 30.0), (30.0, 0.0, 120.0));
+    }
+
+    /// AU.37: a stick's push is its heading at its own strength, the facing
+    /// left to turn toward it, and its strength cuts the top speed.
+    #[test]
+    fn a_stick_gives_its_heading_at_its_strength() {
+        let along = Aim::Along {
+            heading: 90.0,
+            strength: 0.5,
+        };
+        assert_eq!(input(along, Vec3::ZERO, 30.0), (90.0, 0.5, 30.0));
+        let mut f = still(90.0);
+        for _ in 0..120 {
+            f = step(
+                f,
+                &Physics::CHOMPY,
+                along,
+                Vec3::ZERO,
+                Some(Vec3::Y),
+                true,
+                DT,
+            );
+        }
+        let top = Physics::CHOMPY.ground_max_speed * FOOT * 0.5;
+        assert!((f.velocity.length() - top).abs() < 1e-3, "{f:?}");
+        assert!(f.velocity.x > 0.0 && f.velocity.z.abs() < 1e-3, "{f:?}");
     }
 
     #[test]

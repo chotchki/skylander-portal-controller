@@ -101,8 +101,12 @@ impl Walk {
     }
 
     /// Toward the nearest of `foes` awake and within a storey of him, his
-    /// first attack mashed within 5 m, until `over`.
+    /// first attack mashed within 5 m, until `over`; pressed up against one
+    /// and getting nowhere (a lob at arm's length goes over it, the mouth of
+    /// its closet holding it where it stands) he backs off a way, as a hand
+    /// on the pad would.
     fn fight(&mut self, foes: &[Handle], over: impl Fn(&Walk) -> bool, steps: u32) {
+        let mut pressed = 0;
         for k in 0..steps {
             if over(self) {
                 return;
@@ -119,6 +123,16 @@ impl Walk {
                 continue;
             };
             let far = (near.x - me.x).hypot(near.z - me.z);
+            pressed = if far <= 2.5 { pressed + 1 } else { 0 };
+            if pressed > 240 {
+                let away = [me.x + (me.x - near.x) * 4.0, me.z + (me.z - near.z) * 4.0];
+                for _ in 0..30 {
+                    let s = self.stick_at(away, 1.0);
+                    self.step(s, [false; 4]);
+                }
+                pressed = 0;
+                continue;
+            }
             // Close in full, then turn to it on a touch of the stick.
             let push = if far > 2.5 { 1.0 } else { 0.35 };
             let s = self.stick_at([near.x, near.z], push);

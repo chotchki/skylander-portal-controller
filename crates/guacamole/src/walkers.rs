@@ -75,23 +75,6 @@ pub const WALKERS: &[Walker] = &[Walker {
 /// TV's (`play::DROP`) and the disc tests' one number.
 pub const REPLACEMENT_DROP: f32 = 0.40;
 
-/// The attacks the TV holds back, each a load file and its action (0 the
-/// first): Pop Fizz's second (and his red's) turns him into a beast the TV
-/// can neither time nor draw, so pressed it would leave him frozen for good
-/// (openspec AU.10; stand-in ledger: `held-attacks`).
-pub const HELD_ATTACKS: [(&str, usize); 2] = [("108_Alchemist", 1), ("108_Alchemist_Red", 1)];
-
-/// The attack buttons `load_file`'s scripts read: `actions` less
-/// [`HELD_ATTACKS`].
-pub fn held_back(load_file: &str, mut actions: [bool; 4]) -> [bool; 4] {
-    for (file, action) in HELD_ATTACKS {
-        if file.eq_ignore_ascii_case(load_file) {
-            actions[action] = false;
-        }
-    }
-    actions
-}
-
 /// `None` for a character that keeps the portal view.
 pub fn walker(load_file: &str) -> Option<&'static Walker> {
     WALKERS.iter().find(|w| w.load_file == load_file)
@@ -514,16 +497,6 @@ pub struct Kept {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_held_attacks_are_each_ones_own_and_no_one_elses() {
-        let all = [true; 4];
-        for file in ["108_Alchemist", "108_Alchemist_Red", "108_ALCHEMIST"] {
-            assert_eq!(held_back(file, all), [true, false, true, true], "{file}");
-        }
-        assert_eq!(held_back("009_Eruptor", all), all);
-        assert_eq!(held_back("108_Alchemist", [false; 4]), [false; 4]);
-    }
 
     #[test]
     fn eruptor_walks_on_his_live_numbers_and_the_rest_on_their_scripts() {

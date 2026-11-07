@@ -66,6 +66,31 @@ pub fn level_palettes(
         .collect())
 }
 
+/// What `load_file`'s skinned spawns play off the extract (openspec AU.37):
+/// his beast's or his knives' palette, read when he's placed as the rest of
+/// his spawns are ([`crate::scripts::ScriptWorld::set_rigs`]). Why not when
+/// the part isn't there or is another character's.
+pub fn spawn_rigs(
+    dir: &Path,
+    load_file: &str,
+    ir: IrFormat,
+) -> Result<guac_ir::spawn::SpawnRigs, String> {
+    let archive = guac_extract::scripts::character_archive(load_file);
+    let rel = ir.spawn_rig_path(&archive);
+    let bytes = std::fs::read(dir.join(&rel)).map_err(|e| format!("{rel}: {e}"))?;
+    let r: guac_ir::spawn::SpawnRigs = match ir {
+        IrFormat::Ron => std::str::from_utf8(&bytes)
+            .map_err(|e| e.to_string())
+            .and_then(|t| guac_ir::from_ron(t).map_err(|e| e.to_string())),
+        IrFormat::Postcard => guac_ir::from_postcard(&bytes).map_err(|e| e.to_string()),
+    }
+    .map_err(|e| format!("{rel}: {e}"))?;
+    if r.archive != archive {
+        return Err(format!("{rel} holds {}'s rigs", r.archive));
+    }
+    Ok(r)
+}
+
 /// Each slot's clip length at 100 %, 0 where a slot holds no clip; a clip
 /// past one Havok block its whole length (openspec AS.78: the animator
 /// cameras' shots last it).

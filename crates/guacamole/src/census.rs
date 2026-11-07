@@ -735,6 +735,36 @@ pub const CREATURES: &[Row] = &[
 /// Their glowing parts' level glow masks past [`HEROES_GLOW`]'s.
 pub const CREATURES_GLOW: &[Row] = &[row(0x3c23, 0x3423, ADD, true, false, false, 3, true, true)];
 
+/// Every key the skinned models in the walkers' own archives draw on a
+/// skinned mesh past [`HEROES`], [`TURNTABLE`] and [`CREATURES`] (openspec
+/// AU.37: Pop Fizz's beast, Stealth Elf's knives; each opaque one blending as
+/// it fades, `creature_models::keys`), asked with [`WALKER_SPAWNS`].
+pub const WALKER_CREATURES: &[Row] = &[
+    row(0x0400, 0x0400, A, false, true, false, 1, true, false),
+    row(0x0424, 0x1424, O, true, true, false, 1, true, true),
+    row(0x0424, 0x1424, A, true, true, false, 1, true, true),
+    row(0x3c00, 0x2400, ADD, true, false, false, 1, true, false),
+    row(0x3c01, 0x3401, A, false, true, false, 2, true, true),
+    row(0x3c04, 0x3404, A, true, false, false, 1, true, true),
+    row(0x3c1c, 0x241c, A, true, false, false, 1, true, false),
+    row(0x3c20, 0x3420, O, true, false, false, 1, true, true),
+    row(0x3c20, 0x3420, A, true, false, false, 1, true, true),
+    row(0x3c20, 0x3420, ADD, false, false, false, 1, true, true),
+    row(0x3c24, 0x3424, O, true, false, false, 1, true, true),
+    row(0x3c24, 0x3424, A, true, false, false, 1, true, true),
+    row(0x3c25, 0x3425, O, true, false, false, 2, true, true),
+    row(0x3c25, 0x3425, A, true, false, false, 2, true, true),
+    row(0x3c2c, 0x342c, A, true, false, false, 1, true, true),
+];
+
+/// Their glowing parts' level glow masks past [`HEROES_GLOW`]'s and
+/// [`CREATURES_GLOW`]'s.
+pub const WALKER_CREATURES_GLOW: &[Row] = &[
+    row(0x3c00, 0x2400, ADD, true, false, false, 1, true, false),
+    row(0x3c04, 0x3404, O, true, false, false, 1, true, true),
+    row(0x3c20, 0x3420, ADD, false, false, false, 1, true, true),
+];
+
 /// Every key the particles of what the fight's scripts spawn draw (openspec
 /// AH.87) that [`LEVEL`], [`LEVEL_PROPS`] and [`SPAWNS`] don't hold: the
 /// extract's particle part's generators (`global.bld`'s and each fighter's
@@ -834,6 +864,8 @@ pub fn level_keys() -> Vec<WarmKey> {
 pub fn walker_keys() -> Vec<WarmKey> {
     let mut out = keys(WALKER_SPAWNS, false);
     out.extend(glow_keys(WALKER_GLOW, false));
+    out.extend(keys(WALKER_CREATURES, true));
+    out.extend(glow_keys(WALKER_CREATURES_GLOW, true));
     out
 }
 
@@ -986,6 +1018,7 @@ mod tests {
             (HEROES, true, 33),
             (HEROES_STATIC, false, 23),
             (CREATURES, true, 21),
+            (WALKER_CREATURES, true, 15),
             (PARTICLES, false, 1),
         ] {
             assert_eq!(rows.len(), n);
@@ -1009,6 +1042,7 @@ mod tests {
             (HEROES_GLOW, true, 17),
             (HEROES_GLOW_STATIC, false, 0),
             (CREATURES_GLOW, true, 1),
+            (WALKER_CREATURES_GLOW, true, 3),
             (PARTICLES_GLOW, false, 1),
         ] {
             assert_eq!(rows.len(), n);
@@ -1038,11 +1072,18 @@ mod tests {
         // its glow pass and a level's without.
         assert_eq!(
             every.len(),
-            33 + 24 + 67 + 124 + 86 + 33 + 23 + 78 + 17 + 21 + 1 + 1 + 1 + 1 + 4
+            33 + 24 + 67 + 124 + 86 + 33 + 23 + 78 + 17 + 21 + 1 + 1 + 1 + 1 + 4 + 15 + 3
         );
         assert_eq!(
             turntable_keys().len(),
             TURNTABLE.len() + TURNTABLE_STATIC.len()
+        );
+        assert_eq!(
+            walker_keys().len(),
+            WALKER_SPAWNS.len()
+                + WALKER_GLOW.len()
+                + WALKER_CREATURES.len()
+                + WALKER_CREATURES_GLOW.len()
         );
         assert_eq!(
             level_keys().len(),

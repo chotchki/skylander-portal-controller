@@ -433,6 +433,8 @@ pub(crate) struct HeroModel {
     clips: Arc<HeroClips>,
     palette: Option<Arc<Palette>>,
     nodes: Option<Arc<AttachNodes>>,
+    /// What his skinned spawns play (openspec AU.37).
+    rigs: Option<Arc<guac_ir::spawn::SpawnRigs>>,
 }
 
 /// `load`'s model, its hero side, its palette and its attach nodes, on a
@@ -460,6 +462,13 @@ fn read_hero_model(
             None
         }
     };
+    let rigs = match guacamole::level_scripts::spawn_rigs(&shelf.dir, load, shelf.ir) {
+        Ok(r) => Some(Arc::new(r)),
+        Err(why) => {
+            warn!(load_file = load, reason = %why, "his spawn rigs didn't read: what his scripts clone plays no clip");
+            None
+        }
+    };
     let solid = hero.solid;
     Ok(HeroModel {
         loaded,
@@ -467,6 +476,7 @@ fn read_hero_model(
         clips: Arc::new(HeroClips::of(hero)),
         palette,
         nodes,
+        rigs,
     })
 }
 
@@ -2001,6 +2011,7 @@ fn enter(
     };
     let clips = read.clips.clone();
     let palette = read.palette.clone();
+    let rigs = read.rigs.clone();
     let rig = read.nodes.clone().map(|nodes| hero_scripts::HandRig {
         model: drawn.model.clone(),
         clips: clips.clone(),
@@ -2026,6 +2037,7 @@ fn enter(
         hero_entity,
         walker,
         palette.clone(),
+        rigs,
         rig,
         s.source.as_deref(),
         c.slot,

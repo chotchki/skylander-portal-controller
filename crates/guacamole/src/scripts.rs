@@ -614,6 +614,9 @@ pub struct ScriptWorld {
     /// to` with no creature's body (openspec AS.52,
     /// [`crate::script_engine::SceneWalk`]), by handle.
     pub(crate) scene_walks: HashMap<Handle, crate::script_engine::SceneWalk>,
+    /// The heroes whose walk a script set this step (openspec AU.37): the
+    /// engine's own model leaves it as written ([`ScriptWorld::engine_walk`]).
+    pub(crate) walk_written: std::collections::HashSet<Handle>,
     /// What the static member being read is read under ([`Host::told`]):
     /// the running placement, or the object a tell's block tells.
     pub(crate) told: Value,
@@ -921,6 +924,7 @@ impl ScriptWorld {
             walk_clones: Default::default(),
             intro_held: None,
             scene_walks: HashMap::new(),
+            walk_written: std::collections::HashSet::new(),
             told: Value::Null,
             interface: None,
             warps: Vec::new(),
@@ -1656,6 +1660,19 @@ impl ScriptWorld {
         self.set_clip_info(template, clip_infos(palette));
     }
 
+    /// `rigs`' palettes for the templates of `unit` (a character's own file)
+    /// naming each one's model (openspec AU.37): what a script reads under a
+    /// `control` of a clone of them, and how long each clip it starts runs.
+    pub fn set_rigs(&mut self, files: &Files, unit: u16, rigs: &guac_ir::spawn::SpawnRigs) {
+        for rig in &rigs.rigs {
+            for p in files.placed.iter().filter(|p| {
+                p.obj.unit == unit && p.model.as_deref() == Some(rig.palette.owner.as_str())
+            }) {
+                self.set_palette_of(p.obj, &rig.palette);
+            }
+        }
+    }
+
     /// Slot `slot` of `template`'s palette's animation info as its file
     /// holds it: a base clip with no layered bit where none was given.
     pub fn clip_info(&self, template: Obj, slot: u32) -> ClipInfo {
@@ -1770,6 +1787,7 @@ impl ScriptWorld {
     /// scripts' ticks: the sequences playing and the actors they set going
     /// moving.
     pub fn advance(&mut self, dt: f32, engine: &mut dyn Engine) {
+        self.walk_written.clear();
         for s in &mut self.sequences {
             s.advance(dt);
         }
@@ -5408,6 +5426,49 @@ mod tests {
     /// a placement that's one does; a clone of anything else with none.
     /// The files list every emitter by name, and a template's name reads
     /// an emitter's too.
+    #[test]
+    fn a_clone_of_a_walkers_template_reads_its_rigs_clips() {
+        const BEAST: Obj = Obj { unit: 4, index: 12 };
+        const HIS_OTHER: Obj = Obj { unit: 4, index: 13 };
+        const ELSEWHERE: Obj = Obj { unit: 5, index: 12 };
+        let identity = guac_ir::DumpIdentity {
+            title_id: "BLUS30968".into(),
+            app_ver: "01.00".into(),
+            manifest_hash: guac_ir::Sha256([7; 32]),
+        };
+        let mut palette = crate::picks::tests::palette();
+        palette.owner = "beast.mdl".into();
+        let placed = |obj: Obj, model: &str| {
+            let mut p = Placed::named(obj, "Beast", None, 2);
+            p.model = Some(model.to_owned());
+            p
+        };
+        let files = Files {
+            placed: vec![
+                placed(BEAST, "beast.mdl"),
+                placed(HIS_OTHER, "bottle.mdl"),
+                placed(ELSEWHERE, "beast.mdl"),
+            ],
+            ..Files::default()
+        };
+        let handles = headless_handles(&files);
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let rigs = guac_ir::spawn::SpawnRigs {
+            identity,
+            archive: "character/108_alchemist.bld".into(),
+            rigs: vec![guac_ir::spawn::SpawnRig {
+                palette,
+                nodes: None,
+            }],
+            refused: Vec::new(),
+        };
+        world.set_rigs(&files, 4, &rigs);
+        let walk = world.palette(BEAST).map(|p| p[1]).expect("its palette");
+        assert!((walk - 1.0667).abs() < 1e-3, "its clip's length: {walk}");
+        assert_eq!(world.palette(HIS_OTHER), None, "another model of his file");
+        assert_eq!(world.palette(ELSEWHERE), None, "another file's");
+    }
+
     #[test]
     fn a_clone_of_an_emitter_names_it_and_nothing_else_does() {
         const TRAIL: Obj = Obj { unit: 4, index: 12 };

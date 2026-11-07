@@ -482,6 +482,20 @@ impl IrFormat {
         )
     }
 
+    /// The spawn rigs of a character `archive`,
+    /// `spawn_rigs/<stem>.<ron|postcard>` (openspec AU.37).
+    pub fn spawn_rig_path(self, archive: &str) -> String {
+        let ext = match self {
+            Self::Ron => "ron",
+            Self::Postcard => "postcard",
+        };
+        format!(
+            "{}/{}.{ext}",
+            crate::scripts::SPAWN_RIG_DIR,
+            crate::scripts::stem(archive)
+        )
+    }
+
     /// A level's part, `levels/<archive>/<part>.<ron|postcard>` (AG.15).
     pub fn level_path(self, level: &str, part: &str) -> String {
         let ext = match self {

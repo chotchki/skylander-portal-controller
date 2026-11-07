@@ -337,6 +337,40 @@ fn spawn_models_are_every_placements_but_the_fighters_body() {
     assert!(r.ir.props.is_empty() && r.textures.is_empty());
 }
 
+/// AU.37: a character archive's rigs are its skinned models' past his body,
+/// each with its palette by the slots its scripts play and its model's path
+/// as the spawn models part names it; static models have none.
+#[test]
+fn spawn_rigs_are_every_skinned_model_but_the_fighters_body() {
+    let bytes: &'static [u8] = Vec::leak(model::character(&model::attached()));
+    let igz = Igz::parse(bytes).unwrap();
+    let archive = "character/009_eruptor.bld";
+    let hero = body(&igz, archive);
+    let r = spawn_rigs(&igz, archive, identity(), hero).unwrap();
+    assert_eq!((r.archive.as_str(), r.identity), (archive, identity()));
+    assert!(r.rigs.is_empty() && r.refused.is_empty(), "{:?}", r.refused);
+    let all = spawn_rigs(&igz, archive, identity(), None).unwrap();
+    let [rig] = &all.rigs[..] else {
+        panic!("{:?}", all.rigs.len());
+    };
+    assert_eq!(rig.palette.owner, "Models/Characters/Eruptor/Eruptor.mdl");
+    assert!(rig.palette.slots > 0 && !rig.palette.entries.is_empty());
+    assert_eq!(
+        rig.nodes.as_ref().map(|n| n.load_file.as_str()),
+        Some("Models/Characters/Eruptor/Eruptor.mdl"),
+        "its attach list by the same path"
+    );
+    // The rigs come from the characters' archives, not `global.bld`'s.
+    let walkers = ["016_Spyro".to_owned()];
+    assert_eq!(
+        rig_archives_with(&walkers),
+        [
+            character_archive(FIGHTERS[0]),
+            character_archive("016_Spyro")
+        ]
+    );
+}
+
 /// AH.39: models whose techniques name an effect of their own file (as
 /// `global.bld`'s do) read with that file's own effects exported as
 /// tfbmulti2, each as it reads importing it; without them each is refused
@@ -411,7 +445,7 @@ fn spawn_models_naming_their_files_own_effects_read_through_its_exports() {
 }
 
 #[test]
-fn complete_wants_both_parts_and_the_walkers_list() {
+fn complete_wants_the_three_parts_and_the_walkers_list() {
     let mut m: Manifest = serde_json::from_value(serde_json::json!({
         "extractor": "0", "layout": 4, "ir_version": 5,
         "identity": identity(), "source_dir": "/d", "complete": true,
@@ -422,12 +456,17 @@ fn complete_wants_both_parts_and_the_walkers_list() {
     m.parts.insert(SCRIPTS.into(), Vec::new());
     assert!(!complete(&m), "the spawn models missing");
     m.parts.insert(SPAWNS.into(), Vec::new());
+    m.parts.insert(SPAWN_RIGS.into(), Vec::new());
     // A scripts part made before the walkers has no list (AG.27): the
     // start isn't current, so the part resumes alone.
     assert!(!complete(&m), "the walkers' list missing");
     m.parts
         .insert(SCRIPTS.into(), vec![WALKERS_FILE.to_owned()]);
     assert!(complete(&m));
+    // AU.37: an extract made before the spawn rigs resumes for them.
+    let rigs = m.parts.remove(SPAWN_RIGS).unwrap();
+    assert!(!complete(&m), "the spawn rigs missing");
+    m.parts.insert(SPAWN_RIGS.into(), rigs);
     // AU.1: once the scripts part holds a walker, the spawn models part
     // holds his models too, in either IR, or the start resumes for it: an
     // extract made before AU.1 read only the base's.
@@ -450,6 +489,11 @@ fn complete_wants_both_parts_and_the_walkers_list() {
         .get_mut(SPAWNS)
         .unwrap()
         .push("spawns/016_spyro.postcard".into());
+    assert!(!complete(&m), "the walker's spawn rigs missing");
+    m.parts.insert(
+        SPAWN_RIGS.into(),
+        vec!["spawn_rigs/016_spyro.postcard".into()],
+    );
     assert!(complete(&m));
     m.parts.get_mut(SPAWNS).unwrap()[2] = "spawns/016_spyro_dark.ron".into();
     assert!(!complete(&m), "another walker's file isn't his");

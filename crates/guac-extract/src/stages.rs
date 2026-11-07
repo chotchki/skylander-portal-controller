@@ -301,6 +301,9 @@ pub struct ScriptStage {
     /// Spawn models read this run, and those refused.
     pub props: usize,
     pub refused_props: Vec<(String, String)>,
+    /// Spawn rigs read this run, and those refused (openspec AU.37).
+    pub rigs: usize,
+    pub refused_rigs: Vec<(String, String)>,
     /// The screens' part (AS.53, [`crate::screens`]), counted apart from
     /// the two above: read this run, or kept; its entries written or kept,
     /// the archives the dump lacks with why, and its files (not in
@@ -935,6 +938,53 @@ pub fn script_stage(
                     stage.refused_props.extend(refused);
                 }
                 dir.record_part(scripts::SPAWNS, files)?;
+                stage.parts_read += 1;
+            }
+        }
+    }
+    // What each character's skinned spawns play (openspec AU.37).
+    let archives = scripts::rig_archives_with(&listed);
+    let irs: Vec<String> = archives.iter().map(|a| ir.spawn_rig_path(a)).collect();
+    if dir.part_holds(scripts::SPAWN_RIGS, &irs)? {
+        let recorded = dir.manifest().parts[scripts::SPAWN_RIGS].clone();
+        count_kept(dir, &recorded, &mut stage.spawn_files);
+        stage.parts_kept += 1;
+    } else {
+        let mut read = Vec::with_capacity(archives.len());
+        let mut failed = None;
+        for (archive, rel) in archives.iter().zip(&irs) {
+            let one = entry(archive).and_then(|bytes| {
+                let igz = guac_formats::igz::Igz::parse(&bytes).map_err(|e| e.to_string())?;
+                let body = scripts::body(&igz, archive);
+                let r = scripts::spawn_rigs(&igz, archive, identity.clone(), body)?;
+                let refused: Vec<(String, String)> = r
+                    .refused
+                    .iter()
+                    .map(|p| (format!("{archive}: {}", p.path), p.reason.clone()))
+                    .collect();
+                let rigs = r.rigs.len();
+                let bytes = ir.encode(&r, dir, rel).map_err(|e| e.to_string())?;
+                Ok((rigs, refused, bytes))
+            });
+            match one {
+                Ok(r) => read.push(r),
+                Err(reason) => {
+                    failed = Some((archive.clone(), reason));
+                    break;
+                }
+            }
+        }
+        match failed {
+            Some((archive, reason)) => fail(&mut stage, scripts::SPAWN_RIGS, &archive, reason),
+            None => {
+                let mut files = Vec::with_capacity(irs.len());
+                for ((rigs, refused, bytes), rel) in read.into_iter().zip(&irs) {
+                    put(dir, rel, &bytes, &mut stage.spawn_files)?;
+                    files.push(rel.clone());
+                    stage.rigs += rigs;
+                    stage.refused_rigs.extend(refused);
+                }
+                dir.record_part(scripts::SPAWN_RIGS, files)?;
                 stage.parts_read += 1;
             }
         }

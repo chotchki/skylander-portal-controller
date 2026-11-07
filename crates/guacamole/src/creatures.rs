@@ -268,9 +268,28 @@ fn playing_clips<'c>(
     }
 }
 
+/// What a drawn creature's or skinned clone's other clips are laid over: the
+/// clips its locomotion on the VM weights on it (openspec AU.37: Pop Fizz's
+/// beast, the scripts' `Minion - Define Locomotion States` run on the
+/// clone), each at its time and share, else its idle at `seconds`.
+fn base_clips<'c>(
+    c: &'c DrawnCreature,
+    world: &ScriptWorld,
+    seconds: f64,
+) -> Vec<(&'c guac_ir::clip::Clip, f64, f64)> {
+    let moving = c.palette.as_deref().map_or_else(Vec::new, |p| {
+        guacamole::picks::locomotion(world, c.actor, p)
+    });
+    if moving.is_empty() {
+        vec![(&c.model.idle, seconds, 1.0)]
+    } else {
+        moving
+    }
+}
+
 /// A drawn creature's or skinned clone's attach nodes as [`pose_creatures`]
-/// poses its model (openspec AH.138): its idle at `seconds` with the clips
-/// its scripts play laid over it, each node on its joint, in the frame
+/// poses its model (openspec AH.138): [`base_clips`] at `seconds` with the
+/// clips its scripts play laid over it, each node on its joint, in the frame
 /// [`ScriptWorld::set_nodes`] takes (its own, +Z its facing) at its scale,
 /// its tilt and roll taken (a clone turns by all three, AG.150). None
 /// without an attach list.
@@ -282,7 +301,7 @@ pub(crate) fn creature_nodes(
 ) -> Option<Vec<guacamole::script_engine::NodePose>> {
     let nodes = c.nodes.as_deref()?;
     let over = playing_clips(c, world);
-    let base = [(&c.model.idle, seconds, 1.0)];
+    let base = base_clips(c, world, seconds);
     let posed = guacamole::hands::posed(&c.model.skeleton, nodes, &base, &over, 1.0);
     // Drawn turned by `placed`'s rotation; read turned by its facing alone.
     let drawn = placed(actor).rotation;
@@ -585,7 +604,7 @@ fn tint_creatures(
     }
 }
 
-/// Each drawn creature posed: its idle on the TV's clock since it was
+/// Each drawn creature posed: [`base_clips`] on the TV's clock since it was
 /// drawn, with the clips its scripts play on it laid over, oldest first,
 /// each at its time out of its palette.
 fn pose_creatures(
@@ -597,11 +616,8 @@ fn pose_creatures(
     for c in &creatures {
         let seconds = time.elapsed().saturating_sub(c.since).as_secs_f64();
         let over = playing_clips(c, &world);
-        let pose = guacamole::character::mesh::blended_over(
-            &c.model,
-            &[(&c.model.idle, seconds, 1.0)],
-            &over,
-        );
+        let base = base_clips(c, &world, seconds);
+        let pose = guacamole::character::mesh::blended_over(&c.model, &base, &over);
         for (joint, p) in c.joints.iter().zip(pose) {
             if let Ok(mut t) = transforms.get_mut(*joint)
                 && *t != p
