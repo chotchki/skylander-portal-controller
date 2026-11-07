@@ -793,6 +793,94 @@ fn after_return_a_family_reads_its_callees_returned_parameter() {
 }
 
 #[test]
+fn an_embedder_adds_to_a_set_as_a_combine_does() {
+    // Openspec AS.139: once, and only to a set.
+    let p = program(|w| {
+        let things = w.variable("things", "ScriptSet", None);
+        frame(
+            w,
+            |_| {},
+            |_| {},
+            |_| {},
+            |w| {
+                let b = w.behaviour("idle");
+                add_to(w, things, &[El::Named("SpriteInfo", "A")]);
+                w.end_block(b);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "Thing", 0);
+    vm.tick(id, &mut Bare).unwrap_or_else(|h| panic!("{h}"));
+    let set = vm.local(id, "things").expect("the set");
+    assert_eq!(vm.set(set).map(<[Value]>::len), Some(1));
+    assert!(vm.set_add(set, Value::Int(5)));
+    assert!(vm.set_add(set, Value::Int(5)));
+    assert_eq!(vm.set(set).map(<[Value]>::len), Some(2));
+    assert!(!vm.set_add(Value::Int(1), Value::Int(5)), "no set");
+}
+
+#[test]
+fn a_nested_call_binds_what_an_open_specialization_returned() {
+    // Macros (openspec AS.139): after a specialization returns, a nested
+    // call's argument names the base's parameter: it reads the open
+    // specialization's frame, the nested use's own call on top of it, as
+    // Giants' `System - Check Level Objective Completed` hands a check's
+    // objective on to its on-complete macro.
+    let p = program(|w| {
+        let base = w.op(Class::DefineMacro, "Check");
+        let spec = w.op(Class::DefineMacroSpecialization, "Check Time");
+        let then = w.op(Class::DefineMacro, "On Complete");
+        let what = parameter(w, "what", base);
+        let got = parameter(w, "got", then);
+        frame(
+            w,
+            |_| {},
+            |_| {},
+            |w| {
+                let at = w.push(base);
+                let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
+                w.push(what);
+                let enter = w.flow(Class::FlowMacro);
+                w.push(enter);
+                w.close(iface);
+                w.end_block(at);
+                let np = w.stack(StackClass::MacroDefinitions, &[El::Local(base)]);
+                w.refer(spec, 0x38, np);
+                let at = w.push(spec);
+                let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
+                w.push(what);
+                let enter = w.flow(Class::FlowMacro);
+                w.push(enter);
+                w.close(iface);
+                w.end_block(at);
+                let at = w.push(then);
+                let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
+                w.push(got);
+                let enter = w.flow(Class::FlowMacro);
+                w.push(enter);
+                w.close(iface);
+                let r = w.rhs(INT, &[El::Local(got)]);
+                w.set(&[El::Member("test", "out")], r);
+                w.end_block(at);
+            },
+            |_| {},
+            |w| {
+                let b = w.behaviour("idle");
+                let five = w.int(5);
+                call_then(w, spec, &[("what", five)], |w| {
+                    let r = w.rhs(INT, &[El::Local(what)]);
+                    call_then(w, then, &[("got", r)], |_| {});
+                });
+                w.end_block(b);
+            },
+        );
+    });
+    let (vm, _) = run(&p, config(Mode::Strict, &["out"]), 1);
+    assert_eq!(cell(&vm, "out"), Some(Value::Int(5)));
+}
+
+#[test]
 fn a_behaviour_switch_applies_next_tick_or_this_tick_from_prescript() {
     for from_prescript in [false, true] {
         let p = program(|w| {

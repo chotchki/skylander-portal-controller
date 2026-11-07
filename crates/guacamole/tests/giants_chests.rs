@@ -10,6 +10,7 @@ use guac_motion::stick::Stick;
 use guac_script::{Handle, Mode, Value};
 use guac_server::saves::SaveValues;
 use guacamole::announcements;
+use guacamole::level_end::{ObjectiveKind, Status};
 use guacamole::script_engine::Pad;
 use guacamole::story_save::{self, Session};
 
@@ -116,6 +117,25 @@ impl Story {
         const F: [&str; 5] = ["completed", "chest 1", "chest 2", "chest 3", "chest 4"];
         self.run.with_host(|vm, host| {
             let args: Vec<(&str, Value)> = F.iter().map(|f| (*f, Value::Int(-1))).collect();
+            let (_, back) = vm
+                .call_with(None, "Save - Get/Adjust Level Saved Flags", &args, &F, host)
+                .unwrap();
+            F.into_iter()
+                .zip(back)
+                .map(|(f, v)| {
+                    let v = v.map(|v| vm.value(v)).and_then(|v| v.as_i32());
+                    (f, v.unwrap_or(-2))
+                })
+                .collect()
+        })
+    }
+
+    /// The level's two dares as the same macro reads them.
+    fn dare_flags(&mut self) -> Vec<(&'static str, i32)> {
+        const F: [&str; 2] = ["achieved target time", "achieved no lives lost"];
+        self.run.with_host(|vm, host| {
+            let mut args = vec![("completed", Value::Int(-1))];
+            args.extend(F.iter().map(|f| (*f, Value::Int(-1))));
             let (_, back) = vm
                 .call_with(None, "Save - Get/Adjust Level Saved Flags", &args, &F, host)
                 .unwrap();
@@ -323,6 +343,104 @@ fn a_chest_opens_pays_and_stays_opened() {
     );
 }
 
+/// The story levels past chapter 1 and 214, each holding chests and hat
+/// boxes.
+const LEVELS: [&str; 13] = [
+    "level_200",
+    "level_201",
+    "level_202_arkeyancopter",
+    "level_203_the_machine",
+    "level_204_choices",
+    "level_205_piratecards",
+    "level_206",
+    "level_207_arkus_adventure",
+    "level_208_ice",
+    "level_209_giantrobot",
+    "level_210_thevillage",
+    "level_211_final_level",
+    "level_215_enter_arkus",
+];
+
+/// The level's first ranged placement running `script`, by name and where
+/// it stands.
+fn first_ranged(s: &Story, script: &str) -> Option<(Handle, Vec3, String)> {
+    let mut found: Vec<_> = s
+        .run
+        .files
+        .placed
+        .iter()
+        .filter(|p| p.obj.unit == LEVEL && p.activity_state == 4 && p.range > 0.0)
+        .filter(|p| p.script.as_deref().is_some_and(|x| x.ends_with(script)))
+        .collect();
+    found.sort_by_key(|p| p.name.clone());
+    let p = found.first()?;
+    Some((
+        s.run.handles[&p.obj],
+        Vec3::from_array(p.position),
+        p.name.clone(),
+    ))
+}
+
+/// Mashes by `h` until it's gone or `steps` have run: the steps it took.
+fn mash_off(s: &mut Story, h: Handle, at: Vec3, steps: u32) -> Option<u32> {
+    s.run.put(at + Vec3::new(2.0, 1.0, 0.0), 0.0);
+    let start = s.run.steps;
+    while !s.run.world.removed(h) {
+        let k = s.run.steps - start;
+        if k > steps {
+            return None;
+        }
+        s.step(mash(k));
+    }
+    Some(s.run.steps - start)
+}
+
+/// openspec AU.39: every story level's chests and hat boxes on the TV's
+/// listing. Each level's first of each, a hero set down by it and △ mashed
+/// through: nothing stops, on what the level's own start leaves running. A
+/// chest's value is its level's (`Loot - Set Treasure Chest Value`), listed.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn every_levels_chest_and_hat_box_run_clean() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let mut bad = Vec::new();
+    for level in [CHAPTER_1, LEVEL_214].into_iter().chain(LEVELS) {
+        let t = std::time::Instant::now();
+        let mut s = Story::joined(level, Session::new(Some(HOST.into())));
+        let chest = first_ranged(&s, "/Chest.ai");
+        let (mut opened, mut value, mut taken) = (None, None, None);
+        if let Some((h, at, _)) = &chest {
+            s.run.put(*at + Vec3::new(2.0, 1.0, 0.0), 0.0);
+            for _ in 0..4 {
+                s.step([false; 4]);
+            }
+            opened = mash_off(&mut s, *h, *at, 1500);
+            value = s.local(*h, "coin amount");
+        }
+        let hat = first_ranged(&s, "/Hat_Pickup.ai");
+        if let Some((h, at, _)) = &hat {
+            taken = mash_off(&mut s, *h, *at, 2400);
+        }
+        println!(
+            "{level}: chest {:?} off after {opened:?} steps, worth {value:?}; hat box {:?} off after {taken:?}; stops {}, {:.1} s",
+            chest.as_ref().map(|c| &c.2),
+            hat.as_ref().map(|c| &c.2),
+            s.stops.len(),
+            t.elapsed().as_secs_f64(),
+        );
+        if !s.stops.is_empty() {
+            bad.push((level, s.stops.clone()));
+        }
+    }
+    assert!(bad.is_empty(), "{bad:#?}");
+    println!(
+        "{:.1} s, load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
+
 const HAT_BOX: &str = "HatBox_Pickup(1)_wind_Area";
 
 /// openspec AU.39: chapter 1's first hat box. Mashed open, its hat is taken:
@@ -394,6 +512,97 @@ fn a_hat_box_gives_its_hat_and_stays_taken() {
         again.step([false; 4]);
     }
     assert!(again.run.world.removed(hat), "a box again on a restart");
+    println!(
+        "{:.1} s, load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
+
+/// The outro's player waypoint, facing `Temp_Level_Ender`: the dev entry's
+/// end anchor.
+const END: ([f32; 3], f32) = ([-10.282436, -153.01357, 318.01202], 17.6);
+
+/// Chapter 1 cleared from a joined run on `session`, its clock taken past
+/// any target when `late`: the objectives screen's results, and the run at
+/// its completion screen.
+fn clear(session: Session, late: bool) -> (Story, guacamole::level_end::LevelResults) {
+    let mut s = Story::joined(CHAPTER_1, session);
+    s.run.world.sequence.shows_completion = true;
+    if late {
+        let g = s
+            .run
+            .vm
+            .program()
+            .global_named("level control data")
+            .unwrap();
+        let data = s.run.vm.global_peek(g).unwrap();
+        let stats = s.run.vm.field(data, "level stat tracking").unwrap();
+        assert!(
+            s.run
+                .vm
+                .set_field(stats, "playtime", Value::Float(36_000.0))
+        );
+    }
+    s.run.put(Vec3::from_array(END.0), END.1);
+    let (ender, _) = s.run.placed("Temp_Level_Ender");
+    assert!(s.run.world.wake(ender));
+    let start = s.run.steps;
+    while s.run.world.sequence.completion.is_none() {
+        assert!(s.run.steps < start + 2400, "no completion screen");
+        s.step([false; 4]);
+    }
+    let shown = s.run.world.sequence.completion.clone().unwrap();
+    let results = shown.results.expect("the objectives screen's results");
+    (s, results)
+}
+
+/// The dares among `r`'s objectives: the time dare and the check beside it
+/// in the dares' tab, no lives lost, each with its status.
+fn dares(r: &guacamole::level_end::LevelResults) -> Vec<(ObjectiveKind, Status)> {
+    r.objectives
+        .iter()
+        .filter(|o| o.category == 1)
+        .map(|o| (o.kind, o.status))
+        .collect()
+}
+
+/// openspec AS.139: a dare met is saved met. Chapter 1 cleared in time and
+/// with no life lost reads both newly done, the flags hold them, and the
+/// next clear, on the words the first left, reads them done from before. A
+/// dare missed stays open and its flag unset, the other beside it met.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_dare_met_is_saved_met_and_reads_done_on_the_next_clear() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut s, r) = clear(Session::new(Some(HOST.into())), false);
+    println!("the first clear: {:?}, stars {:?}", dares(&r), r.stars);
+    let met = dares(&r);
+    assert!(met.iter().any(|d| d.0 == ObjectiveKind::Time), "{met:?}");
+    let time =
+        |d: &[(ObjectiveKind, Status)]| d.iter().find(|x| x.0 == ObjectiveKind::Time).map(|x| x.1);
+    assert_eq!(time(&met), Some(Status::NewlyDone));
+    let flags = s.dare_flags();
+    println!("its flags {flags:?}");
+    assert_eq!(
+        flags,
+        [("achieved target time", 1), ("achieved no lives lost", 1)]
+    );
+    assert!(s.stops.is_empty(), "{:#?}", s.stops);
+
+    let (again, r) = clear(s.session.clone(), false);
+    assert_eq!(again.session.report.start.as_deref(), Some("carried"));
+    println!("the next clear: {:?}, stars {:?}", dares(&r), r.stars);
+    assert_eq!(time(&dares(&r)), Some(Status::Done));
+
+    let (mut s, r) = clear(Session::new(Some(HOST.into())), true);
+    println!("a late clear: {:?}, stars {:?}", dares(&r), r.stars);
+    assert_eq!(time(&dares(&r)), Some(Status::Open));
+    assert_eq!(
+        s.dare_flags(),
+        [("achieved target time", 0), ("achieved no lives lost", 1)]
+    );
     println!(
         "{:.1} s, load at end: {}",
         started.elapsed().as_secs_f64(),

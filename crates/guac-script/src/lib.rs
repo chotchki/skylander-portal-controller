@@ -373,8 +373,9 @@
 //!   above); a specialization's own parameters name the base and read the
 //!   specialization's frame. Any other parameter on a path (an after-return
 //!   read of what a call returned) reads the frame of the definition it
-//!   binds into (its `_macroDef`, a stub followed), or of the open call's
-//!   specialization of that definition.
+//!   binds into (its `_macroDef`, a stub followed), or of the nearest open
+//!   call's specialization of that definition, down the open calls, so one
+//!   read binding a nested call's arguments still finds it (openspec AS.139).
 //! - A variable holds a number (dynamically an integer or a float: a write
 //!   takes the type it's given), a reference, a set, a reference to a set or
 //!   a structure, as its declaration says. Writing anything but a number or a
