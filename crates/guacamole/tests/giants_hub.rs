@@ -350,8 +350,10 @@ fn hub_stage_1s_way_on_is_cali_then_flynn_into_level_201() {
         stops.extend(run.step_play().unwrap());
     }
     assert_eq!(global(&run, "Cali_Intro"), Some(Value::Int(0)));
-    // openspec AU.28: the people the TV draws are Flynn and Cali, their own
-    // scripts running, unwalked, each on a model of the level's creatures.
+    // openspec AU.28, AU.34: the people the TV draws, Flynn and Cali among
+    // them, their own scripts running, unwalked, each on a model of the
+    // level's creatures. A template among them runs nothing and draws
+    // nothing.
     let skinned: Vec<String> = skinned_models_of(HUB_1)
         .into_iter()
         .map(|(path, _)| path)
@@ -373,10 +375,11 @@ fn hub_stage_1s_way_on_is_cali_then_flynn_into_level_201() {
         .collect();
     people.sort();
     println!("the people: {people:?}; the creature models: {skinned:?}");
-    let names: Vec<&str> = people.iter().map(|p| p.0.as_str()).collect();
-    assert_eq!(names, ["Cali", "Flynn"]);
-    for (name, runs, model) in &people {
-        assert!(runs, "{name}'s script runs");
+    let running: Vec<_> = people.iter().filter(|p| p.1).collect();
+    for name in ["Cali", "Flynn"] {
+        assert!(running.iter().any(|p| p.0 == name), "{name}'s script runs");
+    }
+    for (name, _, model) in running {
         let model = model.as_ref().expect("a model");
         assert!(skinned.contains(model), "{name}'s {model}");
     }
