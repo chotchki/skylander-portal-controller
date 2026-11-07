@@ -586,3 +586,63 @@ fn a_variants_tag_gives_its_subtype_bits() {
         load()
     );
 }
+
+/// AS.153's review: what `figure::put_on_portal`'s toy table entry gives.
+/// Eruptor's reposes and his LightCore keep his entry and element; a Giant's
+/// tag reads as a Giant (`Save - Get Tag Type Properties`, the `is titan`
+/// every chest and interior asks) where none did before; and a toy the disc
+/// doesn't know joins with no entry, nothing stopped, strict.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn a_tag_names_its_toy_table_entry() {
+    println!("load before: {}", load());
+    let started = Instant::now();
+    for (toy, subtype, element, giant) in [
+        (9u32, 0u32, Some(5), 0),
+        (9, 0x800, Some(5), 0),
+        (9, 0x200, Some(5), 0),
+        (112, 0, Some(7), 1),
+        (65_000, 0, None, 0),
+    ] {
+        let (mut run, _) = run_on(Mode::Strict);
+        run.step().unwrap_or_else(|h| panic!("{h}"));
+        run.step().unwrap_or_else(|h| panic!("{h}"));
+        let mut tag = eruptor_tag(Values::default());
+        tag.toy_id = toy;
+        tag.subtype = subtype;
+        run.join_tag(tag).unwrap_or_else(|h| panic!("{toy}: {h}"));
+        for _ in 0..10 {
+            run.step().unwrap_or_else(|h| panic!("{toy}: {h}"));
+        }
+        let data = run.figure.expect("joined");
+        let hint = run.vm.field(data, "toy load hint").map(|v| run.vm.value(v));
+        let read = hint
+            .filter(|h| *h != Value::Null)
+            .and_then(|h| run.vm.field(h, "element"))
+            .map(|v| run.vm.value(v))
+            .and_then(|v| v.as_i32());
+        let pm = scripts::portal_manager_placement(&run.vm, &run.world).unwrap();
+        let is_giant = run
+            .with_host(|vm, host| {
+                vm.call_with(
+                    Some(pm),
+                    "Save - Get Tag Type Properties",
+                    &[("check tag data", data)],
+                    &["is giant"],
+                    host,
+                )
+            })
+            .unwrap_or_else(|h| panic!("{toy}: {h}"))
+            .1[0]
+            .map(|v| run.vm.value(v))
+            .and_then(|v| v.as_i32());
+        println!("toy {toy} subtype {subtype:#x}: element {read:?}, giant {is_giant:?}");
+        assert_eq!(read, element, "{toy} {subtype:#x}");
+        assert_eq!(is_giant, Some(giant), "{toy} {subtype:#x}");
+    }
+    println!(
+        "{:.1} s; load after: {}",
+        started.elapsed().as_secs_f32(),
+        load()
+    );
+}

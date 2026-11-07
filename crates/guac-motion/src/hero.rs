@@ -601,7 +601,9 @@ impl Hero {
             self.stalled,
         );
         self.pivot = moved.pivot;
-        self.stalled = !self.footing.supported && v != Vec3::ZERO && self.pivot == start;
+        self.stalled = !self.footing.supported
+            && v != Vec3::ZERO
+            && self.pivot.distance(start) < proxy::TOUCHING;
         self.velocity = (self.pivot - start) / step;
         self.solved = moved.velocity;
         self.look(seam, exclude, surfaces, walking, airborne, step);

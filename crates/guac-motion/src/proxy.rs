@@ -97,7 +97,7 @@ pub const RECOVERY_RATE: f32 = 1.0;
 /// the wall law (AG.70, a hypothesis).
 pub const INSIDE: f32 = 0.02;
 /// A plane this near the skin is touching, metres.
-const TOUCHING: f32 = 1.0e-3;
+pub(crate) const TOUCHING: f32 = 1.0e-3;
 /// The velocity model's leave-the-ground test (as read): ground facing up
 /// less than this, or a walk moving off it faster than [`LEAVE_SPEED`] m/s,
 /// isn't walked along.
@@ -344,8 +344,11 @@ impl Proxy<'_> {
             // Stopped at once again, on nothing: a triangle met from behind
             // gives no plane, so nothing the solve could lay him along. He's
             // already through it, and it has no say in where he goes next
-            // (openspec AS.159: Tree Rex falling down the pit's wall).
-            if stalled && hit.distance <= 0.0 && hit.planes.is_empty() {
+            // (openspec AS.159: Tree Rex falling down the pit's wall). A
+            // hair's as good as none: the cast stops a few microns on as
+            // often as at once, under what a float moves him here (the
+            // AS.159 review: chapter 1, behind the air area's ledge).
+            if stalled && hit.distance <= TOUCHING && hit.planes.is_empty() {
                 pos += motion;
                 break;
             }
@@ -377,8 +380,12 @@ impl Proxy<'_> {
             // along it for good (the AS.159 review, `runs/s1`). The step ends
             // there: the rest of a walk from inside a closet's floor took a
             // Chompy in deeper.
-            let inside = if stalled { 0.0 } else { INSIDE };
-            if travel <= 0.0
+            let (inside, moved) = if stalled {
+                (0.0, TOUCHING)
+            } else {
+                (INSIDE, 0.0)
+            };
+            if travel <= moved
                 && squarest.is_none()
                 && let Some(deepest) = seen
                     .iter()
@@ -901,15 +908,15 @@ mod tests {
             .pivot
     }
 
-    /// A seam whose casts all stop at once on nothing, a triangle met from
-    /// behind.
-    struct Behind;
+    /// A seam whose casts all stop this far on, on nothing: a triangle met
+    /// from behind.
+    struct Behind(f32);
 
     impl PhysicsSeam for Behind {
         fn cast(&self, _: &Shape, _: Pose, _: Vec3, _: f32, _: &[BodyId]) -> Option<Cast> {
             Some(Cast {
                 fraction: 0.0,
-                distance: 0.0,
+                distance: self.0,
                 planes: Vec::new(),
             })
         }
@@ -928,23 +935,26 @@ mod tests {
     }
 
     /// openspec AS.159: a triangle he's behind stops him for the step, as
-    /// any cast stopping him does, and has no say in the next.
+    /// any cast stopping him does, and has no say in the next. A cast
+    /// stopping microns on is one stopping at once (the review).
     #[test]
     fn a_triangle_he_is_behind_stops_him_for_a_step_alone() {
-        let proxy = Proxy {
-            seam: &Behind,
-            shape: Shape::Sphere { radius: 0.5 },
-            centre: Vec3::new(0.0, 0.5, 0.0),
-            rotation: Quat::IDENTITY,
-            exclude: &[],
-            surfaces: Surfaces::NONE,
-        };
-        let fall = Vec3::new(0.0, -36.0, 0.0);
-        let step = 1.0 / 60.0;
-        let first = proxy.integrate(Vec3::ZERO, Vec3::Y, fall, step, false, false);
-        assert_eq!(first.pivot, Vec3::ZERO);
-        let second = proxy.integrate(Vec3::ZERO, Vec3::Y, fall, step, false, true);
-        assert!((second.pivot.y + 0.6).abs() < 1e-5, "{}", second.pivot);
+        for stop in [0.0, 3.7e-6] {
+            let proxy = Proxy {
+                seam: &Behind(stop),
+                shape: Shape::Sphere { radius: 0.5 },
+                centre: Vec3::new(0.0, 0.5, 0.0),
+                rotation: Quat::IDENTITY,
+                exclude: &[],
+                surfaces: Surfaces::NONE,
+            };
+            let fall = Vec3::new(0.0, -36.0, 0.0);
+            let step = 1.0 / 60.0;
+            let first = proxy.integrate(Vec3::ZERO, Vec3::Y, fall, step, false, false);
+            assert!(first.pivot.length() < 1e-4, "{}", first.pivot);
+            let second = proxy.integrate(Vec3::ZERO, Vec3::Y, fall, step, false, true);
+            assert!((second.pivot.y + 0.6).abs() < 1e-4, "{}", second.pivot);
+        }
     }
 
     /// openspec AS.159: a solid at his side doesn't hold him up: he falls on

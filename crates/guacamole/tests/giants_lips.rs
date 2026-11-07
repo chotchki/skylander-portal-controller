@@ -596,3 +596,31 @@ fn a_hero_a_hair_in_the_third_islands_bank_slides_off_it() {
         *run.hero_mut() = start;
     }
 }
+
+/// The AS.159 review: behind chapter 1's faces, where a hero the level's
+/// shell lets past has only triangles' backs round him. A cast stops a few
+/// microns on, under what a float moves him here, with no plane to lay him
+/// along: he hung at 120 ft/s, the stick dead for good. He falls on.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_hero_behind_chapter_1s_faces_falls_on() {
+    let run = joined(CHAPTER_1);
+    let world = &run.bench.world;
+    for spot in [
+        Vec3::new(-24.336582, -134.11949, 128.32382),
+        Vec3::new(-34.813004, -149.0437, 315.4434),
+    ] {
+        let mut h = run.hero().clone();
+        h.pivot = spot;
+        h.up = Vec3::Y;
+        h.walk.velocity = Vec3::new(0.0, -120.0, 0.0);
+        for _ in 0..60 {
+            h.step_engine(world, 1.0 / 60.0, &[HERO_BODY], Surfaces::NONE);
+            if h.footing.supported {
+                break;
+            }
+        }
+        println!("{spot}: on to {} in a second", h.pivot);
+        assert!(h.pivot.distance(spot) > 0.3, "hung at {}", h.pivot);
+    }
+}
