@@ -3375,12 +3375,17 @@ impl ScriptWorld {
                 }
                 _ => None,
             };
-            // What hangs on an actor itself turns as that actor turns
-            // (openspec AU.37: Pop Fizz's beast, hung on him), by what it
-            // turned through, so a spin of its own goes on. Stand-in ledger:
+            // A skinned clone hung on an actor itself turns as that actor
+            // turns (openspec AU.37: Pop Fizz's beast, hung on him), by what
+            // it turned through, so a spin of its own goes on. What has no
+            // palette, a collider or a pivot, keeps the scripts' facing:
+            // turned, Dino-Rang's whirlwind misses. Stand-in ledger:
             // `hung-turn`.
+            let skinned = self
+                .template_of(h)
+                .is_some_and(|t| self.palettes.contains_key(&t));
             let owner_facing = match self.object(Some(node)) {
-                None => self
+                None if skinned => self
                     .actor_of(Some(node))
                     .filter(|&o| o != h)
                     .and_then(|o| self.angles_within(o, engine, HUNG_DEPTH - 1))
@@ -5060,6 +5065,7 @@ mod tests {
     #[test]
     fn what_hangs_on_an_actor_turns_as_he_turns() {
         const BEAST: Handle = 0x55;
+        const PIVOT: Handle = 0x56;
         let mut e = bench();
         let mut w = world();
         let solid = guac_motion::tuning::eruptor_solid();
@@ -5067,16 +5073,28 @@ mod tests {
         him.facing = 10.0;
         e.hero = Some(him);
         w.actors.insert(HERO, Actor::blank());
+        let skinned = Obj { unit: 9, index: 1 };
+        w.set_palette(skinned, vec![1.0]);
         let mut beast = Actor::blank();
+        beast.template = Some(skinned);
         beast.attach = Value::Entity(HERO);
         beast.angles.facing = 30.0;
         w.actors.insert(BEAST, beast);
+        let mut pivot = Actor::blank();
+        pivot.template = Some(Obj { unit: 9, index: 2 });
+        pivot.attach = Value::Entity(HERO);
+        pivot.angles.facing = 30.0;
+        w.actors.insert(PIVOT, pivot);
         let facing = |w: &ScriptWorld| w.actors[&BEAST].angles.facing;
         w.place_hung(&mut e);
         assert_eq!(facing(&w), 30.0, "as it was hung");
         e.hero.as_mut().unwrap().facing = 50.0;
         w.place_hung(&mut e);
         assert_eq!(facing(&w), 70.0, "40 degrees with him");
+        assert_eq!(
+            w.actors[&PIVOT].angles.facing, 30.0,
+            "no palette, no turn: the scripts' facing stands"
+        );
         w.actors.get_mut(&BEAST).unwrap().angles.facing = 100.0;
         w.place_hung(&mut e);
         assert_eq!(facing(&w), 100.0, "a turn of its own stays");
