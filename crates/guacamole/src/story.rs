@@ -52,6 +52,9 @@ pub(crate) struct Story {
     /// The quit's save being written (openspec AU.15): the server's ticket,
     /// and whether a write since failed.
     quit: Option<(u64, bool)>,
+    /// How many runs' definitions the title's part was asked ahead of
+    /// (openspec AS.130).
+    titles_asked: u32,
 }
 
 /// `/api/_test/tv`'s `story`: the session's report and the state the host
@@ -67,6 +70,11 @@ pub(crate) struct StoryShot {
 }
 
 impl Story {
+    #[cfg(test)]
+    pub(crate) fn titles_asked(&self) -> u32 {
+        self.titles_asked
+    }
+
     pub(crate) fn shot(&self, world: Option<&ScriptWorld>) -> StoryShot {
         StoryShot {
             report: self.session.report.clone(),
@@ -298,6 +306,27 @@ fn serves(resumed: bool, changing: bool) -> bool {
     resumed && !changing
 }
 
+/// The title's part of run `run`'s start ([`story_save::title`]), in its
+/// definition's place on its first walk, when [`serve_saves`] would serve
+/// it: a run ahead of the session's resume, or one on its way out, starts
+/// as it did, a step on.
+pub(crate) fn title(
+    story: &mut Story,
+    changing: bool,
+    vm: &mut guac_script::Vm,
+    host: &mut dyn guac_script::Host,
+    run: u64,
+) {
+    story.titles_asked += 1;
+    if !serves(story.resumed, changing) {
+        return;
+    }
+    if let Err(h) = story_save::title(vm, host, &mut story.session, run) {
+        warn!(%h, "the save system's title stopped");
+        story.session.report.error = Some(h.to_string());
+    }
+}
+
 /// The step's save requests, after the scripts' step: the run's start and
 /// each request the scripts made ([`story_save::serve`]), on no engine (the
 /// save macros reach none).
@@ -403,6 +432,7 @@ mod tests {
         story.session.layout = Some(layout.clone());
         // Chapter 1 done, slot level 15, as its level end leaves the words.
         story.session.live = Some(Live {
+            just_done: Vec::new(),
             layout: layout.id(),
             slot: vec![1],
             header: vec![15],

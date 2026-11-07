@@ -1446,3 +1446,23 @@ fn a_props_stop_in_play_leaves_the_scripts_the_view() {
         crate::hero::CameraScripts::On
     );
 }
+
+/// openspec AS.130: the title's part is asked once a run, on its first walk,
+/// ahead of the level's definition (the synthetic level's placement), so what
+/// the definition counts is what the save holds.
+#[test]
+fn the_title_goes_ahead_of_the_definition_once_a_run() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut app, tx) = play_app(tmp.path());
+    app.init_resource::<crate::story::Story>();
+    write_attack_parts(tmp.path());
+    write_camera(tmp.path(), spots(), CameraFault::None);
+    tx.send(write_level(tmp.path(), &lights())).unwrap();
+    until(&mut app, "the level and its scripts", |a| {
+        level_state(a) == "ready" && a.world().contains_resource::<ScriptRuntime>()
+    });
+    let steps = |app: &App| app.world().resource::<ScriptRuntime>().steps;
+    until(&mut app, "the first steps", |a| steps(a) >= 5);
+    let asked = app.world().resource::<crate::story::Story>().titles_asked();
+    assert_eq!(asked, 1, "once, at the first walk");
+}

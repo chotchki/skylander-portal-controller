@@ -1281,6 +1281,10 @@ pub(crate) fn step_scripts(
         Option<Res<CameraPlacements>>,
         Option<Res<crate::play::Play>>,
     ),
+    (mut story, choice): (
+        Option<ResMut<crate::story::Story>>,
+        Option<Res<crate::level_choice::LevelChoice>>,
+    ),
 ) {
     let began = std::time::Instant::now();
     let pivots: Vec<Vec3> = heroes.iter().map(|(_, b)| b.hero.pivot).collect();
@@ -1509,13 +1513,34 @@ pub(crate) fn step_scripts(
     // his minion first, then the awake placements as they woke, the player
     // loop's slices (AH.20) in their placements' places, its stretches past
     // the clock once he'd joined before this step, the mover update last.
+    // The title's part of the run's start, in the definition's place on the
+    // run's first walk (openspec AS.130): what it counts is what the save
+    // holds.
+    let run_id = world.run();
+    let definition = (ran == 0)
+        .then(|| guacamole::story_save::definition(vm, &world))
+        .flatten();
+    if let Some(d) = definition {
+        vm.native_first(d);
+    }
+    let changing = choice
+        .as_deref()
+        .is_some_and(crate::level_choice::LevelChoice::changing);
+    let mut title = |vm: &mut guac_script::Vm, id, host: &mut dyn guac_script::Host| {
+        if Some(id) == definition
+            && let Some(story) = story.as_deref_mut()
+        {
+            crate::story::title(story, changing, vm, host, run_id);
+        }
+        Ok(())
+    };
     let mut host = WorldHost {
         world: &mut world,
         engine: &mut engine,
         generator,
         spawn: &mut spawn,
     };
-    match player_loop.walk(vm, &mut host, settled, &mut stopped) {
+    match player_loop.walk_with(vm, &mut host, settled, &mut stopped, &mut title) {
         Ok(r) => stopped.extend(r.stopped),
         Err(h) => stopped.push(h),
     }

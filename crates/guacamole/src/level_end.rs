@@ -282,6 +282,11 @@ pub fn sequencing(vm: &Vm, world: &ScriptWorld) -> Option<PlacementId> {
 pub fn queued_movie(vm: &Vm, world: &ScriptWorld) -> Option<String> {
     let data = progression(vm)?;
     let sprite = vm.field(data, "level end movie sprite")?;
+    sprite_movie(vm, world, sprite)
+}
+
+/// The movie `sprite` shows, by the disc's name for it ([`queued_movie`]).
+fn sprite_movie(vm: &Vm, world: &ScriptWorld, sprite: Value) -> Option<String> {
     let source = world.interface().and_then(|k| {
         let m = k.model();
         match &m.sprite(m.sprite_of(sprite)?).content {
@@ -476,10 +481,89 @@ fn clean_up_fader(vm: &mut Vm, host: &mut WorldHost<'_, '_>, gs: PlacementId) ->
     Ok(())
 }
 
+/// The movie control of the scene in play, once its update has made the
+/// movie's sprite (`Cutscene - Add Scene - Movie`, `UI - Show Full-Screen
+/// Movie`): none outside a movie scene.
+fn scene_movie_control(vm: &Vm) -> Option<Value> {
+    let g = vm.program().global_named("cs control data")?;
+    let data = vm.global_peek(g)?;
+    let current = vm.field(data, "current cs").filter(|v| *v != Value::Null)?;
+    let scene = vm.field(current, "cur scene data")?;
+    let definition = vm.field(scene, "scene definition")?;
+    let extra = vm.field(definition, "extra def data")?;
+    vm.set(extra)?.iter().map(|c| vm.value(*c)).find(|&c| {
+        vm.field(c, "created movie sprite")
+            .is_some_and(|s| s != Value::Null)
+    })
+}
+
+/// A cutscene's movie scene (openspec AS.130; the hub's story scenes hold
+/// them, the Hermit's after level 201): the movie handed to the TV's player
+/// as a level end's is, the scene waiting on its fader, whose update the TV
+/// doesn't run (stand-in ledger: `movie-fader`). Over, or with no player, the
+/// fader's clean-up takes the sprite off, which is the scene's advance.
+fn scene_movie(
+    vm: &mut Vm,
+    host: &mut WorldHost<'_, '_>,
+    control: Value,
+) -> Result<Option<Ended>, Halt> {
+    let Some(sprite) = vm.field(control, "created movie sprite") else {
+        return Ok(None);
+    };
+    if host.world.level_end_movie.is_none() {
+        let name = sprite_movie(vm, host.world, sprite);
+        let state = match &name {
+            Some(_) if host.world.plays_movies => MovieState::Queued,
+            _ => MovieState::Over(MovieEnd::Unplayed),
+        };
+        info!(movie = ?name, ?state, "a cutscene's movie scene");
+        let queued = state == MovieState::Queued;
+        let name = name.unwrap_or_default();
+        host.world.level_end_movie = Some(LevelEndMovie {
+            name: name.clone(),
+            state,
+        });
+        if queued {
+            return Ok(Some(Ended::Movie(name)));
+        }
+    }
+    let over = host
+        .world
+        .level_end_movie
+        .as_ref()
+        .is_some_and(|m| matches!(m.state, MovieState::Over(_)));
+    if over {
+        host.world.level_end_movie = None;
+        let Some(gs) = running(vm, host.world, GAME_SYSTEMS) else {
+            return Ok(None);
+        };
+        match vm.field(control, "movie fader struct") {
+            Some(fader) if fader != Value::Null => {
+                vm.call_for(
+                    gs,
+                    CLEAN_UP_FADER,
+                    &[("return movie fader", fader)],
+                    &[],
+                    host,
+                )?;
+            }
+            _ => {
+                vm.set_field(control, "created movie sprite", Value::Null);
+            }
+        }
+    }
+    Ok(None)
+}
+
 /// One step's level end, after the walk and before the host takes the
 /// step's requests (the module docs). A skip that stops is the error; it
 /// isn't tried again for that cutscene.
 pub fn step(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<Option<Ended>, Halt> {
+    if let Some(control) = scene_movie_control(vm)
+        && let Some(ended) = scene_movie(vm, host, control)?
+    {
+        return Ok(Some(ended));
+    }
     if crate::prompt::back_out_of_menu(vm) {
         info!("a cutscene's menu the TV doesn't draw: backed out of");
     }

@@ -5,6 +5,8 @@
 //! `cargo test -p guacamole --profile disc --test giants_hub -- --ignored --nocapture`
 
 use guac_script::{Mode, Value};
+use guac_server::saves::SaveValues;
+use guacamole::story_save::{self, File, Layout, Live, Session};
 
 mod common;
 
@@ -802,4 +804,281 @@ fn every_hub_stages_people_stand_talk_and_stop_the_hero() {
         started.elapsed().as_secs_f64(),
         load()
     );
+}
+
+/// Each stage and the story adventures done it can stand at (openspec
+/// AS.130): the hub's unlocks open a stage at 7, 14 and 16.
+const COUNTS: [(usize, std::ops::RangeInclusive<usize>); 4] =
+    [(0, 2..=6), (1, 7..=13), (2, 14..=15), (3, 16..=16)];
+
+/// The first `done` story adventures marked complete on `vm`, as the title's
+/// fill leaves them, the last at 2 when `just` (a level end just marked it).
+fn mark(vm: &mut guac_script::Vm, done: usize, just: bool) {
+    let g = vm.program().global_named("level progression data").unwrap();
+    let progression = vm.global(g).unwrap();
+    let set = vm.field(progression, "story adventures").unwrap();
+    let adventures = vm.set(set).unwrap().to_vec();
+    assert!(adventures.len() >= done, "{}", adventures.len());
+    for (i, ad) in adventures.iter().take(done).enumerate() {
+        let complete = if just && i + 1 == done { 2 } else { 1 };
+        vm.set_field(vm.value(*ad), "complete", Value::Int(complete));
+    }
+}
+
+/// What a stage came to at a count.
+#[derive(Debug)]
+struct AtCount {
+    completed: Option<Value>,
+    first_time: Option<Value>,
+    zone: Option<Value>,
+    sky: Vec<String>,
+    began: Option<(u32, Option<String>)>,
+    gone: Option<u32>,
+    at: guac_motion::seam::Vec3,
+    stops: Vec<String>,
+}
+
+/// `stage` run with `done` adventures done ahead of its definition: joined,
+/// its intro played to its hand-over, 30 steps on.
+fn at_count(stage: usize, done: usize, just: bool, scripts: &'static [&'static str]) -> AtCount {
+    let (name, intro) = STAGES[stage];
+    let (mut run, _found) = run_on_level(Mode::Play, name, setup(scripts));
+    let intro = run.placement(intro);
+    let definition = guacamole::story_save::definition(&run.vm, &run.world).expect("a definition");
+    run.vm.native_first(definition);
+    let mut stops: Vec<_> = run
+        .step_play_with(&mut |vm, id, _| {
+            if id == definition {
+                mark(vm, done, just);
+            }
+            Ok(())
+        })
+        .unwrap();
+    stops.extend(run.step_play().unwrap());
+    run.join().unwrap_or_else(|h| panic!("{name}: {h}"));
+    let joined = run.steps;
+    let (mut began, mut gone) = (None, None);
+    while gone.is_none() && run.steps < joined + 18000 {
+        stops.extend(run.step_play().unwrap());
+        if began.is_none() && cutscene_name(&run).is_some() {
+            began = Some((run.steps, cutscene_name(&run)));
+        }
+        if run.vm.removed(intro) {
+            gone = Some(run.steps);
+        }
+    }
+    for _ in 0..30 {
+        stops.extend(run.step_play().unwrap());
+    }
+    AtCount {
+        completed: global(&run, "Levels_Completed"),
+        first_time: global(&run, "First_Time_Here"),
+        zone: zone(&run),
+        sky: skies(&run).into_iter().map(|s| s.0).collect(),
+        began,
+        gone,
+        at: run.hero().pivot,
+        stops: stops.iter().map(ToString::to_string).collect(),
+    }
+}
+
+/// openspec AS.130: `stage` at every count its saves can hold, the last
+/// adventure just done and not: the definition counts what the save holds,
+/// the intro plays and hands him over where every stage does, the exterior
+/// zone is the one the definition picks for the count, nothing stops.
+fn stage_at_every_count(stage: usize) {
+    let (_, counts) = &COUNTS[stage];
+    let name = STAGES[stage].0;
+    println!("load at start: {}", load());
+    let handed = guac_motion::seam::Vec3::from_array(HANDED_OVER);
+    let flat = |v: guac_motion::seam::Vec3| guac_motion::seam::Vec3::new(v.x, 0.0, v.z);
+    for done in counts.clone() {
+        for just in [false, true] {
+            let c = at_count(stage, done, just, &[]);
+            println!("{name} at {done}, just {just}: {c:?}");
+            assert_eq!(c.completed, Some(Value::Int(done as i32)), "{name} {done}");
+            assert!(c.gone.is_some(), "{name} {done}: no hand-over");
+            assert!(
+                flat(c.at).distance(flat(handed)) < 0.05,
+                "{name} {done}: handed over at {:?}",
+                c.at
+            );
+            assert!(c.stops.is_empty(), "{name} {done}: {:#?}", c.stops);
+        }
+    }
+    println!("load at end: {}", load());
+}
+
+#[test]
+#[ignore = "reads the Giants dump"]
+fn hub_stage_1_at_every_count() {
+    stage_at_every_count(0);
+}
+
+#[test]
+#[ignore = "reads the Giants dump"]
+fn hub_stage_2_at_every_count() {
+    stage_at_every_count(1);
+}
+
+#[test]
+#[ignore = "reads the Giants dump"]
+fn hub_stage_3_at_every_count() {
+    stage_at_every_count(2);
+}
+
+#[test]
+#[ignore = "reads the Giants dump"]
+fn hub_stage_4_at_every_count() {
+    stage_at_every_count(3);
+}
+
+/// openspec AS.130: a story scene's movie: the Hermit's scene after level 201
+/// reaches its movie scene and hands the cinematic to the TV's player by the
+/// disc's name, waits there while it plays, and goes on the step it's over,
+/// its fader cleaned up; with no player (every other test here) it passes
+/// straight on.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn the_hermits_scene_waits_on_its_movie() {
+    use guacamole::scripts::{MovieEnd, MovieState};
+    println!("load at start: {}", load());
+    let (mut run, _found) = run_on_level(Mode::Play, HUB_1, setup(&[]));
+    run.world.plays_movies = true;
+    let definition = story_save::definition(&run.vm, &run.world).expect("a definition");
+    run.vm.native_first(definition);
+    let mut stops = run
+        .step_play_with(&mut |vm, id, _| {
+            if id == definition {
+                mark(vm, 3, true);
+            }
+            Ok(())
+        })
+        .unwrap();
+    stops.extend(run.step_play().unwrap());
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    let mut waited = 0;
+    while run.world.level_end_movie().is_none() {
+        stops.extend(run.step_play().unwrap());
+        waited += 1;
+        assert!(waited < 6000, "no movie by step {}", run.steps);
+    }
+    let scene = scene_of(&run);
+    let movie = run.world.level_end_movie().unwrap();
+    println!("{movie:?} at {scene:?} after {waited} steps");
+    assert_eq!(movie.name, "fmv03");
+    assert_eq!(movie.state, MovieState::Queued);
+    for _ in 0..300 {
+        stops.extend(run.step_play().unwrap());
+    }
+    assert_eq!(scene_of(&run), scene, "held on it while it plays");
+    run.world.movie_over(MovieEnd::Finished);
+    for _ in 0..60 {
+        stops.extend(run.step_play().unwrap());
+    }
+    assert_ne!(scene_of(&run), scene, "on past it");
+    assert!(run.world.level_end_movie().is_none(), "over and let go");
+    println!("load at end: {}", load());
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
+/// The save words and values a fresh `HUB_1` run's scripts define, with the
+/// first `done` adventures of its list marked done.
+fn save_with(done: usize) -> (Layout, Vec<i32>, Vec<i32>, SaveValues) {
+    let (mut run, _found) = run_on_level(Mode::Play, HUB_1, setup(&[]));
+    for _ in 0..2 {
+        run.step_play().unwrap();
+    }
+    let layout = Layout::read(&run.vm).expect("the save's layout");
+    let (mut slot, header) = (
+        story_save::words_of(&run.vm, File::Slot).unwrap(),
+        story_save::words_of(&run.vm, File::Header).unwrap(),
+    );
+    let mut params = layout.decode(File::Slot, &slot);
+    params.extend(layout.decode(File::Header, &header));
+    for flag in params.get_mut("level flags").unwrap().iter_mut().take(done) {
+        *flag |= 1;
+    }
+    layout.encode(File::Slot, &params, &mut slot);
+    let values = SaveValues {
+        params,
+        adventures: layout.adventures.clone(),
+    };
+    (layout, slot, header, values)
+}
+
+/// `session`'s run on `HUB_1` to its first step, the title's part in its
+/// definition's place as the TV's first walk makes it.
+fn titled_step(session: &mut Session) -> Run {
+    let (mut run, _found) = run_on_level(Mode::Play, HUB_1, setup(&[]));
+    let definition = story_save::definition(&run.vm, &run.world).expect("a definition");
+    run.vm.native_first(definition);
+    let id = run.world.run();
+    run.step_play_with(&mut |vm, at, host| {
+        if at == definition {
+            assert!(story_save::title(vm, host, session, id)?, "the save read");
+        }
+        Ok(())
+    })
+    .unwrap();
+    run
+}
+
+/// openspec AS.130: what a save holds reaches the hub's definition. A stored
+/// save past level 201 counts three, the exterior zone and sky the third
+/// count's, and no first visit; the words a run carries on from a level end
+/// that just finished 201 count the same as a first visit. A run with no
+/// title ahead of its definition (the walk this replaced) counts none, held
+/// at the stage's floor, which is what Flynn's offer went by.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_save_past_level_201_reaches_the_hubs_definition() {
+    println!("load at start: {}", load());
+    let (layout, slot, header, values) = save_with(3);
+    let id = layout.id();
+
+    let mut stored = Session::new(Some("host".into()));
+    stored.stored = Some((id.clone(), values));
+    let mut run = titled_step(&mut stored);
+    assert_eq!(stored.report.start.as_deref(), Some("stored"));
+    assert_eq!(global(&run, "Levels_Completed"), Some(Value::Int(3)));
+    assert_eq!(global(&run, "First_Time_Here"), Some(Value::Int(0)));
+    assert_eq!(global(&run, "Current Exterior Zone"), Some(Value::Int(205)));
+    for _ in 0..30 {
+        assert_eq!(run.step_play().unwrap().len(), 0);
+    }
+    assert_eq!(zone(&run), Some(Value::Int(205)));
+
+    let mut carried = Session::new(Some("host".into()));
+    carried.live = Some(Live {
+        layout: id,
+        slot,
+        header,
+        just_done: vec![2],
+    });
+    let mut run = titled_step(&mut carried);
+    assert_eq!(carried.report.start.as_deref(), Some("carried"));
+    assert_eq!(global(&run, "Levels_Completed"), Some(Value::Int(3)));
+    assert_eq!(global(&run, "First_Time_Here"), Some(Value::Int(1)));
+    // The start's rest makes no second title: what it carried stays what the
+    // run started from.
+    {
+        let mut spawn = guacamole::scripts::headless_spawner(1 << 50);
+        let mut engine = guacamole::script_engine::NoEngine;
+        let mut host = guacamole::scripts::WorldHost {
+            world: &mut run.world,
+            engine: &mut engine,
+            generator: &mut run.generator,
+            spawn: &mut spawn,
+        };
+        story_save::serve(&mut run.vm, &mut host, &mut carried, HUB_1)
+            .unwrap_or_else(|h| panic!("{h}"));
+    }
+    assert_eq!(carried.report.start.as_deref(), Some("carried"));
+
+    // Without the title ahead of it the definition counts nothing.
+    let (mut run, _found) = run_on_level(Mode::Play, HUB_1, setup(&[]));
+    run.step_play().unwrap();
+    assert_eq!(global(&run, "Levels_Completed"), Some(Value::Int(2)));
+    println!("load at end: {}", load());
 }

@@ -273,6 +273,17 @@ A camera's rig SHALL hold the pose its last clip reached once none plays, what h
 - **WHEN** a shot's new rig is made and isn't drawn yet
 - **THEN** the view and what hangs on the rig stay where the last rig left them until it's posed, and no frame stands at the rig's origin
 
+### Requirement: The hub stands at the story's every point
+A hub stage SHALL show what the adventures done open, by what the host's save holds or the last level just finished: its count, its sky and zone, its people and removals and the next chapter Flynn offers. A level end just finished SHALL bring its first-visit scenes, a story movie among them played full screen, and its intro SHALL hand the hero over where every stage does, nothing stopped.
+
+#### Scenario: A save after level 201
+- **WHEN** a profile whose save has level 201 done resumes
+- **THEN** hub stage 1 stands at count 3 in zone 205 under its sky, and Flynn's Yes takes the hero to level 205, not 201 again
+
+#### Scenario: Straight from level 201
+- **WHEN** level 201's end brings the hero to the hub
+- **THEN** the Hermit's scene plays through its movie, the hero handed over on the main deck
+
 ### Requirement: A level's zone lights it
 From a level's first step the TV SHALL light and fog it by the atmospheric zone its scripts have it in, blending over a transition at a few points of its way with no stall the frame log shows. A zone whose fog the TV can't draw, or that the level's part doesn't hold, SHALL leave the level as it was, named in the report; a zone's share of the sky's fog is left undrawn, named.
 

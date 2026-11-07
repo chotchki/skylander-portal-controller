@@ -5265,6 +5265,11 @@ mod tests {
         room.fog.colour = [200, 20, 20, 0];
         room.fog.start = 10;
         part.zones.push(room.clone());
+        // Its fog, other lights: what the fog's own check would miss.
+        let mut lamp = room.clone();
+        lamp.id = 6;
+        lamp.ambient = [10, 40, 90, 0];
+        part.zones.push(lamp);
         let rel = source.ir.level_path(LEVEL, ATMOSPHERE);
         std::fs::write(tmp.path().join(rel), guac_ir::to_ron(&part).unwrap()).unwrap();
         let mut app = level_app(tmp.path(), source, false);
@@ -5332,9 +5337,14 @@ mod tests {
         let refused = report(&app).zones_refused;
         assert_eq!(refused.len(), 1, "{refused:?}");
         assert!(refused[0].contains("zone 9"), "{refused:?}");
+        // The same fog under other lights relights all the same.
+        ask(&mut app, 6, None, 0.0);
+        assert_eq!(relit(&app), before + 3, "its lights alone");
+        assert_ne!(lit(&app)[0].light_ambient[0], there[0].light_ambient[0]);
+        assert_eq!(lit(&app)[0].fog_colour, there[0].fog_colour);
         // Back: the start's zone again, whole.
         ask(&mut app, 0, None, 0.0);
-        assert_eq!(relit(&app), before + 3);
+        assert_eq!(relit(&app), before + 4);
         assert_eq!(lit(&app)[0].fog_colour, start[0].fog_colour);
     }
 

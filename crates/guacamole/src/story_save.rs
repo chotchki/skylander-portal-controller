@@ -77,18 +77,21 @@
 //!
 //! What's ours (stand-in ledger: `story-save`): the run's start, each run
 //! of the TV's being a fresh VM where the original's memory carries on.
-//! [`start_run`] stands in for the title (the system activated, the save
+//! [`title`] stands in for the title (the system activated, the save
 //! loaded, the adventures filled, a fresh save marked in use as the title's
-//! new game does) and for the Pause Controller's switch (the adventure the
-//! level is named the current one, its slot level written), then makes the
-//! level initializer's save; the system monitor's two save macros run
+//! new game does), in the level definition's place on a run's first walk so
+//! the definition counts what the save holds (openspec AS.130), and
+//! [`start_run`] after that step for the Pause Controller's switch (the
+//! adventure the level is named the current one, its slot level written),
+//! then makes the level initializer's save; a level end's just-done marks,
+//! which no save word holds, go on in [`Live`]; the system monitor's two save macros run
 //! ahead of each step's walk in `Macros_Animation`'s name ([`tick`]), the
 //! monitor's other macros not at all; and the words a run leaves are
 //! carried into the next ([`Live`]), as the original's memory carries them.
 
 use std::collections::BTreeMap;
 
-use guac_script::{Halt, MemberId, Value, Vm};
+use guac_script::{Halt, MemberId, PlacementId, Value, Vm};
 use guac_server::saves::SaveValues;
 use serde::Serialize;
 use tracing::{info, warn};
@@ -395,6 +398,10 @@ pub struct Live {
     pub layout: String,
     pub slot: Vec<i32>,
     pub header: Vec<i32>,
+    /// The adventures a level end marked just done (`complete` 2), by their
+    /// place in `adventure data`: what the original's run keeps past its
+    /// level end for the hub to see, and no save word holds.
+    pub just_done: Vec<usize>,
 }
 
 /// The words of `file`'s set on `vm`, or `None` before the run's init made
@@ -570,6 +577,8 @@ pub struct Session {
     writing: Option<(String, SaveValues)>,
     /// The run whose start was made, by [`ScriptWorld::run`].
     started: Option<u64>,
+    /// The run whose title's part was made ([`title`]).
+    titled: Option<u64>,
     /// The layout of the run whose start was made.
     pub layout: Option<Layout>,
     pub report: Report,
@@ -807,27 +816,29 @@ fn objectives_done_before(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<(
     Ok(())
 }
 
-/// A run's start (the module docs): once its init has defined the save, the
-/// title's part (the system activated; the save loaded from the last run's
-/// words, else the host's stored save, else marked in use as a new game;
-/// each adventure's `complete` filled from it), the Pause Controller's
-/// switch's (the adventure `level` is named the current one, its slot level
-/// written), then the level initializer's save. Nothing until the init has
-/// run; once a run.
-pub fn start_run(
+/// The title's part of a run's start, once its init has defined the save
+/// (false until then): the system activated; the save loaded from the last
+/// run's words, else the host's stored save, else marked in use as a new
+/// game; each adventure's `complete` filled from it, those the last run just
+/// finished at 2. It belongs ahead of the level: the original's title runs
+/// before a level loads, and a definition counts the adventures at its
+/// STARTUP (the hub's `Levels_Completed`, which picks all a stage shows and
+/// the chapter Flynn offers: openspec AS.130), so the TV runs it in the
+/// definition's place ([`definition`]). [`start_run`] makes it for a run
+/// that wasn't ready for it there.
+pub fn title(
     vm: &mut Vm,
-    host: &mut WorldHost<'_, '_>,
+    host: &mut dyn guac_script::Host,
     session: &mut Session,
-    level: &str,
-) -> Result<(), Halt> {
-    let run = host.world.run();
-    if session.started == Some(run) {
-        return Ok(());
+    run: u64,
+) -> Result<bool, Halt> {
+    if session.titled == Some(run) {
+        return Ok(true);
     }
     let Some(layout) = Layout::read(vm) else {
-        return Ok(());
+        return Ok(false);
     };
-    session.started = Some(run);
+    session.titled = Some(run);
     let id = layout.id();
     session.report.host = session.host.clone();
     session.report.layout = Some(id.clone());
@@ -883,10 +894,9 @@ pub fn start_run(
         "fresh"
     };
     session.report.start = Some(start.to_owned());
-    // What waited to read it (openspec AU.39): the chests and hat boxes.
-    host.world.story_started = true;
     // The title's fill: each adventure's `complete` off its flags.
-    for ad in adventures(vm) {
+    let just_done = live.as_ref().map_or(&[][..], |l| l.just_done.as_slice());
+    for (i, ad) in adventures(vm).into_iter().enumerate() {
         let mut args: Vec<(&str, Value)> = vec![("input adventure data", ad)];
         args.extend(LEVEL_FLAGS.iter().map(|f| (*f, Value::Int(-1))));
         let (_, back) = vm.call_with(
@@ -902,9 +912,57 @@ pub fn start_run(
             .flatten()
             .and_then(|v| int_of(vm, v))
             .unwrap_or(0);
-        vm.set_field(ad, "complete", Value::Int(completed as i32));
+        let complete = match just_done.contains(&i) {
+            true => 2,
+            false => completed as i32,
+        };
+        vm.set_field(ad, "complete", Value::Int(complete));
         vm.set_field(ad, "unlocked", Value::Int(0));
     }
+    Ok(true)
+}
+
+/// The placement running a run's level definition, which [`title`] goes
+/// ahead of.
+pub fn definition(vm: &Vm, world: &ScriptWorld) -> Option<PlacementId> {
+    world
+        .templates
+        .values()
+        .filter(|p| {
+            p.script
+                .as_deref()
+                .is_some_and(crate::scripts::is_level_definition)
+        })
+        .filter_map(|p| world.objects.get(&p.obj))
+        .find_map(|&h| vm.placement_of(h))
+}
+
+/// A run's start (the module docs): once its init has defined the save, the
+/// title's part ([`title`], unless made in the definition's place), the
+/// Pause Controller's switch's (the adventure `level` is named the current
+/// one, its slot level written), then the level initializer's save. Nothing
+/// until the init has run; once a run.
+pub fn start_run(
+    vm: &mut Vm,
+    host: &mut WorldHost<'_, '_>,
+    session: &mut Session,
+    level: &str,
+) -> Result<(), Halt> {
+    let run = host.world.run();
+    if session.started == Some(run) {
+        return Ok(());
+    }
+    if !title(vm, host, session, run)? {
+        return Ok(());
+    }
+    let Some(layout) = Layout::read(vm) else {
+        return Ok(());
+    };
+    session.started = Some(run);
+    let id = layout.id();
+    let start = session.report.start.clone().unwrap_or_default();
+    // What waited to read it (openspec AU.39): the chests and hat boxes.
+    host.world.story_started = true;
     for name in [
         "Save - Accolade Set XP Multiplier",
         "Save - UpgradeOTron Set Multipliers",
@@ -997,10 +1055,17 @@ pub fn serve(
         && let Some(layout) = &session.layout
         && let (Some(slot), Some(header)) = (words_of(vm, File::Slot), words_of(vm, File::Header))
     {
+        let just_done = adventures(vm)
+            .iter()
+            .enumerate()
+            .filter(|(_, ad)| vm.field(**ad, "complete").and_then(|c| int_of(vm, c)) == Some(2))
+            .map(|(i, _)| i)
+            .collect();
         session.live = Some(Live {
             layout: layout.id(),
             slot,
             header,
+            just_done,
         });
     }
     answered
@@ -1361,6 +1426,7 @@ mod tests {
         assert!(!quit_save_carried(&mut carried), "kept with no layout");
         carried.layout = Some(l.clone());
         carried.live = Some(Live {
+            just_done: Vec::new(),
             layout: "1:other".into(),
             slot: slot.clone(),
             header: header.clone(),

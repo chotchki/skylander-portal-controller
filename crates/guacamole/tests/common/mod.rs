@@ -455,15 +455,23 @@ impl Run {
     /// this step stopped, each logged by the VM and the run going on as the
     /// TV's does, where a strict run would halt.
     pub fn step_play(&mut self) -> Result<Vec<Halt>, Halt> {
+        self.step_play_with(&mut |_, _, _| Ok(()))
+    }
+
+    /// [`Run::step_play`], with `then` in the walk's native places, the TV's
+    /// way of reaching in (openspec AS.130).
+    pub fn step_play_with(
+        &mut self,
+        then: &mut guac_script::Native<'_>,
+    ) -> Result<Vec<Halt>, Halt> {
         let pads = self.bench.pads;
         self.world.read_pads(pads);
         self.vm.set_activity(&self.world.activity(&mut self.bench));
         let joined = self.minion.is_some();
         let player_loop = self.player_loop.clone();
         let mut stopped = Vec::new();
-        let r = self.with_host(|vm, host| {
-            player_loop.frame_with(vm, host, joined, &mut stopped, &mut |_, _, _| Ok(()))
-        });
+        let r =
+            self.with_host(|vm, host| player_loop.frame_with(vm, host, joined, &mut stopped, then));
         if let Err(h) = self.with_host(guacamole::level_end::step) {
             stopped.push(h);
         }

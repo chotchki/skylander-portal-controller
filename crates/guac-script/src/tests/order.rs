@@ -384,3 +384,30 @@ fn an_asleep_placement_the_host_finds_awake_after_the_walk_ticks_that_step() {
     assert_eq!(seen(&vm, &ids), ints(&[15, 16, 6, 14]), "at that place");
     assert_eq!(host.asked[2], [0x30], "C, never named, still asked");
 }
+
+/// openspec AS.130: a placement asked for runs the step's native in its
+/// place once, between what ticks ahead of it and its own first tick, and
+/// never again; one not asked for runs none.
+#[test]
+fn a_native_asked_for_runs_once_ahead_of_its_placements_first_tick() {
+    let mut vm = Vm::new(counting(), Config::new(Mode::Strict));
+    let first = vm.add(0x10, "first", 0);
+    let second = vm.add(0x20, "second", 0);
+    vm.native_first(second);
+    let mut host = Engine::default();
+    let mut asked = Vec::new();
+    for _ in 0..2 {
+        vm.step_with(&mut host, &mut |vm, id, _| {
+            let counter = vm.program().global_named("Counter").unwrap();
+            asked.push((id, vm.global_peek(counter).map(|v| vm.value(v))));
+            Ok(())
+        })
+        .unwrap();
+    }
+    assert_eq!(
+        asked,
+        [(second, Some(Value::Int(1)))],
+        "once, after the first's tick and before its own"
+    );
+    assert_ne!(first, second);
+}

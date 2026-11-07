@@ -280,11 +280,17 @@ fn chapter_1s_end_saves_it_done_and_a_load_goes_on_to_214() {
         "the level end saved: the original's doesn't"
     );
     // Its words are what the session carries into the next run, as the
-    // original's memory carries them.
+    // original's memory carries them, with chapter 1 just done (openspec
+    // AS.130): the mark no word holds.
     assert_eq!(
         session.live.as_ref().map(|l| &l.slot),
         Some(&words),
         "the session carries other words"
+    );
+    assert_eq!(
+        session.live.as_ref().map(|l| l.just_done.as_slice()),
+        Some(&[0][..]),
+        "chapter 1 just done"
     );
     let chapter_1_steps = run.steps;
     // AU.15: a phone's quit here, between the level end and 214's start,

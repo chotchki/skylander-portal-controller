@@ -244,6 +244,9 @@ struct Placement {
     first_tick: bool,
     /// Its first tick done: never ticked again, not taken off.
     held: bool,
+    /// The step's native runs in its place once, ahead of its first tick
+    /// ([`Vm::native_first`]).
+    native_first: bool,
     /// Inactive (the embedder's activity rule): not ticked until it wakes,
     /// its state kept.
     asleep: bool,
@@ -970,6 +973,7 @@ impl Vm {
             listed: false,
             first_tick: listing == Listed::FirstTick,
             held: false,
+            native_first: false,
             asleep: false,
             activator: false,
             active: 0.0,
@@ -1044,6 +1048,16 @@ impl Vm {
     /// listing its script for that tick alone).
     pub fn is_held(&self, id: PlacementId) -> bool {
         self.placements.get(id as usize).is_some_and(|p| p.held)
+    }
+
+    /// Asks a walk's native ([`Vm::step_with`]) in `id`'s place just before
+    /// its next tick, once: an embedder's word on the world between the
+    /// placements ahead of it and this one's first look at it. Nothing for a
+    /// placement never ticked again.
+    pub fn native_first(&mut self, id: PlacementId) {
+        if let Some(p) = self.placements.get_mut(id as usize) {
+            p.native_first = true;
+        }
     }
 
     /// Whether a script has suspended the placement (`placement.script
@@ -1931,6 +1945,10 @@ impl Vm {
             native(self, id, host)?;
             self.adopt(program, host);
             return Ok(());
+        }
+        if p.native_first {
+            self.placements[id as usize].native_first = false;
+            native(self, id, host)?;
         }
         let before = self.executed;
         let result = self.tick(id, host);
