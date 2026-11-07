@@ -1978,6 +1978,7 @@ impl ScriptWorld {
                 if let Some(a) = self.actors.get_mut(&h) {
                     a.attach = v;
                     a.hung = Vec3::ZERO;
+                    a.hung_facing = None;
                 }
                 // A hero hung has his controller off until he's let go
                 // (openspec AS.115); another's ground carries nobody here.
@@ -3349,6 +3350,17 @@ impl ScriptWorld {
                 }
                 _ => None,
             };
+            // What hangs on an actor itself turns as that actor turns
+            // (openspec AU.37: Pop Fizz's beast, hung on him), by what it
+            // turned through, so a spin of its own goes on.
+            let owner_facing = match self.object(Some(node)) {
+                None => self
+                    .actor_of(Some(node))
+                    .filter(|&o| o != h)
+                    .and_then(|o| self.angles_within(o, engine, HUNG_DEPTH - 1))
+                    .map(|g| g.facing),
+                _ => None,
+            };
             // Its offset from what it hangs from, in that frame (openspec
             // AH.226); what it hangs from at once otherwise.
             let at = match self.hang_frame(h, engine) {
@@ -3362,6 +3374,12 @@ impl ScriptWorld {
                 if let Some(q) = turn {
                     a.angles = angles_of(q);
                 }
+                if let (Some(now), Some(last)) = (owner_facing, a.hung_facing)
+                    && now != last
+                {
+                    a.angles.facing = (a.angles.facing + now - last).rem_euclid(360.0);
+                }
+                a.hung_facing = owner_facing;
             }
             // A hung hero's body goes with his node (openspec AS.115), his
             // place being his controller's.
@@ -5007,6 +5025,37 @@ mod tests {
         )
         .unwrap();
         assert_eq!(e.hero.as_ref().unwrap().walk.velocity, Vec3::X);
+    }
+
+    /// AU.37: what hangs on an actor itself turns as he turns (Pop Fizz's
+    /// beast, hung on him), by what he turned through, so a spin of its own
+    /// goes on; what hangs on nothing keeps its facing.
+    #[test]
+    fn what_hangs_on_an_actor_turns_as_he_turns() {
+        const BEAST: Handle = 0x55;
+        let mut e = bench();
+        let mut w = world();
+        let solid = guac_motion::tuning::eruptor_solid();
+        let mut him = Hero::actor(solid, Vec3::ZERO, 0.0);
+        him.facing = 10.0;
+        e.hero = Some(him);
+        w.actors.insert(HERO, Actor::blank());
+        let mut beast = Actor::blank();
+        beast.attach = Value::Entity(HERO);
+        beast.angles.facing = 30.0;
+        w.actors.insert(BEAST, beast);
+        let facing = |w: &ScriptWorld| w.actors[&BEAST].angles.facing;
+        w.place_hung(&mut e);
+        assert_eq!(facing(&w), 30.0, "as it was hung");
+        e.hero.as_mut().unwrap().facing = 50.0;
+        w.place_hung(&mut e);
+        assert_eq!(facing(&w), 70.0, "40 degrees with him");
+        w.actors.get_mut(&BEAST).unwrap().angles.facing = 100.0;
+        w.place_hung(&mut e);
+        assert_eq!(facing(&w), 100.0, "a turn of its own stays");
+        e.hero.as_mut().unwrap().facing = 350.0;
+        w.place_hung(&mut e);
+        assert_eq!(facing(&w), 40.0, "round through north");
     }
 
     /// AH.50's hand: an actor hung on his node 7 sits there; posed again,
