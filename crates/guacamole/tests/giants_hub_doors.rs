@@ -4,7 +4,9 @@
 //!
 //! `cargo test -p guacamole --profile disc --test giants_hub_doors -- --ignored --nocapture --test-threads=1`
 
+use guac_motion::stick::{DEAD_ZONE, Stick};
 use guac_script::{Handle, Mode, Value};
+use guacamole::script_engine::Pad;
 
 mod common;
 
@@ -115,6 +117,86 @@ fn every_stages_doors_stand_by_their_unlock_values() {
         assert!(
             !run.world.removed(run.placed("Galley_Blocker").0),
             "{level}"
+        );
+    }
+    println!(
+        "{:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
+
+/// The stick that pushes along `heading` against a view looking along
+/// `view`, past the dead zone per axis, as giants_route's driver makes it.
+fn stick_for(view: f32, heading: f32) -> Stick {
+    let d = (heading - view).to_radians();
+    let raw = |a: f32| {
+        if a.abs() < 1e-4 {
+            0.0
+        } else {
+            a.signum() * (DEAD_ZONE + (1.0 - DEAD_ZONE) * a.abs())
+        }
+    };
+    Stick::new(raw(-d.sin()), raw(d.cos()))
+}
+
+/// Walked on the stick through `points` (across the ground), each within
+/// 1 m, at most 900 steps each: where he stopped if he didn't get there.
+fn walk(run: &mut Run, points: &[[f32; 2]]) -> Result<(), guac_motion::seam::Vec3> {
+    for &to in points {
+        let mut reached = false;
+        for _ in 0..900 {
+            let at = run.hero().pivot;
+            if (to[0] - at.x).hypot(to[1] - at.z) <= 1.0 {
+                reached = true;
+                break;
+            }
+            let heading = (to[0] - at.x).atan2(to[1] - at.z).to_degrees();
+            run.bench.pads[0] = Pad {
+                stick: stick_for(run.bench.view, heading),
+                actions: [false; 4],
+                connected: true,
+            };
+            run.step_play().unwrap();
+        }
+        if !reached {
+            return Err(run.hero().pivot);
+        }
+    }
+    Ok(())
+}
+
+/// openspec AS.138: with the doors and their art on the listing, a hero
+/// handed over on any stage walks to Cali on the main deck and up the helm's
+/// stairs to Flynn, the way chotchki's kids go, nothing in his way.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn flynn_and_cali_stay_in_reach_on_every_stage() {
+    const TO_CALI: [[f32; 2]; 1] = [[-9.5, 16.0]];
+    const TO_FLYNN: [[f32; 2]; 5] = [
+        [1.0, 27.0],
+        [1.0, 33.0],
+        [1.0, 40.0],
+        [1.0, 44.0],
+        [0.3, 47.5],
+    ];
+    let started = std::time::Instant::now();
+    for level in STAGES {
+        let (mut run, _found) = run_on_level(Mode::Play, level, setup());
+        for _ in 0..2 {
+            run.step_play().unwrap();
+        }
+        run.world.skip_cutscenes = true;
+        run.join().unwrap_or_else(|h| panic!("{level}: {h}"));
+        for _ in 0..600 {
+            run.step_play().unwrap();
+        }
+        walk(&mut run, &TO_CALI).unwrap_or_else(|at| panic!("{level}: to Cali, stopped at {at}"));
+        let by_cali = run.hero().pivot;
+        walk(&mut run, &TO_FLYNN).unwrap_or_else(|at| panic!("{level}: to Flynn, stopped at {at}"));
+        println!(
+            "{level}: by Cali at {by_cali}, by Flynn at {}",
+            run.hero().pivot
         );
     }
     println!(
