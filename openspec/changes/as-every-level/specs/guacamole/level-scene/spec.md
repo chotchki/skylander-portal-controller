@@ -316,3 +316,10 @@ While a scene keeps the portal, the hero's figure lifted SHALL leave him in it: 
 #### Scenario: Lifted in Norticus' scene
 - **WHEN** the hero's figure is lifted in Norticus' scene, which lets switching through
 - **THEN** he comes off, the level holds behind the call for a Skylander, and the next placed comes in with the scene playing on to its end
+
+### Requirement: Reflections the scene leaves off
+A material leaving reflections to the scene SHALL draw with them off while the level places no planar reflection, as the original's scene does; a material asking for them in its own bits SHALL be refused by name.
+
+#### Scenario: The ship's deck
+- **WHEN** level 214 or a hub stage draws the ship's deck decal
+- **THEN** it draws from its own textures, tint and blend, unrefused, with no reflection

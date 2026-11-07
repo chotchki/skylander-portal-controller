@@ -115,7 +115,10 @@ impl std::fmt::Display for Side {
 }
 
 /// The scene's runtime switches: what it turns on for every part that
-/// leaves them to it.
+/// leaves them to it. Never reflections (bit 9): the original's scene raises
+/// it only for a receiver a planar reflection is cast on, and nothing on the
+/// dump places one, so the 15 materials leaving it to the scene draw with it
+/// off (openspec AS.56; stand-in ledger: `reflections`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SceneBits {
     pub shadows: bool,
@@ -834,6 +837,35 @@ mod tests {
             Err(KeyError::SplitPointLights {
                 side: Side::Pixel,
                 ignore: 0x0AFF
+            })
+        );
+    }
+
+    /// openspec AS.56: the ship's deck decal on 214 and the hub leaves bit 9
+    /// to the scene on both masks; under every switch the scene has it draws
+    /// with it off, unrefused, where the same bit in a material's own base is
+    /// refused by name.
+    #[test]
+    fn reflections_left_to_the_scene_draw_off() {
+        let (p, v) = (mask(0x1, 0xFF), mask(0x1001, 0x18FF));
+        let everything = SceneBits {
+            shadows: true,
+            fog: true,
+            point_lights: 3,
+        };
+        for scene in [SceneBits::default(), SceneBits::TURNTABLE, everything] {
+            let k = ShaderKey::resolve(p, v, scene).unwrap();
+            assert_eq!(k.pixel() >> bit::REFLECTIONS & 1, 0, "{scene:?}");
+            assert_eq!(k.vertex() >> bit::REFLECTIONS & 1, 0, "{scene:?}");
+        }
+        let lit = ShaderKey::resolve(p, v, everything).unwrap();
+        assert_eq!((lit.pixel(), lit.vertex()), (0x3D01, 0x3501));
+        assert_eq!(
+            ShaderKey::resolve(mask(0x201, 0xFF), mask(0x1201, 0x18FF), everything),
+            Err(KeyError::Feature {
+                side: Side::Pixel,
+                bit: bit::REFLECTIONS,
+                name: "reflections"
             })
         );
     }
