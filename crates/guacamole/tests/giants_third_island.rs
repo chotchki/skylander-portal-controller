@@ -609,8 +609,11 @@ fn level_214s_third_island_is_walked_to_its_end() {
     }
     println!("the barrel broken, him at {}", run.hero().pivot);
     // Square behind the block before pushing: off its middle he slides by.
+    // The stick walks him through the swings since AU.37, so he comes here
+    // on the barrel's line, and the push leans him west: east of its middle
+    // (705.6) he meets the block, west of it he slides off.
     for _ in 0..120 {
-        if run.hero().pivot.x > 705.0 {
+        if run.hero().pivot.x > 705.8 {
             break;
         }
         let s = stick_to(&run, [706.0, 495.0]);
