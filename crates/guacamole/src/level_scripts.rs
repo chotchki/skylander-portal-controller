@@ -685,6 +685,37 @@ mod tests {
         assert_eq!(linked.files, 5);
     }
 
+    /// AU.37: a walker's spawn rigs read by his load file, in either IR's
+    /// path; another archive's kept under his name is why, not his clips.
+    #[test]
+    fn a_walkers_rigs_are_his_own_archives() {
+        let dir = tempfile::tempdir().unwrap();
+        let load = "108_Alchemist";
+        let rigs = |archive: String| guac_ir::spawn::SpawnRigs {
+            identity: guac_ir::DumpIdentity {
+                title_id: "BLUS30968".into(),
+                app_ver: "01.00".into(),
+                manifest_hash: guac_ir::Sha256([7; 32]),
+            },
+            archive,
+            rigs: Vec::new(),
+            refused: Vec::new(),
+        };
+        let archive = guac_extract::scripts::character_archive(load);
+        let rel = dir.path().join(IrFormat::Ron.spawn_rig_path(&archive));
+        assert!(
+            spawn_rigs(dir.path(), load, IrFormat::Ron).is_err(),
+            "no file"
+        );
+        std::fs::create_dir_all(rel.parent().unwrap()).unwrap();
+        std::fs::write(&rel, guac_ir::to_ron(&rigs(archive.clone())).unwrap()).unwrap();
+        let read = spawn_rigs(dir.path(), load, IrFormat::Ron).unwrap();
+        assert_eq!(read.archive, archive);
+        std::fs::write(&rel, guac_ir::to_ron(&rigs("elsewhere".into())).unwrap()).unwrap();
+        let why = spawn_rigs(dir.path(), load, IrFormat::Ron).unwrap_err();
+        assert!(why.contains("elsewhere"), "{why}");
+    }
+
     #[test]
     fn a_part_that_wont_load_names_its_file() {
         let tmp = extract();

@@ -87,11 +87,11 @@ Every modelled character SHALL attack with its own attack scripts, its attack bu
 
 #### Scenario: An attack that changes him into something else
 - **WHEN** Pop Fizz or his red presses the second attack
-- **THEN** he grows into his beast, drawn on its own model and clips, walks and strikes in it on the stick until its meter runs out, and turns back and walks on
+- **THEN** he grows into his beast by 1.8 s, drawn on its own model and clips, walks and strikes in it on the stick from 2.5 s to 9.3 s, its meter out at 10.1 s, or the same button sooner, and turns back and walks on
 
 #### Scenario: A hero off the scripts' movers
-- **WHEN** an attack cut short leaves a hero off the movement scripts' movers
-- **THEN** the stick still walks him at his own numbers and a walk nothing keeps slows to a stop (stand-in ledger: `engine-walk`)
+- **WHEN** an attack leaves a hero off the movement scripts' movers, as 31 of the sweep's 268 presses do
+- **THEN** the stick still walks him at his own numbers and a walk nothing keeps slows at his own deceleration, a 40 ft/s leap falling 1.33 ft/s a frame as Tree Rex's recorded 38.8 ft/s one does (stand-in ledger: `engine-walk`)
 
 #### Scenario: An attack that swapped his movement numbers stops
 - **WHEN** an attack replaces the hero's movement numbers with a set of its own, then stops his script

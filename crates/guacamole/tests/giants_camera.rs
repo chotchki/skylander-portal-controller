@@ -1811,7 +1811,7 @@ fn kept_in_order(a: &[String], b: &[String]) -> Vec<String> {
 /// scheduler's at AF.8's fresh state (AH.195's read), placement by
 /// placement, the run joined at the spawn (`fresh`); placements of the level
 /// only (a name the file's running placements hold once). The read holds
-/// 86 of the level's among its 165 awake, the VM 68: 55 in both, 52 of them
+/// 86 of the level's among its 165 awake, the VM 66: 54 in both, 51 of them
 /// in the same order. The three that moved got their places in the
 /// original before the state, which a run from the level's start doesn't
 /// have: `Propellar_Prop`, whose range the intro's script takes to 0 at its
@@ -1821,11 +1821,13 @@ fn kept_in_order(a: &[String], b: &[String]) -> Vec<String> {
 /// `Norticus_First_Encounter(1)` (260 ft), woken 0.68 s before the state,
 /// where the run measures the hero's 255 ft from it from its first step.
 /// Only the read's: placements with no script, which the activity rule
-/// wakes in the world and the VM doesn't hold. Only the VM's: placements off
+/// wakes in the world and the VM doesn't hold, and `Chest(1)`, asleep here
+/// for a save this run doesn't make. Only the VM's: placements off
 /// the whitelist, inert here, whose own STARTUP took them off there (the
-/// read's group 3), and `Eon_1_Move_along_path`, listed since AR.29 and
-/// waiting for the hero's touch, which the original's took before the state
-/// with him standing at the spawn (AR.37).
+/// read's group 3), the quarry's three chains, listed since AU.33 and waiting
+/// to die, and `Eon_1_Move_along_path`, listed since AR.29 and waiting for
+/// the hero's touch, which the original's took before the state with him
+/// standing at the spawn (AR.37).
 #[test]
 #[ignore = "reads the Giants dump and AH.195's read"]
 fn the_levels_placements_tick_as_the_scheduler_holds_them_at_the_fresh_state() {
@@ -1896,11 +1898,14 @@ fn the_levels_placements_tick_as_the_scheduler_holds_them_at_the_fresh_state() {
     }
     println!("the read's shared order: {read_shared:?}");
     println!("the VM's shared order: {shared:?}");
-    // The VM's 68 (69 before AT.44): `213_UI_Controller`, inert and awake
+    // The VM's 66 (69 before AT.44): `213_UI_Controller`, inert and awake
     // until AT.44 listed it, now shows the title and takes itself off, as
-    // AF.8's fresh state holds it (AG.7: taken off), in neither list.
-    assert_eq!((awake.len(), read.len(), vm.len()), (165, 86, 68));
-    assert_eq!((shared.len(), kept.len()), (55, 52));
+    // AF.8's fresh state holds it (AG.7: taken off), in neither list; so
+    // since AS.133 does `_FoodInit`; and `Chest(1)`, on the listing since
+    // AU.39, sleeps until a run's save is in (`treasure::waits_for_the_save`),
+    // which this run has none of, so it's the read's alone.
+    assert_eq!((awake.len(), read.len(), vm.len()), (165, 86, 66));
+    assert_eq!((shared.len(), kept.len()), (54, 51));
     assert_eq!(
         moved,
         [
@@ -1909,7 +1914,7 @@ fn the_levels_placements_tick_as_the_scheduler_holds_them_at_the_fresh_state() {
             "Norticus_First_Encounter(1)"
         ]
     );
-    for n in &only_read {
+    for n in only_read.iter().filter(|n| n.as_str() != "Chest(1)") {
         assert!(placed(n).script.is_none(), "{n} has a script");
     }
     let taken_off = read_group(3);
@@ -1922,6 +1927,12 @@ fn the_levels_placements_tick_as_the_scheduler_holds_them_at_the_fresh_state() {
             // in the original (AR.37).
             let id = run.vm.placement_of(h).unwrap();
             assert_eq!(run.vm.behaviour(id), Some("wait"), "{n}");
+            continue;
+        }
+        if n.starts_with("Chain ") {
+            // The quarry's chains, listed since AU.33: awake here, off there.
+            let id = run.vm.placement_of(h).unwrap();
+            assert_eq!(run.vm.behaviour(id), Some("wait to die"), "{n}");
             continue;
         }
         assert!(run.vm.inert().contains(&h), "{n} isn't inert");

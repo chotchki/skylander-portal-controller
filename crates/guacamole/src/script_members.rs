@@ -3598,13 +3598,14 @@ impl ScriptWorld {
     /// What the engine walks `hero` with this step, if it does (openspec
     /// AU.37): none while he's one of the scripts' movers, whose velocity
     /// the movement scripts keep and hand the engine, nor on a step a script
-    /// set his walk itself (Swarm's flight sets it every step, and every
-    /// recording of an attack so far stands on it left as written). Off them
-    /// (`Movement - Remove Mover` hands the engine his numbers: most attacks,
-    /// and for good where an attack cut short leaves him there) the engine's
-    /// own velocity model runs on him as it runs on every actor, the stick
-    /// its input with a pad as his `actorinfo.controller`. Stand-in ledger:
-    /// `engine-walk`.
+    /// set his walk itself (Swarm's flight sets it every step and loses its
+    /// hits otherwise). Off them (`Movement - Remove Mover` hands the engine
+    /// his numbers: 31 of the sweep's 268 presses, and for good where an
+    /// attack cut short leaves him there) the engine's own velocity model
+    /// runs on him as it runs on every actor, the stick its input with a pad
+    /// as his `actorinfo.controller`, which `Movement - Activate/Deactivate
+    /// Controller` swaps for the inactive one off the movers alone. Stand-in
+    /// ledger: `engine-walk`.
     pub fn engine_walk(&self, hero: Handle, push: Push) -> Option<(SteerPhysics, Aim)> {
         let a = self.actors.get(&hero)?;
         if a.physics.ground_max_speed >= MOVER_TOP_SPEED || self.walk_written.contains(&hero) {
@@ -5101,6 +5102,35 @@ mod tests {
         e.hero.as_mut().unwrap().facing = 350.0;
         w.place_hung(&mut e);
         assert_eq!(facing(&w), 40.0, "round through north");
+        // Let go and hung again, what he turned through unhung isn't its
+        // turn (the au-pop-fizz review).
+        let node = at(
+            "abstractplacement",
+            "attach node",
+            Some(Value::Entity(BEAST)),
+            None,
+        );
+        w.set(&node, Value::Null, &mut e).unwrap();
+        e.hero.as_mut().unwrap().facing = 100.0;
+        w.place_hung(&mut e);
+        w.set(&node, Value::Entity(HERO), &mut e).unwrap();
+        w.place_hung(&mut e);
+        assert_eq!(facing(&w), 40.0, "hung afresh");
+        e.hero.as_mut().unwrap().facing = 110.0;
+        w.place_hung(&mut e);
+        assert_eq!(facing(&w), 50.0, "turning with him again");
+        // A clone hung on itself (Dino-Rang's script hangs his on themselves)
+        // has no one to turn with: its own turn isn't turned again.
+        const ITSELF: Handle = 0x57;
+        let mut own = Actor::blank();
+        own.template = Some(skinned);
+        own.attach = Value::Entity(ITSELF);
+        own.angles.facing = 20.0;
+        w.actors.insert(ITSELF, own);
+        w.place_hung(&mut e);
+        w.actors.get_mut(&ITSELF).unwrap().angles.facing = 35.0;
+        w.place_hung(&mut e);
+        assert_eq!(w.actors[&ITSELF].angles.facing, 35.0, "its own turn, once");
     }
 
     /// AH.50's hand: an actor hung on his node 7 sits there; posed again,
@@ -8045,6 +8075,18 @@ mod animation_tests {
             Surfaces::NONE,
         );
         assert_eq!(body.walk.velocity.z, 5.0, "the scripts' walk is left alone");
+        // Hung on something the engine leaves him be, off the movers or on
+        // them: his rig has him, his walk kept for his letting go (the
+        // au-pop-fizz review).
+        let a = w.actors.get_mut(&HERO).unwrap();
+        a.physics.ground_max_speed = 25.0;
+        a.controller = pad;
+        body.hung = true;
+        body.walk.velocity = Vec3::new(0.0, 0.0, 5.0);
+        body.facing = 10.0;
+        w.step_scripted(HERO, &mut body, &e.world, push, STEP, &[], Surfaces::NONE);
+        assert_eq!(body.walk.velocity.z, 5.0, "hung");
+        assert_eq!(body.facing, 10.0, "hung, the stick turning nothing");
     }
 
     /// AS.78: a palette's clip read before any copy of it plays has its

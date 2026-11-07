@@ -6397,6 +6397,94 @@ fn pop_fizz_goes_into_his_beast_and_back_and_walks_on() {
     }
 }
 
+/// How many steps a lunge's fall is read over, past its peak.
+const FALL: usize = 12;
+
+/// AG.12's `t_south` (Tree Rex, two replays): at his walk he presses South
+/// with the stick held on and leaps, then falls to nothing with the stick
+/// ignored. Each replay's peak, ft/s, and what it falls a frame from there.
+fn recorded_lunges() -> Vec<(f32, f32)> {
+    let run = capture_dir().join("BLUS30968/ag12-walks-1792580915");
+    ["t_south-W-00", "t_south-W-01"]
+        .iter()
+        .map(|replay| {
+            let text = std::fs::read_to_string(run.join(replay).join("recording.json"))
+                .unwrap_or_else(|e| panic!("{replay}: {e}"));
+            let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+            let walk: Vec<f32> = json
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| json_f32(&r["mover"]["length"]))
+                .collect();
+            let peak = (1..walk.len())
+                .find(|&k| walk[k] > walk[k - 1] + 10.0)
+                .expect("the leap");
+            (walk[peak], (walk[peak] - walk[peak + FALL]) / FALL as f32)
+        })
+        .collect()
+}
+
+/// His walk across the ground, ft/s, each step from his first attack pressed
+/// at his top speed with the stick held on.
+fn lunge(w: &mut W) -> Vec<f32> {
+    // The recording's stick, from the spawn it walks out of.
+    let forward = Stick::new(-1.0, 0.0);
+    for _ in 0..40 {
+        pad_step(w, forward, None);
+    }
+    (0..60)
+        .map(|s| {
+            pad_step(w, forward, (s < HELD).then_some(0));
+            let v = w.hero().walk.velocity;
+            v.x.hypot(v.z)
+        })
+        .collect()
+}
+
+/// Where `speeds` peaks, and how high.
+fn peak_of(speeds: &[f32]) -> (usize, f32) {
+    speeds.iter().copied().enumerate().fold(
+        (0, 0.0),
+        |best, (k, v)| if v > best.1 { (k, v) } else { best },
+    )
+}
+
+/// openspec AU.37, the au-pop-fizz review: how a hero comes out of an attack.
+/// The one recording of an attack under a held stick is AG.12's Tree Rex, on
+/// the movers: 38.76 ft/s falling at his 80 ft/s² to nothing in 30 frames.
+/// He does that here, and `013_Crab`'s first attack, the same kind of leap
+/// off the movers, falls at the same 80 on the engine's model
+/// (`ScriptWorld::engine_walk`; before it his 40 ft/s stood for 35 steps).
+#[test]
+#[ignore = "reads the Giants dump and AG.12's recording"]
+fn a_lunge_off_the_movers_falls_as_the_recorded_one_does() {
+    let recorded = recorded_lunges();
+    println!("recorded: {recorded:?}");
+    let l = Level::open();
+    let o = Opts {
+        fight: true,
+        ..PLAY
+    };
+    let mut rex =
+        W::joined(&l, "112_TitanLife", o, 120).unwrap_or_else(|b| panic!("{}: {}", b.1, b.2));
+    let speeds = lunge(&mut rex);
+    let (at, peak) = peak_of(&speeds);
+    let fall = (speeds[at] - speeds[at + FALL]) / FALL as f32;
+    println!("Tree Rex: {peak:.2} ft/s, falling {fall:.3} ft/s a step");
+    for &(theirs, falls) in &recorded {
+        assert!((peak - theirs).abs() < 1.0, "{peak} against {theirs}");
+        assert!((fall - falls).abs() < 0.1, "{fall} against {falls}");
+    }
+    let mut crab = W::joined(&l, "013_Crab", o, 120).unwrap_or_else(|b| panic!("{}: {}", b.1, b.2));
+    let speeds = lunge(&mut crab);
+    let (at, peak) = peak_of(&speeds);
+    let fall = (speeds[at] - speeds[at + FALL]) / FALL as f32;
+    println!("013_Crab: {peak:.2} ft/s, falling {fall:.3} ft/s a step");
+    assert!(peak > 30.0, "no leap: {speeds:?}");
+    assert!((fall - recorded[0].1).abs() < 0.1, "{speeds:?}");
+}
+
 /// openspec AU.37's verify: in the beast Pop Fizz and his red hit, a Chompy
 /// of the first fight set in front of him at full health losing it to his
 /// punches, and each walks on after the beast's end.
