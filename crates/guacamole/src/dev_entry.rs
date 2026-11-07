@@ -75,8 +75,9 @@
 //!   state a walk reaches wherever the level's way to the door is open.
 //! - By (openspec AU.39): any placement of the level by name (`{"anchor":
 //!   "by", "by": "<name>"}`, or `GUAC_DEV_ENTRY=by:<name>`): once he's
-//!   settled, set down [`BY_DISTANCE`] off it along its own facing, facing
-//!   it. Nothing else is set.
+//!   settled, set down [`BY_DISTANCE`] off it along its own facing, or
+//!   `"distance": <metres>` along `"heading": <degrees>` where that's off
+//!   its ledge, facing it. Nothing else is set.
 //! - Norticus' scene, once the four are beaten, ends from his own script as
 //!   the original's does (openspec AH.56: the cutscene system's update in
 //!   the game systems' tick), freeing the hero: the entry sets nothing
@@ -418,6 +419,10 @@ pub(crate) struct Asked {
     pub(crate) plan: Plan,
     pub(crate) seed: Option<u32>,
     pub(crate) interior: Option<String>,
+    /// The way off a placement an [`Anchor::By`] sets him down, degrees,
+    /// over its own facing, and how far, metres, over [`BY_DISTANCE`].
+    pub(crate) heading: Option<f32>,
+    pub(crate) distance: Option<f32>,
 }
 
 /// How far off a placement an [`Anchor::By`] sets him down, metres: past a
@@ -425,10 +430,10 @@ pub(crate) struct Asked {
 pub(crate) const BY_DISTANCE: f32 = 7.0;
 
 /// Where an [`Anchor::By`] sets him down for a placement at `at` turned to
-/// `facing` (degrees): [`BY_DISTANCE`] along its facing, turned back on it.
-pub(crate) fn by_placement(at: Vec3, facing: f32) -> (Vec3, f32) {
+/// `facing` (degrees): `distance` along its facing, turned back on it.
+pub(crate) fn by_placement(at: Vec3, facing: f32, distance: f32) -> (Vec3, f32) {
     let f = facing.to_radians();
-    let off = Vec3::new(f.sin(), 0.0, f.cos()) * BY_DISTANCE;
+    let off = Vec3::new(f.sin(), 0.0, f.cos()) * distance;
     (at + off, (facing + 180.0).rem_euclid(360.0))
 }
 
@@ -535,6 +540,8 @@ pub(crate) fn asked_at_start(dev_build: bool, value: Option<&str>) -> Option<Ask
                 plan: Plan::of(anchor),
                 seed: None,
                 interior: Some(name.trim().to_owned()),
+                heading: None,
+                distance: None,
             });
         }
     }
@@ -543,6 +550,8 @@ pub(crate) fn asked_at_start(dev_build: bool, value: Option<&str>) -> Option<Ask
         plan: Plan::of(anchor),
         seed: None,
         interior: None,
+        heading: None,
+        distance: None,
     })
 }
 
@@ -564,7 +573,7 @@ impl Plugin for DevEntryPlugin {
         if env.is_some() && at_start.is_none() {
             warn!(
                 value = ?env,
-                "GUAC_DEV_ENTRY isn't `b`, `start`, `end`, `pods`, `elves`, `part`, `part2`, `door2` or `interior:<name>`: no entry"
+                "GUAC_DEV_ENTRY isn't `b`, `start`, `end`, `pods`, `elves`, `part`, `part2`, `door2`, `by:<placement>` or `interior:<name>`: no entry"
             );
         }
         if let Some(a) = &at_start {
@@ -626,6 +635,7 @@ pub(crate) fn drive(
     let plan = asked.plan.clone();
     let seed = asked.seed;
     let interior = asked.interior.clone();
+    let (heading, distance) = (asked.heading, asked.distance);
     let has_intro = source
         .as_deref()
         .is_some_and(|s| scripts::intro(s.level()).is_some());
@@ -702,7 +712,13 @@ pub(crate) fn drive(
                 let placed = world
                     .placed_in(level, name)
                     .and_then(|h| world.actor(h))
-                    .map(|a| by_placement(a.position, a.angles.facing));
+                    .map(|a| {
+                        by_placement(
+                            a.position,
+                            heading.unwrap_or(a.angles.facing),
+                            distance.unwrap_or(BY_DISTANCE),
+                        )
+                    });
                 match placed {
                     Some(by) => by,
                     None => {
@@ -839,6 +855,8 @@ struct EntryBody {
     seed: Option<u32>,
     interior: Option<String>,
     by: Option<String>,
+    heading: Option<f32>,
+    distance: Option<f32>,
 }
 
 impl EntryBody {
@@ -872,6 +890,8 @@ pub(crate) fn routes<S: Clone + Send + Sync + 'static>(asks: &EntryAsks) -> axum
                             plan: Plan::of(b.anchor),
                             seed: b.seed,
                             interior,
+                            heading: b.heading,
+                            distance: b.distance,
                         });
                         true
                     }
@@ -1047,7 +1067,7 @@ mod tests {
         assert_eq!(by.interior.as_deref(), Some("Chest(1)"));
         assert_eq!(asked_at_start(true, Some("by")), None);
         assert_eq!(asked_at_start(false, Some("by:Chest(1)")), None);
-        let (at, facing) = by_placement(Vec3::new(1.0, 2.0, 3.0), 90.0);
+        let (at, facing) = by_placement(Vec3::new(1.0, 2.0, 3.0), 90.0, BY_DISTANCE);
         assert!(at.distance(Vec3::new(1.0 + BY_DISTANCE, 2.0, 3.0)) < 1e-4);
         assert_eq!(facing, 270.0);
         // Any level's interior by its controller's name (openspec AS.96):
@@ -1109,6 +1129,8 @@ mod tests {
             },
             seed: Some(77),
             interior: None,
+            heading: None,
+            distance: None,
         }
     }
 
@@ -1254,6 +1276,8 @@ mod tests {
             plan: Plan::of(Anchor::Start),
             seed: None,
             interior: None,
+            heading: None,
+            distance: None,
         };
         let (mut app, _) = fight_app(tmp.path(), Some(asked));
         until(&mut app, "the entry at its anchor", |a| {

@@ -835,6 +835,8 @@ mod tests {
             plan: Plan::of(Anchor::Start),
             seed: None,
             interior: None,
+            heading: None,
+            distance: None,
         }
     }
 
