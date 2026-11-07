@@ -200,6 +200,10 @@ A hero SHALL stop dead the frame a point 1.2105 m (4 ft as read) ahead along his
 - **WHEN** a hit leaves a hero falling with his shape 0.39 m into a cliff under its rim, where every cast from him stops at once
 - **THEN** he comes straight out of the face at the recovery's speed, falls and lands, and the stick walks him
 
+#### Scenario: Falling past a foe at a wall
+- **WHEN** a Giant falls down a wall with a foe on the rim above it at his side
+- **THEN** neither holds him: he falls on and his own fall check sets him back
+
 ### Requirement: He leans with the ground
 A hero SHALL turn his up axis at 120°/s of game time toward the normal of the ground under him while he's on it or within 0.375 m over ground he can stand on, and toward straight up otherwise, until he's within half a degree of it, the last frame taking what's left, so a change under 2° at 1/60 s is done in one frame. Turned about the vertical, his lean SHALL turn with him.
 
