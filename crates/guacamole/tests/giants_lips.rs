@@ -483,3 +483,27 @@ fn a_hero_in_214s_cliff_comes_out_and_lands() {
         assert!(walked > 1.0, "a dead stick: {walked}");
     }
 }
+
+/// openspec AS.159: where Tree Rex stood on the TV with the stick on the way
+/// back, slipped off the pit's edge and 68 m under the level's underside.
+/// Its ground is the finder's upward ray's, none under him, so he's fallen,
+/// past his check's 225 ft by the ground he last had, and it sets him back.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_hero_under_the_level_is_set_back() {
+    const UNDER: Vec3 = Vec3::new(-8.2253275, -18.914867, -31.966932);
+    let mut run = joined(CHAPTER_1);
+    run.hero_mut().pivot = UNDER;
+    for _ in 0..3 {
+        run.step_play().unwrap();
+    }
+    let height = run.hero().footing.height;
+    println!("the ground at {height:?}");
+    assert!(height.is_some_and(|h| h < -60.0), "{height:?}");
+    for _ in 0..30 {
+        run.step_play().unwrap();
+    }
+    let at = run.hero().pivot;
+    println!("half a second on at {at:?}");
+    assert!(at.y > 20.0, "hung under the level: {at:?}");
+}

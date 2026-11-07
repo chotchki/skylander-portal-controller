@@ -157,6 +157,10 @@ impl Input {
     }
 }
 
+/// A ground this far over his pivot (metres, negative) can only be the
+/// finder's upward ray's: its downward one starts [`ground::find`]'s 0.1 m up.
+const OVER_HIS_HEAD: f32 = -0.11;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Hero {
     /// His pivot, the bottom centre of his solid, metres.
@@ -609,9 +613,17 @@ impl Hero {
     /// Stand-in ledger: `fall-reset`.
     pub fn fallen(&self) -> Option<f32> {
         match self.footing.ground {
-            Some(_) => None,
-            None => Some((self.last_ground.unwrap_or(self.pivot.y) - self.pivot.y).max(0.0)),
+            Some(_) if !self.ground_over_him() => None,
+            _ => Some((self.last_ground.unwrap_or(self.pivot.y) - self.pivot.y).max(0.0)),
         }
+    }
+
+    /// What the ground finder holds is its upward ray's, over his head with
+    /// nothing under him (openspec AS.159: Tree Rex slipped off the pit's
+    /// edge read a gap of 0 under it, 68 m below the level's underside, and
+    /// hung there with no gravity while the stick stayed on the way back).
+    fn ground_over_him(&self) -> bool {
+        self.footing.height.is_some_and(|h| h < OVER_HIS_HEAD)
     }
 
     /// Held up by a rim alone (openspec AS.155): the support check passes on
@@ -625,7 +637,9 @@ impl Hero {
     /// and he falls, the minion's own check setting him back (a reading: no
     /// recording has a hero at rest on one).
     pub fn on_a_lip(&self) -> bool {
-        self.footing.supported && self.footing.height.is_none_or(|h| h > edge::WALKABLE_RANGE)
+        self.footing.supported
+            && (self.ground_over_him()
+                || self.footing.height.is_none_or(|h| h > edge::WALKABLE_RANGE))
     }
 
     /// The catch under the minion's own fall check (openspec AS.146): falling
@@ -1056,6 +1070,27 @@ mod catch {
         h.step_engine(&seam, step, &[], Surfaces::NONE);
         assert!(h.pivot.y < met.y, "on down it: {}", h.pivot);
         assert!(h.pivot.x >= met.x, "none of it into the plane: {}", h.pivot);
+    }
+
+    /// AS.159: ground only over his head isn't ground under him: he's
+    /// falling, and a rim holding him there is a lip. The down ray's own
+    /// reach above his pivot still reads as ground under him.
+    #[test]
+    fn ground_over_his_head_is_none_under_him() {
+        let mut h = Hero::new(eruptor_solid(), Tuning::ERUPTOR, Vec3::ZERO, 0.0);
+        h.footing.ground = Some(Vec3::Y);
+        h.last_ground = Some(49.0);
+        h.pivot.y = -19.0;
+        h.footing.height = Some(-68.0);
+        assert_eq!(h.fallen(), Some(68.0));
+        assert!(!h.on_a_lip(), "not held by anything");
+        h.footing.supported = true;
+        assert!(h.on_a_lip());
+        h.footing.supported = false;
+        h.footing.height = Some(-0.1);
+        assert_eq!(h.fallen(), None);
+        h.footing.supported = true;
+        assert!(!h.on_a_lip());
     }
 
     /// AS.155: a hero with ground under his pivot, however far, within the
