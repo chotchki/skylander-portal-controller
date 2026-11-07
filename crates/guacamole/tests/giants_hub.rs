@@ -811,6 +811,21 @@ fn every_hub_stages_people_stand_talk_and_stop_the_hero() {
 const COUNTS: [(usize, std::ops::RangeInclusive<usize>); 4] =
     [(0, 2..=6), (1, 7..=13), (2, 14..=15), (3, 16..=16)];
 
+/// The exterior zone the definition picks at each count of adventures done
+/// (AS.130's runs): the level last done's, as its sky out past the ship.
+fn exterior_at(done: usize) -> i32 {
+    match done {
+        2 => 201,
+        3 => 205,
+        4..=6 => 208,
+        7..=8 => 206,
+        9..=10 => 203,
+        11..=13 => 200,
+        14..=15 => 202,
+        _ => 208,
+    }
+}
+
 /// The first `done` story adventures marked complete on `vm`, as the title's
 /// fill leaves them, the last at 2 when `just` (a level end just marked it).
 fn mark(vm: &mut guac_script::Vm, done: usize, just: bool) {
@@ -897,6 +912,18 @@ fn stage_at_every_count(stage: usize) {
             let c = at_count(stage, done, just, &[]);
             println!("{name} at {done}, just {just}: {c:?}");
             assert_eq!(c.completed, Some(Value::Int(done as i32)), "{name} {done}");
+            assert_eq!(
+                c.first_time,
+                Some(Value::Int(i32::from(just))),
+                "{name} {done}: the scene for the adventure just done"
+            );
+            assert!(c.began.is_some(), "{name} {done}: no intro");
+            assert_eq!(c.zone, Some(Value::Int(exterior_at(done))), "{name} {done}");
+            assert!(
+                c.sky.len() == 1 && c.sky[0].ends_with(&exterior_at(done).to_string()),
+                "{name} {done}: the zone's sky alone: {:?}",
+                c.sky
+            );
             assert!(c.gone.is_some(), "{name} {done}: no hand-over");
             assert!(
                 flat(c.at).distance(flat(handed)) < 0.05,
