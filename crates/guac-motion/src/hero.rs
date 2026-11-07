@@ -606,7 +606,8 @@ impl Hero {
     /// script's fall check reads as his separation from the ground: past its
     /// 225 ft it sets him back on his safe point trail (openspec AS.146; a
     /// reading: what the original's ground reads with none under him isn't
-    /// recorded, stand-in ledger: `fall-reset`).
+    /// recorded).
+    /// Stand-in ledger: `fall-reset`.
     pub fn fallen(&self) -> Option<f32> {
         match self.footing.ground {
             Some(_) => None,
@@ -615,7 +616,7 @@ impl Hero {
     }
 
     /// The catch for a hero with nowhere to go (openspec AS.146; a catch, not
-    /// the cause; stand-in ledger: `fall-reset`): with no ground under him,
+    /// the cause), stand-in ledger: `fall-reset`. With no ground under him,
     /// past [`FALL_DEPTH`] below the last, or for [`FALL_STUCK_STEPS`] hardly
     /// moving, he's set back where he stood on the ground, walk gone. The
     /// original's minion script does as much by its safe point trail, and
@@ -831,6 +832,44 @@ mod catch {
         let moved_to = h.catch.next.unwrap();
         assert_ne!(moved_to, first);
         assert_eq!(h.catch.safe, Some(first), "a step behind");
+    }
+
+    /// AS.146: in a crease of two steep faces with a slit under him, the
+    /// faces' planes sum to up but no ground lies under his pivot: no
+    /// support, so gravity isn't taken off him a step at a time.
+    #[test]
+    fn a_crease_with_no_floor_is_no_support() {
+        let face = |id: u32, x: f32, turn: f32| Body {
+            id: BodyId(id),
+            kind: BodyKind::Static,
+            collider: Collider::Convex(crate::seam::Shape::Box {
+                half_extents: Vec3::new(1.0, 4.0, 5.0),
+                margin: 0.0,
+            }),
+            pose: crate::seam::Pose::new(
+                Vec3::new(x, 3.2, 0.0),
+                Quat::from_rotation_z(turn.to_radians()),
+            ),
+        };
+        let world = ParryWorld::new(&[face(1, 2.8, -25.0), face(2, -2.8, 25.0)]).unwrap();
+        let mut h = Hero::new(
+            eruptor_solid(),
+            Tuning::ERUPTOR,
+            Vec3::new(0.0, 1.2, 0.0),
+            0.0,
+        );
+        let mut touched = false;
+        for _ in 0..120 {
+            h.walk.velocity = Vec3::new(0.0, -2.0, 0.0);
+            h.step_engine(&world, 1.0 / 60.0, &[], Surfaces::NONE);
+            touched |= !h
+                .proxy(&world, &[], Surfaces::NONE)
+                .planes(h.pivot, h.up, SUPPORT_GAP)
+                .is_empty();
+            assert_eq!(h.footing.ground, None);
+            assert!(!h.footing.supported, "held at {}", h.pivot);
+        }
+        assert!(touched, "the crease never met him");
     }
 
     /// AS.146: nothing under him is no support, whatever he's pressed

@@ -421,8 +421,8 @@ pub(crate) fn step_heroes(
         } else {
             hero.step_among(&seam, &input, step, exclude, &moving.0);
         }
-        // Over nothing with nowhere to go (openspec AS.146; stand-in ledger:
-        // `fall-reset`).
+        // Over nothing with nowhere to go (openspec AS.146).
+        // Stand-in ledger: `fall-reset`.
         if hero.catch_fall() {
             info!(at = %hero.pivot, "a hero over nothing set back on the ground");
         }

@@ -153,8 +153,8 @@ pub(crate) enum Member {
     /// `animationinfo.walk` and `animationinfo.run`, read only: the clip a
     /// `turn to` or `move to` plays on the way. Nothing yet: what asks it on
     /// chapter 1 (the Giant's turn to the cracked floor) turns as well
-    /// without one, and AS.39 reads the actor's own (stand-in ledger:
-    /// `locomotion-clip`).
+    /// without one, and AS.39 reads the actor's own.
+    /// Stand-in ledger: `locomotion-clip`.
     LocomotionClip,
     /// `animationinfo.type`, read only.
     ClipKind,
@@ -3473,8 +3473,8 @@ fn turned_by(angles: Angles, m: Member, by: f32) -> Angles {
 /// An actor's movement numbers as the engine's steering reads them.
 /// Where a hero with no ground under him reads his ground: under him by how
 /// far he's fallen, at least a foot, so the mover update's gravity, which
-/// asks how far over his ground he is, acts on him (openspec AS.146; stand-in
-/// ledger: `fall-reset`).
+/// asks how far over his ground he is, acts on him (openspec AS.146).
+/// Stand-in ledger: `fall-reset`.
 fn fall_point(hero: &Hero) -> Option<Vec3> {
     let fallen = hero.fallen()?;
     Some(hero.pivot - Vec3::Y * fallen.max(METRES_PER_FOOT))
@@ -3495,8 +3495,9 @@ const CARRIED_STEPS: u32 = 30;
 /// fronts face the arena: a reading, that the original's mesh stops a body
 /// from that side alone. Ours stops it from both, so eight of Setup_002's
 /// twenty stood in the mouth for good and its gate never opened (openspec
-/// AU.33; stand-in ledger: `wedged-walker`). One that has left where it first
-/// stood is a creature pressed into a wall, and walks as ever.
+/// AU.33). One that has left where it first stood is a creature pressed into
+/// a wall, and walks as ever.
+/// Stand-in ledger: `wedged-walker`.
 fn wedged_step(walker: &mut Walker, at: Vec3, velocity: Vec3, speed: f32, dt: f32) -> Option<Vec3> {
     let first = *walker.first.get_or_insert(at);
     let walk = Vec3::new(velocity.x, 0.0, velocity.z);

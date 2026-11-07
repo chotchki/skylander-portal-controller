@@ -50,3 +50,22 @@ When a level's end names the hub, the TV SHALL take the hero there and draw it w
 #### Scenario: A question on the hub
 - **WHEN** a person on the hub asks the kid a yes-or-no question, and a figure goes onto the portal while it's up
 - **THEN** the TV shows the question with Yes and No, the focus where the original's starts, steps aside for the portal's message until it's gone, and the answer takes the branch the original's answer takes
+
+### Requirement: Chapter 1 played to its end on foot
+A new game SHALL play chapter 1 from its spawn to its outro with nothing but the pads: the cave and its Giant, the cracked floor he breaks, the second cave's Chompies and Arkeyan, its jump pads to the quarry, the three posts whose chains hold the robot, each breaking under the hero's attacks, and the fights between them.
+
+#### Scenario: The way past the pit
+- **WHEN** a hero beats the pit's four Chompies and walks into the cave
+- **THEN** its cutscene frees the Giant, the Giant breaks the floor as the hero nears him, and falling through it takes the hero to the second cave
+
+#### Scenario: The last chain
+- **WHEN** the third post gives
+- **THEN** its cutscene plays, the screen fades, the outro plays and the level end names level 214
+
+### Requirement: A hero over nothing comes back
+A hero with no ground under him who has fallen far past the last ground, or who hardly moves for a second, SHALL come back to where he stood on the ground a moment before, his walk gone, so no fall or edge leaves a kid stuck under or beside a level.
+
+#### Scenario: Held on a chasm's rim
+- **WHEN** a knock leaves the hero over a chasm, held on its rim
+- **THEN** within a second or so he stands on the ground he left, the stick moving him again
+
