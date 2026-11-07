@@ -471,7 +471,7 @@ fn the_fights_parts_extract_whole_and_resume() {
         load_average()
     );
     assert_eq!(written, 0, "every file was there as recorded");
-    assert_eq!((done.levels.parts_read, done.scripts.parts_read), (2, 2));
+    assert_eq!((done.levels.parts_read, done.scripts.parts_read), (2, 3));
     assert!(done.particles.read && done.particles.files.written == 0);
     drop(again);
     assert_eq!(
