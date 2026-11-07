@@ -1217,6 +1217,14 @@ pub(crate) fn activity_from(
     last_place.or(start).into_iter().collect()
 }
 
+/// The attack buttons a step's scripts read: a hero not joined, whose join
+/// failed or whose script stopped reads none (`joined`, his load file while
+/// he's on them), one joined all but what the TV holds back of his
+/// ([`walkers::held_back`], openspec AU.10).
+fn attack_buttons(joined: Option<&str>, held: [bool; 4]) -> [bool; 4] {
+    joined.map_or([false; 4], |load_file| walkers::held_back(load_file, held))
+}
+
 /// One step of the run, before the hero's (the module docs).
 pub(crate) fn step_scripts(
     mut commands: Commands,
@@ -1452,7 +1460,10 @@ pub(crate) fn step_scripts(
     // (hero-attacks' Which characters attack, openspec AU.1): a hero not
     // joined yet, or whose join failed or whose script stopped, reads none,
     // so nothing of his file the VM still ticks throws for him.
-    let held = if joined.is_some() { held } else { [false; 4] };
+    let held = attack_buttons(
+        joined.and(run.as_deref()).map(|r| r.load_file.as_str()),
+        held,
+    );
     world.read_pads([
         Pad {
             stick: input.0.stick,
@@ -2333,6 +2344,18 @@ mod tests {
 
     use super::*;
     use crate::test_support::hero_scripts::{LEVEL, progression_rows, write_attack, write_smash};
+
+    #[test]
+    fn a_heros_scripts_read_his_buttons_less_what_the_tv_holds_back() {
+        let all = [true; 4];
+        assert_eq!(attack_buttons(None, all), [false; 4], "no one joined");
+        assert_eq!(attack_buttons(Some("009_Eruptor"), all), all);
+        assert_eq!(
+            attack_buttons(Some("108_Alchemist"), all),
+            [true, false, true, true],
+            "Pop Fizz's second attack would leave him frozen"
+        );
+    }
 
     /// AH.280's backstop: with no hero in, the activity rule measures from
     /// where the last one came off once the level has had one, never the

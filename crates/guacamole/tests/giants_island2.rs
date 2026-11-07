@@ -289,6 +289,34 @@ fn level_214s_lobbers_intro_puts_up_his_card_then_the_hint() {
     assert!(stops.is_empty(), "{stops:#?}");
 }
 
+/// openspec AS.131, on AS.57: a bomb hint's words reach the same queue. The
+/// hero set down in the first hint's volume, its line stands on the queue.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_bomb_hint_puts_up_its_words() {
+    use guacamole::announcements::hints;
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, mut stops) = joined_214();
+    let (_, at) = run.placed("0_Hint_Use_Bombs");
+    run.put(at, 90.0);
+    let mut shown = None;
+    for _ in 0..600 {
+        step(&mut run, &mut stops, [false; 4]);
+        if let Some(text) = hints(&run.vm, &run.world).into_iter().find_map(|h| h.text) {
+            shown = Some((run.steps, line_hash(&text)));
+            break;
+        }
+    }
+    println!(
+        "the hint up at {shown:?} ({:.1} s, load {})",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    assert!(shown.is_some(), "no hint on the queue");
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
 /// openspec AS.97: level 214's Setup_004B, from its trigger to its end, on
 /// the stick. Set down past the second locked door; the trigger queues the
 /// lobber down off his ledge and plays his enemy intro; the closets let out

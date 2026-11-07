@@ -85,6 +85,10 @@ Every modelled character SHALL attack with its own attack scripts, its attack bu
 - **WHEN** an attack reaches what guacamole doesn't model yet and stops the hero's script
 - **THEN** the stick still walks him at his own speed and his attack buttons do nothing
 
+#### Scenario: An attack the TV holds back
+- **WHEN** Pop Fizz or his red presses the second attack
+- **THEN** it never reaches his scripts, and he walks and fights on (stand-in ledger: `held-attacks`, until his beast is drawn)
+
 #### Scenario: An attack that swapped his movement numbers stops
 - **WHEN** an attack replaces the hero's movement numbers with a set of its own, then stops his script
 - **THEN** he stays in the level and the stick walks him at the speed he had before it
