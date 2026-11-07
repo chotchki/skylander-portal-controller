@@ -1322,19 +1322,22 @@ impl ScriptWorld {
                 // Set` by `Camera - Clean Up Targets` on that reading where
                 // the level's mesh ends under it, which AG.13's corridor
                 // recordings never do; a hypothesis, the ground facet of such
-                // an actor not read). Nor a hero over nothing (openspec
-                // AS.146): the mover update takes a mover reading under 0 off
-                // for gone, every step, so his stick and his gravity died
-                // there and stayed dead on any ground he came back to.
+                // an actor not read). Nor a hero over nothing on his own feet
+                // (openspec AS.146): the mover update takes a mover reading
+                // under 0 off for gone, every step, so his stick and his
+                // gravity died there and stayed dead on any ground he came
+                // back to. Hung on a rig or held by a scene he reads as ever:
+                // level 201's intro walks him off its pod along a plank with
+                // no solid, which its mover's gravity would drop him through.
                 // Stand-in ledger: `fall-reset`.
                 let free = match object {
-                    Some(Object::Facet(h, Facet::Ground)) => {
-                        engine.hero(h).is_some()
-                            || self
-                                .actors
-                                .get(&h)
-                                .is_some_and(|a| a.havok().is_none() && !(a.managed && !a.active))
-                    }
+                    Some(Object::Facet(h, Facet::Ground)) => match engine.hero(h) {
+                        Some(hero) => !hero.hung && !self.in_scene,
+                        None => self
+                            .actors
+                            .get(&h)
+                            .is_some_and(|a| a.havok().is_none() && !(a.managed && !a.active)),
+                    },
                     _ => false,
                 };
                 Value::Int(match (found, free) {
@@ -6475,6 +6478,14 @@ mod fight_tests {
             };
             w.get(&a, e).unwrap().as_f32().unwrap()
         };
+        // Hung on a rig or held by a scene his type stands as it was: level
+        // 201's pod and the walk off it.
+        e.hero.as_mut().unwrap().hung = true;
+        assert_eq!(type_under(&mut w, &mut e, HERO), Value::Int(-1));
+        e.hero.as_mut().unwrap().hung = false;
+        w.in_scene = true;
+        assert_eq!(type_under(&mut w, &mut e, HERO), Value::Int(-1));
+        w.in_scene = false;
         assert_eq!(over(&mut w, &mut e, "separation"), 1.0);
         assert!(over(&mut w, &mut e, "vertical offset") > 5.0);
         e.hero.as_mut().unwrap().footing.supported = true;

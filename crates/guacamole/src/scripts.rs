@@ -448,6 +448,9 @@ pub struct ScriptWorld {
     /// Each template's animation palette: every slot's clip length,
     /// seconds at 100 %, 0 where a slot is empty.
     pub(crate) palettes: HashMap<Obj, Vec<f32>>,
+    /// Whether a scene held the game as the last step ended
+    /// ([`crate::anchors::scene_holds`], [`add_scripted`]).
+    pub(crate) in_scene: bool,
     /// The placements that reset themselves this step: what a player was
     /// carrying among them he's carrying no more ([`add_scripted`]).
     pub(crate) went_round: Vec<Handle>,
@@ -860,6 +863,7 @@ impl ScriptWorld {
             sequences: Vec::new(),
             restarts: Vec::new(),
             palettes: HashMap::new(),
+            in_scene: false,
             went_round: Vec::new(),
             rigs: Default::default(),
             rig_held: Vec::new(),
@@ -4875,6 +4879,7 @@ pub fn set_loot_index(vm: &mut Vm, world: &ScriptWorld, rarity: Rarity, index: f
 /// of those waits for this.
 pub fn add_scripted(vm: &mut Vm, world: &mut ScriptWorld) -> Vec<PlacementId> {
     let program = vm.program_arc();
+    world.in_scene = crate::anchors::scene_holds(vm);
     let_go_of_tools(vm, world);
     let mut added: Vec<PlacementId> = world
         .adopt(&program)

@@ -698,8 +698,13 @@ impl Hero {
                     g.point,
                     g.normal,
                 );
+                // No further than the snap reaches: off a face all but upright
+                // (a body beside him met by the finder's ray) the lift out
+                // runs to tens of metres, and a spawner a hero stood in went
+                // 73 m up and out of its activation range for good, its fight
+                // never ending (the au-whole-story review).
                 if inside < 0.0 && g.normal.y > 1e-3 {
-                    y -= inside / g.normal.y;
+                    y -= (inside / g.normal.y).max(-SNAP_REACH);
                 }
                 // Set down, never above where the move left him: past a
                 // convex crest the face's plane runs on under his shape
@@ -823,6 +828,43 @@ mod catch {
         h.step_engine(&world, 1.0 / 60.0, &[], Surfaces::NONE);
         assert!(!h.footing.supported);
         assert!(h.fallen().unwrap() > 2.9);
+    }
+
+    /// The au-whole-story review: the ground finder meeting a body at its
+    /// side, a face all but upright over his pivot, sets him down off it no
+    /// further than the snap reaches: on level 214's third island it lifted
+    /// a Chompy spawner 73 m in a step.
+    #[test]
+    fn a_snap_off_an_upright_face_goes_no_further_than_it_reaches() {
+        let world = ParryWorld::new(&[
+            Body {
+                id: BodyId(1),
+                kind: BodyKind::Static,
+                collider: Collider::Convex(crate::seam::Shape::Box {
+                    half_extents: Vec3::new(5.0, 0.5, 5.0),
+                    margin: 0.0,
+                }),
+                pose: crate::seam::Pose::new(Vec3::new(0.0, 0.01, 0.0), Quat::IDENTITY),
+            },
+            Body {
+                id: BodyId(2),
+                kind: BodyKind::Kinematic,
+                collider: Collider::Convex(crate::seam::Shape::Sphere { radius: 1.0 }),
+                pose: crate::seam::Pose::at(Vec3::new(0.999, 0.5, 0.0)),
+            },
+        ])
+        .unwrap();
+        let at = Vec3::new(0.0, 0.52, 0.0);
+        let mut h = Hero::new(eruptor_solid(), Tuning::ERUPTOR, at, 0.0);
+        h.stand(&world, &[]);
+        let ground = h.footing.ground.expect("the body's side");
+        assert!(ground.y < 0.1, "all but upright: {ground}");
+        assert!(h.footing.supported, "the floor's plane holds him");
+        assert!(
+            h.pivot.y - at.y <= crate::ground::SNAP_REACH + 0.05,
+            "lifted to {}",
+            h.pivot
+        );
     }
 
     /// AS.146's review: over nothing with his shape on the lip he stands, as

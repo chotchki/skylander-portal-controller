@@ -90,7 +90,7 @@ A new game SHALL play chapter 1 from its spawn to its outro with nothing but the
 - **THEN** its cutscene plays, the screen fades, the outro plays and the level end names level 214
 
 ### Requirement: A hero over nothing comes back
-A hero with no ground under him SHALL fall at his gravity to his 120 ft/s with the stick still his, and past the 225 ft the minion's own check reads SHALL come back on his safe point trail, the stick moving him on, so no fall leaves a kid stuck under or beside a level.
+A hero on his own feet with no ground under him SHALL fall at his gravity to his 120 ft/s with the stick still his, and past the 225 ft the minion's own check reads SHALL come back on his safe point trail, the stick moving him on, so no fall leaves a kid stuck under or beside a level.
 
 #### Scenario: Knocked over a gap
 - **WHEN** a hero stands on level 214's first island and is put over the gap beside it, no mesh under him
@@ -98,7 +98,7 @@ A hero with no ground under him SHALL fall at his gravity to his 120 ft/s with t
 
 #### Scenario: Held there by a scene
 - **WHEN** a scene or a hook holds the hero over nothing
-- **THEN** he stays where it holds him until it lets him go
+- **THEN** he stays where it holds him, level 201's walk off its pod crossing its plank on no gravity, until it lets him go
 
 ### Requirement: A bomb run out in his hands is his no more
 A bomb whose count runs out while a hero carries it SHALL burst and stand back on its spawner carried by no one, so every other spawner on the level clones its own and a Giant can lift again.
