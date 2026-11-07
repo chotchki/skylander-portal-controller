@@ -193,6 +193,9 @@ pub struct Hero {
     /// scene's rig or ship, a turret): his controller takes no step, and his
     /// place is what he hangs from's.
     pub hung: bool,
+    /// His last step off the ground got him nowhere, asked to move
+    /// (`Proxy::integrate`'s `stalled`, openspec AS.159).
+    stalled: bool,
     /// The steps one and two frames before the next.
     steps: [f32; 2],
     solid: HavokSolid,
@@ -221,6 +224,7 @@ impl Hero {
             probe_held: false,
             gait_speed: 0.0,
             hung: false,
+            stalled: false,
             steps: [NOMINAL_STEP; 2],
             solid,
             tuning,
@@ -587,8 +591,10 @@ impl Hero {
             v,
             step,
             self.footing.supported,
+            self.stalled,
         );
         self.pivot = moved.pivot;
+        self.stalled = !self.footing.supported && v != Vec3::ZERO && self.pivot == start;
         self.velocity = (self.pivot - start) / step;
         self.solved = moved.velocity;
         self.look(seam, exclude, surfaces, walking, airborne, step);

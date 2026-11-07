@@ -447,3 +447,39 @@ fn a_knock_onto_a_lip_doesnt_leave_him_on_it() {
     );
     assert!(held > 0, "none reached a lip");
 }
+
+/// openspec AS.159: where a fight on level 214's top left Eruptor on the TV,
+/// 0.39 m into the cliff under its rim, in the air at his fall's full speed:
+/// every cast stopped at once, from every heading, and neither he nor the
+/// stick moved again. He comes out of the face, lands and walks.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_hero_in_214s_cliff_comes_out_and_lands() {
+    const IN_THE_CLIFF: Vec3 = Vec3::new(-229.5532, -16.840977, 831.4073);
+    let mut run = joined(LEVEL_214);
+    for heading in [None, Some(270.0), Some(90.0), Some(0.0), Some(180.0)] {
+        run.put(IN_THE_CLIFF + Vec3::new(5.0, 2.0, 0.0), 0.0);
+        for _ in 0..30 {
+            run.step_play().unwrap();
+        }
+        run.hero_mut().pivot = IN_THE_CLIFF;
+        let view = run.bench.view;
+        let stick = heading.map_or(Stick::new(0.0, 0.0), |h| stick_for(view, h));
+        let mut landed = None;
+        for k in 0..90 {
+            pad(&mut run, stick);
+            run.step_play().unwrap();
+            if run.hero().footing.supported {
+                landed = Some(k);
+                break;
+            }
+        }
+        let at = run.hero().pivot;
+        println!("{heading:?}: landed after {landed:?} steps at {at:?}");
+        assert!(landed.is_some(), "still hanging at {at:?}");
+        assert!(at.y < IN_THE_CLIFF.y, "{at:?}");
+        let walked = stick_reach(&mut run);
+        println!("  the stick walks him {walked:.2}");
+        assert!(walked > 1.0, "a dead stick: {walked}");
+    }
+}
