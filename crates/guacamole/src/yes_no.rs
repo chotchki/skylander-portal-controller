@@ -15,8 +15,8 @@
 //!   interface part holds it, as AU.5's screen takes the objectives screen's
 //!   (openspec AU.29, AU design decision 2): `global.bld`'s yes and no
 //!   backdrops, desaturated off the focus, and its bitmap font on a box of
-//!   the clean text box's colour; the TV's own look without it (stand-in
-//!   ledger: `yes-no`).
+//!   the clean text box's colour; the TV's own look without it
+//!   (stand-in ledger: `yes-no`).
 
 use bevy::image::CompressedImageFormats;
 use bevy::input_focus::tab_navigation::TabIndex;
