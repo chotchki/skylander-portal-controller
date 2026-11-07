@@ -272,3 +272,18 @@ A camera's rig SHALL hold the pose its last clip reached once none plays, what h
 #### Scenario: A cut between two shots
 - **WHEN** a shot's new rig is made and isn't drawn yet
 - **THEN** the view and what hangs on the rig stay where the last rig left them until it's posed, and no frame stands at the rig's origin
+
+### Requirement: A scene keeps the hero's figure
+While a scene keeps the portal, the hero's figure lifted SHALL leave him in it: the level holds behind a screen naming him within 1.5 s, frozen, until his figure is back in any slot, and carries on. A character that walks placed instead SHALL let the scene run on with him and come in as the scene lets go, at the latest 60 s of play on. A scene that lets switching through SHALL swap as any other moment does.
+
+#### Scenario: Lifted in the cave's fade and put back
+- **WHEN** the hero's figure is lifted while the cave's darkness takes him in, then placed in another slot
+- **THEN** the level holds behind the screen naming him with nothing moving, the phone shows the slot empty, and the fade carries on from where it held with him in it
+
+#### Scenario: Lifted in the fade with another placed
+- **WHEN** the hero's figure is lifted in the fade and another character is placed
+- **THEN** the fade plays on and lands him in the room, then the other arrives and comes in where he stood
+
+#### Scenario: Lifted in Norticus' scene
+- **WHEN** the hero's figure is lifted in Norticus' scene, which lets switching through
+- **THEN** he comes off, the level holds behind the call for a Skylander, and the next placed comes in with the scene playing on to its end

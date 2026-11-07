@@ -2609,6 +2609,13 @@ fn attack_global_with(
         w.refer(players, 0x24, player_ty);
         let loaded = w.variable("loaded objects", "ScriptSet", None);
         w.refer(loaded, 0x24, slot_ty);
+        // The toys a scene keeps on the portal (openspec AS.112), the scene
+        // itself `Cutscene State`: a test writes both.
+        let requirements_ty = w.op(Class::DefineStructure, "Portal Requirements");
+        let need_keep = w.variable("need keep", "ScriptSet", None);
+        w.refer(need_keep, 0x24, pair_ty);
+        let requirements = structure_var(&mut w, "requirements", requirements_ty);
+        let scene = file_int(&mut w, "Cutscene State");
         // `portal control data`, `portal save control` and `projectile
         // control data`: globals.
         let control = w.b.object(0, "ScriptStructure", 0x20);
@@ -2647,6 +2654,7 @@ fn attack_global_with(
                 }
                 structure(w, info_ty, &[spawned, extra, info_tag]);
                 structure(w, pair_ty, &[rfid, prodid]);
+                structure(w, requirements_ty, &[need_keep]);
                 structure(w, slot_ty, &[object_info, slot_tag, pair, entered, owner]);
                 let mut fields = vec![area];
                 fields.extend(&tag_fields);
@@ -2656,15 +2664,17 @@ fn attack_global_with(
                 match &beam {
                     Some(beam) => {
                         beam.structure(w);
-                        structure(w, control_ty, &[loaded, joined, beam.beams]);
+                        structure(w, control_ty, &[loaded, joined, requirements, beam.beams]);
                     }
-                    None => structure(w, control_ty, &[loaded, joined]),
+                    None => structure(w, control_ty, &[loaded, joined, requirements]),
                 }
                 if let Some(c) = &described {
                     c.structures(w);
                 }
             },
             |w| {
+                let none = w.int(0);
+                w.set(&[El::Local(scene)], none);
                 // The portal's one loaded slot, and two players.
                 w.inc(&[
                     El::Local(control),

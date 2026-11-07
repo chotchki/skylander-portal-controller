@@ -69,6 +69,10 @@ pub(crate) fn lines(alert: Alert) -> [&'static str; 2] {
             "This Skylander needs to rest",
             "Take it off the portal and put on another",
         ],
+        Alert::PutBack => [
+            "Put your Skylander back on the portal",
+            "to play on, or put on another",
+        ],
     }
 }
 
@@ -90,6 +94,10 @@ fn show_alert(
     mut redrawn: MessageWriter<Redrawn>,
     mut shown: Local<Option<(Alert, Entity)>>,
 ) {
+    let name = play
+        .as_deref()
+        .and_then(Play::lifted_name)
+        .map(str::to_owned);
     let want = play.and_then(|p| p.alert());
     if shown.map(|(a, _)| a) == want {
         return;
@@ -104,17 +112,27 @@ fn show_alert(
         return;
     };
     let pen = Pen::new(&assets, &theme);
-    let entity = spawn_alert(&mut commands, &pen, want);
+    let entity = spawn_alert(&mut commands, &pen, want, name.as_deref());
     commands.entity(entity).insert(ShownAt(time.elapsed()));
     *shown = Some((want, entity));
     redrawn.write(Redrawn::Alert);
 }
 
+/// The put-back alert's title, by the figure it asks for.
+pub(crate) fn put_back(name: &str) -> String {
+    format!("Put {name} back on the portal")
+}
+
 /// The alert full screen: the TV's night sky, opaque, under a blue panel in
-/// a gold edge holding its two lines.
-fn spawn_alert(commands: &mut Commands, pen: &Pen, alert: Alert) -> Entity {
+/// a gold edge holding its two lines. `lifted`, the figure the put-back
+/// alert asks for.
+fn spawn_alert(commands: &mut Commands, pen: &Pen, alert: Alert, lifted: Option<&str>) -> Entity {
     let theme = &pen.theme;
     let [title, then] = lines(alert);
+    let title = match (alert, lifted) {
+        (Alert::PutBack, Some(name)) => put_back(name),
+        _ => title.to_owned(),
+    };
     commands
         .spawn((
             AlertScreen(alert),
@@ -147,7 +165,7 @@ fn spawn_alert(commands: &mut Commands, pen: &Pen, alert: Alert) -> Entity {
                 BorderColor::all(theme.gold),
             ))
             .with_children(|panel| {
-                panel.spawn(pen.text(title, Step::Lg, Role::Accent));
+                panel.spawn(pen.text(&title, Step::Lg, Role::Accent));
                 panel.spawn(pen.text(then, Step::Body, Role::Primary));
             });
         })
@@ -318,6 +336,10 @@ mod tests {
         for alert in [Alert::TooManySkylanders, Alert::TooManyItems] {
             assert!(lines(alert)[1].contains("Take one off"), "{alert:?}");
         }
+        let [ask, then] = lines(Alert::PutBack);
+        assert!(ask.contains("back on the portal"), "{ask}");
+        assert!(then.contains("another"), "{then}");
+        assert_eq!(put_back("Eruptor"), "Put Eruptor back on the portal");
         let [call, _] = lines(Alert::PlaceSkylander);
         assert!(
             call.starts_with("Player 1") && call.contains("put a Skylander"),

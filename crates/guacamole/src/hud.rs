@@ -421,8 +421,10 @@ fn read_hud(
     };
     // His slot's values as the TV holds them, else the row he was placed
     // with (play's report reads them so too).
+    let lifted = play.as_deref().is_some_and(Play::lifted);
     let progress = earning
         .as_deref()
+        .filter(|_| !lifted)
         .and_then(|e| e.slots.get(slot.as_usize()))
         .and_then(Option::as_ref)
         .map(|e| e.progress)

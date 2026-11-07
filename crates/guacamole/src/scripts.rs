@@ -5064,6 +5064,25 @@ pub fn portal_mode(vm: &mut Vm) -> Option<String> {
         .map(|d| d.display.clone())
 }
 
+/// Whether a scene keeps the playing heroes' figures on the portal (openspec
+/// AS.112): `Game - Cutscene`, started with `skylander switching not
+/// allowed` (its default, which the interiors, the chests and the other
+/// direct callers keep; the cutscene system's own scenes and a dialogue that
+/// pauses pass 0), lists each playing hero's toy in `portal control data`'s
+/// `requirements.need keep` until the scene ends. A toy on that list lifted
+/// doesn't exit: the portal holds the game until it's back. Read with the
+/// scene itself, so a list a scene left behind doesn't outlive it.
+pub fn scene_keeps_figures(vm: &Vm) -> bool {
+    fn kept(vm: &Vm) -> Option<usize> {
+        let g = vm.program().global_named("portal control data")?;
+        let pcd = vm.global_peek(g)?;
+        let requirements = vm.field(pcd, "requirements")?;
+        let need_keep = vm.field(requirements, "need keep")?;
+        vm.set(need_keep).map(<[Value]>::len)
+    }
+    crate::anchors::scene_holds(vm) && kept(vm).is_some_and(|n| n > 0)
+}
+
 /// The portal put in adventure mode as the level's first minion joins
 /// (openspec AH.28): the original's level load clones the level
 /// initializer, whose `Game - Init Minions in Level` sets it once a player

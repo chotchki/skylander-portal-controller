@@ -77,6 +77,16 @@
 //! - A character who can't walk (one the part lacks or keeps, AG.27)
 //!   counts as one on the portal but can't come in: alone, it leaves the
 //!   level asking for a Skylander.
+//! - A scene that keeps the portal (openspec AS.112; level-scene's A scene
+//!   keeps the hero's figure, [`guacamole::scripts::scene_keeps_figures`]):
+//!   the hero's figure lifted under one doesn't take him off. The level
+//!   holds behind the put-back alert, the scene frozen where it stood, and
+//!   his figure back in any slot lets it carry on, as the original's portal
+//!   does. Ours past it (stand-in ledger: `scene-swap`): a character that
+//!   walks placed under that alert lets the scene run on with him in it and
+//!   comes in as the next once the scene lets go ([`let_go`]; or at
+//!   [`HELD_SWAP_BACKSTOP`], a dying hero or the level's end), so the hold
+//!   asks no more of a kid than the call for a Skylander does.
 //! - A hero whose script stops in play walks on in the level on AG.16's
 //!   controller ([`crate::hero_scripts`], stand-in ledger: `walker`), his
 //!   walk and facing the controller's alone and the view the TV's chain's
@@ -244,6 +254,9 @@ pub(crate) struct Lineup {
     pub(crate) beaten: usize,
     /// The hero is dying: his health ran out and he isn't out yet.
     pub(crate) dying: bool,
+    /// The hero's figure is off the portal under a scene's lock (AS.112):
+    /// he's in the level with no one on the portal for him.
+    pub(crate) lifted: bool,
 }
 
 impl Lineup {
@@ -296,6 +309,9 @@ pub(crate) enum Alert {
     /// A figure beaten in the level is on the portal and no character can
     /// take the hero's place (AH.26: the original's "needs to rest").
     NeedsRest,
+    /// The hero's figure came off under a scene's lock and no character
+    /// can take his place when it lets go (AS.112).
+    PutBack,
 }
 
 impl Alert {
@@ -306,6 +322,7 @@ impl Alert {
             Alert::TooManyItems => "too_many_items",
             Alert::PlaceSkylander => "place_a_skylander",
             Alert::NeedsRest => "needs_rest",
+            Alert::PutBack => "put_back",
         }
     }
 }
@@ -315,8 +332,10 @@ impl Alert {
 /// the start, the level would show now but for the portal. A toy Giants
 /// can't use comes first, then too many characters (one beside a dying hero
 /// waits), then too many magic items, then, with no hero and none to come
-/// in, the needs-rest alert while a beaten figure stands on the portal, else
-/// the call for a Skylander.
+/// in, the put-back alert while a scene keeps his figure, the needs-rest
+/// alert while a beaten figure stands on the portal, else the call for a
+/// Skylander. `hero` is none while his figure is lifted: whoever stands in
+/// his slot now is another character.
 pub(crate) fn judge(
     lineup: &Lineup,
     inside: bool,
@@ -351,6 +370,9 @@ pub(crate) fn judge(
     // AG.72's); one that doesn't walk yet can't, so the call stays up.
     if hero.is_some() || others.first().is_some_and(|walks| *walks) {
         return None;
+    }
+    if lineup.lifted {
+        return Some(Alert::PutBack);
     }
     Some(match lineup.beaten {
         0 => Alert::PlaceSkylander,
@@ -624,6 +646,10 @@ pub(crate) struct Play {
     beaten_at: Option<Duration>,
     /// The arrivals waiting and on screen (openspec AG.72).
     arrivals: Arrivals,
+    /// The hero's figure came off under a scene's lock, on the level's clock
+    /// (openspec AS.112): he stays in the level until it's back or the scene
+    /// lets go.
+    lifted: Option<Duration>,
 }
 
 /// How far above the last hero's place a replacement comes in, metres
@@ -639,6 +665,13 @@ pub(crate) const DROP: f32 = guacamole::walkers::REPLACEMENT_DROP;
 /// ends it (a part without the portal manager's, one stopped in play, the
 /// test hook's health of 0 with no bite to kill him).
 pub(crate) const DEFEAT_BACKSTOP: Duration = Duration::from_secs(3);
+
+/// How long of game time a scene may run with a swap held before the hero
+/// comes off under it all the same (openspec AS.112): past any scene a
+/// player doesn't hold up, for one that never lets go (a script stopped in
+/// it). The clock stands still behind the put-back alert, so this only
+/// counts while the scene runs on with the next hero waiting.
+pub(crate) const HELD_SWAP_BACKSTOP: Duration = Duration::from_secs(60);
 
 /// Restart chapter comes up this long after the hero's health ran out
 /// (tv-hud's No character left: AH.11's `defeat2`, at 0 health by flip
@@ -663,6 +696,9 @@ pub(crate) const NO_RUN: &str =
 pub(crate) struct HeroReport {
     /// 1-based, as the phone numbers slots.
     pub slot: u8,
+    /// His figure is off that slot under a scene's lock, he stands in the
+    /// level still (AS.112).
+    pub lifted: bool,
     pub figure_id: String,
     pub load_file: String,
     /// His model: `shelfless`, `reading`, `compiling`, `ready` or `failed`,
@@ -958,18 +994,38 @@ impl Play {
         self.inside.as_ref()?.hero.as_ref()
     }
 
+    /// The slot the hero's figure stands in: none with him out of the level
+    /// or his figure lifted (whoever stands there now isn't him, AS.112).
+    fn hero_slot(&self) -> Option<SlotIndex> {
+        self.on_stage()?;
+        self.lifted.is_none().then_some(())?;
+        self.candidate.as_ref().map(|c| c.slot)
+    }
+
+    /// The hero stands in the level with his figure off the portal under a
+    /// scene's lock (AS.112).
+    pub(crate) fn lifted(&self) -> bool {
+        self.lifted.is_some()
+    }
+
+    /// The figure the put-back alert asks for by name (AS.112).
+    pub(crate) fn lifted_name(&self) -> Option<&str> {
+        self.lifted?;
+        self.candidate.as_ref().map(|c| c.placement.name.as_str())
+    }
+
     /// The arrivals waiting and on screen (AG.72).
     pub(crate) fn arrivals(&self) -> &Arrivals {
         &self.arrivals
     }
 
-    /// A too-many or wrong-toy alert is up, which hides an arrival's card
-    /// and holds its clock (the call for a Skylander and the needs-rest
-    /// alert don't: AH.52's `cap_off`).
+    /// A too-many, wrong-toy or put-back alert is up, which hides an
+    /// arrival's card and holds its clock (the call for a Skylander and the
+    /// needs-rest alert don't: AH.52's `cap_off`).
     pub(crate) fn arrival_hidden(&self) -> bool {
         matches!(
             self.alert,
-            Some(Alert::TooManySkylanders | Alert::TooManyItems | Alert::WrongToy)
+            Some(Alert::TooManySkylanders | Alert::TooManyItems | Alert::WrongToy | Alert::PutBack)
         )
     }
 
@@ -997,7 +1053,8 @@ impl Play {
     }
 
     /// The slot the hero's figure stands in and its placement, while he's
-    /// in the level: what the HUD reads his figure's numbers by.
+    /// in the level: what the HUD reads his figure's numbers by. Under a
+    /// lifted figure, the slot it left (AS.112).
     pub(crate) fn hero_placement(&self) -> Option<(Entity, SlotIndex, &Placement)> {
         let h = self.on_stage()?;
         let c = self.candidate.as_ref()?;
@@ -1044,6 +1101,7 @@ impl Play {
         // The TV's values for his slot: what his figure's words hold after
         // the last step (AH.23), else the row as the placement read it.
         let progress = earning
+            .filter(|_| self.lifted.is_none())
             .and_then(|e| e.slots.get(c.slot.as_usize()))
             .and_then(Option::as_ref)
             .map(|e| e.progress)
@@ -1058,6 +1116,7 @@ impl Play {
             .and_then(|(t, p, f)| CameraReport::held(t, p, f));
         Some(HeroReport {
             slot: c.slot.as_u8() + 1,
+            lifted: self.lifted.is_some(),
             figure_id: c.placement.figure_id.as_str().to_owned(),
             load_file: c.load_file.clone(),
             model: c.model.name().to_owned(),
@@ -1211,7 +1270,7 @@ fn tell_level_hero(play: Res<Play>, out: Option<Res<LevelHeroOut>>) {
     let Some(out) = out else {
         return;
     };
-    let hero = play.on_stage().and(play.candidate.as_ref()).map(|c| c.slot);
+    let hero = play.hero_slot();
     if out.0.get() != hero {
         info!(
             slot = hero.map(SlotIndex::display),
@@ -1249,6 +1308,8 @@ impl Plugin for PlayPlugin {
                     leave,
                     keep_cards,
                     follow_defeat,
+                    let_go,
+                    follow_hero_slot,
                     tick_arrivals,
                     judge_portal,
                     enter,
@@ -1264,16 +1325,26 @@ impl Plugin for PlayPlugin {
     }
 }
 
+/// `placement` is the toy `hero` stood on the portal as, its words still
+/// good: the same figure for the same profile, no edit or reset since
+/// (AS.112; the original's portal knows a toy by its serial).
+fn same_toy(hero: &Placement, placement: &Placement) -> bool {
+    let generation = |p: &Placement| p.owner.as_ref().map(|o| o.progress.generation);
+    instance(hero) == instance(placement) && generation(hero) == generation(placement)
+}
+
 /// The slots in the order their figures were placed. The hero's figure
 /// leaving the portal, or another placed over it, drops him: before the
 /// level shows he never walks in; in it he leaves where he stands
-/// ([`take_off`]).
+/// ([`take_off`]), unless a scene keeps his figure (AS.112): then he stays,
+/// [`Play::lifted`], until it's back, here, or [`let_go`].
 fn follow_portal(
     mut heard: MessageReader<PortalChanged>,
     mut play: ResMut<Play>,
     mut level: ResMut<Level>,
     mut commands: Commands,
     bodies: Query<(&HeroBody, Option<&HeroRun>)>,
+    (runtime, game): (Option<Res<ScriptRuntime>>, Res<Time<Virtual>>),
 ) {
     for PortalChanged(change) in heard.read() {
         let slot = match change {
@@ -1284,7 +1355,30 @@ fn follow_portal(
         if matches!(change, PortalChange::Placed { .. }) {
             play.order.push(slot);
         }
+        if play.lifted.is_some() {
+            let play = &mut *play;
+            if let PortalChange::Placed { placement, .. } = change
+                && let Some(c) = play.candidate.as_mut()
+                && same_toy(&c.placement, placement)
+            {
+                info!(slot = slot.display(), figure = %placement.name, "the hero's figure is back");
+                c.slot = slot;
+                c.placement = placement.clone();
+                play.lifted = None;
+            }
+            continue;
+        }
         if !play.candidate.as_ref().is_some_and(|c| c.slot == slot) {
+            continue;
+        }
+        // Not while he's dying: the original finalizes his defeat as such a
+        // scene starts and keeps no toy marked defeated.
+        if play.dying.is_none() && scene_keeps_him(&play, &bodies, runtime.as_deref()) {
+            info!(
+                slot = slot.display(),
+                "the hero's figure left the portal under a scene's lock"
+            );
+            play.lifted = Some(game.elapsed());
             continue;
         }
         let gone = play.candidate.take().expect("checked above");
@@ -1304,6 +1398,69 @@ fn follow_portal(
                 take_off(inside, &mut level, &mut commands, &bodies, slot);
             }
         }
+    }
+}
+
+/// The scene in hand keeps the hero's figure (openspec AS.112): he's in the
+/// level, joined to the run the lock is held in.
+fn scene_keeps_him(
+    play: &Play,
+    bodies: &Query<(&HeroBody, Option<&HeroRun>)>,
+    runtime: Option<&ScriptRuntime>,
+) -> bool {
+    let joined = play.on_stage().is_some_and(|h| {
+        bodies
+            .get(h.hero)
+            .is_ok_and(|(_, run)| run.is_some_and(|r| matches!(r.join, Join::Joined(_))))
+    });
+    joined && runtime.is_some_and(|rt| guacamole::scripts::scene_keeps_figures(&rt.vm))
+}
+
+/// A held swap goes through (openspec AS.112): the scene let go, or ran
+/// [`HELD_SWAP_BACKSTOP`] on the level's clock with him still lifted. He
+/// leaves as a hero taken off does; whoever stands on the portal comes in,
+/// or the level calls for a Skylander. Behind the put-back alert no step
+/// runs, so nothing here lets go of a kid's chance to put him back.
+fn let_go(
+    mut play: ResMut<Play>,
+    mut level: ResMut<Level>,
+    mut commands: Commands,
+    bodies: Query<(&HeroBody, Option<&HeroRun>)>,
+    runtime: Option<Res<ScriptRuntime>>,
+    game: Res<Time<Virtual>>,
+) {
+    let Some(at) = play.lifted else {
+        return;
+    };
+    let overdue = game.elapsed() >= at + HELD_SWAP_BACKSTOP;
+    if !overdue && scene_keeps_him(&play, &bodies, runtime.as_deref()) {
+        return;
+    }
+    let play = &mut *play;
+    play.lifted = None;
+    let Some(c) = play.candidate.take() else {
+        return;
+    };
+    info!(overdue, figure = %c.placement.name, "the held swap goes through");
+    if let Some(inside) = play.inside.as_mut() {
+        take_off(inside, &mut level, &mut commands, &bodies, c.slot);
+    }
+}
+
+/// His run on the slot his figure stands in now, and told when it's lifted
+/// (openspec AS.112): what his figure's words hold after a step goes by it.
+fn follow_hero_slot(play: Res<Play>, mut runs: Query<&mut HeroRun>) {
+    let Some((hero, slot, _)) = play.hero_placement() else {
+        return;
+    };
+    let Ok(mut run) = runs.get_mut(hero) else {
+        return;
+    };
+    if run.slot != slot {
+        run.slot = slot;
+    }
+    if run.figure_off != play.lifted() {
+        run.figure_off = play.lifted();
     }
 }
 
@@ -1351,6 +1508,7 @@ fn follow_defeat(
         return;
     };
     play.dying = None;
+    play.lifted = None;
     play.beaten.push(instance(&c.placement));
     info!(
         slot = c.slot.display(),
@@ -1701,6 +1859,7 @@ fn end_level(
     play.beaten.clear();
     play.dying = None;
     play.beaten_at = None;
+    play.lifted = None;
     play.arrivals.clear();
     // The scripts start over with the level's next entry (AH.24).
     commands.queue(hero_scripts::reinstall);
@@ -1783,6 +1942,7 @@ fn keep_cards(
         });
         take_off(inside, &mut level, &mut commands, &bodies, run.slot);
         play.candidate = None;
+        play.lifted = None;
     }
 }
 
@@ -1849,7 +2009,8 @@ fn judge_portal(
                     *walks &= *slot != c.slot;
                 }
             }
-            let hero = play.on_stage().and(play.candidate.as_ref()).map(|c| c.slot);
+            lineup.lifted = play.lifted.is_some();
+            let hero = play.hero_slot();
             let would_start = play.inside.is_none()
                 && would_enter(&play, &level, prepare.as_deref(), queue.as_deref());
             judge(&lineup, play.inside.is_some(), hero, would_start)
@@ -2449,6 +2610,9 @@ pub(crate) fn drawn_clips(
 
 #[cfg(test)]
 mod level_change_tests;
+
+#[cfg(test)]
+mod scene_lock_tests;
 
 #[cfg(test)]
 mod tests {
@@ -6601,6 +6765,37 @@ mod tests {
     /// Items, adventure-pack pieces and sidekicks never hold the level for
     /// too many Skylanders and never answer the call for one; a second
     /// magic item (a sidekick counted as one) holds it under its own alert.
+    /// AS.112: his figure lifted under a scene's lock, the hero isn't in the
+    /// count. With no one to come in the alert asks for his figure, ahead of
+    /// the call and the needs-rest alert; a lone character that walks lets
+    /// the scene run on; two are too many; a toy Giants can't use comes
+    /// first.
+    #[test]
+    fn a_lifted_hero_asks_for_his_figure_back_until_another_could_come_in() {
+        let mut lifted = lineup(&[], 0, 0);
+        lifted.lifted = true;
+        assert_eq!(judge(&lifted, true, None, false), Some(Alert::PutBack));
+        lifted.beaten = 1;
+        assert_eq!(judge(&lifted, true, None, false), Some(Alert::PutBack));
+        lifted.beaten = 0;
+        lifted.characters = vec![(slot(2), false)];
+        assert_eq!(
+            judge(&lifted, true, None, false),
+            Some(Alert::PutBack),
+            "one who can't walk can't come in"
+        );
+        lifted.characters = vec![(slot(2), true)];
+        assert_eq!(judge(&lifted, true, None, false), None);
+        lifted.characters = vec![(slot(2), true), (slot(3), true)];
+        assert_eq!(
+            judge(&lifted, true, None, false),
+            Some(Alert::TooManySkylanders)
+        );
+        lifted.characters.clear();
+        lifted.unusable = 1;
+        assert_eq!(judge(&lifted, true, None, false), Some(Alert::WrongToy));
+    }
+
     #[test]
     fn items_packs_and_sidekicks_never_hold_it_for_too_many_skylanders() {
         let hero = Some(slot(0));

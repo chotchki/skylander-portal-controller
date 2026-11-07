@@ -255,6 +255,69 @@ fn chapter_1s_cave_is_entered_and_left_on_foot() {
     assert!(stops.is_empty(), "{stops:#?}");
 }
 
+/// openspec AS.112: chapter 1's cave keeps the portal while it takes him in.
+/// The controller's own `Game - Cutscene` leaves the switching rule at its
+/// default, so the lock stands from its darkness to the room (`need keep`
+/// holds his toy, `Cutscene State` the scene: 81 steps), while the room's
+/// own scene, the cutscene system's, passes switching through. A swap asked
+/// in the fade waits for the lock to let go, as the TV holds it, and lands
+/// with the warp already done: the next hero joins in the room, nothing
+/// stopped, no warp owed.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_swap_asked_in_the_caves_fade_waits_for_the_room() {
+    use guacamole::scripts::scene_keeps_figures;
+    println!("load at start: {}", load());
+    let (mut run, mut stops) = joined(guac_extract::levels::FIRST_RUN[0]);
+    let cave = handle(&run, "Interior_controller_Cave");
+    run.put(Vec3::new(11.0, 22.4, -28.5), 105.0);
+    for _ in 0..10 {
+        step(&mut run, &mut stops, None, [false; 4]);
+    }
+    assert!(!scene_keeps_figures(&run.vm), "no scene, no lock");
+    // On the stick to the fade.
+    let mut walked = 0;
+    while behaviour(&run, cave).as_deref() != Some(FADING) {
+        step(&mut run, &mut stops, Some([16.5, -30.2]), [false; 4]);
+        walked += 1;
+        assert!(walked < 600, "into the box");
+    }
+    let (mut locked, mut landed_locked) = (0, false);
+    let landed0 = run.world.landed.len();
+    while scene_keeps_figures(&run.vm) {
+        step(&mut run, &mut stops, None, [false; 4]);
+        locked += 1;
+        landed_locked |= run.world.landed.len() > landed0;
+        assert!(locked < 600, "the lock lets go");
+    }
+    println!("walked {walked}, locked {locked} steps");
+    assert!((78..=84).contains(&locked), "{locked}");
+    assert!(landed_locked, "the warp lands under the lock");
+    assert_eq!(behaviour(&run, cave).as_deref(), Some(INSIDE));
+    // The swap goes through now: the room holds the next hero.
+    let at = run.hero().pivot;
+    run.deactivate().unwrap_or_else(|h| panic!("{h}"));
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    for _ in 0..30 {
+        step(&mut run, &mut stops, None, [false; 4]);
+    }
+    assert!(run.hero().pivot.distance(at) < 3.0, "{}", run.hero().pivot);
+    assert_eq!(run.world.landed.len(), landed0 + 1, "one warp, landed");
+    // The room's scene lets switching through.
+    let mut seen = false;
+    for _ in 0..1500 {
+        step(&mut run, &mut stops, None, [false; 4]);
+        seen |= guacamole::anchors::scene_holds(&run.vm);
+        assert!(
+            !scene_keeps_figures(&run.vm),
+            "the cutscene system's own keeps nothing"
+        );
+    }
+    assert!(seen, "the room's scene ran");
+    println!("load at end: {}", load());
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
 /// openspec AS.96: every interior level 214 places entered and left: the
 /// hero set down in each controller's box in turn lands at its arrival,
 /// then set down in its exit's box lands back outside, the controller

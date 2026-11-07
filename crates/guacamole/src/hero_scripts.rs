@@ -660,6 +660,9 @@ pub(crate) struct HeroRun {
     pub(crate) join: Join,
     /// The portal slot his figure stands in: its values make his tag's words.
     pub(crate) slot: SlotIndex,
+    /// His figure came off that slot under a scene's lock (openspec AS.112):
+    /// what his words hold after a step isn't its next occupant's.
+    pub(crate) figure_off: bool,
     /// His figure's tag data once his scripts join holding it (AH.23), and
     /// the generation its words were made under.
     pub(crate) figure: Option<(Value, i64)>,
@@ -737,6 +740,7 @@ pub(crate) fn ask_join(
             rig,
             join: Join::Asked,
             slot,
+            figure_off: false,
             figure: None,
             origin: walk.origin,
             shape: walk.shape,
@@ -1535,7 +1539,10 @@ pub(crate) fn step_scripts(
     ) && let Some((data, generation)) = r.figure
         && let Some(values) = figure::read(vm, layout, data)
     {
-        earning.earned(r.slot.as_usize(), values, generation);
+        match r.figure_off {
+            true => earning.earned_off(r.slot.as_usize(), values, generation),
+            false => earning.earned(r.slot.as_usize(), values, generation),
+        };
     }
     runtime.steps += 1;
     // The camera's scripts (openspec AG.28): theirs the view once a hero has
