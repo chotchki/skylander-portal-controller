@@ -608,6 +608,20 @@ impl Hero {
         }
     }
 
+    /// Held up by a rim alone (openspec AS.155): the support check passes on
+    /// a plane at his shape, as a proxy's does up to its 45° (ag-motion section
+    /// 1, as read), with nothing to stand on under his pivot within the
+    /// walkable check's 225 ft. No script's walk leaves him there: its check
+    /// looks past him for ground and, from under a rim's height, reads the
+    /// rim as a wall to stand off, out over the drop, so it holds his stick
+    /// from every heading. So his gravity acts ([`Self::fallen`]'s reading,
+    /// his scripts' separation), the solve slides him off the rim's plane
+    /// and he falls, the minion's own check setting him back (a reading: no
+    /// recording has a hero at rest on one).
+    pub fn on_a_lip(&self) -> bool {
+        self.footing.supported && self.footing.height.is_none_or(|h| h > edge::WALKABLE_RANGE)
+    }
+
     /// The catch under the minion's own fall check (openspec AS.146): falling
     /// past [`FALL_DEPTH`] with no ground under him, he's set back where he
     /// stood on the ground, walk gone. Only a hero no script ends a fall for
@@ -867,11 +881,13 @@ mod catch {
         );
     }
 
-    /// AS.146's review: over nothing with his shape on the lip he stands, as
-    /// on any ledge, a floor under his pivot or none: the support check is
-    /// the planes at his shape, the ground finder its own. Eruptor and a
+    /// AS.146's review: over nothing with his shape on the lip the support
+    /// check holds him, as on any ledge, a floor under his pivot or none:
+    /// it's the planes at his shape, the ground finder its own. Eruptor and a
     /// giant's twice his size, on a floor's edge and on a beam narrower than
-    /// either, walked to its side.
+    /// either, walked to its side. AS.155: that's the engine's half, a walk
+    /// that stops once he's supported; his scripts' gravity doesn't, and
+    /// [`lip_gravity_slides_him_off_the_rim`] takes him off.
     #[test]
     fn a_lip_with_nothing_under_his_pivot_holds_him() {
         let beam = ParryWorld::new(&[Body {
@@ -903,9 +919,7 @@ mod catch {
                 let mut over = Hero::new(solid, Tuning::ERUPTOR, Vec3::ZERO, 0.0);
                 over.settle(world, &[]);
                 over.pivot.x = edge + r * 0.3;
-                // Gravity brings him onto the lip and sleeps there, as the
-                // mover update's does: it asks his separation, 0 once he's
-                // supported.
+                // Gravity brings him onto the lip and sleeps there.
                 let mut settled = 0;
                 for _ in 0..60 {
                     over.walk.velocity = match over.footing.supported {
@@ -921,7 +935,62 @@ mod catch {
                 }
                 assert_eq!(over.footing.ground, None, "{what}: nothing under his pivot");
                 assert!(settled >= 30, "{what} on the lip at {edge}: {}", over.pivot);
+                assert!(over.on_a_lip(), "{what} on the lip at {edge}");
             }
+        }
+    }
+
+    /// AS.155: his scripts' gravity on a lip (136.21 ft/s², the mover
+    /// update's, kept on while he's [`Hero::on_a_lip`]) presses him into the
+    /// rim's plane, the solve slides him down and out along it, and past 45°
+    /// the rim lets him go: he's over the drop and falling, from anywhere a
+    /// rim can hold him.
+    #[test]
+    fn lip_gravity_slides_him_off_the_rim() {
+        let world = floor();
+        for past in [0.05f32, 0.2, 0.4, 0.55] {
+            let mut h = Hero::new(eruptor_solid(), Tuning::ERUPTOR, Vec3::ZERO, 0.0);
+            h.settle(&world, &[]);
+            h.pivot.x = 5.0 + past;
+            h.walk.velocity = Vec3::new(0.0, -1.667, 0.0);
+            let mut steps = 0;
+            for _ in 0..180 {
+                h.step_engine(&world, 1.0 / 60.0, &[], Surfaces::NONE);
+                if h.on_a_lip() || !h.footing.supported {
+                    h.walk.velocity.y -= 136.21 / 60.0;
+                }
+                steps += 1;
+                if h.pivot.y < -2.0 {
+                    break;
+                }
+            }
+            assert!(
+                h.pivot.y < -2.0,
+                "{past}: held at {} after {steps}",
+                h.pivot
+            );
+            assert!(h.pivot.x > 5.0, "{past}: out over the drop: {}", h.pivot);
+            assert!(!h.footing.supported, "{past}: falling");
+        }
+    }
+
+    /// AS.155: a hero with ground under his pivot, however far, within the
+    /// walkable check's reach isn't on a lip: the walk's own check finds it,
+    /// and he walks off. Past 225 ft, or none, he is; off the ground he isn't.
+    #[test]
+    fn a_lip_is_support_with_nothing_walkable_under_him() {
+        let mut h = Hero::new(eruptor_solid(), Tuning::ERUPTOR, Vec3::ZERO, 0.0);
+        for (supported, height, lip) in [
+            (true, None, true),
+            (true, Some(0.005), false),
+            (true, Some(edge::WALKABLE_RANGE - 0.1), false),
+            (true, Some(edge::WALKABLE_RANGE + 0.1), true),
+            (false, None, false),
+            (false, Some(edge::WALKABLE_RANGE + 0.1), false),
+        ] {
+            h.footing.supported = supported;
+            h.footing.height = height;
+            assert_eq!(h.on_a_lip(), lip, "{supported} {height:?}");
         }
     }
 }

@@ -1486,12 +1486,16 @@ impl ScriptWorld {
             Member::Separation => {
                 // A hero his support check holds is touching what's under
                 // him: no gap, whatever his skin leaves (Update Movers' band
-                // and gravity act only while it's over 0, AG.38).
+                // and gravity act only while it's over 0, AG.38). Unless a
+                // rim alone holds him, nothing walkable under his pivot
+                // (openspec AS.155): what's under him is the gap below, so
+                // his gravity slides him off, where a gap of 0 left him
+                // standing with his walkable check refusing every heading.
                 if let (Some(h), Some(o)) = (actor, at.other_point)
                     && self.object(Some(o)) == Some(Object::Facet(h, Facet::Ground))
                     && let Some(hero) = engine.hero(h)
                 {
-                    if hero.footing.supported {
+                    if hero.footing.supported && !hero.on_a_lip() {
                         return Ok(Value::Float(0.0));
                     }
                     // With none under him, how far he's fallen: gravity acts
@@ -6078,6 +6082,52 @@ mod fight_tests {
         assert!((at.z - 7.0 / 3.0 * FOOT).abs() < 0.005, "{at}");
         assert_eq!(w.actor(C1).unwrap().velocity, Vec3::ZERO);
         assert!(at.y.abs() < 0.02, "{at}");
+    }
+
+    /// openspec AS.155: a hero held up by a rim alone has a gap under him,
+    /// so the mover update's gravity acts, a foot at least with nothing
+    /// under him and the drop itself over one past the walkable check's
+    /// reach; on ground, under a rim or not, he reads none, whatever is
+    /// under his pivot within that reach.
+    #[test]
+    fn a_hero_a_rim_holds_has_a_gap_under_him() {
+        let mut e = pit();
+        let mut hero = Hero::new(eruptor_solid(), Tuning::ERUPTOR, Vec3::ZERO, 0.0);
+        hero.settle(&e.world, &[]);
+        e.hero = Some(hero);
+        e.bodies.insert(HERO, BodyId(9));
+        let mut w = world();
+        let ground = w.objs.value(Object::Facet(HERO, Facet::Ground));
+        let mut gap = |e: &mut Pit, supported: bool, height: Option<f32>| {
+            let h = e.hero.as_mut().unwrap();
+            h.footing.supported = supported;
+            h.footing.height = height;
+            h.footing.ground = height.map(|_| Vec3::Y);
+            let v = w
+                .get(
+                    &Access {
+                        placement: HERO,
+                        receiver: Some(Value::Entity(HERO)),
+                        member: MemberId::named("positionmeasurement", "separation"),
+                        other_point: Some(ground),
+                        via: None,
+                        op: None,
+                    },
+                    e,
+                )
+                .unwrap();
+            v.as_f32().unwrap()
+        };
+        assert_eq!(gap(&mut e, true, Some(0.005)), 0.0, "on the ground");
+        assert_eq!(
+            gap(&mut e, true, Some(40.0)),
+            0.0,
+            "a ledge's drop in reach"
+        );
+        assert!(gap(&mut e, true, None) >= 1.0, "a rim over nothing");
+        assert!(gap(&mut e, false, None) >= 1.0, "over nothing");
+        let deep = guac_motion::edge::WALKABLE_RANGE + 1.0;
+        assert!(gap(&mut e, true, Some(deep)) > 225.0, "a rim over the deep");
     }
 
     #[test]

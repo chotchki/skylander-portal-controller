@@ -192,6 +192,10 @@ A hero SHALL stop dead the frame a point 1.2105 m (4 ft as read) ahead along his
 - **WHEN** Eruptor walks at full stick at the ledge route's edge over the corridor, head-on, 17°-70° east of head-on or 34°-64° west of it, or creeps at it under 2 ft/s
 - **THEN** head-on and east of head-on he walks off anywhere along it from its west end, and 42° west of it only from 0.65 m along it, where his pivot crosses the edge before the next frame's probe stops him dead over it, so he slips down the cliff for 0.9-1.0 s with his walk held at 0; creeping 5.5° east of head-on he walks off 0.78 m along it
 
+#### Scenario: Knocked past a rim with nothing below
+- **WHEN** a hit or a set-down leaves a hero with his shape held on a rim, his pivot past it and no ground within 225 ft under it
+- **THEN** his gravity acts, the rim's plane slides him down and off it, he falls and his own fall check sets him back on his trail, the stick walking him again
+
 ### Requirement: He leans with the ground
 A hero SHALL turn his up axis at 120°/s of game time toward the normal of the ground under him while he's on it or within 0.375 m over ground he can stand on, and toward straight up otherwise, until he's within half a degree of it, the last frame taking what's left, so a change under 2° at 1/60 s is done in one frame. Turned about the vertical, his lean SHALL turn with him.
 
