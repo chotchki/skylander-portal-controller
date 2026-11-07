@@ -3655,6 +3655,85 @@ mod tests {
         ScriptWorld::new(&files, &handles, headless_objects(&handles))
     }
 
+    /// AU.33: a creature held where it first stood is carried on along its
+    /// walk once it's been held long enough, through what holds it.
+    #[test]
+    fn a_creature_held_where_it_first_stood_is_carried_on() {
+        let mut w = Walker {
+            body: None,
+            aim: Aim::Still,
+            along: 0,
+            wedged: 0,
+            first: None,
+            carried: Vec3::ZERO,
+        };
+        let at = Vec3::new(1.0, 2.0, 3.0);
+        let walk = Vec3::new(-82.0, -120.0, 0.0);
+        for _ in 0..WEDGED_STEPS {
+            assert_eq!(wedged_step(&mut w, at, walk, 20.0, 1.0 / 60.0), None);
+        }
+        let on = wedged_step(&mut w, at, walk, 20.0, 1.0 / 60.0).expect("carried");
+        assert!((on.x - (at.x - 20.0 * METRES_PER_FOOT / 60.0)).abs() < 1e-5);
+        assert_eq!(
+            (on.y, on.z),
+            (at.y, at.z),
+            "along its walk, across the ground"
+        );
+        // Its way holds as it's carried, and it's let go after.
+        let mut there = on;
+        let mut steps = 1;
+        while let Some(next) = wedged_step(&mut w, there, Vec3::ZERO, 20.0, 1.0 / 60.0) {
+            there = next;
+            steps += 1;
+        }
+        assert_eq!(steps, CARRIED_STEPS);
+        assert!(there.x < on.x);
+    }
+
+    /// AU.33: one still that asks no walk, and one that has left where it
+    /// first stood, pressed into a wall chasing a hero, stay as they are.
+    #[test]
+    fn a_creature_pressed_into_a_wall_past_where_it_stood_walks_as_ever() {
+        let blank = || Walker {
+            body: None,
+            aim: Aim::Still,
+            along: 0,
+            wedged: 0,
+            first: None,
+            carried: Vec3::ZERO,
+        };
+        let at = Vec3::new(1.0, 2.0, 3.0);
+        let mut still = blank();
+        for _ in 0..WEDGED_STEPS * 3 {
+            assert_eq!(
+                wedged_step(&mut still, at, Vec3::ZERO, 20.0, 1.0 / 60.0),
+                None
+            );
+        }
+        let mut left = blank();
+        assert_eq!(wedged_step(&mut left, at, Vec3::X, 20.0, 1.0 / 60.0), None);
+        let wall = at + Vec3::new(5.0, 0.0, 0.0);
+        for _ in 0..WEDGED_STEPS * 3 {
+            let v = Vec3::new(20.0, 0.0, 0.0);
+            assert_eq!(wedged_step(&mut left, wall, v, 20.0, 1.0 / 60.0), None);
+        }
+    }
+
+    /// AU.33: `animationinfo.walk` and `run` read as nothing, so a `turn to`
+    /// naming one to play turns on with no clip (the Giant's at the floor).
+    #[test]
+    fn a_locomotion_clip_reads_as_nothing() {
+        let mut w = world();
+        let mut e = crate::script_engine::NoEngine;
+        for name in ["walk", "run"] {
+            assert_eq!(
+                w.get(&at("animationinfo", name, None, None), &mut e),
+                Ok(Value::Null),
+                "{name}"
+            );
+        }
+    }
+
     fn at(ns: &str, name: &str, receiver: Option<Value>, other: Option<Value>) -> Access {
         Access {
             placement: 1,

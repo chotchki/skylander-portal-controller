@@ -6661,7 +6661,10 @@ mod tests {
     fn a_reset_brings_a_placement_taken_off_back() {
         let (mut w, grunt, _) = world();
         let file = w.actor(grunt).unwrap().position;
-        w.actors.get_mut(&grunt).unwrap().position = file + Vec3::X;
+        let range = w.actor(grunt).unwrap().range;
+        let k = w.actors.get_mut(&grunt).unwrap();
+        k.position = file + Vec3::X;
+        k.range = range + 50.0;
         assert_eq!(
             w.op(
                 &call(Class::Reset, Some(Value::Entity(grunt))),
@@ -6671,6 +6674,9 @@ mod tests {
             Ok(Answer::Done)
         );
         assert!(w.revived.is_empty(), "a standing one isn't revived");
+        // AU.33: its range as its file has it (chapter 1's vista takes the
+        // quarry's to 0 and resets them).
+        assert_eq!(w.actor(grunt).unwrap().range, range);
         assert_eq!(w.actor(grunt).unwrap().position, file + Vec3::X);
         w.op(
             &call(Class::Remove, Some(Value::Entity(grunt))),

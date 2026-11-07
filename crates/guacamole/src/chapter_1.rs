@@ -139,3 +139,42 @@ pub fn passage(level: &str) -> &'static [&'static str] {
         _ => &[],
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use guac_script::Mode;
+
+    use super::*;
+    use crate::scripts::{Files, encounters, level_config};
+
+    /// Its way is chapter 1's alone: another level's placements so named
+    /// (level 214 holds an `Enemy_Chompy(11)`) stay as that level has them.
+    #[test]
+    fn chapter_1s_way_is_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, WAY.level);
+        let off = level_config(Mode::Play, &files, 5, "level_200");
+        for name in WAY.placements.iter().chain(&PASSAGE) {
+            assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+            assert!(!off.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+        }
+        assert_eq!(encounters(WAY.level).count(), 1);
+        assert_eq!(encounters("level_200").count(), 0);
+        assert!(passage("level_200").is_empty());
+    }
+
+    /// What fights is walked and what takes the way on never is: a jump pad
+    /// the engine walked stood asleep on its body (AS.59's rule for 214's).
+    #[test]
+    fn what_takes_the_way_on_is_never_walked() {
+        for name in PASSAGE {
+            assert!(!WAY.placements.contains(&name), "{name}");
+        }
+        for pad in ["PvP_JumpPad_NORMAL(1)", "PvP_JumpPad_NORMAL(6)"] {
+            assert!(PASSAGE.contains(&pad), "{pad}");
+        }
+        for foe in ["Enemy_Chompy(11)", "PandoranGruntSimple(1)"] {
+            assert!(WAY.placements.contains(&foe), "{foe}");
+        }
+    }
+}
