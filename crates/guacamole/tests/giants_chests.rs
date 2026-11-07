@@ -344,7 +344,7 @@ fn a_chest_opens_pays_and_stays_opened() {
 }
 
 /// The story levels past chapter 1 and 214, each holding chests and hat
-/// boxes.
+/// boxes, but for level 212, which has no start the headless run can read.
 const LEVELS: [&str; 13] = [
     "level_200",
     "level_201",
@@ -404,7 +404,7 @@ fn mash_off(s: &mut Story, h: Handle, at: Vec3, steps: u32) -> Option<u32> {
 fn every_levels_chest_and_hat_box_run_clean() {
     let started = std::time::Instant::now();
     println!("load at start: {}", load());
-    let mut bad = Vec::new();
+    let (mut bad, mut unopened) = (Vec::new(), Vec::new());
     for level in [CHAPTER_1, LEVEL_214].into_iter().chain(LEVELS) {
         let t = std::time::Instant::now();
         let mut s = Story::joined(level, Session::new(Some(HOST.into())));
@@ -432,8 +432,15 @@ fn every_levels_chest_and_hat_box_run_clean() {
         if !s.stops.is_empty() {
             bad.push((level, s.stops.clone()));
         }
+        if opened.is_none() {
+            unopened.push(level);
+        }
+        assert!(taken.is_some(), "{level}: its hat box stayed");
     }
     assert!(bad.is_empty(), "{bad:#?}");
+    // Two chests stand out of a set-down's reach of their height (a hero
+    // landing past the 5 ft the chest asks): neither stops, neither rises.
+    assert_eq!(unopened, ["level_201", "level_209_giantrobot"]);
     println!(
         "{:.1} s, load at end: {}",
         started.elapsed().as_secs_f64(),
