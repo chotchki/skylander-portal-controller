@@ -268,23 +268,15 @@ fn playing_clips<'c>(
     }
 }
 
-/// What a drawn creature's or skinned clone's other clips are laid over: the
-/// clips its locomotion on the VM weights on it (openspec AU.37: Pop Fizz's
-/// beast, the scripts' `Minion - Define Locomotion States` run on the
-/// clone), each at its time and share, else its idle at `seconds`.
+/// What a drawn creature's or skinned clone's other clips are laid over
+/// ([`guacamole::picks::under_clips`]): what its locomotion on the VM weights
+/// on it, else its idle at `seconds`.
 fn base_clips<'c>(
     c: &'c DrawnCreature,
     world: &ScriptWorld,
     seconds: f64,
 ) -> Vec<(&'c guac_ir::clip::Clip, f64, f64)> {
-    let moving = c.palette.as_deref().map_or_else(Vec::new, |p| {
-        guacamole::picks::locomotion(world, c.actor, p)
-    });
-    if moving.is_empty() {
-        vec![(&c.model.idle, seconds, 1.0)]
-    } else {
-        moving
-    }
+    guacamole::picks::under_clips(world, c.actor, c.palette.as_deref(), &c.model.idle, seconds)
 }
 
 /// A drawn creature's or skinned clone's attach nodes as [`pose_creatures`]

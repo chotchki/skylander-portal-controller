@@ -3166,6 +3166,69 @@ mod tests {
         assert!(walker_keys_warm(&Warm::new(false), "016_Spyro"));
     }
 
+    /// AU.37: what a character's skinned templates play reaches them at his
+    /// join, off the part read with his model: a palette for his file's
+    /// template naming the model, none for one of another file's.
+    #[test]
+    fn a_walkers_rigs_reach_his_templates_at_his_join() {
+        use guac_formats::script::builder::WalkerFault;
+        use guac_script::Obj;
+        use guacamole::scripts::{Placed, ScriptWorld};
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let (mut app, pad) = walker_app(dir, WalkerFault::None);
+        let mut palette: Palette = guac_ir::from_ron(
+            &std::fs::read_to_string(dir.join(IrFormat::Ron.palette_path(WALKER))).unwrap(),
+        )
+        .unwrap();
+        palette.owner = "beast.mdl".into();
+        let archive = guac_extract::scripts::character_archive(WALKER);
+        let rel = dir.join(IrFormat::Ron.spawn_rig_path(&archive));
+        std::fs::create_dir_all(rel.parent().unwrap()).unwrap();
+        let rigs = guac_ir::spawn::SpawnRigs {
+            identity: palette.identity.clone(),
+            archive,
+            rigs: vec![guac_ir::spawn::SpawnRig {
+                palette,
+                nodes: None,
+            }],
+            refused: Vec::new(),
+        };
+        std::fs::write(rel, guac_ir::to_ron(&rigs).unwrap()).unwrap();
+        place(&mut app, 0, WALKER_TOY, "Synthetic");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        let unit = app
+            .world()
+            .resource::<ScriptSource>()
+            .walker(WALKER)
+            .expect("his scripts")
+            .unit;
+        let (his, others) = (
+            Obj {
+                unit,
+                index: 90_000,
+            },
+            Obj {
+                unit: unit + 1,
+                index: 90_000,
+            },
+        );
+        let mut source = app.world_mut().resource_mut::<ScriptSource>();
+        for obj in [his, others] {
+            source.files.placed.push(Placed {
+                model: Some("beast.mdl".into()),
+                ..Placed::named(obj, "Beast", None, 2)
+            });
+        }
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        let world = app.world().resource::<ScriptWorld>();
+        assert!(world.palette(his).is_some(), "his template's clips");
+        assert_eq!(world.palette(others), None, "another file's");
+    }
+
     /// AG.27: a character with his own scripts in the part, no table of
     /// measured numbers, walks on what his setup wrote: his speed level and
     /// turn class into his description's movement parameters (ground max

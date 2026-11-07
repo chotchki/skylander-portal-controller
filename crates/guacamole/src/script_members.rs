@@ -3754,6 +3754,8 @@ mod tests {
     #[test]
     fn a_walk_a_script_sets_stays_as_written_for_the_step() {
         let (mut w, mut e) = (world(), bench());
+        let solid = guac_motion::tuning::eruptor_solid();
+        e.hero = Some(Hero::actor(solid, Vec3::ZERO, 0.0));
         let mut him = Actor::blank();
         him.physics.ground_max_speed = 20.0;
         w.actors.insert(HERO, him);

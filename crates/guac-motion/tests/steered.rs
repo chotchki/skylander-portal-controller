@@ -248,6 +248,24 @@ fn a_lunge_its_scripts_set_stays_theirs_against_a_body() {
     );
 }
 
+/// A stick pressing a hero into a body keeps the move's solve, as a
+/// destination's does (openspec AU.37): the walk doesn't pile up behind it.
+#[test]
+fn a_stick_into_a_body_keeps_the_solve() {
+    let other = Vec3::new(0.0, 1.0, 1.75);
+    let world = with_another(other);
+    let mut c = settled(&world, Vec3::new(0.0, 1.0, 0.0), 0.0);
+    let along = Aim::Along {
+        heading: 0.0,
+        strength: 1.0,
+    };
+    for _ in 0..60 {
+        c.step_steered(&world, &Physics::CHOMPY, along, DT, &[], Surfaces::NONE);
+    }
+    let kept = c.walk.velocity.length();
+    assert!(kept < 3.0, "kept {kept} ft/s");
+}
+
 /// A fall that lands with no destination loses what pressed into the
 /// ground (openspec AS.97): its speed across the ground is what it fell
 /// with, where the frame after a landing turned the whole fall along the

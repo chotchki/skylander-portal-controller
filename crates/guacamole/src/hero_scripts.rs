@@ -134,7 +134,7 @@ use skylander_core::SlotIndex;
 #[derive(Resource, Clone)]
 pub(crate) struct ScriptSource {
     program: Arc<Program>,
-    files: Files,
+    pub(crate) files: Files,
     order: Vec<u16>,
     /// Each fighter's load file and the unit his file links as.
     fighters: Vec<(String, u16)>,

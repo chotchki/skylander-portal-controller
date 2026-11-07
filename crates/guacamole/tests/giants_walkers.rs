@@ -5907,32 +5907,10 @@ impl W {
     }
 }
 
-/// `load` along AH.8's route to anchor B as `giants_chompy`'s `fight`
-/// takes Eruptor (the route's set-downs, the scene waited on, the
-/// creatures where anchor B has them, the combat manager's first alert),
-/// every Chompy's health 100, his own kept full; then each of `actions`
-/// pressed in turn with [`TARGET`] set in front of him in reach, each
-/// window's press, clips, clones, hits and stops into `out`. Returns the
-/// action his minion stopped in, if it did (the next run takes the rest).
-fn fight_presses(l: &Level, load: &str, actions: &[usize], out: &mut Fought) -> Option<usize> {
-    use guacamole::anchors::{ANCHOR_B, FIRST_ALERT, OPENING, ROUTE};
-    let o = Opts {
-        fight: true,
-        ..PLAY
-    };
-    let mut w = match W::joined(l, load, o, 120) {
-        Ok(w) => w,
-        Err(b) => {
-            let (_, when, h) = *b;
-            out.failed = Some(format!("{when}: {}", named(&h.to_string())));
-            return None;
-        }
-    };
-    let chompies: Vec<Handle> = SWEEP_CHOMPIES
-        .iter()
-        .map(|n| w.level_handle(l, n))
-        .collect();
-    let target = w.level_handle(l, TARGET);
+/// AH.8's route to the first fight's pit, its Chompies set down as anchor B
+/// has them: where the sweep presses.
+fn to_the_fight(l: &Level, w: &mut W) -> Result<(), String> {
+    use guacamole::anchors::{ANCHOR_B, OPENING, ROUTE};
     let mut waited = 0u32;
     let mut k = 0u32;
     while k < OPENING {
@@ -5966,14 +5944,46 @@ fn fight_presses(l: &Level, load: &str, actions: &[usize], out: &mut Fought) -> 
             ..Pad::default()
         };
         if let Err(h) = w.step() {
-            out.failed = Some(format!("route step {k}: {}", named(&h.to_string())));
-            return None;
+            return Err(format!("route step {k}: {}", named(&h.to_string())));
         }
         k += 1;
     }
     for (name, at, facing) in ANCHOR_B {
         let h = w.level_handle(l, name);
         w.world.place(h, Vec3::from_array(at), facing);
+    }
+    Ok(())
+}
+
+/// `load` along AH.8's route to anchor B as `giants_chompy`'s `fight`
+/// takes Eruptor (the route's set-downs, the scene waited on, the
+/// creatures where anchor B has them, the combat manager's first alert),
+/// every Chompy's health 100, his own kept full; then each of `actions`
+/// pressed in turn with [`TARGET`] set in front of him in reach, each
+/// window's press, clips, clones, hits and stops into `out`. Returns the
+/// action his minion stopped in, if it did (the next run takes the rest).
+fn fight_presses(l: &Level, load: &str, actions: &[usize], out: &mut Fought) -> Option<usize> {
+    use guacamole::anchors::{ANCHOR_B, FIRST_ALERT};
+    let o = Opts {
+        fight: true,
+        ..PLAY
+    };
+    let mut w = match W::joined(l, load, o, 120) {
+        Ok(w) => w,
+        Err(b) => {
+            let (_, when, h) = *b;
+            out.failed = Some(format!("{when}: {}", named(&h.to_string())));
+            return None;
+        }
+    };
+    let chompies: Vec<Handle> = SWEEP_CHOMPIES
+        .iter()
+        .map(|n| w.level_handle(l, n))
+        .collect();
+    let target = w.level_handle(l, TARGET);
+    if let Err(why) = to_the_fight(l, &mut w) {
+        out.failed = Some(why);
+        return None;
     }
     scripts::alert_in(&mut w.vm, FIRST_ALERT);
     let radius = w.walk.shape.width.max(w.walk.shape.length) * 0.5 * w.scale * FOOT;
@@ -6381,6 +6391,56 @@ fn pop_fizz_goes_into_his_beast_and_back_and_walks_on() {
                 pad_step(&mut w, Stick::CENTRED, None);
             }
         }
+    }
+}
+
+/// openspec AU.37's verify: in the beast Pop Fizz and his red hit, a Chompy
+/// of the first fight set in front of him at full health losing it to his
+/// punches, and each walks on after the beast's end.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn pop_fizz_hits_in_his_beast_and_walks_on() {
+    let l = Level::open();
+    let o = Opts {
+        fight: true,
+        ..PLAY
+    };
+    for load in ["108_Alchemist", "108_Alchemist_Red"] {
+        let mut w =
+            W::joined(&l, load, o, 120).unwrap_or_else(|b| panic!("{load}: {}: {}", b.1, b.2));
+        let target = w.level_handle(&l, TARGET);
+        to_the_fight(&l, &mut w).unwrap_or_else(|why| panic!("{load}: {why}"));
+        scripts::alert_in(&mut w.vm, guacamole::anchors::FIRST_ALERT);
+        w.set_creature_health(target, 1000);
+        into_beast(&mut w, load);
+        for _ in 0..150 {
+            pad_step(&mut w, Stick::CENTRED, None);
+        }
+        let start = w.creature_health(target);
+        let mut punches = 0;
+        while beast(&w).is_some() && punches < 600 {
+            let at = w.hero().pivot;
+            let along = guac_motion::seam::Vec3::new(
+                w.hero().facing.to_radians().sin(),
+                0.0,
+                w.hero().facing.to_radians().cos(),
+            );
+            w.world
+                .place(target, at + along * 2.0, w.hero().facing + 180.0);
+            pad_step(&mut w, Stick::CENTRED, (punches % 30 < HELD).then_some(0));
+            punches += 1;
+        }
+        let end = w.creature_health(target);
+        println!("{load}: the Chompy {start:?} -> {end:?} over {punches} steps");
+        assert!(
+            end < start,
+            "{load}: no punch landed: {start:?} -> {end:?} over {punches} steps"
+        );
+        while beast(&w).is_some() {
+            pad_step(&mut w, Stick::CENTRED, None);
+        }
+        let after = walks(&mut w, 120, false);
+        assert!(after > 2.0, "{load}: {after} m after it");
     }
 }
 

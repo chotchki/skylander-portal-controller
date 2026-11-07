@@ -336,17 +336,24 @@ impl Picked {
     }
 }
 
-/// What the locomotion on the VM weights on `actor` out of `palette`, each
-/// clip at its time and share (openspec AU.37: Pop Fizz's beast, whose
-/// scripts define its locomotion states on the clone): what a drawn clone's
-/// other clips are laid over. None where nothing's weighted on it.
-pub fn locomotion<'p>(
+/// What a drawn clone's other clips are laid over (openspec AU.37: Pop Fizz's
+/// beast, whose scripts define its locomotion states on the clone): what the
+/// locomotion on the VM weights on `actor` out of `palette`, each clip at its
+/// time and share, else `idle` at `seconds`.
+pub fn under_clips<'p>(
     world: &ScriptWorld,
     actor: Handle,
-    palette: &'p Palette,
+    palette: Option<&'p Palette>,
+    idle: &'p Clip,
+    seconds: f64,
 ) -> Vec<(&'p Clip, f64, f64)> {
-    Picked::read(world, actor, Four::standard(palette), 0.0)
-        .map_or_else(Vec::new, |p| p.posed(&[], palette, (1.0, 0.0)))
+    let weighted = palette.and_then(|p| {
+        Picked::read(world, actor, Four::standard(p), 0.0).map(|w| w.posed(&[], p, (1.0, 0.0)))
+    });
+    match weighted {
+        Some(clips) if !clips.is_empty() => clips,
+        _ => vec![(idle, seconds, 1.0)],
+    }
 }
 
 #[cfg(test)]
@@ -888,10 +895,16 @@ pub(crate) mod tests {
         // A drawn clone's pose reads the same off the world (AU.37), and
         // nothing for an actor no locomotion weights.
         let pal = palette();
-        let drawn = locomotion(&world, me, &pal);
-        let names: Vec<(&str, f64)> = drawn.iter().map(|c| (c.0.name.as_str(), c.2)).collect();
-        assert_eq!(names, [("Eruptor_Run.ma", 1.0)]);
-        assert!(locomotion(&world, me + 1, &pal).is_empty());
+        let idle = clip("Idle", 1.0);
+        let names = |clips: Vec<(&Clip, f64, f64)>| -> Vec<(String, f64)> {
+            clips.iter().map(|c| (c.0.name.clone(), c.2)).collect()
+        };
+        let drawn = under_clips(&world, me, Some(&pal), &idle, 0.5);
+        assert_eq!(names(drawn), [("Eruptor_Run.ma".to_owned(), 1.0)]);
+        let none = under_clips(&world, me + 1, Some(&pal), &idle, 0.5);
+        assert_eq!(names(none), [("Idle".to_owned(), 1.0)]);
+        let no_palette = under_clips(&world, me, None, &idle, 0.5);
+        assert_eq!(names(no_palette), [("Idle".to_owned(), 1.0)]);
     }
 
     /// Nothing weighted with weight (the frame his scripts' influence
