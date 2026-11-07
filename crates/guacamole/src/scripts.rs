@@ -2771,6 +2771,15 @@ pub const HUB_PEOPLE: [&str; 14] = [
     "/CardPirate_Template.ai",
 ];
 
+/// The hub's utilities and doors (openspec AS.138), by their scripts, on
+/// every stage. `_Utilities_Controller` takes `Hatterson(Orbit)` off, bobs
+/// the camera, hangs the ship parts the hub's load brought on the ship and
+/// holds `Galley_Blocker` until the Dragon Engine hangs there. Each door and
+/// hatch (`Hub2_Door.ai`) clones its art and, its `unlock value` over the
+/// adventures done, takes its room's interior controller off and stays
+/// shut, else it swings open as a hero comes near.
+pub const HUB_DOORS: [&str; 2] = ["/Utilities_Controller.ai", "/Hub2_Door.ai"];
+
 /// A level's own people the TV draws as it does the hub's (openspec AS.98),
 /// by level and placement, never walked: Auric in his scene on level 214
 /// and at his stall after it, Flynn and Cali on its third ship (AS.142).
@@ -3809,6 +3818,7 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
     {
         scripts.extend(HUB_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(HUB_PEOPLE.iter().map(|s| (*s).to_owned()));
+        scripts.extend(HUB_DOORS.iter().map(|s| (*s).to_owned()));
     }
     with_level(config, files, level)
 }
