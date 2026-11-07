@@ -196,7 +196,7 @@ pub fn lit(atmosphere: &Atmosphere, now: &ZoneNow) -> Result<AtmosphericZone, St
     let to = zone(now.to)?;
     let lit = match now.from {
         Some(from) if now.remaining > 0.0 => blended(zone(from)?, to, now.remaining),
-        _ => to.clone(),
+        _ => *to,
     };
     LevelFog::from_zone(&lit.fog).map_err(|e: LevelError| format!("zone {}: {e}", now.to))?;
     Ok(lit)
@@ -330,7 +330,7 @@ mod tests {
         odd.fog.sky_dome_percent = 0;
         let mut sky = zone(3, 10, 1);
         sky.fog.sky_dome_percent = 100;
-        let a = atmosphere(vec![zone(0, 100, 1), odd, sky.clone()]);
+        let a = atmosphere(vec![zone(0, 100, 1), odd, sky]);
         let now = |to| ZoneNow::of(to, None);
         assert_eq!(lit(&a, &now(0)).unwrap().id, 0);
         assert!(lit(&a, &now(9)).unwrap_err().contains("zone 9"));

@@ -5264,9 +5264,9 @@ mod tests {
         room.lights[0].diffuse = [250, 240, 230, 0];
         room.fog.colour = [200, 20, 20, 0];
         room.fog.start = 10;
-        part.zones.push(room.clone());
+        part.zones.push(room);
         // Its fog, other lights: what the fog's own check would miss.
-        let mut lamp = room.clone();
+        let mut lamp = room;
         lamp.id = 6;
         lamp.ambient = [10, 40, 90, 0];
         part.zones.push(lamp);
