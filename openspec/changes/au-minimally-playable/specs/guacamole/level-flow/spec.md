@@ -82,7 +82,7 @@ A new game SHALL play chapter 1 from its spawn to its outro with nothing but the
 - **THEN** its cutscene frees the Giant, the Giant breaks the floor as the hero nears him, and falling through it takes the hero to the second cave
 
 #### Scenario: The second cave's mouths
-- **WHEN** Setup_002 wakes its Chompies, each a 3 ft sphere in a mouth narrower than it
+- **WHEN** Setup_002 wakes its Chompies, each 6 ft across in a mouth 5.8 ft wide
 - **THEN** every one comes out into the arena, jumping and falling along the walls that squeeze it
 
 #### Scenario: The last chain

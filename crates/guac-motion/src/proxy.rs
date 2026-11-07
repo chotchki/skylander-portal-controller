@@ -286,7 +286,7 @@ impl Proxy<'_> {
             // Inside two walls that face each other, each asking to push him
             // off, no velocity keeps both and the solve gives none: he'd stand
             // there for good however he's walked (eight of chapter 1's second
-            // cave's Chompies, their 3 ft sphere in a mouth 5.8 ft wide). He
+            // cave's Chompies, a sphere 6 ft across in a mouth 5.8 ft wide). He
             // goes on along them with the recovery off (a hypothesis: Havok's
             // solver slides, and the mouths let them out).
             if solved == Vec3::ZERO && limits.iter().any(|l| l.min > 0.0) {
@@ -469,8 +469,8 @@ mod tests {
         )
     }
 
-    /// The au-whole-story review: a 3 ft sphere in chapter 1's second cave's
-    /// mouth, its walls' normals and his place as `Enemy_Chompy(12)` stood,
+    /// The au-whole-story review: a sphere 6 ft across in chapter 1's second
+    /// cave's mouth, its walls' normals and his place as `Enemy_Chompy(12)` stood,
     /// inside both at once, each pushing him off. No velocity keeps the two,
     /// and a solve that gave up left eight of the cave's Chompies stood in
     /// their mouths for good, falling and jumping on the spot. He goes on
