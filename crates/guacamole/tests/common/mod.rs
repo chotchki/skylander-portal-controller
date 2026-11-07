@@ -432,6 +432,7 @@ impl Run {
         let dt = 1.0 / 60.0;
         for hero in self.bench.heroes.values_mut() {
             hero.step_engine(&self.bench.world, dt, &[HERO_BODY], Surfaces::NONE);
+            hero.catch_fall();
         }
         self.world.advance(dt, &mut self.bench);
         self.steps += 1;
@@ -465,6 +466,7 @@ impl Run {
         let dt = 1.0 / 60.0;
         for hero in self.bench.heroes.values_mut() {
             hero.step_engine(&self.bench.world, dt, &[HERO_BODY], Surfaces::NONE);
+            hero.catch_fall();
         }
         self.world.advance(dt, &mut self.bench);
         self.steps += 1;

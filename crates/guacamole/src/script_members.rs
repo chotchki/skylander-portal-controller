@@ -744,7 +744,10 @@ impl ScriptWorld {
         match self.objs.get(h) {
             None => self.position(h, engine),
             Some(Object::Node(a, i)) => self.node(a, i, engine),
-            Some(Object::Facet(a, Facet::Ground)) => self.ground(a, engine).map(|g| g.0),
+            Some(Object::Facet(a, Facet::Ground)) => self
+                .ground(a, engine)
+                .map(|g| g.0)
+                .or_else(|| fall_point(engine.hero(a)?)),
             Some(Object::RayStart) => Some(self.ray.start),
             Some(Object::RayEnd) => Some(self.ray.end),
             Some(Object::RayCast) => self.ray_contact(engine).map(|c| c.0),
@@ -1442,9 +1445,17 @@ impl ScriptWorld {
                 // and gravity act only while it's over 0, AG.38).
                 if let (Some(h), Some(o)) = (actor, at.other_point)
                     && self.object(Some(o)) == Some(Object::Facet(h, Facet::Ground))
-                    && engine.hero(h).is_some_and(|hero| hero.footing.supported)
+                    && let Some(hero) = engine.hero(h)
                 {
-                    return Ok(Value::Float(0.0));
+                    // With none under him, how far he's fallen: gravity acts
+                    // on him, and the minion's fall check sets him back on
+                    // his trail once it's past its 225 ft (openspec AS.146).
+                    if let Some(fallen) = hero.fallen() {
+                        return Ok(Value::Float((fallen * FEET_PER_METRE).max(1.0)));
+                    }
+                    if hero.footing.supported {
+                        return Ok(Value::Float(0.0));
+                    }
                 }
                 // From another actor's body: the gap between the two solids
                 // as authored (a Chompy nips at 10 ft of it, AH.10's middles
@@ -3460,6 +3471,15 @@ fn turned_by(angles: Angles, m: Member, by: f32) -> Angles {
 }
 
 /// An actor's movement numbers as the engine's steering reads them.
+/// Where a hero with no ground under him reads his ground: under him by how
+/// far he's fallen, at least a foot, so the mover update's gravity, which
+/// asks how far over his ground he is, acts on him (openspec AS.146; stand-in
+/// ledger: `fall-reset`).
+fn fall_point(hero: &Hero) -> Option<Vec3> {
+    let fallen = hero.fallen()?;
+    Some(hero.pivot - Vec3::Y * fallen.max(METRES_PER_FOOT))
+}
+
 /// How far from where it first stood a creature counts as out of it, metres.
 const WEDGED_REACH: f32 = 1.0;
 /// How fast its walk must ask to go for it to count as held there, ft/s.

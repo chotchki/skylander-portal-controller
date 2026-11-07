@@ -429,7 +429,7 @@ mod tests {
                 placed("Enemy_Chompy(2)", Some("chompy.mdl")),
                 placed("1.NPC_Norticus_First_Encounter", Some("mabu.mdl")),
                 placed("Chompie_Dummies(4)", Some("barrel.mdl")),
-                placed("Enemy_Chompy(9)", Some("other.mdl")),
+                placed("Enemy_Chompy(99)", Some("other.mdl")),
             ],
             waypoints: Vec::new(),
         };

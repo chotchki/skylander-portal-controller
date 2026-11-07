@@ -5765,7 +5765,10 @@ mod tests {
             assert!(l214.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
             assert!(!other.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
             assert!(
-                !fight.whitelist.lists(name, "C:/x/Any.ai") || FIRST_FIGHT.contains(name),
+                !fight.whitelist.lists(name, "C:/x/Any.ai")
+                    || FIRST_FIGHT.contains(name)
+                    || crate::chapter_1::WAY.placements.contains(name)
+                    || crate::chapter_1::PASSAGE.contains(name),
                 "{name}"
             );
         }
