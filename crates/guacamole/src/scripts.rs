@@ -448,6 +448,9 @@ pub struct ScriptWorld {
     /// Each template's animation palette: every slot's clip length,
     /// seconds at 100 %, 0 where a slot is empty.
     pub(crate) palettes: HashMap<Obj, Vec<f32>>,
+    /// The placements that reset themselves this step: what a player was
+    /// carrying among them he's carrying no more ([`add_scripted`]).
+    pub(crate) went_round: Vec<Handle>,
     /// The templates whose model is a camera's rig (openspec AS.145).
     pub(crate) rigs: std::collections::HashSet<Obj>,
     /// Where the last rig posed left its nodes, in the level, each turned
@@ -850,6 +853,7 @@ impl ScriptWorld {
             sequences: Vec::new(),
             restarts: Vec::new(),
             palettes: HashMap::new(),
+            went_round: Vec::new(),
             rigs: Default::default(),
             rig_held: Vec::new(),
             clip_info: HashMap::new(),
@@ -2133,6 +2137,7 @@ impl ScriptWorld {
                     && let Some(a) = self.as_made(h)
                 {
                     self.actors.insert(h, a);
+                    self.went_round.push(h);
                     return Ok(Answer::Done);
                 }
                 if let Some(k) = target.and_then(|h| self.actors.get_mut(&h)) {
@@ -4832,6 +4837,7 @@ pub fn set_loot_index(vm: &mut Vm, world: &ScriptWorld, rarity: Rarity, index: f
 /// of those waits for this.
 pub fn add_scripted(vm: &mut Vm, world: &mut ScriptWorld) -> Vec<PlacementId> {
     let program = vm.program_arc();
+    let_go_of_tools(vm, world);
     let mut added: Vec<PlacementId> = world
         .adopt(&program)
         .into_iter()
@@ -4853,6 +4859,27 @@ pub fn add_scripted(vm: &mut Vm, world: &mut ScriptWorld) -> Vec<PlacementId> {
         }
     }
     added
+}
+
+/// What each player carries, as the tools' scripts hold it.
+const PLAYER_TOOLS: [&str; 2] = ["Player 1 Tool", "Player 2 Tool"];
+
+/// A tool that reset itself is no tool a player carries (openspec AU.33). A
+/// bomb's script lets go of it on a throw and on a reset while it's carried,
+/// not when its count runs out in his hands, so the bomb stood back on its
+/// spawner still his, and no other spawner cloned one (level 214's workshop,
+/// its wall and the second key past it). What lets go in the original isn't
+/// read (stand-in ledger: `tool-let-go`).
+fn let_go_of_tools(vm: &mut Vm, world: &mut ScriptWorld) {
+    for h in std::mem::take(&mut world.went_round) {
+        for name in PLAYER_TOOLS {
+            if let Some(g) = vm.program().global_named(name)
+                && vm.global_peek(g) == Some(Value::Entity(h))
+            {
+                vm.set_global_reference(g, Value::Null);
+            }
+        }
+    }
 }
 
 pub(crate) fn outside(why: String) -> Halt {
@@ -6830,6 +6857,7 @@ mod tests {
             "still walked, its body made again"
         );
         assert!(w.revived.is_empty());
+        assert_eq!(w.went_round, [grunt], "what a player carried he lets go");
     }
 
     /// The as-214-walk review: a scripted template's clone joins the run

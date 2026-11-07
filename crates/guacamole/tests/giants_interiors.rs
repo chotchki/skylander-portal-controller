@@ -443,6 +443,83 @@ fn bombs(run: &Run) -> Vec<Handle> {
         .collect()
 }
 
+/// openspec AU.33: a bomb left to run out in his hands is no bomb he carries.
+/// Its count at 0 it bursts over him and stands back on the first spawner,
+/// and the workshop's spawner, which clones none while a player carries one,
+/// clones its own; taken there. Until AU.33 the bomb stayed his, so the
+/// workshop stood empty and its wall and the key behind it stayed shut. The
+/// first run with no anchor stopped there. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_bomb_run_out_in_his_hands_leaves_the_workshops_spawner_free() {
+    println!("load at start: {}", load());
+    let started = std::time::Instant::now();
+    let (mut run, mut stops) = joined(LEVEL_214);
+    run.put(Vec3::new(36.0, -16.0, 27.9), 90.0);
+    let mut carried = None;
+    for _ in 0..240 {
+        step(&mut run, &mut stops, None, [false; 4]);
+        carried = bombs(&run)
+            .into_iter()
+            .find(|b| behaviour(&run, *b).as_deref() == Some("following player"));
+        if carried.is_some() {
+            break;
+        }
+    }
+    let bomb = carried.expect("the first bomb taken");
+    let mut out = None;
+    for k in 0..1200u32 {
+        step(&mut run, &mut stops, None, [false; 4]);
+        if behaviour(&run, bomb).as_deref() == Some("wait to be grabbed") {
+            out = Some(k);
+            break;
+        }
+    }
+    let out = out.expect("it ran out and stands on its spawner again");
+    let tool = run.vm.program().global_named("Player 1 Tool").unwrap();
+    assert_eq!(run.vm.global_peek(tool), Some(Value::Null), "his no more");
+    // Off where it can't be taken again, then the workshop.
+    run.put(Vec3::new(20.0, -16.0, 20.0), 90.0);
+    for _ in 0..120 {
+        step(&mut run, &mut stops, None, [false; 4]);
+    }
+    let house = run.placed("Interior_Controller_Island_2_1").1;
+    let landed0 = run.world.landed.len();
+    run.put(house, 0.0);
+    for _ in 0..300 {
+        step(&mut run, &mut stops, None, [false; 4]);
+        if run.world.landed.len() > landed0 {
+            break;
+        }
+    }
+    assert!(run.world.landed.len() > landed0, "into the workshop");
+    let mut taken = None;
+    for k in 0..900u32 {
+        let at = run.hero().pivot;
+        let far = (at.x - WORKSHOP_BOMBS[0]).hypot(at.z - WORKSHOP_BOMBS[1]) > 0.8;
+        step(
+            &mut run,
+            &mut stops,
+            far.then_some(WORKSHOP_BOMBS),
+            [false; 4],
+        );
+        if bombs(&run)
+            .into_iter()
+            .any(|b| b != bomb && behaviour(&run, b).as_deref() == Some("following player"))
+        {
+            taken = Some(k);
+            break;
+        }
+    }
+    println!(
+        "ran out after {out} steps, the workshop's taken after {taken:?}; {:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    assert!(taken.is_some(), "the workshop's own bomb");
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
 /// openspec AS.96's review: level 214's workshop wall and the bomb's reach.
 /// A bomb's burst opens every bombable wall within `Bomb_Range` of it
 /// across the ground, a level global that starts at 20 ft and that the

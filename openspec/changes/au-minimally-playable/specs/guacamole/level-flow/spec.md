@@ -69,3 +69,9 @@ A hero with no ground under him who has fallen far past the last ground, or who 
 - **WHEN** a knock leaves the hero over a chasm, held on its rim
 - **THEN** within a second or so he stands on the ground he left, the stick moving him again
 
+### Requirement: A bomb run out in his hands is his no more
+A bomb whose count runs out while a hero carries it SHALL burst and stand back on its spawner carried by no one, so every other spawner on the level clones its own and a Giant can lift again.
+
+#### Scenario: The workshop after a bomb left to run out
+- **WHEN** a hero carries a bomb until it bursts over him and walks to another spawner
+- **THEN** that spawner's bomb stands there and he takes it

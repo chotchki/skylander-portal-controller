@@ -261,3 +261,7 @@ A camera's rig SHALL hold the pose its last clip reached once none plays, what h
 #### Scenario: Level 201's pod lands
 - **WHEN** the pod's last shot has played and the scene lets the player go
 - **THEN** he is let go where the pod stands on the dock, with no jump onto his path
+
+#### Scenario: A cut between two shots
+- **WHEN** a shot's new rig is made and isn't drawn yet
+- **THEN** the view and what hangs on the rig stay where the last rig left them until it's posed, and no frame stands at the rig's origin
