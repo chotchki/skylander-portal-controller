@@ -2027,13 +2027,28 @@ pub(crate) fn draw_clones(
                             .insert((Visibility::Hidden, CloneDrawn { draws: false, ..*d }));
                         commands.entity(entity).despawn_related::<Children>();
                     }
-                } else if *t != place {
-                    *t = place;
+                } else {
+                    if *t != place {
+                        *t = place;
+                    }
+                    let template = actor.template.and_then(|t| world.template(t));
+                    if comes_back(d, clone_parts(template, models)) {
+                        commands.entity(entity).remove::<CloneDrawn>();
+                    }
                 }
             }
             (Some(_), None) => {}
         }
     }
+}
+
+/// Whether a clone on again is to be drawn afresh: drawing nothing with
+/// parts to draw, so it was taken off (an elemental wall's pool makes each
+/// clone and takes it off at once, and a node's reset brings it back: the
+/// AS.153 review). Losing its [`CloneDrawn`] sends it round [`draw_clones`]
+/// as a new one.
+fn comes_back(drawn: &CloneDrawn, parts: Option<&Vec<ClonePart>>) -> bool {
+    !drawn.draws && parts.is_some_and(|p| !p.is_empty())
 }
 
 /// The hero's numbers as his scripts hold them (AH.24's report): his health
@@ -3261,6 +3276,27 @@ mod tests {
         assert!(clone_parts(Some(&template("bare", None)), &models).is_none());
         assert!(clone_parts(Some(&template("other", Some("x.mdl"))), &models).is_none());
         assert!(clone_parts(None, &models).is_none());
+    }
+
+    /// The AS.153 review: a clone drawing nothing with parts to draw was
+    /// taken off, so it's drawn afresh; one drawing, or with nothing to
+    /// draw, stays as it is.
+    #[test]
+    fn a_clone_back_from_a_pool_is_drawn_afresh() {
+        let part = (
+            bevy::asset::Handle::default(),
+            bevy::asset::Handle::default(),
+        );
+        let some = vec![part];
+        let none = Vec::new();
+        let drawn = |draws| CloneDrawn {
+            draws,
+            attack: false,
+        };
+        assert!(comes_back(&drawn(false), Some(&some)));
+        assert!(!comes_back(&drawn(true), Some(&some)));
+        assert!(!comes_back(&drawn(false), Some(&none)));
+        assert!(!comes_back(&drawn(false), None));
     }
 
     /// AG.60: a clone the scripts make before the level's loaded (the

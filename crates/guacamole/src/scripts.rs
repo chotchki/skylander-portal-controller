@@ -2243,12 +2243,12 @@ impl ScriptWorld {
                     {
                         k.light = Some(*l);
                     }
-                    // Any clone taken off comes back: an elemental wall keeps
-                    // a pool of them, each removed as it's made and reset
-                    // as a node takes it (the AS.153 review: with only the
-                    // lights' coming back, not one twister or dirt mound
-                    // stood).
-                    if k.obj.is_none() {
+                    // A clone taken off comes back on another's reset, not
+                    // its own: an elemental wall keeps a pool of them, each
+                    // removed as it's made and reset as a node takes it
+                    // (the AS.153 review: with only the lights' coming
+                    // back, not one twister or dirt mound stood).
+                    if k.obj.is_none() && target != Some(call.placement) {
                         k.removed = false;
                     }
                 }
