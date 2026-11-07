@@ -57,12 +57,12 @@
 //! by triangle alone it limited nothing and pinned him on the clearing's
 //! crease); off the ground it still stops the step there, as AG.16's
 //! replays have it (one of AG.39's landings comes a record early without
-//! that), but only for one step; inside a triangle a cast that stops him at
-//! once with no plane against the motion brings him out of it first, at the
-//! recovery's speed at most; one a solid answers so goes on past it; and a
-//! second step's cast stopped at once on no plane at all, a triangle met from
-//! behind, is passed over (openspec AS.159, all four a reading: no recording
-//! has a hero in a cliff or pinned on a Chompy).
+//! that), but only for one step; over [`INSIDE`] into a triangle a cast that
+//! stops him at once with no plane against the motion gives way to the
+//! recovery alone; one a solid answers so goes on past it; and a second step's
+//! cast stopped at once on no plane at all, a triangle met from behind, is
+//! passed over (openspec AS.159, all four a reading: no recording has a hero
+//! in a cliff or pinned on a Chompy).
 
 use std::collections::BTreeMap;
 
@@ -273,7 +273,6 @@ impl Proxy<'_> {
         // up as he moves (AG.61).
         let mut met: Vec<(BodyId, Option<u32>)> = Vec::new();
         let mut met_away: Vec<ContactPlane> = Vec::new();
-        let mut recovered = false;
         for cast in 0..MAX_CASTS {
             if remaining <= MIN_TIME {
                 break;
@@ -366,27 +365,21 @@ impl Proxy<'_> {
             };
             let travel = (hit.distance - back).clamp(0.0, len);
             // Stopped at once with no plane the motion runs into: a cast from
-            // inside a triangle answers from there whichever way he goes, the
-            // motion sliding along it or leaving, so no solve moves him and he
-            // hangs where he is for good, stick and all (openspec AS.159: a
-            // knock put Eruptor 0.39 m into level 214's cliff, and a Chompy
-            // held Tree Rex's fall a hair into the pit's wall). He comes
-            // straight out of the plane he's deepest in, at the recovery's
-            // speed at most, once a step, and the rest of it goes on.
+            // deep in a triangle answers from inside it, whichever way he
+            // goes, so no solve moves him and he hangs where he is for good,
+            // stick and all (openspec AS.159: a knock put Eruptor 0.39 m into
+            // level 214's cliff). He leaves by the recovery alone, straight
+            // out of the plane he's deepest in. The step ends there: the rest
+            // of a walk from inside a closet's floor took a Chompy in deeper.
             if travel <= 0.0
                 && squarest.is_none()
-                && !recovered
-                && let Some((normal, depth)) = hit
-                    .planes
+                && let Some(deepest) = seen
                     .iter()
-                    .map(|p| (p.normal, -p.distance))
-                    .chain(seen.iter().map(|p| (p.normal, -p.distance - KEEP)))
-                    .filter(|(_, depth)| *depth > 0.0)
-                    .max_by(|a, b| a.1.total_cmp(&b.1))
+                    .filter(|p| p.distance < -INSIDE)
+                    .min_by(|a, b| a.distance.total_cmp(&b.distance))
             {
-                pos += normal * (depth + KEEP).min(RECOVERY * remaining);
-                recovered = true;
-                continue;
+                pos += deepest.normal * (RECOVERY * remaining);
+                break;
             }
             if travel <= 0.0
                 && let Some(p) = squarest
@@ -825,11 +818,11 @@ mod tests {
         }
     }
 
-    /// A hair in he comes out to his keep off it and no further.
+    /// A touch stays what it was: a cast stopped at once with him barely in
+    /// the plane is the step's end.
     #[test]
-    fn a_hero_barely_in_a_plane_comes_out_to_his_keep() {
-        let out = inside(0.002, false);
-        assert!((out.z + 0.002 + KEEP).abs() < 1e-6, "{out}");
+    fn a_hero_barely_in_a_plane_stops_as_ever() {
+        assert_eq!(inside(INSIDE * 0.5, false), Vec3::ZERO);
     }
 
     /// A seam with one solid, its plane facing +x, a hair into his shape, that
