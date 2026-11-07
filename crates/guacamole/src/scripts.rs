@@ -454,8 +454,12 @@ pub struct ScriptWorld {
     /// The templates whose model is a camera's rig (openspec AS.145).
     pub(crate) rigs: std::collections::HashSet<Obj>,
     /// Where the last rig posed left its nodes, in the level, each turned
-    /// as it stood: what a new shot's rig reads until it's posed itself.
+    /// as it stood: what a new shot's rig reads until it's posed itself. Let
+    /// go the step after that rig's taken off, so a later scene's first shot
+    /// reads none of an old scene's.
     pub(crate) rig_held: Vec<(Vec3, Quat)>,
+    /// The rig `rig_held` is from.
+    pub(crate) rig_holder: Option<Handle>,
     /// Each template's palette's animation info as its file holds it, slot
     /// by slot (openspec AH.49): a template given none reads every slot a
     /// base clip with no layered bit.
@@ -856,6 +860,7 @@ impl ScriptWorld {
             went_round: Vec::new(),
             rigs: Default::default(),
             rig_held: Vec::new(),
+            rig_holder: None,
             clip_info: HashMap::new(),
             clip_state: HashMap::new(),
             hero_templates: HashMap::new(),
@@ -1376,6 +1381,13 @@ impl ScriptWorld {
     /// isn't loaded and reads none from the next step on, as one loaded at
     /// once (stand-in ledger: `level-request`).
     pub fn end_step(&mut self) {
+        if self
+            .rig_holder
+            .is_some_and(|h| self.actors.get(&h).is_none_or(|a| a.removed))
+        {
+            self.rig_holder = None;
+            self.rig_held.clear();
+        }
         let load = self.load_level;
         if load == Value::Null
             || self.level_change.as_ref().is_some_and(|c| c.value == load)
@@ -1696,6 +1708,7 @@ impl ScriptWorld {
                 .iter()
                 .map(|n| (a.position + facing * n.at, facing * n.turn))
                 .collect();
+            self.rig_holder = Some(actor);
         }
         self.nodes.insert(actor, nodes);
     }

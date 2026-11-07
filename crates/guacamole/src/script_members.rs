@@ -2355,6 +2355,14 @@ impl ScriptWorld {
         self.template_of(h).is_some_and(|t| self.rigs.contains(&t))
     }
 
+    /// Whether `h` is made from a template with no model: what a shot hangs
+    /// on its rig for the view to follow.
+    fn follower(&self, h: Handle) -> bool {
+        self.template_of(h)
+            .and_then(|t| self.templates.get(&t))
+            .is_some_and(|p| p.model.is_none())
+    }
+
     /// Whether `h` is a rig no pose has reached yet.
     fn rig_unposed(&self, h: Handle) -> bool {
         !self.nodes.contains_key(&h) && self.is_rig(h)
@@ -3312,9 +3320,11 @@ impl ScriptWorld {
                 continue;
             }
             // The first shot's rig, unposed, has no last place to read: what
-            // hangs on it stays where it stands until it's posed.
+            // hangs on it and draws stays where it stands until it's posed,
+            // where the shot's cam actor, a model of none, goes to the view.
             if self.rig_held.is_empty()
                 && matches!(self.object(Some(node)), Some(Object::Node(owner, _)) if self.rig_unposed(owner))
+                && !self.follower(h)
             {
                 continue;
             }
@@ -4625,10 +4635,20 @@ mod tests {
         hung.attach = w.objs.value(Object::Node(NEXT, 0));
         w.actors.insert(HUNG, hung);
         w.view.eye = Vec3::new(1.0, 1.0, 1.0);
-        // The first shot's: nothing to read, and what hangs stays.
+        // The first shot's: nothing to read, and what hangs stays, but for
+        // its cam actor, a template of no model, which goes to the view.
+        const CAM: Obj = Obj { unit: 0, index: 78 };
+        const CAM_ACTOR: Handle = 0x6000_0036;
+        let mut cam = crate::scripts::Placed::named(CAM, "follower", None, 4);
+        cam.model = None;
+        w.templates.insert(CAM, cam);
+        let mut follower = clone(Vec3::ZERO, Some(CAM));
+        follower.attach = w.objs.value(Object::Node(NEXT, 0));
+        w.actors.insert(CAM_ACTOR, follower);
         assert_eq!(w.node(NEXT, 0, &mut e), Some(w.view.eye));
         w.place_hung_actors(&mut e);
         assert_eq!(w.actors[&HUNG].position, Vec3::new(8.0, 8.0, 8.0));
+        assert_eq!(w.actors[&CAM_ACTOR].position, w.view.eye);
         // A shot posed: the next, unposed, reads it.
         let turned = Quat::from_rotation_y(90f32.to_radians());
         let at = Vec3::new(30.0, 40.0, 50.0);
@@ -4652,6 +4672,13 @@ mod tests {
         assert_eq!(w.rig_held[0].0, own);
         // Not a rig: at its pivot, as ever.
         assert_eq!(w.node(PLAIN, 0, &mut e), Some(Vec3::new(2.0, 0.0, 0.0)));
+        // The last rig taken off and the step over, a later scene's first
+        // shot reads nothing of the old scene's.
+        w.actors.get_mut(&NEXT).unwrap().removed = true;
+        w.end_step();
+        const LATER: Handle = 0x6000_0035;
+        w.actors.insert(LATER, clone(Vec3::ZERO, Some(RIG)));
+        assert_eq!(w.node(LATER, 0, &mut e), Some(w.view.eye));
     }
 
     /// openspec AS.115: a hero hung on a node rides it, his controller's
