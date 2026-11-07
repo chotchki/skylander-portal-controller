@@ -2242,6 +2242,13 @@ impl ScriptWorld {
                         && k.light.is_some()
                     {
                         k.light = Some(*l);
+                    }
+                    // Any clone taken off comes back: an elemental wall keeps
+                    // a pool of them, each removed as it's made and reset
+                    // as a node takes it (the AS.153 review: with only the
+                    // lights' coming back, not one twister or dirt mound
+                    // stood).
+                    if k.obj.is_none() {
                         k.removed = false;
                     }
                 }
@@ -6947,6 +6954,40 @@ mod tests {
             }
             assert!(vm.inert().contains(&handles[&objs[2]]), "{mode:?}");
         }
+    }
+
+    /// The AS.153 review: a clone taken off comes back on its reset, where
+    /// it stood, as a wall's pool takes one out for a node; a file
+    /// placement's revival isn't its.
+    #[test]
+    fn a_reset_brings_a_clone_taken_off_back() {
+        let (mut w, grunt, _) = world();
+        let mut spawned = 900;
+        w.op(
+            &OpCall {
+                operands: vec![("_LHS", Some(Value::Entity(grunt)))],
+                ..call(Class::Spawn, Some(Value::Entity(grunt)))
+            },
+            &mut |_| {
+                spawned += 1;
+                spawned
+            },
+            &mut NoEngine,
+        )
+        .unwrap();
+        let clone = spawned;
+        let at = w.actor(clone).unwrap().position;
+        for (class, off) in [(Class::Remove, true), (Class::Reset, false)] {
+            w.op(
+                &call(class, Some(Value::Entity(clone))),
+                &mut |_| 0,
+                &mut NoEngine,
+            )
+            .unwrap();
+            assert_eq!(w.removed(clone), off, "{class:?}");
+        }
+        assert!(w.revived.is_empty(), "nothing to run again");
+        assert_eq!(w.actor(clone).unwrap().position, at);
     }
 
     /// AS.60: a reset of a file placement a script took off brings it back

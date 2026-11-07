@@ -221,6 +221,21 @@ fn the_air_wall_stands_until_an_air_hero_comes() {
     }
     println!("Eruptor stops at {}", w.run.hero().pivot);
     assert!(w.run.hero().pivot.y > -135.0, "still on the ledge");
+    // Its own art, out of its pool (the review: a reset left every one off).
+    let standing = |w: &Walk, name: &str| {
+        w.run
+            .world
+            .clones()
+            .into_iter()
+            .filter(|h| !w.gone(*h) && w.run.world.name(*h) == name)
+            .count()
+    };
+    let (twisters, mounds) = (
+        standing(&w, "AirWallTemplate(1)"),
+        standing(&w, "DirtReplacement_DONT_REMOVE"),
+    );
+    println!("{twisters} twisters, {mounds} mounds");
+    assert!(twisters >= 5 && mounds >= 5, "{twisters} {mounds}");
     assert!(!w.gone(wall), "a fire hero");
     assert!(w.standing(AIR_WALL), "its solid");
     assert_eq!(w.run.world.achievements, Vec::<i32>::new());
