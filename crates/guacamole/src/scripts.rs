@@ -483,6 +483,11 @@ pub struct ScriptWorld {
     /// ([`add_scripted`]).
     pub revived: Vec<(Handle, Obj)>,
     time_scale: f32,
+    /// Whether a target's `collision` against the ray caster picks along
+    /// it: while a turret's game runs (openspec AS.76, [`crate::turret`]).
+    pub(crate) ray_picks: bool,
+    /// The active turret's base, which its own shots pass.
+    pub(crate) turret_base: Option<Handle>,
     load_level: Value,
     /// The levels the scripts asked for, as each step took them.
     pub requests: Vec<Value>,
@@ -854,6 +859,8 @@ impl ScriptWorld {
             scripted: Vec::new(),
             revived: Vec::new(),
             time_scale: FULL_SPEED,
+            ray_picks: false,
+            turret_base: None,
             load_level: Value::Null,
             requests: Vec::new(),
             levels: None,
@@ -2609,6 +2616,36 @@ pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
     steered: &["TreeRex_special_homing_actor"],
 }];
 
+/// Level 214's third island (openspec AS.76), a table of its own beside
+/// [`ENCOUNTERS`] ([`encounters`]): Setup_006's controller, waking at the
+/// final island's end (or, with Persephone visited, its lobbers and two of
+/// its Elf Nears too) and at its first trigger past the drawbridge setting
+/// its two Tree Rexes and Chompy spawner on the hero, then once they're
+/// beaten its lobbers back behind the first gate and its Elf Nears in: the
+/// seven the first turret waits on. Setup_007's controller, whose trigger
+/// lies by the second turret: while the turret's game runs it clones its
+/// lobber (`Enemy_Elf_Lobber(10)`) past the second gate, up to twelve, until
+/// `Crache_1(1)`'s gone or the game's over.
+pub const THIRD_ISLAND: Encounter = Encounter {
+    level: "level_214_tutotial_2",
+    placements: &[
+        "Setup_006_Controller",
+        "Enemy_TreeRex(4)",
+        "Enemy_TreeRex(5)",
+        "Enemy_Elf_Lobber(4)",
+        "Enemy_Elf_Lobber(6)",
+        "Enemy_Elf_Lobber(7)",
+        "Enemy_Elf_Near_S2(5)",
+        "Enemy_Elf_Near_S2(6)",
+        "Enemy_Elf_Near_S2(7)",
+        "Enemy_Elf_Near_S2(8)",
+        "Enemy_Chompy_Spawner(4)",
+        "Setup_007_Controller",
+    ],
+    clones: &["Enemy_Elf_Lobber(10)"],
+    steered: &[],
+};
+
 /// The intros the TV runs past chapter 1's, by level and placement
 /// (openspec AS.47, AS.60). Level 214's (`214_Intro_IGC`, awake from the
 /// load), held for the hero ([`hold_intro`]) and played to its end since
@@ -2625,9 +2662,13 @@ pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
 /// which the hub's definition sets off its `complete` flags), only the
 /// landing on a load; either way its last scene hands the players over at
 /// `CS_Hub_Intro_Final_Positions`' first two waypoints, which every stage
-/// holds alike ([`crate::level_scene::HUB_START_PLACEMENT`]).
-pub const INTROS: [(&str, &str); 5] = [
+/// holds alike ([`crate::level_scene::HUB_START_PLACEMENT`]). Level 201's
+/// (openspec AS.113) lands him by pod and walks him along his path, its
+/// five scenes held for the hero and skipped by △ alike
+/// ([`crate::level_scene::INTRO_PATH`]).
+pub const INTROS: [(&str, &str); 6] = [
     ("level_214_tutotial_2", "214_Intro_IGC"),
+    ("level_201", "_Level_201_Intro_CS"),
     ("level_hub_2_stage_1", "CS_Intro_Controller"),
     ("level_hub_2_stage_2", "CS_Hub_Intro_Stage2"),
     ("level_hub_2_stage_3", "CS_Hub_Intro_Stage3"),
@@ -2714,11 +2755,14 @@ pub const HUB_PEOPLE: [&str; 15] = [
 
 /// A level's own people the TV draws as it does the hub's (openspec AS.98),
 /// by level and placement, never walked: Auric in his scene on level 214
-/// and at his stall after it. Walked, his scene never ended (a reading: its
-/// `Turn to Target` left to the walk's steering, as Cali's was at AU.6).
-pub const LEVEL_PEOPLE: [(&str, &str); 2] = [
+/// and at his stall after it, Flynn and Cali on its third ship (AS.142).
+/// Walked, his scene never ended (a reading: its `Turn to Target` left to
+/// the walk's steering, as Cali's was at AU.6).
+pub const LEVEL_PEOPLE: [(&str, &str); 4] = [
     ("level_214_tutotial_2", "Moneybags_end"),
     ("level_214_tutotial_2", "Auric_store"),
+    ("level_214_tutotial_2", "Flynn_Island_3"),
+    ("level_214_tutotial_2", "Cali_Island_3"),
 ];
 
 /// Whether a placement whose script is `script` is one of the hub's
@@ -2796,6 +2840,15 @@ pub fn release_intro(vm: &mut Vm, world: &mut ScriptWorld) -> bool {
 /// runs one past chapter 1's.
 pub fn encounter(level: &str) -> Option<&'static Encounter> {
     ENCOUNTERS.iter().find(|e| e.level == level)
+}
+
+/// Every encounter the TV runs on the level whose archive is `level`.
+pub fn encounters(level: &str) -> impl Iterator<Item = &'static Encounter> {
+    let level = level.to_owned();
+    ENCOUNTERS
+        .iter()
+        .chain(std::iter::once(&THIRD_ISLAND))
+        .filter(move |e| e.level == level)
 }
 
 /// The loot on the way to the first fight (openspec AH.20, design decision
@@ -3135,6 +3188,15 @@ pub fn is_level_definition(file: &str) -> bool {
     })
 }
 
+/// The cutscene actors' sizes (openspec AS.114), by script, every tick:
+/// `NPC_Size_120.ai` (level 214's MoneyBags, 120 %, its shadow on) is a
+/// template's script a cutscene adds as an object of its own, so no definer
+/// names it as [`cutscene_objects`]' do (`NPC_Size_130.ai` needs no line:
+/// every level holding it holds Flynn's definer). Every placement running
+/// it on the disc's levels a cutscene clones is a template, so this lists
+/// their clones alone.
+pub const NPC_SIZES: [&str; 1] = ["NPC_Size_120.ai"];
+
 /// The macro a cutscene object is defined by: its `object def` and
 /// `actor` are what [`cutscene_objects`] reads.
 const DEFINE_OBJECT: &str = "Cutscene - Define Object";
@@ -3392,6 +3454,8 @@ pub fn smash_config(mode: Mode) -> Config {
         scripts.extend(LEVEL_UI.iter().map(|s| (*s).to_owned()));
         // Eon's lines (openspec AR.29).
         scripts.extend(LINE_SCRIPTS.iter().map(|s| (*s).to_owned()));
+        // The cutscene actors' sizes (openspec AS.114).
+        scripts.extend(NPC_SIZES.iter().map(|s| (*s).to_owned()));
         first_tick.extend(START_PROPS_FIRST_TICK.iter().map(|s| (*s).to_owned()));
     }
     c
@@ -3694,23 +3758,25 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
     } else {
         smash_config(mode)
     };
-    if let (Some(e), Whitelist::Only { placements, .. }) = (encounter(name), &mut config.whitelist)
-    {
-        placements.extend(
-            e.placements
-                .iter()
-                .chain(e.clones)
-                .chain(e.steered)
-                .map(|s| (*s).to_owned()),
-        );
+    if let Whitelist::Only { placements, .. } = &mut config.whitelist {
+        for e in encounters(name) {
+            placements.extend(
+                e.placements
+                    .iter()
+                    .chain(e.clones)
+                    .chain(e.steered)
+                    .map(|s| (*s).to_owned()),
+            );
+        }
     }
     // Its intro (openspec AS.47).
     if let (Some(i), Whitelist::Only { placements, .. }) = (intro(name), &mut config.whitelist) {
         placements.push(i.to_owned());
     }
-    // What takes the way on past its fights (openspec AS.59).
+    // What takes the way on past its fights (openspec AS.59, AS.76).
     if let Whitelist::Only { placements, .. } = &mut config.whitelist {
         placements.extend(passages(name).iter().map(|s| (*s).to_owned()));
+        placements.extend(third_island_way(name).iter().map(|s| (*s).to_owned()));
     }
     // A hub stage's sky, its stage's controller, its background and its
     // way on (openspec AS.46, AS.47, AU.6); the filter cells Cali's dialogue
@@ -3770,6 +3836,113 @@ pub const PASSAGES: [(&str, &[&str]); 1] = [(
         "214_Final_Island_IGC",
     ],
 )];
+
+/// What takes the way on through level 214's third island (openspec
+/// AS.76), by placement name, listed and never walked:
+/// - the second ship part and the final island's cutscene it wakes are
+///   [`PASSAGES`]' (AS.98); the cutscene carries the players on the ship's
+///   rigs to the third island's ship (AS.115) and brings `Island_3`'s
+///   placements back;
+/// - Flynn sends them to Persephone (`Flynn_Island_3`, a pan to her door,
+///   `Door_Persephone's_Room(3)`), whose room is an interior; her first
+///   visit's cutscene (`Persephone_214`) is what lets the drawbridge down
+///   (`DrawBridge`), and the menu it ends on is backed out of
+///   ([`crate::prompt::back_out_of_menu`]);
+/// - past Setup_006 the first turret (`Turret_1_Activator`) wakes once its
+///   side enemies are beaten: three padlocks shot from it (their chains and
+///   their pieces) open the first gate;
+/// - `PvP_JumpPad_SUPER(6)` past that gate launches a hero onto the stone
+///   blocks' plateau (`SetUp_Turret_2` wakes the second turret as he
+///   passes); the pads in the two pits below get him back up;
+/// - across the blocks (one pushed three spans north and two back makes
+///   the bridge, [`START_PROPS`]' `PushBlock_Template.ai`) the second turret
+///   (`Turret_2_Activator`) shoots the four padlocks of the second gate
+///   (`ChainedGate_Controller`), Setup_007's lobbers coming from past it;
+/// - past that gate the third ship part (`Ship_part_3`) clones the outro
+///   (`214_Outro_IGC`), whose `Game - Level End` names the village.
+pub const THIRD_ISLAND_WAY: [&str; 41] = [
+    "Flynn_Island_3",
+    "Cali_Island_3",
+    "Door_Persephone's_Room(3)",
+    "DrawBridge",
+    "Persephone_214",
+    "Spike_Gate_Wooden_Template(2)",
+    "Turret_1_Activator",
+    "Padlock_Target_01a",
+    "Padlock_Target_01a(1)",
+    "Padlock_Target_01a(2)",
+    "Chain_01a(1)",
+    "Chain_01b(1)",
+    "Chain_01c(1)",
+    "ChainFence_Gate1(1)",
+    "ChainFence_Gate1(2)",
+    "PvP_JumpPad_SUPER(5)",
+    "PvP_JumpPad_SUPER(6)",
+    "PvP_JumpPad_SUPER(7)",
+    "SetUp_Turret_2",
+    "Turret_2_Activator",
+    "ChainedGate_Controller",
+    "Padlock_Target_02a",
+    "Padlock_Target_02b",
+    "Padlock_Target_02c",
+    "Padlock_Target_02d",
+    "Chain_02a",
+    "Chain_02b",
+    "Chain_02c",
+    "Chain_02d",
+    "ChainFence_Gate2_1",
+    "ChainFence_Gate2_2",
+    "Crache_1",
+    "Crache_1(1)",
+    "Ship_part_3",
+    "214_Outro_IGC",
+    // What they clone (a clone runs under its template's name).
+    "Padlock",
+    "Padlock_Part_02",
+    "Padlock_Part_03",
+    "Padlock_Part_04",
+    "Padlock_Part_05",
+    "Chain_Link",
+];
+
+/// Each placement of the file-variable sets `names` taken off, as a script's
+/// remove of the set does: a dev entry leaving fights behind that a walk
+/// would have fought (openspec AS.76). How many went.
+pub fn take_off_sets(vm: &mut Vm, world: &mut ScriptWorld, names: &[&str]) -> usize {
+    let program = vm.program().clone();
+    let mut off = 0;
+    for name in names {
+        let Some(g) = program.global_named(name) else {
+            continue;
+        };
+        let Some((_, guac_script::Global::Set { members, .. })) = program.globals.get(g as usize)
+        else {
+            continue;
+        };
+        for member in members {
+            let guac_script::Elem::Object(o) = member else {
+                continue;
+            };
+            let Some(&h) = world.handles().get(o) else {
+                continue;
+            };
+            off += usize::from(vm.remove(h));
+            if let Some(a) = world.actors.get_mut(&h) {
+                a.removed = true;
+            }
+        }
+    }
+    off
+}
+
+/// The placements [`THIRD_ISLAND_WAY`] lists for the level whose archive
+/// is `level`.
+pub fn third_island_way(level: &str) -> &'static [&'static str] {
+    match level {
+        "level_214_tutotial_2" => &THIRD_ISLAND_WAY,
+        _ => &[],
+    }
+}
 
 /// The placements [`PASSAGES`] lists for the level whose archive is
 /// `level`.
@@ -5607,12 +5780,6 @@ mod tests {
         // Its intro, 214's alone (openspec AS.47, AS.60).
         assert!(l214.whitelist.lists("214_Intro_IGC", "C:/x/Any.ai"));
         assert!(!other.whitelist.lists("214_Intro_IGC", "C:/x/Any.ai"));
-        // A spawner of a fight past the TV's (the third island's).
-        assert!(
-            !l214
-                .whitelist
-                .lists("Enemy_Chompy_Spawner(4)", "C:/x/Any.ai")
-        );
         assert!(encounter("level_212").is_none());
     }
 
@@ -5849,6 +6016,45 @@ mod tests {
         }
     }
 
+    /// openspec AS.76: level 214's third island on its listing alone: its
+    /// two fights' controllers and foes by name and walked, its lobber's
+    /// clones walked, the way on's placements listed and never walked, its
+    /// turrets' update macros in the game systems' tick; AS.114: the
+    /// cutscene actors' sizes by script on every level's.
+    #[test]
+    fn level_214s_third_island_is_listed() {
+        let files = Files::default();
+        let l214 = level_config(Mode::Play, &files, 4, "level_214_tutotial_2");
+        let other = level_config(Mode::Play, &files, 4, "level_212");
+        for name in THIRD_ISLAND.placements.iter().chain(&THIRD_ISLAND_WAY) {
+            assert!(l214.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+            assert!(!other.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+        }
+        for name in THIRD_ISLAND.clones {
+            assert!(l214.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
+        }
+        assert!(encounters("level_214_tutotial_2").any(|e| *e == THIRD_ISLAND));
+        assert_eq!(encounters("level_214_tutotial_2").count(), 2);
+        assert_eq!(encounters("level_212").count(), 0);
+        for way in THIRD_ISLAND_WAY {
+            assert!(!THIRD_ISLAND.placements.contains(&way), "{way} walked");
+        }
+        for macro_name in [
+            "New Turret - Wait for Turret Activation",
+            "New Turret - Update Turret",
+        ] {
+            assert!(crate::player_loop::UPDATES.contains(&macro_name));
+        }
+        for script in NPC_SIZES {
+            let path = format!("C:/tfb/Content/Levels/Includes/NPC_IGC/{script}");
+            assert_eq!(
+                other.whitelist.listing("a clone", &path),
+                guac_script::Listed::Every,
+                "{script}"
+            );
+        }
+    }
+
     /// openspec AS.97, AS.98: Setup_004B, Setup_005 and the way to the
     /// second ship part on level 214's listing by name, on no other's; its
     /// fights' placements walked, what the closets let out walked as clones,
@@ -5933,6 +6139,16 @@ mod tests {
                 "{level}"
             );
         }
+    }
+
+    /// openspec AS.113: level 201's intro is on the TV's listing, held for
+    /// the hero as 214's is.
+    #[test]
+    fn level_201s_intro_is_run() {
+        assert_eq!(intro("level_201"), Some("_Level_201_Intro_CS"));
+        let files = Files::default();
+        let l201 = level_config(Mode::Play, &files, 4, "level_201");
+        assert!(l201.whitelist.lists("_Level_201_Intro_CS", "C:/x/Any.ai"));
     }
 
     /// openspec AS.96: the interiors' scripts on every level's listing,
@@ -6065,6 +6281,8 @@ mod tests {
         let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
         assert_eq!(world.people(), [0x10A, 0x10B]);
         assert!(is_level_person("level_214_tutotial_2", "Auric_store"));
+        assert!(is_level_person("level_214_tutotial_2", "Flynn_Island_3"));
+        assert!(is_level_person("level_214_tutotial_2", "Cali_Island_3"));
         assert!(!is_level_person("level_201", "Auric_store"));
         world.walk(0x10A);
         assert_eq!(world.people(), [0x10B], "a walked one isn't");

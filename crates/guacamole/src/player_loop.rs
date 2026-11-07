@@ -123,7 +123,7 @@ impl Places {
 /// completion screen's stream, the movie, the level switch), and the
 /// notifications' queue (openspec AS.131: a hint's stay). The set's other
 /// update macros (the encounter's camera pans, the HUD's) stay off.
-pub const UPDATES: [&str; 10] = [
+pub const UPDATES: [&str; 12] = [
     "Destructibles - System Update",
     "Destructibles - Bounce",
     "Destructibles - Delayed Particle",
@@ -134,6 +134,9 @@ pub const UPDATES: [&str; 10] = [
     "Gesture - Update",
     "System - End of Level Sequencing",
     "Notification - Manage Queue",
+    // A turret (openspec AS.76): waiting for its activation, then its game.
+    "New Turret - Wait for Turret Activation",
+    "New Turret - Update Turret",
 ];
 
 /// The portal manager's tick as the loop runs it: each stretch's positions

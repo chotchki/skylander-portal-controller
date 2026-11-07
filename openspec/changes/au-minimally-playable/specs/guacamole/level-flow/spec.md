@@ -12,6 +12,10 @@ When a level's own end-of-level sequencing runs, the TV SHALL show its completio
 - **WHEN** chapter 1's outro ends
 - **THEN** its completion screen shows over the held level in the disc's own art, and a continue press goes on to FMV02, then level 214
 
+#### Scenario: Level 214's end
+- **WHEN** level 214's outro ends
+- **THEN** its completion screen shows its own objectives, and a continue press goes on to hub stage 1
+
 #### Scenario: Moving between the tabs
 - **WHEN** a player presses left or right on the completion screen
 - **THEN** the next tab's objectives show (its story goals, its dares, its collections), and the continue press on any tab goes on

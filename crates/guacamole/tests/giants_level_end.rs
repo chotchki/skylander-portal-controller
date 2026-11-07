@@ -406,19 +406,22 @@ fn level_214s_first_encounter_is_fought_with_eruptor() {
         .map(|n| run.placed(n).0)
         .collect();
     // The spawners walk, and the later fights' own from the start too
-    // (openspec AS.58, AS.75, AS.84, AS.97, AS.98), none of them a clone,
-    // and nothing else.
+    // (openspec AS.58, AS.75, AS.76, AS.84, AS.97, AS.98), none of them a
+    // clone, and nothing else.
     let placed = run.world.creatures();
     let mut walking: Vec<String> = placed.iter().map(|h| run.world.name(*h)).collect();
     walking.sort_unstable();
-    let e = guacamole::scripts::encounter(NEXT).expect("214's encounter");
+    let listed: Vec<&str> = guacamole::scripts::encounters(NEXT)
+        .flat_map(|e| e.placements.iter().copied())
+        .collect();
     assert!(
-        walking.iter().all(|n| e.placements.contains(&n.as_str())),
+        walking.iter().all(|n| listed.contains(&n.as_str())),
         "the spawners and the later fights' own walk: {walking:?}"
     );
     assert!(
         walking.iter().any(|n| n == "Enemy_Chompy_Spawner(1)")
-            && walking.iter().any(|n| n == "Enemy_Chompy_Spawner(5)"),
+            && walking.iter().any(|n| n == "Enemy_Chompy_Spawner(5)")
+            && walking.iter().any(|n| n == "Enemy_TreeRex(4)"),
         "{walking:?}"
     );
     assert!(spawners.iter().all(|s| placed.contains(s)));

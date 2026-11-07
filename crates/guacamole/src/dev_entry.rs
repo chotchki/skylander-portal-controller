@@ -50,6 +50,16 @@
 //!   unfought behind him, and nothing on the second island stands on them,
 //!   so from the ship on the level is as a walk leaves it: Setup_003's
 //!   trigger off the gangplank, Setup_004 past the locked door.
+//! - Part2 (openspec AS.76): level 214's second ship part, where the walk
+//!   past Setup_005 and Auric's scene leave a hero, for the third island
+//!   before the second is walkable: once he's settled, set down by the
+//!   part. What it fakes: the first ship part stays untaken and its sail
+//!   unplayed (objective 1 unmet on the completion screen); Auric unmet,
+//!   the part woken as his scene's end has `Temp_Teleporter.ai` wake it; the
+//!   second island's fights unfought, their four sets taken off as
+//!   Setup_006's own STARTUP takes them off
+//!   ([`anchors::SECOND_ISLAND_FIGHTS`]). From
+//!   the part on everything is the level's own.
 //! - Door 2 (openspec AS.97): level 214 past its second locked door: once
 //!   he's settled, set down short of `Setup_004B_Trigger`
 //!   ([`PAST_THE_SECOND_DOOR`]), for Setup_004B and what follows it. What's
@@ -113,6 +123,9 @@ pub(crate) enum Anchor {
     /// Level 214's first ship part (openspec AS.84): set down by it on its
     /// ledge, for the second island.
     Part,
+    /// Level 214's second ship part (openspec AS.76): set down by it, the
+    /// second island's fights left behind, for the third island.
+    Part2,
     /// Level 214 past its second locked door (openspec AS.97): set down
     /// short of Setup_004B's trigger.
     Door2,
@@ -131,6 +144,7 @@ impl Anchor {
             "pods" => Some(Anchor::Pods),
             "elves" => Some(Anchor::Elves),
             "part" => Some(Anchor::Part),
+            "part2" => Some(Anchor::Part2),
             "door2" => Some(Anchor::Door2),
             "interior" => Some(Anchor::Interior),
             _ => None,
@@ -204,6 +218,11 @@ pub(crate) const AMONG_THE_ELVES: ([f32; 3], f32) = ([22.5, -10.8, 77.5], 310.0)
 /// Steps from the trigger's set-down to the elves': their helper's wake
 /// and writes done.
 pub(crate) const ELVES_WOKEN: u32 = 60;
+/// By level 214's second ship part (metres), facing it (openspec AS.76).
+pub(crate) const BY_THE_SECOND_PART: ([f32; 3], f32) = ([-291.11, -22.3, 816.5], 0.0);
+/// What the second ship part wakes for the anchor: as `Temp_Teleporter.ai`
+/// wakes it once Auric's scene is over.
+pub(crate) const SECOND_PART_WAKES: [&str; 1] = ["Ship_part_2(1)"];
 /// By level 214's first ship part on its ledge (metres), where the jump
 /// pad's flight lands him (openspec AS.75), facing it.
 pub(crate) const BY_THE_PART: ([f32; 3], f32) = ([29.45, -6.92, 56.37], 0.0);
@@ -300,6 +319,22 @@ impl Plan {
                 loot: None,
                 view: None,
                 wake: Vec::new(),
+            },
+            Anchor::Part2 => Plan {
+                anchor,
+                settle: SETTLE,
+                set_downs: vec![(
+                    0,
+                    Vec3::from_array(BY_THE_SECOND_PART.0),
+                    BY_THE_SECOND_PART.1,
+                )],
+                creatures_at: u32::MAX,
+                creatures: Vec::new(),
+                f0: 1,
+                first_alert: None,
+                loot: None,
+                view: None,
+                wake: SECOND_PART_WAKES.to_vec(),
             },
             Anchor::Door2 => Plan {
                 anchor,
@@ -500,7 +535,7 @@ impl Plugin for DevEntryPlugin {
         if env.is_some() && at_start.is_none() {
             warn!(
                 value = ?env,
-                "GUAC_DEV_ENTRY isn't `b`, `start`, `end`, `pods`, `elves`, `part`, `door2` or `interior:<name>`: no entry"
+                "GUAC_DEV_ENTRY isn't `b`, `start`, `end`, `pods`, `elves`, `part`, `part2`, `door2` or `interior:<name>`: no entry"
             );
         }
         if let Some(a) = &at_start {
@@ -678,6 +713,14 @@ pub(crate) fn drive(
             Some(h) if world.wake(h) => info!(%name, "the dev entry wakes it"),
             _ => warn!(%name, "the dev entry found no such placement to wake"),
         }
+    }
+    if plan.anchor == Anchor::Part2 {
+        let off =
+            scripts::take_off_sets(&mut runtime.vm, &mut world, &anchors::SECOND_ISLAND_FIGHTS);
+        info!(
+            off,
+            "the dev entry leaves the second island's fights behind"
+        );
     }
     let figure = earning
         .as_deref()
@@ -872,6 +915,15 @@ mod tests {
         );
         assert_eq!((elves.settle, elves.f0), (SETTLE, ELVES_WOKEN + 1));
         assert!(elves.creatures.is_empty() && elves.wake.is_empty());
+        // Level 214's second ship part (openspec AS.76): by it, waking it.
+        assert_eq!(anchor("part2"), Some(Anchor::Part2));
+        let part2 = Plan::of(Anchor::Part2);
+        assert_eq!(
+            part2.set_downs,
+            [(0, Vec3::from_array(BY_THE_SECOND_PART.0), 0.0)]
+        );
+        assert_eq!((part2.settle, part2.f0), (SETTLE, 1));
+        assert_eq!(part2.wake, ["Ship_part_2(1)"]);
         // Level 214's first ship part (openspec AS.84): by it on its ledge.
         assert_eq!(anchor("part"), Some(Anchor::Part));
         let part = Plan::of(Anchor::Part);

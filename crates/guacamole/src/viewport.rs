@@ -151,6 +151,19 @@ impl Viewport {
         ))
     }
 
+    /// The point 1 m in front of the eye that lands at `(x, y)` on the
+    /// screen, pixels from its top-left corner: [`Viewport::project`] turned
+    /// about, so the line from the eye through it holds everything that
+    /// lands there (openspec AS.76: a turret's pointer picking what it's
+    /// on).
+    pub fn unproject(&self, x: f32, y: f32) -> Vec3 {
+        let tan_y = (self.fov_y().to_radians() * 0.5).tan();
+        let tan_x = tan_y * SCREEN_WIDTH / SCREEN_HEIGHT;
+        let nx = x / SCREEN_WIDTH * 2.0 - 1.0;
+        let ny = 1.0 - y / SCREEN_HEIGHT * 2.0;
+        self.eye + self.rotation() * Vec3::new(nx * tan_x, ny * tan_y, -1.0)
+    }
+
     /// Whether `p` is on screen (the module docs' hypothesis): in front of
     /// the eye, within the far clip along the view, inside the picture.
     pub fn shows(&self, p: Vec3) -> bool {
@@ -177,6 +190,12 @@ pub fn fov_y(fov: f32) -> f32 {
 pub fn pack_screen(x: f32, y: f32) -> u32 {
     let half = |v: f32| (v * 16.0).trunc().clamp(-32768.0, 32767.0) as i16 as u16;
     u32::from(half(x)) << 16 | u32::from(half(y))
+}
+
+/// [`pack_screen`] undone: x and y, pixels.
+pub fn unpack_screen(s: u32) -> (f32, f32) {
+    let half = |v: u32| f32::from(v as u16 as i16) / 16.0;
+    (half(s >> 16), half(s))
 }
 
 /// The view the camera's scripts left, as the TV draws it: their eye and
@@ -234,6 +253,26 @@ mod tests {
         assert!((fov_y(68.0) - 53.9605).abs() < 1e-4, "{}", fov_y(68.0));
         assert!(fov_y(80.0) > fov_y(68.0));
         assert!(fov_y(0.0).abs() < 1e-6);
+    }
+
+    /// openspec AS.76: a place on the screen unprojects to a point that
+    /// projects back to it, 1 m ahead along the view's depth, and a packed
+    /// screen place unpacks to what was packed, negatives too.
+    #[test]
+    fn a_screen_place_goes_back_through_the_view() {
+        let mut v = Viewport {
+            eye: Vec3::new(3.0, 4.0, 5.0),
+            ..Viewport::default()
+        };
+        v.angles.facing = 30.0;
+        v.angles.tilt = -10.0;
+        for (x, y) in [(640.0, 360.0), (10.0, 700.0), (1200.0, 20.0)] {
+            let p = v.unproject(x, y);
+            let (px, py) = v.project(p).unwrap();
+            assert!((px - x).abs() < 0.01 && (py - y).abs() < 0.01, "{px} {py}");
+            assert!(((p - v.eye).dot(v.forward()) - 1.0).abs() < 1e-4);
+        }
+        assert_eq!(unpack_screen(pack_screen(-100.0, 37.5)), (-100.0, 37.5));
     }
 
     /// What it looks at lands in the screen's middle; a point above it

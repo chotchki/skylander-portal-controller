@@ -254,6 +254,11 @@ pub struct Walker {
 pub struct SceneWalk {
     pub aim: guac_motion::steer::Aim,
     pub along: usize,
+    /// A hero walked by his own script, not a scene (AU.9: Sunburn's
+    /// teleport), and how fast he's got to, ft/s: his controller carries
+    /// him, so what stops a walk stops him.
+    pub own: bool,
+    pub speed: f32,
 }
 
 /// A contact the engine reports: a point, the normal out of the surface

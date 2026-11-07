@@ -59,6 +59,7 @@ mod theme;
 mod tints;
 mod title;
 mod turntable;
+mod turret_hud;
 mod tv;
 mod tv_state;
 mod video;
@@ -549,6 +550,8 @@ fn run_tv(
             // AS.88: the header's band over a held level.
             held_band::HeldBandPlugin,
             announce::AnnouncePlugin,
+            // AS.76: a turret's pointer over the level.
+            turret_hud::TurretHudPlugin,
             slow_frames::SlowFramesPlugin,
             // AG.290: the world's button prompts by the walking pad.
             button_prompt::ButtonPromptPlugin,

@@ -1707,6 +1707,11 @@ pub(crate) struct LevelCamera;
 #[derive(Component, Debug)]
 pub(crate) struct ShadowLight;
 
+/// Marks what the level's sky segments hang from, kept at the level
+/// camera's eye (openspec AS.45, [`keep_sky_about_the_eye`]).
+#[derive(Component, Debug)]
+pub(crate) struct LevelSky;
+
 /// The level's systems, after the turntables', whose warm compiles the
 /// level's keys.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -1751,6 +1756,10 @@ impl Plugin for LevelPlugin {
             .add_systems(
                 PostUpdate,
                 (light_level, light_frame).before(bevy::asset::AssetEventSystems),
+            )
+            .add_systems(
+                PostUpdate,
+                keep_sky_about_the_eye.before(bevy::transform::TransformSystems::Propagate),
             )
             .add_systems(
                 PostUpdate,
@@ -2407,18 +2416,33 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
         Name::new("the level's shadow light"),
         ChildOf(root),
     ));
-    for (seg, mesh) in built
+    let sky = s
+        .commands
+        .spawn((
+            Name::new("the level's sky"),
+            LevelSky,
+            Transform::IDENTITY,
+            Visibility::Inherited,
+            ChildOf(root),
+        ))
+        .id();
+    for (i, (seg, mesh)) in built
         .drawn
         .segments
         .iter()
         .zip(&mesh_handles[..level_meshes])
+        .enumerate()
     {
         s.commands.spawn((
             Mesh3d(mesh.clone()),
             MeshMaterial3d(materials[usize::from(seg.material)].clone()),
             Transform::IDENTITY,
             RenderLayers::layer(LEVEL_LAYER),
-            ChildOf(root),
+            ChildOf(if built.drawn.sky.contains(&i) {
+                sky
+            } else {
+                root
+            }),
         ));
     }
     let reference = built
@@ -2759,6 +2783,28 @@ fn show_level(
     level.report.shown_ms = Some(real.elapsed().as_secs_f64() * 1e3);
     info!(level = ?level.report.level, "the level shows (GUAC_LEVEL_VIEW)");
     redrawn.write(Redrawn::Level);
+}
+
+/// The sky goes where the eye goes (openspec AS.45): the original draws a
+/// level's sky through the view with its translation taken out, so a sky
+/// segment's file coordinates are metres from the eye, wherever it stands
+/// (AC.13's first capture: chapter 1's 14 sky draws hold 0, 0, -0.2, 0 in
+/// the matrix's last column where every other static draw holds the eye's
+/// 37.58, -14.97, 114.07, 114.17). Past the dome the view looks out of it
+/// otherwise: level 214's stands 550 m about the origin, its second and
+/// third islands 750-830 m out, all black behind them.
+fn keep_sky_about_the_eye(
+    camera: Query<&Transform, (With<LevelCamera>, Without<LevelSky>)>,
+    mut sky: Query<&mut Transform, With<LevelSky>>,
+) {
+    let Some(eye) = camera.iter().next().map(|c| c.translation) else {
+        return;
+    };
+    for mut hung in &mut sky {
+        if hung.translation != eye {
+            hung.translation = eye;
+        }
+    }
 }
 
 /// A fog change relights every material: the level's in its scene, the
@@ -5104,6 +5150,33 @@ mod tests {
         };
         app.update();
         assert!(!rewritten(&app), "a moved camera relit the level");
+        // The sky went with it (AS.45), its segment under it, and the rest
+        // of the level stayed where the file puts it.
+        let mut sky = app
+            .world_mut()
+            .query_filtered::<(&GlobalTransform, &Children), With<LevelSky>>();
+        let (hung, held) = sky.single(app.world()).unwrap();
+        assert_eq!(
+            hung.translation(),
+            moved.translation,
+            "the sky's left behind"
+        );
+        assert_eq!(held.len(), 1, "one sky segment");
+        let segment = held[0];
+        let drawn = app.world().get::<GlobalTransform>(segment).unwrap();
+        assert_eq!(drawn.translation(), moved.translation);
+        let mut parts = app
+            .world_mut()
+            .query_filtered::<(&ChildOf, &GlobalTransform), With<Mesh3d>>();
+        let still = parts
+            .iter(app.world())
+            .filter(|(c, _)| c.parent() == root)
+            .map(|(_, t)| t.translation())
+            .collect::<Vec<_>>();
+        assert!(
+            !still.is_empty() && still.iter().all(|t| *t == Vec3::ZERO),
+            "{still:?}"
+        );
         app.update();
         assert_eq!(app.world().resource::<Level>().report().relit, relit);
         assert_eq!(travel(&app), (world().0, world().1));

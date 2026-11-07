@@ -25,7 +25,7 @@ use guac_ir::palette::Palette;
 use guac_motion::seam::{Quat, Vec3};
 use guac_script::Handle;
 
-use crate::script_engine::NodePose;
+use crate::script_engine::{NodePose, Sequence};
 use crate::scripts::ScriptWorld;
 
 /// Each of `nodes`' places and turns in the actor's own frame (metres, +Z
@@ -76,6 +76,53 @@ pub fn playing<'p>(
             palette.clip_at(u16::try_from(slot).ok()?, f64::from(s.time))
         })
         .collect()
+}
+
+/// The last clip `actor` played of `sequences`, whether it played out or
+/// was stopped ([`held`]): none for one that played no clip.
+fn last_clip(sequences: &[Sequence], actor: Handle) -> Option<&Sequence> {
+    sequences
+        .iter()
+        .rev()
+        .find(|s| s.actor == actor && s.length > 0.0 && s.laid_over())
+}
+
+/// What a camera's rig holds with no clip on it (openspec AS.141): the last
+/// clip its scripts played, at the time it reached. A rig has no idle: its
+/// slot 0 is its first shot (`214_Recovered_Shot1.ma`, 3.13 s), which looped
+/// under what hung on it, level 201's pod flying back 200 m before it let
+/// him go, and between two shots it read no clip at all.
+pub fn held<'p>(
+    world: &ScriptWorld,
+    actor: Handle,
+    palette: &'p Palette,
+) -> Option<(&'p Clip, f64)> {
+    let s = last_clip(world.sequences(), actor)?;
+    let (_, slot) = world.clip_of(s)?;
+    let end = f64::from(s.length) - 1e-3;
+    palette.clip_at(u16::try_from(slot).ok()?, f64::from(s.time).min(end))
+}
+
+/// Whether `palette` is a camera's rig's: its model under `Models/Cameras`,
+/// where every level's animator rig lives (`214_Recovered.mdl`,
+/// `201_Intro.mdl`).
+fn camera_rig(palette: &Palette) -> bool {
+    palette.owner.contains("/Models/Cameras/")
+}
+
+/// What a drawn actor's clips pose as the TV draws it (openspec AS.141):
+/// [`playing`], and with none on it a camera's rig holds what [`held`] says,
+/// where any other goes back to its idle.
+pub fn posing<'p>(
+    world: &ScriptWorld,
+    actor: Handle,
+    palette: &'p Palette,
+) -> Vec<(&'p Clip, f64)> {
+    let mut on = playing(world, actor, palette);
+    if on.is_empty() && camera_rig(palette) {
+        on.extend(held(world, actor, palette));
+    }
+    on
 }
 
 /// What poses an actor's attach nodes where nothing picks his locomotion
@@ -189,6 +236,38 @@ mod tests {
                 },
             }],
         }
+    }
+
+    /// openspec AS.141: a rig holds the last clip it played, played out or
+    /// stopped, not a sound's sequence on it or a clip of another actor's.
+    #[test]
+    fn the_clip_a_rig_holds_is_its_last() {
+        let sequence = |actor: Handle, length: f32, time: f32, done: bool| Sequence {
+            actor,
+            template: guac_script::Value::Null,
+            length,
+            time,
+            rate: 100.0,
+            looping: false,
+            stopped: false,
+            done,
+            blend: 100.0,
+            kind: 0,
+            layered: false,
+            allow_restart: false,
+        };
+        let mut played = vec![
+            sequence(7, 3.0, 3.0, true),
+            sequence(7, 2.0, 1.5, false),
+            sequence(7, 0.0, 0.0, true),
+            sequence(8, 4.0, 4.0, true),
+        ];
+        played[1].stopped = true;
+        assert_eq!(last_clip(&played, 7).map(|s| s.time), Some(1.5));
+        assert!(last_clip(&played, 9).is_none());
+        // One his locomotion's weights pose isn't laid over him.
+        played[1].layered = true;
+        assert_eq!(last_clip(&played, 7).map(|s| s.time), Some(3.0));
     }
 
     #[test]
@@ -351,5 +430,19 @@ mod tests {
             "{:?}",
             node[0]
         );
+        // AS.141: what plays poses a camera's rig too; with its clips over
+        // it holds the last one's end, and anything else goes to its idle.
+        let mut cam = long.clone();
+        cam.owner = "C:/tfb/Content/Models/Cameras/SKY2_cinematics/201_Intro.mdl".into();
+        assert_eq!(posing(&world, 7, &cam).len(), 2);
+        for s in &mut world.sequences {
+            s.done = true;
+        }
+        world.sequences[5].time = 1.0;
+        assert!(posing(&world, 7, &long).is_empty());
+        let end = posing(&world, 7, &cam);
+        assert_eq!(end.len(), 1);
+        assert_eq!(end[0].0.name, "clip5.ma");
+        assert!((end[0].1 - 0.999).abs() < 1e-6, "{}", end[0].1);
     }
 }

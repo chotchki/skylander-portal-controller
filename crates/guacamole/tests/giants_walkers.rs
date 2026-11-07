@@ -5670,6 +5670,12 @@ struct Press {
     /// What stopped in the window among his placements (his minion, his
     /// file's, the clones of his templates), as the VM named it.
     stops: Vec<String>,
+    /// The window's steps he hung on something of his attack's (openspec
+    /// AS.115: a shell's spin, a ball, a rocket ride), how far from the
+    /// press he got, and whether he still hung at its end.
+    hung: u32,
+    travel: f32,
+    left_hung: bool,
     /// How far he walked once the window was out (`AH29_STUCK`), metres.
     moved: Option<f32>,
 }
@@ -6028,6 +6034,7 @@ fn fight_presses(l: &Level, load: &str, actions: &[usize], out: &mut Fought) -> 
         };
         let mut stopped_in = false;
         let mut read_by = None;
+        let from = w.hero().pivot;
         let shape = PressShape::read();
         for s in 0..shape.window {
             if s == READ_BY {
@@ -6047,6 +6054,9 @@ fn fight_presses(l: &Level, load: &str, actions: &[usize], out: &mut Fought) -> 
                 press.stops.push(named(&h.to_string()));
                 break;
             }
+            press.hung += u32::from(w.hero().hung);
+            press.left_hung = w.hero().hung;
+            press.travel = press.travel.max(w.hero().pivot.distance(from));
             for (i, &c) in chompies.iter().enumerate() {
                 let now = w.creature_health(c);
                 if let (Some(was), Some(is)) = (health[i], now)
@@ -6292,9 +6302,10 @@ fn pop_fizz_walks_on_after_his_second_attack_is_pressed() {
 /// many characters stop on each. A hit is a Chompy's health falling in the
 /// press's window, whatever took it. Run whole, it holds AU.2's measure:
 /// every character attacking, every first attack hitting, the second on at
-/// least 45 (AU.10 has the rest), Sunburn's `move to` the one stop of his
-/// (AU.9) and none of the level's (Hot Head's attack stopped the UI's
-/// keyframer before AU.2's reference to a number). `AH29_ONLY` (comma-separated load files) runs those alone,
+/// least 45 (AU.10 has the rest), no stop of his, Sunburn's `move to` riding
+/// his own walk (AU.9), no attack leaving him hung (AS.115), and none of the
+/// level's (Hot Head's attack stopped the UI's keyframer before AU.2's
+/// reference to a number). `AH29_ONLY` (comma-separated load files) runs those alone,
 /// `AH29_ACTIONS` ([`presses_alone`]) those positions alone, and either
 /// checks only Eruptor; [`PressShape`] makes each press otherwise (AU.10);
 /// `AH29_TABLE` (a path outside the tree) gets the table as JSON.
@@ -6329,8 +6340,16 @@ fn every_modelled_character_attacks_or_is_listed() {
         );
         for p in &f.presses {
             println!(
-                "    action {}: slots {:?} (at the press {:?}), clones {:?}, hits {:?}, stops {:?}",
-                p.action, p.slots, p.press_slots, p.clones, p.hits, p.stops
+                "    action {}: slots {:?} (at the press {:?}), clones {:?}, hits {:?}, stops {:?}, hung {} steps, {:.2} m out{}",
+                p.action,
+                p.slots,
+                p.press_slots,
+                p.clones,
+                p.hits,
+                p.stops,
+                p.hung,
+                p.travel,
+                if p.left_hung { ", STILL HUNG" } else { "" }
             );
         }
         for s in &f.level_stops {
@@ -6425,9 +6444,21 @@ fn every_modelled_character_attacks_or_is_listed() {
         .collect();
     assert_eq!(
         stops,
-        BTreeSet::from([("008_FireDragon", "movementUpdate.ai", 129)]),
-        "Sunburn's `move to` the one stop (AU.9)"
+        BTreeSet::new(),
+        "no stop: Sunburn's `move to` rides his own walk (AU.9)"
     );
+    // What an attack hangs him on lets him go again (AS.115: the shell's
+    // spin, the ball).
+    let hung: Vec<(&str, usize)> = table
+        .iter()
+        .flat_map(|f| {
+            f.presses
+                .iter()
+                .filter(|p| p.left_hung)
+                .map(|p| (f.load.as_str(), p.action))
+        })
+        .collect();
+    assert_eq!(hung, Vec::new(), "still hung at the window's end");
     let level: Vec<(&str, &String)> = table
         .iter()
         .flat_map(|f| f.level_stops.iter().map(|s| (f.load.as_str(), s)))

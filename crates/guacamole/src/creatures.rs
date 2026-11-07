@@ -106,7 +106,11 @@ pub(crate) fn place_bodies(
         if !body.exclude.contains(&id) {
             body.exclude.push(id);
         }
-        wanted.push((h, solid, pose));
+        // Hung on a rig or in a turret he has no body (openspec AS.115):
+        // what a turret fires starts inside him.
+        if !body.hero.hung {
+            wanted.push((h, solid, pose));
+        }
     }
     if let Some(world) = world.as_deref() {
         wanted.extend(world.creature_bodies());
@@ -252,13 +256,14 @@ fn placed(a: &guacamole::script_engine::Actor) -> Transform {
 /// The clips `c`'s scripts play on it out of its palette, each with the time
 /// it poses at, oldest first: a clip past one Havok block the block playing
 /// and the time within it (openspec AS.78: an animator camera's rig, whose
-/// node the shot's view hangs on, rides its clip to its end).
+/// node the shot's view hangs on, rides its clip to its end), which with no
+/// clip on it holds the last one's pose (AS.141, [`guacamole::hands::held`]).
 fn playing_clips<'c>(
     c: &'c DrawnCreature,
     world: &ScriptWorld,
 ) -> Vec<(&'c guac_ir::clip::Clip, f64)> {
     match &c.palette {
-        Some(p) => guacamole::hands::playing(world, c.actor, p),
+        Some(p) => guacamole::hands::posing(world, c.actor, p),
         None => Vec::new(),
     }
 }
@@ -861,6 +866,27 @@ mod tests {
 
     fn hero_entity(app: &App) -> Entity {
         app.world().resource::<crate::play::Play>().hero().unwrap()
+    }
+
+    /// openspec AS.115: a hero hung on a rig or in a turret has no body in
+    /// Avian's world (a turret's shot starts inside him), and let go he has
+    /// his body back.
+    #[test]
+    fn a_hung_hero_has_no_body_until_hes_let_go() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _) = fight_app(tmp.path(), Some(start()));
+        let e = hero_entity(&app);
+        let h = e.to_bits();
+        let bodied = |app: &App| {
+            app.world()
+                .get::<SeamBody>(Entity::try_from_bits(h).unwrap())
+                .is_some()
+        };
+        until(&mut app, "his body", |a| bodied(a));
+        app.world_mut().get_mut::<HeroBody>(e).unwrap().hero.hung = true;
+        until(&mut app, "no body hung", |a| !bodied(a));
+        app.world_mut().get_mut::<HeroBody>(e).unwrap().hero.hung = false;
+        until(&mut app, "his body back", |a| bodied(a));
     }
 
     /// AH.25: with the entry asked, the synthetic encounter's creature (a

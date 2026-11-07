@@ -165,6 +165,10 @@ pub struct Hero {
     /// and before its slowing: the speed his locomotion mixes his gaits by
     /// (AG.11, [`crate::locomotion`]).
     pub gait_speed: f32,
+    /// Hung on something a script hangs him from (openspec AS.115: a
+    /// scene's rig or ship, a turret): his controller takes no step, and his
+    /// place is what he hangs from's.
+    pub hung: bool,
     /// The steps one and two frames before the next.
     steps: [f32; 2],
     solid: HavokSolid,
@@ -190,6 +194,7 @@ impl Hero {
             held_off: false,
             probe_held: false,
             gait_speed: 0.0,
+            hung: false,
             steps: [NOMINAL_STEP; 2],
             solid,
             tuning,
@@ -467,10 +472,15 @@ impl Hero {
         surfaces: &Surfaces,
     ) {
         let [before, _] = self.steps;
+        self.steps = [step, before];
         self.probe_held = false;
+        if self.hung {
+            self.gait_speed = 0.0;
+            self.velocity = Vec3::ZERO;
+            return;
+        }
         self.gait_speed = self.walk.velocity.length();
         self.engine(seam, step, exclude, surfaces);
-        self.steps = [step, before];
     }
 
     /// One game frame of an actor no stick drives (openspec AH.18, AH design
@@ -635,5 +645,30 @@ impl Hero {
             },
             ground: found.map(|g| g.normal),
         };
+    }
+}
+
+#[cfg(test)]
+mod hung {
+    use super::*;
+    use crate::parry::ParryWorld;
+    use crate::tuning::eruptor_solid;
+
+    /// openspec AS.115: hung, his controller takes no step: his place holds
+    /// whatever walk he's left with, and let go it moves him again.
+    #[test]
+    fn a_hung_hero_takes_no_step_until_hes_let_go() {
+        let seam = ParryWorld::new(&[]).unwrap();
+        let pivot = Vec3::new(1.0, 2.0, 3.0);
+        let mut hero = Hero::new(eruptor_solid(), Tuning::ERUPTOR, pivot, 0.0);
+        hero.walk.velocity = Vec3::X * 20.0;
+        hero.hung = true;
+        hero.step_engine(&seam, 1.0 / 60.0, &[], Surfaces::NONE);
+        assert_eq!(hero.pivot, pivot);
+        assert_eq!(hero.velocity, Vec3::ZERO);
+        assert_eq!(hero.gait_speed, 0.0);
+        hero.hung = false;
+        hero.step_engine(&seam, 1.0 / 60.0, &[], Surfaces::NONE);
+        assert_ne!(hero.pivot, pivot);
     }
 }

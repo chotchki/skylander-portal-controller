@@ -954,6 +954,18 @@ impl ScriptWorld {
         {
             return Some(angles_of(q));
         }
+        // Hung from another actor, it turns with it (openspec AS.76: a
+        // turret's body on its base, whose facing `New Turret - Find Target`
+        // holds its targets' headings against).
+        if depth > 0
+            && !a.removed
+            && let Some(owner) = self.actor_of(Some(a.attach)).filter(|&o| o != h)
+            && let Some(g) = self.angles_within(owner, engine, depth - 1)
+        {
+            let mut turned = a.angles;
+            turned.facing += g.facing;
+            return Some(turned);
+        }
         Some(a.angles)
     }
 
@@ -1592,6 +1604,24 @@ impl ScriptWorld {
                     // stand-in ledger: `ray-touch`). The fight's headless
                     // runs keep no props in the seam, and AG.90's fix walked
                     // a lob there onto this check.
+                    //
+                    // A turret's pointer (`New Turret - Find Target`, openspec
+                    // AS.76) asks it of its targets along the ray through
+                    // where it points: yes for one the ray passes within its
+                    // reach of (stand-in ledger: `turret-pick`).
+                    if self.ray_picks {
+                        let p = self.position(a, engine).ok_or(HostFault::Nothing)?;
+                        let (start, end) = (self.ray.start, self.ray.end);
+                        let d = end - start;
+                        let t = ((p - start).dot(d) / d.length_squared().max(1e-6)).clamp(0.0, 1.0);
+                        let off = (start + d * t).distance(p);
+                        return Ok(Value::Int(i32::from(off <= crate::turret::PICK_REACH)));
+                    }
+                    return Ok(Value::Int(0));
+                }
+                // A turret's shot leaves from inside its base's sphere, its
+                // barrel's nodes unposed (stand-in ledger: `turret-pick`).
+                if self.turret_base == Some(a) && self.name(b).starts_with(crate::turret::SHOTS) {
                     return Ok(Value::Int(0));
                 }
                 Value::Int(i32::from(self.touching(a, b, engine)?))
@@ -1908,6 +1938,16 @@ impl ScriptWorld {
                     a.attach = v;
                     a.hung = Vec3::ZERO;
                 }
+                // A hero hung has his controller off until he's let go
+                // (openspec AS.115); another's ground carries nobody here.
+                let carried = v != Value::Null
+                    && !matches!(self.object(Some(v)), Some(Object::Facet(_, Facet::Ground)));
+                if let Some(hero) = engine.hero(h)
+                    && hero.hung != carried
+                {
+                    hero.hung = carried;
+                    hero.walk.velocity = Vec3::ZERO;
+                }
             }
             // On a clip (openspec AH.49): what a sequence started from it
             // starts with. The layered bit takes a write only on a clip,
@@ -2044,8 +2084,15 @@ impl ScriptWorld {
                 }
             }
             // A point put where it lands on the screen (its lock type the
-            // screen's): no camera script does, so it's not modelled.
-            Member::ConverterScreen => return Err(HostFault::Unmodelled),
+            // screen's; openspec AS.76: a turret's pointer): on the line
+            // from the eye through that place.
+            Member::ConverterScreen => {
+                let Value::Screen(s) = v else {
+                    return Err(HostFault::Nothing);
+                };
+                let (x, y) = crate::viewport::unpack_screen(s);
+                self.view.converter = self.view.unproject(x, y);
+            }
             // The rest are read-only: a write goes nowhere, as the
             // original's member with no setter.
             _ => {}
@@ -2614,8 +2661,7 @@ impl ScriptWorld {
     /// body under it ([`ScriptWorld::move_scene_walks`]; chapter 1's
     /// outro walks its Mabu so, `CS Walk Obj to Location` handing the
     /// engine an actor no movement data of the scripts' moves). Reached,
-    /// the block runs, as a creature's. A hero walks on his controller
-    /// alone, so one the op moves is still unmodelled.
+    /// the block runs, as a creature's.
     /// (Stand-in ledger: `scene-walk`.)
     fn scene_move(
         &mut self,
@@ -2626,9 +2672,6 @@ impl ScriptWorld {
         (toward, done, last): (bool, bool, bool),
         engine: &mut dyn Engine,
     ) -> Result<Answer, HostFault> {
-        if engine.hero(mover).is_some() {
-            return Err(HostFault::Unmodelled);
-        }
         if !(done && last)
             && let Some(clip) = self.move_clip(call)
         {
@@ -2652,9 +2695,12 @@ impl ScriptWorld {
                 Aim::From(point)
             };
         }
+        // A hero's steps are `move_hero_walk`'s (his scripts zero his walk
+        // each tick while a scene holds him).
         let walk = self.scene_walks.entry(mover).or_default();
         walk.aim = aim;
         walk.along = along;
+        walk.own = call.placement == mover;
         Ok(if done {
             Answer::Run {
                 receiver: None,
@@ -2676,10 +2722,14 @@ impl ScriptWorld {
     /// ([`ScriptWorld::move_actors`]). The aim lasts the tick it was asked
     /// for, as a creature's does. One taken off, hung on something or
     /// walked as a creature since is let go.
-    pub(crate) fn move_scene_walks(&mut self, dt: f32) {
+    pub(crate) fn move_scene_walks(&mut self, dt: f32, engine: &mut dyn Engine) {
         let mut walking: Vec<Handle> = self.scene_walks.keys().copied().collect();
         walking.sort_unstable();
         for h in walking {
+            if engine.hero(h).is_some() {
+                self.move_hero_walk(h, dt, engine);
+                continue;
+            }
             let Some(a) = self
                 .actors
                 .get_mut(&h)
@@ -2709,6 +2759,92 @@ impl ScriptWorld {
             a.position += frame.velocity * dt;
             a.angles.facing = frame.facing;
             a.velocity = frame.velocity * FEET_PER_METRE;
+        }
+    }
+
+    /// A step of a scene's walk on a hero (openspec AS.113: level 201's
+    /// intro walks him in along his path): his pivot across the ground at a
+    /// scene walk's speed, on what's under him, facing where he goes. One
+    /// further from where he's going than any scene walks him starts there:
+    /// what he hung on let him go where its clip didn't pose it (level 201's
+    /// landing pod, stand-in ledger: `scene-walk`). His own script's walk is
+    /// [`ScriptWorld::move_hero_own_walk`]'s.
+    fn move_hero_walk(&mut self, h: Handle, dt: f32, engine: &mut dyn Engine) {
+        let Some(walk) = self.scene_walks.get_mut(&h) else {
+            return;
+        };
+        let Aim::To(to) = std::mem::take(&mut walk.aim) else {
+            walk.speed = 0.0;
+            return;
+        };
+        if walk.own {
+            self.move_hero_own_walk(h, to, dt, engine);
+            return;
+        }
+        let Some(at) = engine.hero(h).map(|hero| hero.pivot) else {
+            return;
+        };
+        let across = Vec3::new(to.x - at.x, 0.0, to.z - at.z);
+        let far = across.length();
+        if far < 1e-4 {
+            return;
+        }
+        let next = if far > SCENE_WALK_REACH {
+            to
+        } else {
+            at + across / far * (SCENE_WALK_SPEED * METRES_PER_FOOT * dt).min(far)
+        };
+        let actors = self.actor_bodies(engine);
+        let ground = guac_motion::ground::ray(
+            engine.seam(),
+            next + Vec3::Y * 2.0,
+            Vec3::NEG_Y,
+            6.0,
+            &actors,
+        )
+        .map(|hit| hit.point.y);
+        if let Some(hero) = engine.hero(h) {
+            hero.pivot = Vec3::new(next.x, ground.unwrap_or(next.y), next.z);
+            hero.facing = crate::script_engine::heading_of(across);
+        }
+    }
+
+    /// A step of a hero's own script's walk (openspec AU.9: Sunburn's
+    /// teleport hands `Movement - Move To` his destination while he plays):
+    /// up to his movement numbers as his scripts left them (200 ft/s, 999
+    /// ft/s² for the teleport; a scene walk's speed with none set) straight
+    /// at it, through his controller, so a wall stops him and past a ledge
+    /// the ground isn't under him. The walk his scripts left him is his
+    /// again after it. What carries him in the original is AU.9's to read
+    /// (stand-in ledger: `scene-walk`).
+    fn move_hero_own_walk(&mut self, h: Handle, to: Vec3, dt: f32, engine: &mut dyn Engine) {
+        let Some(mut body) = engine.hero(h).cloned() else {
+            return;
+        };
+        let across = Vec3::new(to.x - body.pivot.x, 0.0, to.z - body.pivot.z);
+        let far = across.length();
+        if far < 1e-4 {
+            return;
+        }
+        let numbers = self.actors.get(&h).map(|a| a.physics).unwrap_or_default();
+        let Some(walk) = self.scene_walks.get_mut(&h) else {
+            return;
+        };
+        walk.speed = if numbers.ground_acceleration > 0.0 {
+            (walk.speed + numbers.ground_acceleration * dt).min(numbers.ground_max_speed)
+        } else {
+            SCENE_WALK_SPEED
+        };
+        // No further than it is: the step ends on it, not past it.
+        let speed = walk.speed.min(far / (METRES_PER_FOOT * dt));
+        let left = body.walk.velocity;
+        body.walk.velocity = across / far * speed;
+        let own: Vec<BodyId> = engine.body(h).into_iter().collect();
+        body.step_engine(engine.seam(), dt, &own, Surfaces::NONE);
+        body.walk.velocity = left;
+        body.facing = crate::script_engine::heading_of(across);
+        if let Some(hero) = engine.hero(h) {
+            *hero = body;
         }
     }
 
@@ -3031,7 +3167,7 @@ impl ScriptWorld {
     /// `collisioninfo.environment contacts`.
     pub(crate) fn move_actors(&mut self, dt: f32, engine: &mut dyn Engine) {
         self.move_walkers(dt, engine);
-        self.move_scene_walks(dt);
+        self.move_scene_walks(dt, engine);
         // A scene walk is its actor's one motion (AS.68).
         let mut flying: Vec<Handle> = self
             .actors
@@ -3097,6 +3233,14 @@ impl ScriptWorld {
         self.place_hung_actors(engine);
     }
 
+    /// The actor a node value stands on, if it names one.
+    pub fn node_owner(&self, v: Value) -> Option<Handle> {
+        match self.object(Some(v)) {
+            Some(Object::Node(owner, _)) => Some(owner),
+            _ => None,
+        }
+    }
+
     /// The actors something not taken off hangs on a node of, each once in
     /// handle order: whose nodes an embedder poses (openspec AH.138), the
     /// rest left at their pivots for nothing.
@@ -3153,9 +3297,26 @@ impl ScriptWorld {
                     a.angles = angles_of(q);
                 }
             }
+            // A hung hero's body goes with his node (openspec AS.115), his
+            // place being his controller's.
+            if let Some(p) = at
+                && let Some(hero) = engine.hero(h)
+                && hero.hung
+            {
+                hero.pivot = p;
+                if let Some(q) = turn {
+                    hero.facing = angles_of(q).facing;
+                }
+            }
         }
     }
 }
+
+/// The speed a scene walks a hero at, ft/s: what the engine's scene walk
+/// gives an actor with no numbers of its own (stand-in ledger: `scene-walk`).
+const SCENE_WALK_SPEED: f32 = 20.0;
+/// How far a scene walks a hero, metres: from further he starts there.
+const SCENE_WALK_REACH: f32 = 30.0;
 
 impl ScriptWorld {
     /// Makes the actor under `h` a creature the engine moves (openspec
@@ -4263,6 +4424,350 @@ mod tests {
         assert_eq!(collision(&mut w, &mut e), Ok(Value::Int(0)), "no actor");
     }
 
+    /// An actor others hang from in the tests below.
+    const OWNER: Handle = 0x6000_0021;
+
+    /// openspec AS.115: a hero hung on a node rides it, his controller's
+    /// step taking nothing from it and the host carrying his body as the
+    /// node moves, turned as it is; let go, his place is his to walk from,
+    /// from where the node left him. Hung on his own ground he isn't hung.
+    #[test]
+    fn a_hero_hung_on_a_node_rides_it_and_is_let_go_where_it_left_him() {
+        let mut e = bench();
+        let pivot = Vec3::new(1.0, 0.0, 1.0);
+        e.hero = Some(Hero::new(eruptor_solid(), Tuning::ERUPTOR, pivot, 0.0));
+        e.hero.as_mut().unwrap().pivot = pivot;
+        e.hero.as_mut().unwrap().walk.velocity = Vec3::X;
+        let mut w = world();
+        w.actors.insert(HERO, Actor::blank());
+        w.actors.insert(OWNER, Actor::blank());
+        let posed = |w: &mut ScriptWorld, at: Vec3, turn: Quat| {
+            w.set_nodes(OWNER, vec![NodePose { at, turn }]);
+        };
+        posed(&mut w, Vec3::new(5.0, 6.0, 7.0), Quat::IDENTITY);
+        let attach = |w: &mut ScriptWorld, e: &mut Bench, v: Value| {
+            w.set_member(
+                &at(
+                    "abstractplacement",
+                    "attach node",
+                    Some(Value::Entity(HERO)),
+                    None,
+                ),
+                Member::AttachNode,
+                v,
+                e,
+            )
+            .unwrap();
+        };
+        let node = w.objs.value(Object::Node(OWNER, 0));
+        attach(&mut w, &mut e, node);
+        let hero = e.hero.as_ref().unwrap();
+        assert!(hero.hung);
+        assert_eq!(hero.pivot, Vec3::new(5.0, 6.0, 7.0));
+        assert_eq!(
+            hero.walk.velocity,
+            Vec3::ZERO,
+            "his walk stops as he's hung"
+        );
+        // The rig flies on, turned a quarter.
+        posed(
+            &mut w,
+            Vec3::new(9.0, 2.0, 3.0),
+            Quat::from_rotation_y(90f32.to_radians()),
+        );
+        w.place_hung(&mut e);
+        let hero = e.hero.as_ref().unwrap();
+        assert_eq!(hero.pivot, Vec3::new(9.0, 2.0, 3.0));
+        assert!((hero.facing - 90.0).abs() < 1e-3, "{}", hero.facing);
+        attach(&mut w, &mut e, Value::Null);
+        assert!(!e.hero.as_ref().unwrap().hung);
+        posed(&mut w, Vec3::new(1.0, 1.0, 1.0), Quat::IDENTITY);
+        w.place_hung(&mut e);
+        assert_eq!(
+            e.hero.as_ref().unwrap().pivot,
+            Vec3::new(9.0, 2.0, 3.0),
+            "let go, the node carries him no more"
+        );
+        let ground = w.objs.value(Object::Facet(OWNER, Facet::Ground));
+        attach(&mut w, &mut e, ground);
+        assert!(
+            !e.hero.as_ref().unwrap().hung,
+            "another's ground hangs nobody"
+        );
+    }
+
+    /// openspec AS.76: an actor hung from another turns with it: what a
+    /// turret's body reads against its base's facing, its own turn added.
+    #[test]
+    fn an_actor_hung_from_another_reads_its_turn() {
+        let mut e = bench();
+        let mut w = world();
+        let mut base = Actor::blank();
+        base.angles.facing = 81.0;
+        w.actors.insert(OWNER, base);
+        let mut body = Actor::blank();
+        body.attach = Value::Entity(OWNER);
+        w.actors.insert(BALL, body);
+        assert_eq!(w.angles(BALL, &mut e).map(|g| g.facing), Some(81.0));
+        w.actors.get_mut(&BALL).unwrap().angles.facing = 9.0;
+        assert_eq!(w.angles(BALL, &mut e).map(|g| g.facing), Some(90.0));
+        w.actors.get_mut(&BALL).unwrap().attach = Value::Null;
+        assert_eq!(w.angles(BALL, &mut e).map(|g| g.facing), Some(9.0));
+    }
+
+    /// openspec AS.76: the ray caster's collision picks what the ray passes
+    /// within reach of while a turret's game runs, and its own shots pass
+    /// its base; with none running it answers no touch as ever.
+    #[test]
+    fn a_turrets_pointer_picks_along_the_ray_and_its_shots_pass_its_base() {
+        let mut e = bench();
+        let mut w = world();
+        let mut lock = Actor::blank();
+        lock.position = Vec3::new(10.0, 1.0, 0.0);
+        w.actors.insert(BALL, lock);
+        w.ray.start = Vec3::ZERO;
+        w.ray.end = Vec3::new(20.0, 0.0, 0.0);
+        let ray = w.objs.value(Object::RayCast);
+        let asked = |w: &mut ScriptWorld, e: &mut Bench| {
+            let a = at(
+                "positionmeasurement",
+                "collision",
+                Some(Value::Entity(BALL)),
+                Some(ray),
+            );
+            w.get_member(&a, Member::Collision, e)
+        };
+        assert_eq!(
+            asked(&mut w, &mut e),
+            Ok(Value::Int(0)),
+            "no turret: no touch"
+        );
+        w.ray_picks = true;
+        assert_eq!(asked(&mut w, &mut e), Ok(Value::Int(1)), "1 m off the ray");
+        w.ray.end = Vec3::new(20.0, 20.0, 0.0);
+        assert_eq!(asked(&mut w, &mut e), Ok(Value::Int(0)), "well off it");
+        // A shot starts inside its turret's base and passes it; anything
+        // else overlapping the base touches it, and its shot touches another.
+        let (base, shot) = (0x6000_0031, 0x6000_0032);
+        let solid = Vec3::new(1.0, 2.0, 3.0);
+        w.actors.insert(base, ball(solid, 0.0));
+        w.actors.insert(shot, ball(solid, 0.0));
+        let name = |w: &mut ScriptWorld, name: &str| {
+            let o = Obj { unit: 9, index: 1 };
+            w.templates
+                .insert(o, crate::scripts::Placed::named(o, name, None, 5));
+            w.actors.get_mut(&shot).unwrap().template = Some(o);
+        };
+        name(&mut w, "New_Turret_Projectile_Fire");
+        let touch = |w: &mut ScriptWorld, e: &mut Bench| {
+            let a = at(
+                "positionmeasurement",
+                "collision",
+                Some(Value::Entity(base)),
+                Some(Value::Entity(shot)),
+            );
+            w.get_member(&a, Member::Collision, e)
+        };
+        assert_eq!(
+            touch(&mut w, &mut e),
+            Ok(Value::Int(1)),
+            "no turret: it touches"
+        );
+        w.turret_base = Some(base);
+        assert_eq!(
+            touch(&mut w, &mut e),
+            Ok(Value::Int(0)),
+            "its own shot passes"
+        );
+        name(&mut w, "009_LavaProjectile");
+        assert_eq!(
+            touch(&mut w, &mut e),
+            Ok(Value::Int(1)),
+            "another's doesn't"
+        );
+    }
+
+    /// openspec AS.76: a point put at a place on the screen lands there, on
+    /// the line from the eye; a value that's no screen place is refused.
+    #[test]
+    fn the_converters_screen_location_puts_its_point_on_that_line() {
+        let mut e = bench();
+        let mut w = world();
+        w.view.eye = Vec3::new(1.0, 2.0, 3.0);
+        let converter = w.objs.value(Object::ViewConverter);
+        let write = |w: &mut ScriptWorld, e: &mut Bench, v: Value| {
+            w.set_member(
+                &at("viewconverter", "screen location", Some(converter), None),
+                Member::ConverterScreen,
+                v,
+                e,
+            )
+        };
+        let s = crate::viewport::pack_screen(300.0, 500.0);
+        write(&mut w, &mut e, Value::Screen(s)).unwrap();
+        let (x, y) = w.view.project(w.view.converter).unwrap();
+        assert!(
+            (x - 300.0).abs() < 0.01 && (y - 500.0).abs() < 0.01,
+            "{x} {y}"
+        );
+        assert!(write(&mut w, &mut e, Value::Int(3)).is_err());
+    }
+
+    /// openspec AS.113: a scene's walk takes a hero across the ground at a
+    /// scene walk's speed, facing where he goes, step by step, the block
+    /// run once he's there; from further than a scene walks him he starts
+    /// there.
+    #[test]
+    fn a_scene_walks_a_hero_across_the_ground() {
+        let mut e = bench();
+        let pivot = Vec3::new(1.0, 0.0, 1.0);
+        e.hero = Some(Hero::new(eruptor_solid(), Tuning::ERUPTOR, pivot, 0.0));
+        e.hero.as_mut().unwrap().pivot = pivot;
+        let mut w = world();
+        w.actors.insert(HERO, Actor::blank());
+        let call = OpCall {
+            placement: 1,
+            receiver: Value::Null,
+            class: Class::MoveTo,
+            operands: Vec::new(),
+            words: Vec::new(),
+            sets: Vec::new(),
+        };
+        let to = Vec3::new(1.0, 5.0, 11.0);
+        let answer = w
+            .scene_move(HERO, &call, None, to, (true, false, true), &mut e)
+            .unwrap();
+        assert_eq!(answer, Answer::Done);
+        w.move_scene_walks(1.0, &mut e);
+        let hero = e.hero.as_ref().unwrap();
+        let stride = SCENE_WALK_SPEED * METRES_PER_FOOT;
+        assert!(
+            (hero.pivot.z - (1.0 + stride)).abs() < 1e-4,
+            "{}",
+            hero.pivot
+        );
+        assert_eq!(
+            (hero.pivot.x, hero.pivot.y),
+            (1.0, 0.0),
+            "across the ground"
+        );
+        assert_eq!(hero.facing, 0.0);
+        let answer = w
+            .scene_move(HERO, &call, None, to, (true, true, true), &mut e)
+            .unwrap();
+        assert!(matches!(answer, Answer::Run { .. }));
+        let at = e.hero.as_ref().unwrap().pivot;
+        w.move_scene_walks(1.0, &mut e);
+        assert_eq!(e.hero.as_ref().unwrap().pivot, at, "reached: he stands");
+        let far = Vec3::new(200.0, 8.0, 1.0);
+        w.scene_move(HERO, &call, None, far, (true, false, true), &mut e)
+            .unwrap();
+        w.move_scene_walks(1.0 / 60.0, &mut e);
+        assert_eq!(
+            e.hero.as_ref().unwrap().pivot,
+            far,
+            "too far to walk: he's there"
+        );
+    }
+
+    /// openspec AU.9: a hero's own script walking him goes through his
+    /// controller: a wall stops him short of where he's going, and with
+    /// nothing in the way he gets there on his own numbers; let go, his
+    /// walk's what his scripts left it.
+    #[test]
+    fn a_heros_own_walk_stops_at_a_wall() {
+        let floor = Body {
+            id: BodyId(1),
+            kind: BodyKind::Static,
+            pose: Pose::at(Vec3::new(0.0, -0.5, 0.0)),
+            collider: Collider::Convex(Shape::Box {
+                half_extents: Vec3::new(40.0, 0.5, 40.0),
+                margin: 0.0,
+            }),
+        };
+        let wall = Body {
+            id: BodyId(2),
+            kind: BodyKind::Static,
+            pose: Pose::at(Vec3::new(0.0, 2.0, 5.0)),
+            collider: Collider::Convex(Shape::Box {
+                half_extents: Vec3::new(10.0, 2.0, 0.2),
+                margin: 0.0,
+            }),
+        };
+        let walked = |wall: Option<Body>, to: Vec3| {
+            let mut bodies = vec![floor.clone()];
+            bodies.extend(wall);
+            let mut e = Bench {
+                world: ParryWorld::new(&bodies).unwrap(),
+                hero: None,
+            };
+            let mut w = world();
+            let mut hero = Actor::blank();
+            hero.physics.ground_max_speed = 200.0;
+            hero.physics.ground_acceleration = 999.0;
+            w.actors.insert(HERO, hero);
+            let start = Vec3::new(0.0, 0.01, 0.0);
+            let mut h = Hero::new(eruptor_solid(), Tuning::ERUPTOR, start, 0.0);
+            h.settle(&e.world, &[]);
+            h.walk.velocity = Vec3::new(0.0, 0.0, 2.0);
+            e.hero = Some(h);
+            let call = OpCall {
+                placement: HERO,
+                receiver: Value::Null,
+                class: Class::MoveTo,
+                operands: Vec::new(),
+                words: Vec::new(),
+                sets: Vec::new(),
+            };
+            for _ in 0..30 {
+                w.scene_move(HERO, &call, None, to, (true, false, true), &mut e)
+                    .unwrap();
+                w.move_scene_walks(1.0 / 60.0, &mut e);
+            }
+            e.hero.unwrap()
+        };
+        let to = Vec3::new(0.0, 0.0, 10.0);
+        let clear = walked(None, to);
+        assert!((clear.pivot.z - 10.0).abs() < 1e-3, "{}", clear.pivot);
+        assert_eq!(
+            clear.walk.velocity,
+            Vec3::new(0.0, 0.0, 2.0),
+            "his scripts'"
+        );
+        let stopped = walked(Some(wall), to);
+        assert!(
+            stopped.pivot.z < 4.8 && stopped.pivot.z > 3.0,
+            "{}",
+            stopped.pivot
+        );
+    }
+
+    /// openspec AS.115: only a change of what carries him stops his walk:
+    /// a character's attacks write a null over a null on him (Gill Grunt's,
+    /// Spyro's, the shell's), which leaves his walk as his scripts set it.
+    #[test]
+    fn writing_nothing_over_nothing_leaves_his_walk() {
+        let mut e = bench();
+        let pivot = Vec3::new(1.0, 0.0, 1.0);
+        e.hero = Some(Hero::new(eruptor_solid(), Tuning::ERUPTOR, pivot, 0.0));
+        e.hero.as_mut().unwrap().walk.velocity = Vec3::X;
+        let mut w = world();
+        w.actors.insert(HERO, Actor::blank());
+        w.set_member(
+            &at(
+                "abstractplacement",
+                "attach node",
+                Some(Value::Entity(HERO)),
+                None,
+            ),
+            Member::AttachNode,
+            Value::Null,
+            &mut e,
+        )
+        .unwrap();
+        assert_eq!(e.hero.as_ref().unwrap().walk.velocity, Vec3::X);
+    }
+
     /// AH.50's hand: an actor hung on his node 7 sits there; posed again,
     /// the node moves what hangs from it only once the hung are placed
     /// (the frame's end); and read while he's turned since, it's his node's
@@ -5088,7 +5593,7 @@ mod fight_tests {
     /// the point at its ground speed, turning at its rate, at the height it
     /// stands, the block running once it's within reach, a wall in its way
     /// no stop; asked no more, it slows to a stop; along a path, each
-    /// waypoint in turn. A hero moved so is still unmodelled.
+    /// waypoint in turn.
     #[test]
     fn an_actor_no_creature_walks_is_steered_by_move_to_with_no_body() {
         let mut e = pit();
@@ -5177,12 +5682,6 @@ mod fight_tests {
             (at - Vec3::new(8.0, at.y, 6.0)).length() <= 2.0 * FOOT,
             "{at}"
         );
-        // A hero walks on his controller alone.
-        e.hero = Some(Hero::new(eruptor_solid(), Tuning::ERUPTOR, Vec3::ZERO, 0.0));
-        let mut call = move_to(Value::Object(WP), 5);
-        call.receiver = Value::Entity(HERO);
-        assert_eq!(w.op(&call, &mut |_| 0, &mut e), Err(HostFault::Unmodelled));
-        assert!(!w.scene_walks.contains_key(&HERO));
     }
 
     /// AS.68: a scene walk steps from its actor's velocity, which is its

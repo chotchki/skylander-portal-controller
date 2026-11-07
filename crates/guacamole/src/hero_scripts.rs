@@ -488,9 +488,11 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     if source.chapter_1() {
         script_world.walk_first_fight(level);
         script_world.walk_goats(level);
-    } else if let Some(e) = scripts::encounter(source.level()) {
-        let (walked, templates) = script_world.walk_encounter(level, e);
-        info!(level = %source.level(), walked, templates, "the level's first encounter walks");
+    } else {
+        for e in scripts::encounters(source.level()) {
+            let (walked, templates) = script_world.walk_encounter(level, e);
+            info!(level = %source.level(), walked, templates, "the level's encounter walks");
+        }
     }
     for p in source.files.placed.iter().filter(|p| p.obj.unit == level) {
         if let Some(model) = &p.model
@@ -1486,8 +1488,6 @@ pub(crate) fn step_scripts(
         Ok(r) => stopped.extend(r.stopped),
         Err(h) => stopped.push(h),
     }
-    // A cutscene's menu the TV has no screen for backs out (openspec AU.34).
-    guacamole::prompt::back_out(vm);
     // A level's end where the host doesn't run the original's (openspec
     // AS.15): a listed cutscene skipped, the level end's level asked for.
     match guacamole::level_end::step(vm, &mut host) {

@@ -170,6 +170,9 @@ pub struct TvSnapshot {
     pub held_band: Option<crate::held_band::HeldBandReport>,
     /// The words the scripts put up over a level (openspec AS.131).
     pub announce: Option<crate::announce::AnnounceReport>,
+    /// The turret the scripts run (openspec AS.76): its state, pointer,
+    /// calibration and the padlocks hit; none with none active.
+    pub turret: Option<guacamole::turret::TurretView>,
 }
 
 /// Shared with the routes: the last snapshot, skips asked for over HTTP,
@@ -1328,6 +1331,7 @@ fn mirror_tv(
             Option<Res<crate::completion::CompletionReport>>,
             Option<Res<crate::held_band::HeldBandReport>>,
             Option<Res<crate::announce::AnnounceReport>>,
+            Option<Res<crate::turret_hud::TurretReport>>,
         ),
     ),
 ) {
@@ -1389,6 +1393,7 @@ fn mirror_tv(
             .cloned(),
         held_band: story.3.as_deref().filter(|b| b.title.is_some()).cloned(),
         announce: story.4.as_deref().cloned(),
+        turret: story.5.as_deref().and_then(|t| t.0.clone()),
     };
     let mut shared = mirror.0.lock().unwrap_or_else(|e| e.into_inner());
     if *shared != snapshot {

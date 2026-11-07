@@ -233,3 +233,38 @@ When a level's scripts play an enemy's intro with a name card, the TV SHALL show
 - **WHEN** the hero sets off Setup_004B on level 214
 - **THEN** the lobber's name shows over his intro for 2.2 s, and once the scene ends the hint shows for about 4 s
 
+### Requirement: Level 214's third island
+The third island SHALL play from the second ship part to the level's end on the original's own scripts: the flight with the hero riding the ship, Flynn sending him to Persephone, the drawbridge dropping once she's been visited, Setup_006's fight, each turret shot from by the stick with its calibration and padlocks, the pad, the block bridge, the second gate, the third ship part and its outro.
+
+#### Scenario: The flight
+- **WHEN** a hero takes the second ship part
+- **THEN** its cutscene plays its nine scenes, carrying his body on the rig's and the ship's nodes with his controller and body off, and sets him down on the third island's ship, the scene's MoneyBags at 120 %
+
+#### Scenario: A turret
+- **WHEN** a hero enters a turret by its prompt, moves its pointer onto the calibration circle and then onto a padlock with the stick and fires
+- **THEN** the shot flies to the padlock and breaks it, and the last padlock's gate opens and lets him out
+
+#### Scenario: The level's end
+- **WHEN** the hero takes the third ship part
+- **THEN** its outro plays its seven scenes and the level's end names the village, which goes to hub stage 1
+
+### Requirement: Level 201's start
+Level 201 SHALL start where its intro hands the first player over: the intro held for his join and played or skipped by △, him then on the ground at its path's end, walking on the stick.
+
+#### Scenario: From the hub
+- **WHEN** Flynn's ready question is answered yes on hub stage 1
+- **THEN** level 201 reads on its first entry, its intro plays, and he walks from where it hands him over with nothing stopped
+
+### Requirement: A level's sky stays about the eye
+A level's sky SHALL draw through the view with its translation taken out, its coordinates metres from the eye wherever the camera stands: in the first capture chapter 1's 14 sky draws hold 0, 0, -0.2, 0 in the matrix's last column where every other static draw holds the eye's 37.58, -14.97, 114.07, 114.17.
+
+#### Scenario: Past the dome
+- **WHEN** the camera stands further from the level's origin than its dome reaches, as on level 214's second and third islands, 750-830 m out of a dome reaching 585 m
+- **THEN** the sky fills the view behind the level, with no black past it
+
+### Requirement: A camera's rig holds its last clip
+A camera's rig SHALL hold the pose its last clip reached once none plays, what hangs on it staying there, rather than looping its first shot under them: looped, level 201's pod flew 200 m back for 58 steps and 214's ship swept through the sail's last shot every 3.13 s.
+
+#### Scenario: Level 201's pod lands
+- **WHEN** the pod's last shot has played and the scene lets the player go
+- **THEN** he is let go where the pod stands on the dock, with no jump onto his path
