@@ -20,6 +20,12 @@
 //! A run holds a model only when its part loaded: [`with_interface`]
 //! registers the members then, and a run without keeps the earlier tables'
 //! value cells, as before AT.9.
+//!
+//! What the model draws reaches the TV by name (openspec AS.99): the TV
+//! draws its own HUD and screens, so most of the model's sprites stay
+//! unseen, and [`DRAWN_SPRITES`] lists the templates whose clones it draws
+//! as the model lays them out, [`ScriptWorld::drawn_sprites`]. The next
+//! script sprite joins by its template's name.
 
 use std::path::Path;
 use std::sync::LazyLock;
@@ -27,7 +33,9 @@ use std::time::{Duration, Instant};
 
 use guac_extract::intros::IrFormat;
 use guac_interface::Keeper;
+use guac_interface::draw::Entry;
 use guac_interface::load::{self, Imports, Keys};
+use guac_interface::sprite::State;
 use guac_ir::interface::{Interface, RECORD};
 use guac_script::{Access, Answer, Config, HostFault, MemberId, Value, members};
 
@@ -39,6 +47,29 @@ use crate::scripts::ScriptWorld;
 /// asks it of nearly every member access a run holding the model makes.
 static TITLE_SAFE_ZONE: LazyLock<MemberId> =
     LazyLock::new(|| MemberId::named("viewportinfo", "title safe zone"));
+
+/// The sprite templates whose clones the TV draws over a level (openspec
+/// AS.99), by name: a carried bomb's countdown numbers.
+pub const DRAWN_SPRITES: [&str; 1] = ["Bomb_Counter"];
+
+/// One image of a listed sprite this frame, in frame pixels (1280 by 720,
+/// the model's frame): a glyph off its font's atlas or a piece of art.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpriteQuad {
+    /// Its template's name.
+    pub sprite: String,
+    /// `textures/<sha256>.ktx2`.
+    pub image: String,
+    /// Left, top, right, bottom.
+    pub rect: [f32; 4],
+    /// The image's corner at the rectangle's top-left, then bottom-right.
+    pub uv: [f32; 4],
+    /// Its colour: a glyph's its sprite's as the letter's tints it, 0x80 a
+    /// channel at full in the letter's bytes.
+    pub colour: [u8; 4],
+    /// The sprite's `numeric value`.
+    pub value: f32,
+}
 
 /// `config` with the interface's members on the host, which hands them to
 /// the model it holds (`members::INTERFACE`, over the earlier tables'
@@ -69,6 +100,13 @@ impl InterfacePart {
     pub fn templates(&self) -> usize {
         self.keeper.model().len()
     }
+}
+
+/// A glyph's colour: its sprite's times its letter's, 0x80 a letter's channel
+/// at full, the sprite's alpha.
+fn tinted(sprite: [u8; 4], letter: [u8; 4]) -> [u8; 4] {
+    let channel = |c: usize| (u32::from(sprite[c]) * u32::from(letter[c]) / 0x80).min(255) as u8;
+    [channel(0), channel(1), channel(2), sprite[3]]
 }
 
 /// The interface record a unit's file has in the extract: the extract-wide
@@ -240,6 +278,63 @@ impl ScriptWorld {
         if let Some(k) = &mut self.interface {
             k.model_mut().lay_out(&guac_interface::NoWorld);
         }
+    }
+
+    /// A clone of a [`DRAWN_SPRITES`] template stands in the model.
+    pub fn draws_sprites(&self) -> bool {
+        self.interface.as_ref().is_some_and(|k| {
+            k.instances().into_iter().any(|id| {
+                let s = k.model().sprite(id);
+                s.state == State::Awake && DRAWN_SPRITES.contains(&s.name.as_str())
+            })
+        })
+    }
+
+    /// One frame of the model's layout and the listed sprites' images in it
+    /// (the module docs), in the order the model draws them. A kind of
+    /// sprite nothing here draws yet adds nothing.
+    pub fn drawn_sprites(&mut self) -> Vec<SpriteQuad> {
+        if !self.draws_sprites() {
+            return Vec::new();
+        }
+        let Some(keeper) = &mut self.interface else {
+            return Vec::new();
+        };
+        let model = keeper.model_mut();
+        let frame = model.lay_out(&guac_interface::NoWorld);
+        let list = model.draw_list(&frame);
+        let quad = |e: &Entry| {
+            let s = model.sprite(e.sprite());
+            let (image, rect, uv, colour) = match e {
+                Entry::Glyph {
+                    atlas,
+                    rect,
+                    uv,
+                    letter,
+                    paint,
+                    ..
+                } => (atlas.clone(), *rect, *uv, tinted(paint.color, *letter)),
+                Entry::Art {
+                    texture: Some(texture),
+                    rect,
+                    uv,
+                    paint,
+                    ..
+                } => (texture.clone(), *rect, *uv, paint.color),
+                _ => return None,
+            };
+            DRAWN_SPRITES
+                .contains(&s.name.as_str())
+                .then(|| SpriteQuad {
+                    sprite: s.name.clone(),
+                    image,
+                    rect,
+                    uv,
+                    colour,
+                    value: s.numeric_value,
+                })
+        };
+        list.iter().filter_map(quad).collect()
     }
 
     /// Whether `at` goes to the model (the module docs).

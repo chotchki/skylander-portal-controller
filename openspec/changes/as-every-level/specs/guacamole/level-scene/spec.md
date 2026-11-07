@@ -273,6 +273,13 @@ A camera's rig SHALL hold the pose its last clip reached once none plays, what h
 - **WHEN** a shot's new rig is made and isn't drawn yet
 - **THEN** the view and what hangs on the rig stay where the last rig left them until it's posed, and no frame stands at the rig's origin
 
+### Requirement: A carried bomb shows its count
+Each count of a carried bomb SHALL show as its number over the bomb, from the disc's own font, sliding up and fading out over the 2 s its timer stands, a new number at each count until it bursts.
+
+#### Scenario: Carrying the first bomb
+- **WHEN** the hero takes the first spawner's bomb
+- **THEN** 11 shows over it, then each count down to 1 a count every 1.1 s, each rising and fading, none left once the last timer is gone
+
 ### Requirement: A scene keeps the hero's figure
 While a scene keeps the portal, the hero's figure lifted SHALL leave him in it: the level holds behind a screen naming him within 1.5 s, frozen, until his figure is back in any slot, and carries on. A character that walks placed instead SHALL let the scene run on with him and come in as the scene lets go, at the latest 60 s of play on. A scene that lets switching through SHALL swap as any other moment does.
 

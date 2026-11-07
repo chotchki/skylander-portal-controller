@@ -561,7 +561,7 @@ const GLYPH_BODY: f32 = 0.2158;
 /// The tint that draws a glyph's body in `color`: Bevy's UI multiplies in
 /// linear light and doesn't double, so a tint of `color` itself leaves it at
 /// the atlas's grey (openspec AU.29's review).
-fn glyph_tint(color: Color) -> Color {
+pub(crate) fn glyph_tint(color: Color) -> Color {
     let c = color.to_linear();
     Color::LinearRgba(LinearRgba::new(
         c.red / GLYPH_BODY,

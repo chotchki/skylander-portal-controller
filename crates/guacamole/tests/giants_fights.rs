@@ -8,6 +8,8 @@
 //! No recording of 214 exists: every step is the level's own scripts on the
 //! TV's listing, the hero set down where a walk would take him.
 
+use std::collections::{BTreeMap, HashMap};
+
 use guac_motion::seam::Vec3;
 use guac_motion::stick::{DEAD_ZONE, Stick};
 use guac_script::{Handle, Mode, Value};
@@ -243,8 +245,9 @@ struct Timer {
 /// 1.1 s, then the bomb bursts in his hands at 0. Each timer follows its
 /// bomb by `move to` (steered with no body, at its own 17 ft/s, so it lags
 /// a walking carrier), fades its sprite out over 2 s, then takes itself
-/// off, its sprite with it. He paces on the stick as he carries it.
-/// Nothing stops.
+/// off, its sprite with it. He paces on the stick as he carries it. Each
+/// count draws in its digits' glyphs (openspec AS.99), fading out with its
+/// sprite. Nothing stops.
 #[test]
 #[ignore = "reads the Giants dump"]
 fn level_214s_carried_bomb_counts_down_over_him() {
@@ -255,6 +258,7 @@ fn level_214s_carried_bomb_counts_down_over_him() {
     let ends = [[36.0, 27.9], [50.0, 30.0]];
     let mut timers: Vec<Timer> = Vec::new();
     let mut burst = None;
+    let mut drawn: BTreeMap<i32, (u32, u32, u8)> = BTreeMap::new();
     for k in 0..1000u32 {
         push_toward(&mut run, &mut stops, ends[((k / 150) % 2) as usize]);
         let b = run.world.actor(bomb).map(|a| a.position);
@@ -299,12 +303,50 @@ fn level_214s_carried_bomb_counts_down_over_him() {
                     .max(Vec3::new(a.position.x - b.x, 0.0, a.position.z - b.z).length());
             }
         }
+        // What the TV draws of them (openspec AS.99): each count in glyphs,
+        // the sprite fading as its timer says.
+        let quads = run.world.drawn_sprites();
+        for q in &quads {
+            let d = drawn.entry(q.value as i32).or_insert((0, 0, 255));
+            d.0 = d.0.max(1);
+            d.1 += 1;
+            d.2 = d.2.min(q.colour[3]);
+            assert_eq!(q.sprite, "Bomb_Counter");
+            assert!(q.rect[2] > q.rect[0] && q.rect[3] > q.rect[1], "{q:?}");
+            // Over its timer on the screen, not at the frame's corner where
+            // the model starts it: the follow's update ran.
+            assert!((100.0..1180.0).contains(&q.rect[0]), "{q:?}");
+        }
+        let by_count = quads.iter().fold(HashMap::new(), |mut m, q| {
+            *m.entry(q.value as i32).or_insert(0usize) += 1;
+            m
+        });
+        for (count, glyphs) in by_count {
+            let digits = if count >= 10 { 2 } else { 1 };
+            assert_eq!(glyphs, digits, "count {count} at step {}", run.steps);
+        }
         // Its last timer gone, before he takes it again off the spawner.
         if burst.is_some_and(|s| run.steps > s + 60) {
             break;
         }
     }
     let burst = burst.expect("the bomb burst in his hands");
+    let mut counts_drawn: Vec<i32> = drawn.keys().copied().collect();
+    counts_drawn.sort_unstable();
+    println!("drawn {drawn:?}");
+    assert_eq!(
+        counts_drawn,
+        (1..=11).collect::<Vec<_>>(),
+        "every count drawn"
+    );
+    for (count, (_, frames, least)) in &drawn {
+        let digits = if *count >= 10 { 2 } else { 1 };
+        assert!(*frames / digits > 100, "{count} on {frames} glyph frames");
+        assert!(*least < 40, "{count} fades out: {least}");
+    }
+    // All but the first count of the bomb he's taken again by now.
+    let left = run.world.drawn_sprites();
+    assert!(left.iter().all(|q| q.value == 11.0), "{left:?}");
     timers.retain(|t| t.made < burst);
     for t in &timers {
         println!(

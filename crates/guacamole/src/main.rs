@@ -45,6 +45,7 @@ mod play;
 mod prepare;
 mod progress;
 mod screen;
+mod script_sprites;
 #[cfg(feature = "dev-tools")]
 mod shots;
 mod slow_frames;
@@ -552,6 +553,8 @@ fn run_tv(
             announce::AnnouncePlugin,
             // AS.76: a turret's pointer over the level.
             turret_hud::TurretHudPlugin,
+            // AS.99: the scripts' own sprites over the level.
+            script_sprites::ScriptSpritesPlugin,
             slow_frames::SlowFramesPlugin,
             // AG.290: the world's button prompts by the walking pad.
             button_prompt::ButtonPromptPlugin,
