@@ -240,6 +240,8 @@ pub struct Walker {
     pub aim: guac_motion::steer::Aim,
     /// Which waypoint of a path it's walking to (`move to` along a path).
     pub along: usize,
+    /// Whether it's carried on once held where it first stood.
+    pub carries: bool,
     /// Steps it has been held where it first stood, then those it has been
     /// carried on past [`crate::script_members::WEDGED_STEPS`].
     pub wedged: u32,
