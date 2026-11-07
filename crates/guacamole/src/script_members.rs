@@ -3377,7 +3377,8 @@ impl ScriptWorld {
             };
             // What hangs on an actor itself turns as that actor turns
             // (openspec AU.37: Pop Fizz's beast, hung on him), by what it
-            // turned through, so a spin of its own goes on.
+            // turned through, so a spin of its own goes on. Stand-in ledger:
+            // `hung-turn`.
             let owner_facing = match self.object(Some(node)) {
                 None => self
                     .actor_of(Some(node))
