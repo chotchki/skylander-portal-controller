@@ -197,8 +197,12 @@ A hero SHALL stop dead the frame a point 1.2105 m (4 ft as read) ahead along his
 - **THEN** his gravity acts, the rim's plane slides him down and off it, he falls and his own fall check sets him back on his trail, the stick walking him again
 
 #### Scenario: Left inside a cliff
-- **WHEN** a hit leaves a hero falling with his shape 0.39 m into a cliff under its rim, where every cast from him stops at once
+- **WHEN** a hero walks off a rim leaning with its bank and his lean, turning upright in the air, swings him 0.39 m into the cliff under it, where every cast from him stops at once
 - **THEN** he comes straight out of the face at the recovery's speed, falls and lands, and the stick walks him
+
+#### Scenario: A hair in a steep bank
+- **WHEN** a hero falling down a bank too steep to stand on is a hair inside it, so a step along it gets him nowhere
+- **THEN** the next step takes him out of it and he slides on down, landing in under half a second
 
 #### Scenario: Falling past a foe at a wall
 - **WHEN** a Giant falls down a wall with a foe on the rim above it at his side

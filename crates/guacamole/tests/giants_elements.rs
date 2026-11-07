@@ -419,6 +419,20 @@ fn a_heros_own_ground_mends_him_and_anothers_does_nothing() {
     let own = w.run.health().unwrap();
     println!("{} s on his own ground: {own}", 600 / 60);
     assert!((105.0..=115.0).contains(&own), "{own}");
+    // Its walking effect, on its script (the review: the heal comes without).
+    let effect: Vec<Handle> = w
+        .run
+        .world
+        .clones()
+        .into_iter()
+        .filter(|h| !w.gone(*h) && w.run.world.name(*h) == "AirSurface_ParticleManager")
+        .collect();
+    println!("{} of its walking effect", effect.len());
+    assert!(!effect.is_empty(), "no walking effect on him");
+    assert!(
+        effect.iter().all(|h| !w.run.vm.inert().contains(h)),
+        "its script off the listing"
+    );
     assert!(w.stops.is_empty(), "{:#?}", w.stops);
 }
 
@@ -511,4 +525,31 @@ fn every_levels_walls_open_for_their_own_element_alone() {
         load()
     );
     assert_eq!(tried, 23);
+}
+
+/// The AS.153 review: what each of chapter 1's areas holds runs on the
+/// listing, the air area's Spinner, the death area's spike spawner and the
+/// life area's three Chompies, each woken by a hero come near it. The areas'
+/// tests pass without them.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn each_areas_own_placements_wake_for_a_hero_inside() {
+    let mut w = Walk::joined(CHAPTER_1);
+    let (vista, _) = w.run.placed("213_First_Vista_IGC");
+    w.run.vm.remove(vista);
+    for name in [
+        "Spinner",
+        "Spike_Floor_Spawner(1)",
+        "Enemy_Chompy_Undead(4)",
+        "Enemy_Chompy_Undead(5)",
+        "Enemy_Chompy_Undead(6)",
+    ] {
+        let (h, at) = w.run.placed(name);
+        w.run.put(at + Vec3::new(3.0, 2.0, 3.0), 0.0);
+        w.still(30);
+        let id = w.run.vm.placement_of(h).unwrap();
+        println!("{name}: {:?}", w.run.vm.behaviour(id));
+        assert!(!w.run.vm.inert().contains(&h), "{name} off the listing");
+        assert!(!w.run.vm.asleep(id), "{name} asleep");
+    }
 }
