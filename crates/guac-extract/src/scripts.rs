@@ -22,6 +22,12 @@
 //!   read by the ids its exports give them ([`own_effects`], openspec
 //!   AH.39). A level's own spawn templates draw from its props.
 //!
+//! - The spawn rigs (openspec AU.37): each skinned model in a character's
+//!   archive past his own body, its every palette slot and its attach list,
+//!   `spawn_rigs/<archive>.<ron|postcard>`: what his beast or his knives
+//!   play, which a script reads under a `control` of the clone. Its own part,
+//!   so an extract made before it resumes for it alone ([`complete`]).
+//!
 //! - The walkers' own entries (openspec AG.27): every modelled character's
 //!   archive beside [`FIGHTERS`]', so each runs on his own scripts. A
 //!   walker's entry that is missing or won't read is left out of the part,
@@ -35,16 +41,19 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use guac_formats::attachments::attach_points;
 use guac_formats::exports::Exports;
 use guac_formats::iga::Archive;
 use guac_formats::igz::Igz;
+use guac_formats::igz::layouts::Hero;
 use guac_formats::level::Placements;
 use guac_formats::material::OwnEffects;
 use guac_formats::model as fmodel;
 use guac_formats::script::Graph;
 use guac_ir::DumpIdentity;
 use guac_ir::level::{Prop, RefusedProp};
-use guac_ir::spawn::SpawnModels;
+use guac_ir::nodes::AttachNodes;
+use guac_ir::spawn::{SpawnModels, SpawnRig, SpawnRigs};
 
 use crate::extract::Manifest;
 use crate::levels::Read;
@@ -58,9 +67,11 @@ use crate::roster::{BOOTSTRAP, GLOBAL, INIT_SETUP, LEVEL};
 /// read by nothing).
 pub const SCRIPTS: &str = "scripts";
 pub const SPAWNS: &str = "spawn models";
+pub const SPAWN_RIGS: &str = "spawn rigs";
 /// Where each part's files go.
 pub const SCRIPT_DIR: &str = "scripts";
 pub const SPAWN_DIR: &str = "spawns";
+pub const SPAWN_RIG_DIR: &str = "spawn_rigs";
 
 /// The characters whose archives link with the base, by load file: Eruptor,
 /// whose attacks ran on his scripts first (design decision 15; Open
@@ -1165,6 +1176,17 @@ pub fn spawn_archives_with(walkers: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// The archives the spawn rigs come from: each fighter's and each of
+/// `walkers`' (openspec AU.37), `global.bld`'s one skinned model being a
+/// camera's rig no clone of its own plays.
+pub fn rig_archives_with(walkers: &[String]) -> Vec<String> {
+    FIGHTERS
+        .iter()
+        .map(|f| character_archive(f))
+        .chain(walkers.iter().map(|w| character_archive(w)))
+        .collect()
+}
+
 /// The stems of the walkers whose entries `files` (the scripts part's
 /// recorded files) holds: every `scripts/<stem>.igz` but the base's
 /// ([`archives`]).
@@ -1205,19 +1227,25 @@ pub fn script_path(archive: &str) -> String {
     format!("{SCRIPT_DIR}/{}.igz", stem(archive))
 }
 
-/// Whether `m` holds both parts, the scripts one with its walkers' list
-/// ([`WALKERS_FILE`]) and the spawn models one with every listed walker's
-/// models (openspec AU.1): a start is current only then, so an extract
-/// made before the walkers resumes for the scripts part, and one made
-/// before AU.1 for the spawn models part, alone.
+/// Whether `m` holds all three parts, the scripts one with its walkers'
+/// list ([`WALKERS_FILE`]), the spawn models one with every listed walker's
+/// models (openspec AU.1) and the spawn rigs one with every listed walker's
+/// rigs (AU.37): a start is current only then, so an extract made before
+/// the walkers resumes for the scripts part, one made before AU.1 for the
+/// spawn models part and one made before AU.37 for the spawn rigs part,
+/// alone.
 pub fn complete(m: &Manifest) -> bool {
     let Some(scripts) = m.parts.get(SCRIPTS) else {
         return false;
     };
+    let holds = |part: &str, dir: &str| {
+        m.parts
+            .get(part)
+            .is_some_and(|files| holds_every_walker(scripts, files, dir))
+    };
     scripts.iter().any(|f| f == WALKERS_FILE)
-        && m.parts
-            .get(SPAWNS)
-            .is_some_and(|spawns| holds_every_walker(scripts, spawns, SPAWN_DIR))
+        && holds(SPAWNS, SPAWN_DIR)
+        && holds(SPAWN_RIGS, SPAWN_RIG_DIR)
 }
 
 /// The `level.bld` `archive` keeps, decompressed, under `usrdir`. Why it
@@ -1304,6 +1332,64 @@ pub fn spawn_models(
             refused,
         },
         textures: textures.files,
+    })
+}
+
+/// Each skinned model a placement in `igz` names but `skip` (a character's
+/// own body), in object order: its palette and its attach list, as a level's
+/// palettes and nodes parts read a level's models. A model with no skeleton
+/// has neither; one whose skeleton or list won't read is listed with why.
+pub fn spawn_rigs(
+    igz: &Igz<'_>,
+    archive: &str,
+    identity: DumpIdentity,
+    skip: Option<usize>,
+) -> Result<SpawnRigs, String> {
+    let placements = Placements::read(igz).map_err(|e| e.to_string())?;
+    let (mut rigs, mut refused) = (Vec::new(), Vec::new());
+    for (&model, info) in &placements.models {
+        if Some(model) == skip {
+            continue;
+        }
+        let path = info
+            .info
+            .name
+            .ok_or_else(|| format!("model #{model} has no name"))?;
+        let Ok(hero) = Hero::read(igz, model) else {
+            continue;
+        };
+        let read = (|| -> Result<SpawnRig, String> {
+            let skeleton = fmodel::skeleton(igz, &hero).map_err(|e| e.to_string())?;
+            let palette = models::palette(igz, &hero, &skeleton, path, identity.clone());
+            let joints: Vec<&str> = skeleton
+                .bones
+                .iter()
+                .map(|b| b.name.unwrap_or_default())
+                .collect();
+            let points = attach_points(igz, model).map_err(|e| e.to_string())?;
+            let nodes = (!points.is_empty()).then(|| AttachNodes {
+                identity: identity.clone(),
+                load_file: path.to_owned(),
+                nodes: points
+                    .iter()
+                    .map(|p| models::attach_node(p, &joints))
+                    .collect(),
+            });
+            Ok(SpawnRig { palette, nodes })
+        })();
+        match read {
+            Ok(rig) => rigs.push(rig),
+            Err(reason) => refused.push(RefusedProp {
+                path: path.to_owned(),
+                reason,
+            }),
+        }
+    }
+    Ok(SpawnRigs {
+        identity,
+        archive: archive.to_owned(),
+        rigs,
+        refused,
     })
 }
 

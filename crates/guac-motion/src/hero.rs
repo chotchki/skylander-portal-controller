@@ -564,7 +564,10 @@ impl Hero {
         self.facing = frame.facing;
         let off_the_ground = !self.footing.supported;
         self.step_engine(seam, step, exclude, surfaces);
-        if matches!(aim, steer::Aim::To(_) | steer::Aim::From(_)) {
+        if matches!(
+            aim,
+            steer::Aim::To(_) | steer::Aim::From(_) | steer::Aim::Along { .. }
+        ) {
             self.walk.velocity = self.solved / FOOT;
         } else if off_the_ground && self.footing.supported {
             let n = self.footing.ground.unwrap_or(Vec3::Y);

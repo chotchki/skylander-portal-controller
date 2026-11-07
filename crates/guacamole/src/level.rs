@@ -748,12 +748,43 @@ fn read_spawn_archive(
     source: &LevelSource,
     archive: &str,
 ) -> Result<Vec<guacamole::props::PropModel>, String> {
+    let (rel, spawns) = read_spawn_part(source, archive)?;
+    guacamole::props::spawn_models(&spawns).map_err(|e| format!("{rel}: {e}"))
+}
+
+/// One spawn archive's part, with where it's kept.
+fn read_spawn_part(
+    source: &LevelSource,
+    archive: &str,
+) -> Result<(String, guac_ir::spawn::SpawnModels), String> {
     let rel = source.ir.spawn_path(archive);
     let spawns = read_ir::<guac_ir::spawn::SpawnModels>(source.ir, &source.dir.join(&rel))?;
     if spawns.identity != source.identity {
         return Err(format!("{rel} is another dump's"));
     }
-    guacamole::props::spawn_models(&spawns).map_err(|e| format!("{rel}: {e}"))
+    Ok((rel, spawns))
+}
+
+/// The skinned models `spawns` holds as the creatures' draw takes them, each
+/// with its clips and attach list off `rigs` (openspec AU.37: what a clone
+/// of them draws, as a clone of the level's skinned templates is drawn).
+fn spawn_creatures(
+    spawns: &guac_ir::spawn::SpawnModels,
+    rigs: Option<&guac_ir::spawn::SpawnRigs>,
+    identity: &guac_ir::DumpIdentity,
+) -> Vec<CreatureModel> {
+    guacamole::creature_models::spawn_models(spawns, identity)
+        .into_iter()
+        .map(|(path, model)| {
+            let rig = rigs.and_then(|r| r.rigs.iter().find(|x| x.palette.owner == path));
+            CreatureModel {
+                palette: rig.map(|r| Arc::new(r.palette.clone())),
+                nodes: rig.and_then(|r| r.nodes.clone()).map(Arc::new),
+                model: Arc::new(model),
+                path,
+            }
+        })
+        .collect()
 }
 
 /// What a placed walker's attacks draw, read on a task (openspec AU.19):
@@ -765,6 +796,8 @@ struct FigureRead {
     models: Vec<(String, Vec<(usize, u16)>)>,
     /// His emitters, each generator's material by index into `drawn`.
     particles: Vec<(Arc<guac_ir::particle::Emitter>, Vec<Option<usize>>)>,
+    /// His skinned spawns, their textures among `images` (openspec AU.37).
+    creatures: Vec<CreatureModel>,
     meshes: VecDeque<Mesh>,
     images: VecDeque<(ImageKey, Image)>,
     depth_bias: Vec<f32>,
@@ -777,7 +810,14 @@ fn read_figure(
     formats: CompressedImageFormats,
 ) -> Result<FigureRead, String> {
     let archive = guac_extract::scripts::character_archive(load_file);
-    let models = read_spawn_archive(source, &archive)?;
+    let (rel, spawns) = read_spawn_part(source, &archive)?;
+    let models = guacamole::props::spawn_models(&spawns).map_err(|e| format!("{rel}: {e}"))?;
+    // His skinned spawns: a rigs part that doesn't read leaves them on their
+    // idles, what his scripts start on them reading no clip.
+    let rigs = guacamole::level_scripts::spawn_rigs(&source.dir, load_file, source.ir)
+        .inspect_err(|why| warn!(load_file, reason = %why, "a walker's spawn rigs didn't read"))
+        .ok();
+    let creatures = spawn_creatures(&spawns, rigs.as_ref(), &source.identity);
     let (mut drawn, ranges) = guacamole::props::models_drawn(&models);
     // His emitters, their materials after the models': a file that doesn't
     // read leaves them undrawn, as the level's part does its own.
@@ -817,6 +857,7 @@ fn read_figure(
     for (material, slot) in drawn
         .materials
         .iter()
+        .chain(creatures.iter().flat_map(|c| c.model.materials.iter()))
         .flat_map(|m| m.textures.iter().map(move |slot| (m, slot)))
     {
         let srgb = remaster::samples_srgb(material, slot.role);
@@ -850,6 +891,7 @@ fn read_figure(
         drawn,
         models: parts,
         particles,
+        creatures,
         meshes,
         images: images.into(),
         depth_bias,
@@ -2463,7 +2505,19 @@ fn figure_materials(
                 materials,
             });
     }
-    read.models.len()
+    for c in &read.creatures {
+        if !loaded.creatures.iter().any(|k| k.path == c.path) {
+            loaded.creatures.push(c.clone());
+        }
+    }
+    if !read.creatures.is_empty() {
+        for (key, handle) in image_handles {
+            if !loaded.images.iter().any(|(k, _)| k == key) {
+                loaded.images.push((key.clone(), handle.clone()));
+            }
+        }
+    }
+    read.models.len() + read.creatures.len()
 }
 
 /// The script part's task, reported once it's done: what linked and what
@@ -3495,17 +3549,52 @@ mod tests {
             let spawns = SpawnModels {
                 identity: source.identity.clone(),
                 archive: spyro,
-                props: vec![guac_ir::level::Prop {
-                    path: "spyro_fireball.mdl".into(),
-                    skeleton: None,
-                    materials: Vec::new(),
-                    segments: Vec::new(),
-                    idle: None,
-                }],
+                props: vec![
+                    guac_ir::level::Prop {
+                        path: "spyro_fireball.mdl".into(),
+                        skeleton: None,
+                        materials: Vec::new(),
+                        segments: Vec::new(),
+                        idle: None,
+                    },
+                    guac_ir::level::Prop {
+                        path: "spyro_beast.mdl".into(),
+                        skeleton: Some(guac_ir::model::Skeleton {
+                            joints: vec![guac_ir::model::Joint {
+                                name: "root".into(),
+                                parent: None,
+                                reference: guac_ir::model::Transform::IDENTITY,
+                                inverse_bind: Mat4::IDENTITY.to_cols_array_2d(),
+                            }],
+                        }),
+                        materials: Vec::new(),
+                        segments: Vec::new(),
+                        idle: None,
+                    },
+                ],
                 refused: Vec::new(),
             };
             std::fs::write(rel, guac_ir::to_ron(&spawns).unwrap()).unwrap();
             let archive = spawns.archive;
+            // What his skinned spawn plays (AU.37).
+            let rel = dir.join(IrFormat::Ron.spawn_rig_path(&archive));
+            std::fs::create_dir_all(rel.parent().unwrap()).unwrap();
+            let rigs = guac_ir::spawn::SpawnRigs {
+                identity: source.identity.clone(),
+                archive: archive.clone(),
+                rigs: vec![guac_ir::spawn::SpawnRig {
+                    palette: guac_ir::palette::Palette {
+                        identity: source.identity.clone(),
+                        owner: "spyro_beast.mdl".into(),
+                        slots: 4,
+                        entries: Vec::new(),
+                        refused: Vec::new(),
+                    },
+                    nodes: None,
+                }],
+                refused: Vec::new(),
+            };
+            std::fs::write(rel, guac_ir::to_ron(&rigs).unwrap()).unwrap();
             let rel = dir.join(guac_extract::particles::path(IrFormat::Ron, &archive));
             std::fs::create_dir_all(rel.parent().unwrap()).unwrap();
             let emitters = guac_ir::particle::Emitters {
@@ -3561,6 +3650,13 @@ mod tests {
         }
         assert!(drawn(&app), "in the level by the time he's ready");
         assert!(sparks(&app), "his emitters with them");
+        // His skinned spawn as a creature is, with what it plays (AU.37).
+        let (beast, _) = level(&app).creature("spyro_beast.mdl").expect("his beast");
+        assert_eq!(beast.palette.as_ref().map(|p| p.slots), Some(4));
+        assert!(
+            level(&app).creature("spyro_fireball.mdl").is_none(),
+            "a static spawn is the spawn models'"
+        );
         // One whose files don't read holds nobody up: he's ready with
         // nothing drawn (the review: a card that never ended was the risk).
         app.world_mut()

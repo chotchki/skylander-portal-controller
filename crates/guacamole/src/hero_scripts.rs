@@ -134,7 +134,7 @@ use skylander_core::SlotIndex;
 #[derive(Resource, Clone)]
 pub(crate) struct ScriptSource {
     program: Arc<Program>,
-    files: Files,
+    pub(crate) files: Files,
     order: Vec<u16>,
     /// Each fighter's load file and the unit his file links as.
     fighters: Vec<(String, u16)>,
@@ -652,6 +652,9 @@ pub(crate) struct HeroRun {
     pub(crate) load_file: String,
     pub(crate) unit: u16,
     pub(crate) palette: Option<Arc<Palette>>,
+    /// What his skinned spawns play (openspec AU.37): given his templates
+    /// with his palette, at his join.
+    pub(crate) rigs: Option<Arc<guac_ir::spawn::SpawnRigs>>,
     /// None when his attach nodes didn't read: every node at his pivot.
     pub(crate) rig: Option<HandRig>,
     pub(crate) join: Join,
@@ -705,6 +708,7 @@ pub(crate) fn ask_join(
     hero: Entity,
     walk: &walkers::Walk,
     palette: Option<Arc<Palette>>,
+    rigs: Option<Arc<guac_ir::spawn::SpawnRigs>>,
     rig: Option<HandRig>,
     source: Option<&ScriptSource>,
     slot: SlotIndex,
@@ -729,6 +733,7 @@ pub(crate) fn ask_join(
             load_file: load_file.to_owned(),
             unit,
             palette,
+            rigs,
             rig,
             join: Join::Asked,
             slot,
@@ -1244,11 +1249,9 @@ pub(crate) fn activity_from(
 }
 
 /// The attack buttons a step's scripts read: a hero not joined, whose join
-/// failed or whose script stopped reads none (`joined`, his load file while
-/// he's on them), one joined all but what the TV holds back of his
-/// ([`walkers::held_back`], openspec AU.10).
-fn attack_buttons(joined: Option<&str>, held: [bool; 4]) -> [bool; 4] {
-    joined.map_or([false; 4], |load_file| walkers::held_back(load_file, held))
+/// failed or whose script stopped reads none (`joined`, whether he's on them).
+fn attack_buttons(joined: bool, held: [bool; 4]) -> [bool; 4] {
+    if joined { held } else { [false; 4] }
 }
 
 /// One step of the run, before the hero's (the module docs).
@@ -1416,6 +1419,9 @@ pub(crate) fn step_scripts(
         {
             world.set_palette_of(template, palette);
         }
+        if let Some(rigs) = run.as_deref().and_then(|r| r.rigs.as_ref()) {
+            world.set_rigs(files, unit, rigs);
+        }
         let mut host = WorldHost {
             world: &mut world,
             engine: &mut engine,
@@ -1486,10 +1492,7 @@ pub(crate) fn step_scripts(
     // (hero-attacks' Which characters attack, openspec AU.1): a hero not
     // joined yet, or whose join failed or whose script stopped, reads none,
     // so nothing of his file the VM still ticks throws for him.
-    let held = attack_buttons(
-        joined.and(run.as_deref()).map(|r| r.load_file.as_str()),
-        held,
-    );
+    let held = attack_buttons(joined.is_some() && run.is_some(), held);
     world.read_pads([
         Pad {
             stick: input.0.stick,
@@ -2370,15 +2373,10 @@ mod tests {
     use crate::test_support::hero_scripts::{LEVEL, progression_rows, write_attack, write_smash};
 
     #[test]
-    fn a_heros_scripts_read_his_buttons_less_what_the_tv_holds_back() {
+    fn a_heros_scripts_read_his_buttons_while_hes_on_them() {
         let all = [true; 4];
-        assert_eq!(attack_buttons(None, all), [false; 4], "no one joined");
-        assert_eq!(attack_buttons(Some("009_Eruptor"), all), all);
-        assert_eq!(
-            attack_buttons(Some("108_Alchemist"), all),
-            [true, false, true, true],
-            "Pop Fizz's second attack would leave him frozen"
-        );
+        assert_eq!(attack_buttons(false, all), [false; 4], "no one joined");
+        assert_eq!(attack_buttons(true, all), all);
     }
 
     /// AH.280's backstop: with no hero in, the activity rule measures from

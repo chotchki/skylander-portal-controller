@@ -268,9 +268,20 @@ fn playing_clips<'c>(
     }
 }
 
+/// What a drawn creature's or skinned clone's other clips are laid over
+/// ([`guacamole::picks::under_clips`]): what its locomotion on the VM weights
+/// on it, else its idle at `seconds`.
+fn base_clips<'c>(
+    c: &'c DrawnCreature,
+    world: &ScriptWorld,
+    seconds: f64,
+) -> Vec<(&'c guac_ir::clip::Clip, f64, f64)> {
+    guacamole::picks::under_clips(world, c.actor, c.palette.as_deref(), &c.model.idle, seconds)
+}
+
 /// A drawn creature's or skinned clone's attach nodes as [`pose_creatures`]
-/// poses its model (openspec AH.138): its idle at `seconds` with the clips
-/// its scripts play laid over it, each node on its joint, in the frame
+/// poses its model (openspec AH.138): [`base_clips`] at `seconds` with the
+/// clips its scripts play laid over it, each node on its joint, in the frame
 /// [`ScriptWorld::set_nodes`] takes (its own, +Z its facing) at its scale,
 /// its tilt and roll taken (a clone turns by all three, AG.150). None
 /// without an attach list.
@@ -282,7 +293,7 @@ pub(crate) fn creature_nodes(
 ) -> Option<Vec<guacamole::script_engine::NodePose>> {
     let nodes = c.nodes.as_deref()?;
     let over = playing_clips(c, world);
-    let base = [(&c.model.idle, seconds, 1.0)];
+    let base = base_clips(c, world, seconds);
     let posed = guacamole::hands::posed(&c.model.skeleton, nodes, &base, &over, 1.0);
     // Drawn turned by `placed`'s rotation; read turned by its facing alone.
     let drawn = placed(actor).rotation;
@@ -585,7 +596,7 @@ fn tint_creatures(
     }
 }
 
-/// Each drawn creature posed: its idle on the TV's clock since it was
+/// Each drawn creature posed: [`base_clips`] on the TV's clock since it was
 /// drawn, with the clips its scripts play on it laid over, oldest first,
 /// each at its time out of its palette.
 fn pose_creatures(
@@ -597,11 +608,8 @@ fn pose_creatures(
     for c in &creatures {
         let seconds = time.elapsed().saturating_sub(c.since).as_secs_f64();
         let over = playing_clips(c, &world);
-        let pose = guacamole::character::mesh::blended_over(
-            &c.model,
-            &[(&c.model.idle, seconds, 1.0)],
-            &over,
-        );
+        let base = base_clips(c, &world, seconds);
+        let pose = guacamole::character::mesh::blended_over(&c.model, &base, &over);
         for (joint, p) in c.joints.iter().zip(pose) {
             if let Ok(mut t) = transforms.get_mut(*joint)
                 && *t != p
@@ -638,6 +646,9 @@ pub(crate) struct CreatureShot {
 pub(crate) struct SpawnShot {
     pub name: String,
     pub at: [f32; 3],
+    /// Its facing, degrees (openspec AU.37: what hangs on a hero turns with
+    /// him).
+    pub facing: f32,
     pub drawn: bool,
     #[serde(skip)]
     pub handle: Handle,
@@ -772,9 +783,11 @@ pub(crate) fn report(vm: &guac_script::Vm, world: &ScriptWorld) -> CreaturesRepo
         .into_iter()
         .filter(|&c| !world.removed(c))
         .filter_map(|c| {
+            let a = world.actor(c)?;
             Some(SpawnShot {
                 name: world.name(c),
-                at: world.actor(c)?.position.to_array(),
+                at: a.position.to_array(),
+                facing: a.angles.facing,
                 drawn: false,
                 handle: c,
             })

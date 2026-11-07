@@ -66,6 +66,31 @@ pub fn level_palettes(
         .collect())
 }
 
+/// What `load_file`'s skinned spawns play off the extract (openspec AU.37):
+/// his beast's or his knives' palette, read when he's placed as the rest of
+/// his spawns are ([`crate::scripts::ScriptWorld::set_rigs`]). Why not when
+/// the part isn't there or is another character's.
+pub fn spawn_rigs(
+    dir: &Path,
+    load_file: &str,
+    ir: IrFormat,
+) -> Result<guac_ir::spawn::SpawnRigs, String> {
+    let archive = guac_extract::scripts::character_archive(load_file);
+    let rel = ir.spawn_rig_path(&archive);
+    let bytes = std::fs::read(dir.join(&rel)).map_err(|e| format!("{rel}: {e}"))?;
+    let r: guac_ir::spawn::SpawnRigs = match ir {
+        IrFormat::Ron => std::str::from_utf8(&bytes)
+            .map_err(|e| e.to_string())
+            .and_then(|t| guac_ir::from_ron(t).map_err(|e| e.to_string())),
+        IrFormat::Postcard => guac_ir::from_postcard(&bytes).map_err(|e| e.to_string()),
+    }
+    .map_err(|e| format!("{rel}: {e}"))?;
+    if r.archive != archive {
+        return Err(format!("{rel} holds {}'s rigs", r.archive));
+    }
+    Ok(r)
+}
+
 /// Each slot's clip length at 100 %, 0 where a slot holds no clip; a clip
 /// past one Havok block its whole length (openspec AS.78: the animator
 /// cameras' shots last it).
@@ -658,6 +683,37 @@ mod tests {
         let linked = load(tmp.path(), LEVEL).unwrap();
         assert!(linked.walkers.is_empty() && linked.left_out.is_empty());
         assert_eq!(linked.files, 5);
+    }
+
+    /// AU.37: a walker's spawn rigs read by his load file, in either IR's
+    /// path; another archive's kept under his name is why, not his clips.
+    #[test]
+    fn a_walkers_rigs_are_his_own_archives() {
+        let dir = tempfile::tempdir().unwrap();
+        let load = "108_Alchemist";
+        let rigs = |archive: String| guac_ir::spawn::SpawnRigs {
+            identity: guac_ir::DumpIdentity {
+                title_id: "BLUS30968".into(),
+                app_ver: "01.00".into(),
+                manifest_hash: guac_ir::Sha256([7; 32]),
+            },
+            archive,
+            rigs: Vec::new(),
+            refused: Vec::new(),
+        };
+        let archive = guac_extract::scripts::character_archive(load);
+        let rel = dir.path().join(IrFormat::Ron.spawn_rig_path(&archive));
+        assert!(
+            spawn_rigs(dir.path(), load, IrFormat::Ron).is_err(),
+            "no file"
+        );
+        std::fs::create_dir_all(rel.parent().unwrap()).unwrap();
+        std::fs::write(&rel, guac_ir::to_ron(&rigs(archive.clone())).unwrap()).unwrap();
+        let read = spawn_rigs(dir.path(), load, IrFormat::Ron).unwrap();
+        assert_eq!(read.archive, archive);
+        std::fs::write(&rel, guac_ir::to_ron(&rigs("elsewhere".into())).unwrap()).unwrap();
+        let why = spawn_rigs(dir.path(), load, IrFormat::Ron).unwrap_err();
+        assert!(why.contains("elsewhere"), "{why}");
     }
 
     #[test]

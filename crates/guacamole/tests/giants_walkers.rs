@@ -499,6 +499,9 @@ impl W {
         }) {
             world.set_palette_of(template, &palette);
         }
+        if let Ok(rigs) = level_scripts::spawn_rigs(&l.dir, load, IrFormat::Ron) {
+            world.set_rigs(&l.files, unit, &rigs);
+        }
         // The level's placements' palettes by their models.
         for p in l.files.placed.iter().filter(|p| p.obj.unit == l.level_unit) {
             if let Some(model) = &p.model
@@ -627,12 +630,10 @@ impl W {
         self.vm.set_tick_seconds(dt);
         let mut pads = self.bench.pads;
         // As the TV's `step_scripts`: the attack buttons reach his scripts
-        // only while he's joined and on them (openspec AU.1), less what it
-        // holds back of his (AU.10).
-        pads[0].actions = match self.minion.is_none() || self.off.is_some() {
-            true => [false; 4],
-            false => walkers::held_back(&self.walk.load_file, pads[0].actions),
-        };
+        // only while he's joined and on them (openspec AU.1).
+        if self.minion.is_none() || self.off.is_some() {
+            pads[0].actions = [false; 4];
+        }
         self.world.read_pads(pads);
         self.vm.set_activity(&self.world.activity(&mut self.bench));
         // Off his scripts he's off the player loop's joined run, as on the
@@ -683,7 +684,15 @@ impl W {
         let input = guac_motion::hero::Input::stick(self.bench.pads[0].stick, self.bench.view);
         for hero in self.bench.heroes.values_mut() {
             match self.off {
-                None => hero.step_engine(&self.bench.world, dt, &[HERO_BODY], Surfaces::NONE),
+                None => self.world.step_scripted(
+                    self.hero,
+                    hero,
+                    &self.bench.world,
+                    input.stick.push(input.view_heading),
+                    dt,
+                    &[HERO_BODY],
+                    Surfaces::NONE,
+                ),
                 Some(_) => {
                     hero.step_among(&self.bench.world, &input, dt, &[HERO_BODY], Surfaces::NONE)
                 }
@@ -841,6 +850,9 @@ impl W {
                 .map(|p| p.obj)
         }) {
             self.world.set_palette_of(template, &palette);
+        }
+        if let Ok(rigs) = level_scripts::spawn_rigs(&l.dir, load, IrFormat::Ron) {
+            self.world.set_rigs(&l.files, unit, &rigs);
         }
         let walk = if load == "009_Eruptor" {
             Walk::measured(walkers::walker(load).unwrap())
@@ -5895,32 +5907,10 @@ impl W {
     }
 }
 
-/// `load` along AH.8's route to anchor B as `giants_chompy`'s `fight`
-/// takes Eruptor (the route's set-downs, the scene waited on, the
-/// creatures where anchor B has them, the combat manager's first alert),
-/// every Chompy's health 100, his own kept full; then each of `actions`
-/// pressed in turn with [`TARGET`] set in front of him in reach, each
-/// window's press, clips, clones, hits and stops into `out`. Returns the
-/// action his minion stopped in, if it did (the next run takes the rest).
-fn fight_presses(l: &Level, load: &str, actions: &[usize], out: &mut Fought) -> Option<usize> {
-    use guacamole::anchors::{ANCHOR_B, FIRST_ALERT, OPENING, ROUTE};
-    let o = Opts {
-        fight: true,
-        ..PLAY
-    };
-    let mut w = match W::joined(l, load, o, 120) {
-        Ok(w) => w,
-        Err(b) => {
-            let (_, when, h) = *b;
-            out.failed = Some(format!("{when}: {}", named(&h.to_string())));
-            return None;
-        }
-    };
-    let chompies: Vec<Handle> = SWEEP_CHOMPIES
-        .iter()
-        .map(|n| w.level_handle(l, n))
-        .collect();
-    let target = w.level_handle(l, TARGET);
+/// AH.8's route to the first fight's pit, its Chompies set down as anchor B
+/// has them: where the sweep presses.
+fn to_the_fight(l: &Level, w: &mut W) -> Result<(), String> {
+    use guacamole::anchors::{ANCHOR_B, OPENING, ROUTE};
     let mut waited = 0u32;
     let mut k = 0u32;
     while k < OPENING {
@@ -5954,14 +5944,46 @@ fn fight_presses(l: &Level, load: &str, actions: &[usize], out: &mut Fought) -> 
             ..Pad::default()
         };
         if let Err(h) = w.step() {
-            out.failed = Some(format!("route step {k}: {}", named(&h.to_string())));
-            return None;
+            return Err(format!("route step {k}: {}", named(&h.to_string())));
         }
         k += 1;
     }
     for (name, at, facing) in ANCHOR_B {
         let h = w.level_handle(l, name);
         w.world.place(h, Vec3::from_array(at), facing);
+    }
+    Ok(())
+}
+
+/// `load` along AH.8's route to anchor B as `giants_chompy`'s `fight`
+/// takes Eruptor (the route's set-downs, the scene waited on, the
+/// creatures where anchor B has them, the combat manager's first alert),
+/// every Chompy's health 100, his own kept full; then each of `actions`
+/// pressed in turn with [`TARGET`] set in front of him in reach, each
+/// window's press, clips, clones, hits and stops into `out`. Returns the
+/// action his minion stopped in, if it did (the next run takes the rest).
+fn fight_presses(l: &Level, load: &str, actions: &[usize], out: &mut Fought) -> Option<usize> {
+    use guacamole::anchors::{ANCHOR_B, FIRST_ALERT};
+    let o = Opts {
+        fight: true,
+        ..PLAY
+    };
+    let mut w = match W::joined(l, load, o, 120) {
+        Ok(w) => w,
+        Err(b) => {
+            let (_, when, h) = *b;
+            out.failed = Some(format!("{when}: {}", named(&h.to_string())));
+            return None;
+        }
+    };
+    let chompies: Vec<Handle> = SWEEP_CHOMPIES
+        .iter()
+        .map(|n| w.level_handle(l, n))
+        .collect();
+    let target = w.level_handle(l, TARGET);
+    if let Err(why) = to_the_fight(l, &mut w) {
+        out.failed = Some(why);
+        return None;
     }
     scripts::alert_in(&mut w.vm, FIRST_ALERT);
     let radius = w.walk.shape.width.max(w.walk.shape.length) * 0.5 * w.scale * FOOT;
@@ -6252,13 +6274,64 @@ fn sweep_one(l: &Level, load: &str) -> Fought {
     out
 }
 
-/// openspec AU.10: Pop Fizz and his red press their second attack and walk
-/// on. It reaches his beast, whose clips the TV doesn't hold, so his script
-/// would wait on a slide that never starts and leave him frozen for good;
-/// the TV holds the attack back (`walkers::HELD_ATTACKS`) until AU.37.
+/// His beast's clone while it stands (openspec AU.37).
+fn beast(w: &W) -> Option<Handle> {
+    w.world
+        .clones()
+        .into_iter()
+        .find(|&h| !w.world.removed(h) && w.world.name(h).contains("Hulk_Form"))
+}
+
+/// One step of the pad: `stick` held, `action` down if any.
+fn pad_step(w: &mut W, stick: Stick, action: Option<usize>) {
+    let mut actions = [false; 4];
+    if let Some(a) = action {
+        actions[a] = true;
+    }
+    w.bench.pads[0] = Pad {
+        stick,
+        actions,
+        connected: true,
+    };
+    w.step().unwrap_or_else(|h| panic!("{h}"));
+}
+
+/// The stick round the compass for `steps`, what he walked; his first attack
+/// thrown every second with `punching`.
+fn walks(w: &mut W, steps: u32, punching: bool) -> f32 {
+    let (mut walked, mut at) = (0.0, w.hero().pivot);
+    for s in 0..steps {
+        let stick = match (s / 90) % 2 {
+            0 => Stick::new(0.7, -0.7),
+            _ => Stick::new(-0.7, 0.7),
+        };
+        let press = (punching && s % 60 < HELD).then_some(0);
+        pad_step(w, stick, press);
+        walked += w.hero().pivot.distance(at);
+        at = w.hero().pivot;
+    }
+    walked
+}
+
+/// Into the beast: his second attack pressed, until its clone stands.
+fn into_beast(w: &mut W, load: &str) {
+    for s in 0..180 {
+        pad_step(w, Stick::CENTRED, (s < HELD).then_some(1));
+        if beast(w).is_some() {
+            return;
+        }
+    }
+    panic!("{load}: no beast");
+}
+
+/// openspec AU.37: Pop Fizz and his red go into the beast on their second
+/// attack, walk and throw punches in it on the stick, its clone reading its
+/// own clips, and come back and walk on, with or without a punch cut short by
+/// the meter running out (which leaves him off the scripts' movers, the
+/// engine walking him: `ScriptWorld::engine_walk`, the review's 0.00 m).
 #[test]
 #[ignore = "reads the Giants dump"]
-fn pop_fizz_walks_on_after_his_second_attack_is_pressed() {
+fn pop_fizz_goes_into_his_beast_and_back_and_walks_on() {
     let l = Level::open();
     let o = Opts {
         fight: true,
@@ -6267,29 +6340,233 @@ fn pop_fizz_walks_on_after_his_second_attack_is_pressed() {
     for load in ["108_Alchemist", "108_Alchemist_Red"] {
         let mut w =
             W::joined(&l, load, o, 120).unwrap_or_else(|b| panic!("{load}: {}: {}", b.1, b.2));
-        for s in 0..300 {
-            let mut actions = [false; 4];
-            actions[1] = s < HELD;
-            w.bench.pads[0] = Pad {
-                actions,
-                connected: true,
-                ..Pad::default()
-            };
-            w.step().unwrap_or_else(|h| panic!("{load}: {h}"));
+        for punching in [false, true] {
+            into_beast(&mut w, load);
+            let clone = beast(&w).unwrap();
+            let template = w.world.actor(clone).and_then(|a| a.template);
+            let lengths = template.and_then(|t| w.world.palette(t)).map(<[f32]>::len);
+            assert_eq!(lengths, Some(118), "{load}: its palette");
+            // The change itself, the controller off, then the stick his.
+            let mut started = 0;
+            while w.world.actor(w.hero).map(|a| a.tint & 0xff) != Some(0) {
+                pad_step(&mut w, Stick::CENTRED, None);
+                started += 1;
+                assert!(started < 240, "{load}: no change");
+            }
+            for _ in 0..150 {
+                pad_step(&mut w, Stick::CENTRED, None);
+            }
+            let in_it = walks(&mut w, 150, punching);
+            println!(
+                "{load}, punching {punching}: {in_it:.2} m in it, {} clips on it, load {:.2}",
+                w.world
+                    .sequences()
+                    .iter()
+                    .filter(|s| s.actor == clone && s.plays())
+                    .count(),
+                load1()
+            );
+            assert!(in_it > 3.0, "{load}, punching {punching}: {in_it} m in it");
+            // To its end, the punches thrown fast enough that the meter runs
+            // out in one: the cut leaves him off the movers.
+            let mut lasts = 0;
+            while beast(&w).is_some() {
+                let press = (punching && lasts % 24 < HELD).then_some(0);
+                pad_step(&mut w, Stick::new(0.7, -0.7), press);
+                lasts += 1;
+                assert!(lasts < 900, "{load}: the beast never ended");
+            }
+            assert_eq!(
+                w.world.actor(w.hero).map(|a| a.tint & 0xff),
+                Some(0xff),
+                "{load}: himself again"
+            );
+            let after = walks(&mut w, 180, false);
+            println!("{load}, punching {punching}: {after:.2} m after it");
+            assert!(after > 3.0, "{load}, punching {punching}: {after} m after");
+            let thrown = walks(&mut w, 180, true);
+            assert!(
+                thrown > 1.0,
+                "{load}, punching {punching}: {thrown} m throwing"
+            );
+            // The meter fills back.
+            for _ in 0..720 {
+                pad_step(&mut w, Stick::CENTRED, None);
+            }
         }
-        let from = w.hero().pivot;
-        for _ in 0..45 {
-            w.bench.pads[0] = Pad {
-                stick: Stick::new(0.7, -0.7),
-                connected: true,
-                ..Pad::default()
-            };
-            w.step().unwrap_or_else(|h| panic!("{load}: {h}"));
-        }
-        let moved = w.hero().pivot.distance(from);
-        println!("{load}: walked {moved:.2} m after it, load {:.2}", load1());
-        assert!(moved > 2.0, "{load}: {moved} m");
     }
+}
+
+/// How many steps a lunge's fall is read over, past its peak.
+const FALL: usize = 12;
+
+/// AG.12's `t_south` (Tree Rex, two replays): at his walk he presses South
+/// with the stick held on and leaps, then falls to nothing with the stick
+/// ignored. Each replay's peak, ft/s, and what it falls a frame from there.
+fn recorded_lunges() -> Vec<(f32, f32)> {
+    let run = capture_dir().join("BLUS30968/ag12-walks-1792580915");
+    ["t_south-W-00", "t_south-W-01"]
+        .iter()
+        .map(|replay| {
+            let text = std::fs::read_to_string(run.join(replay).join("recording.json"))
+                .unwrap_or_else(|e| panic!("{replay}: {e}"));
+            let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+            let walk: Vec<f32> = json
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| json_f32(&r["mover"]["length"]))
+                .collect();
+            let peak = (1..walk.len())
+                .find(|&k| walk[k] > walk[k - 1] + 10.0)
+                .expect("the leap");
+            (walk[peak], (walk[peak] - walk[peak + FALL]) / FALL as f32)
+        })
+        .collect()
+}
+
+/// His walk across the ground, ft/s, each step from his first attack pressed
+/// at his top speed with the stick held on.
+fn lunge(w: &mut W) -> Vec<f32> {
+    // The recording's stick, from the spawn it walks out of.
+    let forward = Stick::new(-1.0, 0.0);
+    for _ in 0..40 {
+        pad_step(w, forward, None);
+    }
+    (0..60)
+        .map(|s| {
+            pad_step(w, forward, (s < HELD).then_some(0));
+            let v = w.hero().walk.velocity;
+            v.x.hypot(v.z)
+        })
+        .collect()
+}
+
+/// Where `speeds` peaks, and how high.
+fn peak_of(speeds: &[f32]) -> (usize, f32) {
+    speeds.iter().copied().enumerate().fold(
+        (0, 0.0),
+        |best, (k, v)| if v > best.1 { (k, v) } else { best },
+    )
+}
+
+/// openspec AU.37, the au-pop-fizz review: how a hero comes out of an attack.
+/// The one recording of an attack under a held stick is AG.12's Tree Rex, on
+/// the movers: 38.76 ft/s falling at his 80 ft/s² to nothing in 30 frames.
+/// He does that here, and `013_Crab`'s first attack, the same kind of leap
+/// off the movers, falls at the same 80 on the engine's model
+/// (`ScriptWorld::engine_walk`; before it his 40 ft/s stood for 35 steps).
+#[test]
+#[ignore = "reads the Giants dump and AG.12's recording"]
+fn a_lunge_off_the_movers_falls_as_the_recorded_one_does() {
+    let recorded = recorded_lunges();
+    println!("recorded: {recorded:?}");
+    let l = Level::open();
+    let o = Opts {
+        fight: true,
+        ..PLAY
+    };
+    let mut rex =
+        W::joined(&l, "112_TitanLife", o, 120).unwrap_or_else(|b| panic!("{}: {}", b.1, b.2));
+    let speeds = lunge(&mut rex);
+    let (at, peak) = peak_of(&speeds);
+    let fall = (speeds[at] - speeds[at + FALL]) / FALL as f32;
+    println!("Tree Rex: {peak:.2} ft/s, falling {fall:.3} ft/s a step");
+    for &(theirs, falls) in &recorded {
+        assert!((peak - theirs).abs() < 1.0, "{peak} against {theirs}");
+        assert!((fall - falls).abs() < 0.1, "{fall} against {falls}");
+    }
+    let mut crab = W::joined(&l, "013_Crab", o, 120).unwrap_or_else(|b| panic!("{}: {}", b.1, b.2));
+    let speeds = lunge(&mut crab);
+    let (at, peak) = peak_of(&speeds);
+    let fall = (speeds[at] - speeds[at + FALL]) / FALL as f32;
+    println!("013_Crab: {peak:.2} ft/s, falling {fall:.3} ft/s a step");
+    assert!(peak > 30.0, "no leap: {speeds:?}");
+    assert!((fall - recorded[0].1).abs() < 0.1, "{speeds:?}");
+}
+
+/// openspec AU.37's verify: in the beast Pop Fizz and his red hit, a Chompy
+/// of the first fight set in front of him at full health losing it to his
+/// punches, and each walks on after the beast's end.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn pop_fizz_hits_in_his_beast_and_walks_on() {
+    let l = Level::open();
+    let o = Opts {
+        fight: true,
+        ..PLAY
+    };
+    for load in ["108_Alchemist", "108_Alchemist_Red"] {
+        let mut w =
+            W::joined(&l, load, o, 120).unwrap_or_else(|b| panic!("{load}: {}: {}", b.1, b.2));
+        let target = w.level_handle(&l, TARGET);
+        to_the_fight(&l, &mut w).unwrap_or_else(|why| panic!("{load}: {why}"));
+        scripts::alert_in(&mut w.vm, guacamole::anchors::FIRST_ALERT);
+        w.set_creature_health(target, 1000);
+        into_beast(&mut w, load);
+        for _ in 0..150 {
+            pad_step(&mut w, Stick::CENTRED, None);
+        }
+        let start = w.creature_health(target);
+        let mut punches = 0;
+        while beast(&w).is_some() && punches < 600 {
+            let at = w.hero().pivot;
+            let along = guac_motion::seam::Vec3::new(
+                w.hero().facing.to_radians().sin(),
+                0.0,
+                w.hero().facing.to_radians().cos(),
+            );
+            w.world
+                .place(target, at + along * 2.0, w.hero().facing + 180.0);
+            pad_step(&mut w, Stick::CENTRED, (punches % 30 < HELD).then_some(0));
+            punches += 1;
+        }
+        let end = w.creature_health(target);
+        println!("{load}: the Chompy {start:?} -> {end:?} over {punches} steps");
+        assert!(
+            end < start,
+            "{load}: no punch landed: {start:?} -> {end:?} over {punches} steps"
+        );
+        while beast(&w).is_some() {
+            pad_step(&mut w, Stick::CENTRED, None);
+        }
+        let after = walks(&mut w, 120, false);
+        assert!(after > 2.0, "{load}: {after} m after it");
+    }
+}
+
+/// openspec AU.37: his figure off the portal while he's the beast takes the
+/// beast off with him, and the next hero in, then him again, go on.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn pop_fizz_swapped_out_as_the_beast_leaves_no_beast_standing() {
+    let l = Level::open();
+    let o = Opts {
+        fight: true,
+        ..PLAY
+    };
+    let load = "108_Alchemist";
+    let mut w = W::joined(&l, load, o, 120).unwrap_or_else(|b| panic!("{load}: {}: {}", b.1, b.2));
+    into_beast(&mut w, load);
+    for _ in 0..240 {
+        pad_step(&mut w, Stick::CENTRED, None);
+    }
+    w.swap_in(&l, "000_AirDragon")
+        .unwrap_or_else(|h| panic!("{h}"));
+    for _ in 0..120 {
+        pad_step(&mut w, Stick::CENTRED, None);
+    }
+    assert_eq!(beast(&w), None, "a beast standing with nobody in it");
+    let next = walks(&mut w, 120, false);
+    assert!(next > 2.0, "the next hero: {next} m");
+    w.swap_in(&l, load).unwrap_or_else(|h| panic!("{h}"));
+    for _ in 0..120 {
+        pad_step(&mut w, Stick::CENTRED, None);
+    }
+    let back = walks(&mut w, 120, false);
+    assert!(back > 2.0, "him again: {back} m");
+    into_beast(&mut w, load);
+    println!("into the beast again; load {:.2}", load1());
 }
 
 /// AH.29's sweep (openspec AU.1's routing, AU.2's measure): every modelled

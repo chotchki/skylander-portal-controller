@@ -200,6 +200,9 @@ pub struct Actor {
     /// AH.226: the cannon's prompt hung on the cannon 15 ft over it,
     /// Norticus' turban 0.5 ft from his head's node).
     pub hung: Vec3,
+    /// The facing of the actor it hangs on as it was last placed there: what
+    /// it turned through since is its own turn too (openspec AU.37).
+    pub hung_facing: Option<f32>,
     /// `actorinfo.controller`.
     pub controller: Value,
     /// Its clones, made from it as a template, in the order made.
@@ -298,6 +301,7 @@ impl Actor {
             solid: Solid::default(),
             attach: Value::Null,
             hung: Vec3::ZERO,
+            hung_facing: None,
             controller: Value::Null,
             clones: Vec::new(),
             parent: Value::Null,

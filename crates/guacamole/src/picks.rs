@@ -64,6 +64,14 @@ impl Four {
         }))
     }
 
+    /// The four by the slots the original's locomotion keeps them at (slot
+    /// 0 the idle, 1 the walk, 3 the run, 57 the fall: AG.14's, which a
+    /// model with no hero side of its own, a clone's, plays them from
+    /// too, openspec AU.37), each `None` where `palette` holds no clip.
+    pub fn standard(palette: &Palette) -> Self {
+        Four([0, 1, 3, 57].map(|s: u16| palette.clip(s).is_some().then_some(u32::from(s))))
+    }
+
     /// [`Four::of`], each clip at the slot given beside its name where
     /// `palette` holds that clip there (his hero side's, AG.14), by name
     /// otherwise. A palette can hold one clip at several slots, and his
@@ -328,6 +336,26 @@ impl Picked {
     }
 }
 
+/// What a drawn clone's other clips are laid over (openspec AU.37: Pop Fizz's
+/// beast, whose scripts define its locomotion states on the clone): what the
+/// locomotion on the VM weights on `actor` out of `palette`, each clip at its
+/// time and share, else `idle` at `seconds`.
+pub fn under_clips<'p>(
+    world: &ScriptWorld,
+    actor: Handle,
+    palette: Option<&'p Palette>,
+    idle: &'p Clip,
+    seconds: f64,
+) -> Vec<(&'p Clip, f64, f64)> {
+    let weighted = palette.and_then(|p| {
+        Picked::read(world, actor, Four::standard(p), 0.0).map(|w| w.posed(&[], p, (1.0, 0.0)))
+    });
+    match weighted {
+        Some(clips) if !clips.is_empty() => clips,
+        _ => vec![(idle, seconds, 1.0)],
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use guac_ir::clip::{RotationTrack, Track, VecTrack};
@@ -420,6 +448,19 @@ pub(crate) mod tests {
     }
 
     /// The four found by name in his palette, a name it lacks naming none.
+    /// AU.37: a model with no hero side keeps its four at the original's
+    /// slots, each only where its palette holds a clip.
+    #[test]
+    fn the_standard_four_are_the_slots_a_palette_holds() {
+        assert_eq!(
+            Four::standard(&palette()).0,
+            [Some(0), Some(1), Some(3), Some(57)]
+        );
+        let mut p = palette();
+        p.entries.retain(|e| e.slot != 3);
+        assert_eq!(Four::standard(&p).0, [Some(0), Some(1), None, Some(57)]);
+    }
+
     #[test]
     fn the_four_are_found_by_their_clips_names() {
         assert_eq!(four(), Four([Some(0), Some(1), Some(3), Some(57)]));
@@ -851,6 +892,19 @@ pub(crate) mod tests {
         let p = Picked::read(&world, me, four(), 22.25).expect("his locomotion");
         assert_eq!(p.weights(), [0.0, 0.0, 1.0, 0.0]);
         assert_eq!(p.top(), "run");
+        // A drawn clone's pose reads the same off the world (AU.37), and
+        // nothing for an actor no locomotion weights.
+        let pal = palette();
+        let idle = clip("Idle", 1.0);
+        let names = |clips: Vec<(&Clip, f64, f64)>| -> Vec<(String, f64)> {
+            clips.iter().map(|c| (c.0.name.clone(), c.2)).collect()
+        };
+        let drawn = under_clips(&world, me, Some(&pal), &idle, 0.5);
+        assert_eq!(names(drawn), [("Eruptor_Run.ma".to_owned(), 1.0)]);
+        let none = under_clips(&world, me + 1, Some(&pal), &idle, 0.5);
+        assert_eq!(names(none), [("Idle".to_owned(), 1.0)]);
+        let no_palette = under_clips(&world, me, None, &idle, 0.5);
+        assert_eq!(names(no_palette), [("Idle".to_owned(), 1.0)]);
     }
 
     /// Nothing weighted with weight (the frame his scripts' influence

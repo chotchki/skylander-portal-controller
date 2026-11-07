@@ -22,9 +22,10 @@
 //! A hero whose own scripts run (AH.24, [`ScriptedHero`]; AH design decision
 //! 5, one writer) steps on the engine alone: his walk and his facing are
 //! what his scripts on the VM left, read before his step
-//! ([`crate::hero_scripts`]), and nothing here turns or pushes him. Any
-//! other walks on the stick by AG.16's controller
-//! (stand-in ledger: `walker`).
+//! ([`crate::hero_scripts`]), and nothing here turns or pushes him; off the
+//! scripts' movers the engine's own model does (openspec AU.37,
+//! [`ScriptWorld::step_scripted`]). Any other walks on the stick by AG.16's
+//! controller (stand-in ledger: `walker`).
 //!
 //! Ordering ([`guacamole::frame`], openspec AH.59): his step is
 //! [`frame::Frame::Hero`], after the scripts, his locomotion
@@ -379,8 +380,10 @@ pub(crate) fn step_heroes(
     moving: Res<MovingSolids>,
     time: Res<Time>,
     cameras: Query<&FollowCamera>,
+    world: Option<Res<ScriptWorld>>,
     mut heroes: Query<
         (
+            Entity,
             &mut HeroBody,
             &mut Transform,
             Has<ScriptedHero>,
@@ -395,7 +398,8 @@ pub(crate) fn step_heroes(
     if let Some(follow) = cameras.iter().next() {
         input.view_heading = follow.drawn.heading();
     }
-    for (mut body, mut transform, scripted, run, drop) in &mut heroes {
+    let push = input.stick.push(input.view_heading);
+    for (entity, mut body, mut transform, scripted, run, drop) in &mut heroes {
         // In now (openspec AH.224: his join no longer pending): a
         // replacement goes up to drop onto his place (AG.100), drawn from
         // there (no easing up from where he stood unseen).
@@ -416,10 +420,20 @@ pub(crate) fn step_heroes(
             before,
         } = &mut *body;
         *before = hero.pivot;
-        if scripted {
-            hero.step_engine(&seam, step, exclude, &moving.0);
-        } else {
-            hero.step_among(&seam, &input, step, exclude, &moving.0);
+        match (scripted, world.as_deref()) {
+            (true, Some(w)) => {
+                w.step_scripted(
+                    entity.to_bits(),
+                    hero,
+                    &seam,
+                    push,
+                    step,
+                    exclude,
+                    &moving.0,
+                );
+            }
+            (true, None) => hero.step_engine(&seam, step, exclude, &moving.0),
+            (false, _) => hero.step_among(&seam, &input, step, exclude, &moving.0),
         }
         // Over nothing with nowhere to go (openspec AS.146).
         // Stand-in ledger: `fall-reset`.

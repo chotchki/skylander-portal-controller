@@ -193,6 +193,29 @@ fn spawn_models(dump: &Path) -> Vec<guacamole::props::PropModel> {
     out
 }
 
+/// The skinned models in the walkers' own archives (openspec AU.37: what a
+/// clone of them draws, `creature_models::spawn_models`), each path once, off
+/// the dump through the extractor's own reader.
+fn walker_creatures(dump: &Path) -> Vec<(String, guac_ir::Model)> {
+    let usrdir = dump.join("PS3_GAME/USRDIR");
+    let mut out: Vec<(String, guac_ir::Model)> = Vec::new();
+    for load in walkers(dump) {
+        let archive = guac_extract::scripts::character_archive(&load);
+        let entry = guac_extract::scripts::entry(&usrdir, &archive)
+            .unwrap_or_else(|e| panic!("{archive}: {e}"));
+        let igz = Igz::parse(&entry).unwrap_or_else(|e| panic!("{archive}: {e}"));
+        let body = guac_extract::scripts::body(&igz, &archive);
+        let read = guac_extract::scripts::spawn_models(&igz, &archive, identity(), body, None)
+            .unwrap_or_else(|e| panic!("{archive}: {e}"));
+        for (path, model) in guacamole::creature_models::spawn_models(&read.ir, &identity()) {
+            if !out.iter().any(|(p, _)| *p == path) {
+                out.push((path, model));
+            }
+        }
+    }
+    out
+}
+
 /// The particle part's emitters (AH.87) off the dump through the
 /// extractor's own reader, every spawn archive's, and chapter 1's own
 /// (openspec AS.17, its particles part's reader on `igz`), keyed in `view`
@@ -526,6 +549,26 @@ fn the_census_is_the_discs() {
         glows(&creatures_all).len(),
         creature_glow.len()
     );
+    // The walkers' own skinned models (openspec AU.37).
+    let walker_models = walker_creatures(&dump);
+    let walker_all = guacamole::creature_models::keys(&walker_models, &hero_scene)
+        .expect("the walkers' skinned models' keys");
+    let walker_creatures = beyond(
+        &colour(&walker_all),
+        &[census::HEROES, census::TURNTABLE, census::CREATURES],
+    );
+    let walker_creature_glow = beyond(
+        &glows(&walker_all),
+        &[census::HEROES_GLOW, census::CREATURES_GLOW],
+    );
+    eprintln!(
+        "the walkers' skinned models: {} keys off {} models ({} past the heroes' and the creatures'), {} level glow masks ({} past)",
+        colour(&walker_all).len(),
+        walker_models.len(),
+        walker_creatures.len(),
+        glows(&walker_all).len(),
+        walker_creature_glow.len()
+    );
     for (load, keys) in &cards.heroes {
         eprintln!(
             "{load} as the hero: {} keys, {} level glow masks",
@@ -605,6 +648,18 @@ fn the_census_is_the_discs() {
             "the creatures' glow masks",
             &creature_glow,
             census::CREATURES_GLOW,
+            true,
+        ),
+        check(
+            "the walkers' skinned models",
+            &walker_creatures,
+            census::WALKER_CREATURES,
+            true,
+        ),
+        check(
+            "the walkers' skinned models' glow masks",
+            &walker_creature_glow,
+            census::WALKER_CREATURES_GLOW,
             true,
         ),
     ];

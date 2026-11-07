@@ -608,9 +608,14 @@ fn level_214s_third_island_is_walked_to_its_end() {
         step(&mut run, &mut stops, s, [k % 4 < 2, false, false, false]);
     }
     println!("the barrel broken, him at {}", run.hero().pivot);
-    // Square behind the block before pushing: off its middle he slides by.
+    // Square behind the block before pushing. His swings leave him flush on
+    // its face at its west corner, facing aside (the walk that stood through
+    // them until AU.37 ran him into it and pushed it two spans there): a push
+    // begun there slides off west. Walked up to it the block goes from 0.9 m
+    // off its middle (705.6) as from the middle, so this is the route's
+    // start, not his push.
     for _ in 0..120 {
-        if run.hero().pivot.x > 705.0 {
+        if run.hero().pivot.x > 705.8 {
             break;
         }
         let s = stick_to(&run, [706.0, 495.0]);

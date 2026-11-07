@@ -155,6 +155,21 @@ pub fn skinned_models(
     out
 }
 
+/// Each skinned model of a character's spawn part, by its path, as
+/// [`creature_model`] makes it (openspec AU.37: Pop Fizz's beast): what a
+/// clone of his file's templates draws with. Static ones are
+/// [`crate::props::spawn_models`]'.
+pub fn spawn_models(
+    spawns: &guac_ir::spawn::SpawnModels,
+    identity: &DumpIdentity,
+) -> Vec<(String, Model)> {
+    spawns
+        .props
+        .iter()
+        .filter_map(|p| Some((p.path.clone(), creature_model(p, identity.clone())?)))
+        .collect()
+}
+
 /// Every key `models` draw in a level's `scene`, each once, the glow
 /// masks after the colour keys ([`warm::level_keys`], as the hero's), and
 /// each opaque colour key blending as a fading creature draws it (openspec
@@ -264,6 +279,21 @@ mod tests {
             activity_state: 5,
             ..placed(name, Some(model))
         }
+    }
+
+    /// AU.37: a character's spawn part gives a model for each skinned prop
+    /// by its path, a static one being the props' to draw.
+    #[test]
+    fn a_spawn_parts_skinned_models_are_the_creatures_draw() {
+        let spawns = guac_ir::spawn::SpawnModels {
+            identity: identity(),
+            archive: "character/108_alchemist.bld".into(),
+            props: vec![prop("rock.mdl", false), prop("beast.mdl", true)],
+            refused: Vec::new(),
+        };
+        let models = spawn_models(&spawns, &identity());
+        let paths: Vec<&str> = models.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(paths, ["beast.mdl"]);
     }
 
     /// A skinned prop becomes a model: its skeleton, the tfbmulti2

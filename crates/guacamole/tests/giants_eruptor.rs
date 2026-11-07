@@ -32,7 +32,7 @@ use guac_motion::seam::{Body, BodyId, BodyKind, Collider, Mesh, PhysicsSeam, Pos
 use guac_motion::stick::Stick;
 use guac_motion::tuning::{Tuning, eruptor_solid};
 use guac_script::members::{
-    CAMERA, COMBAT, FIGURE, HERO as HERO_MEMBERS, INIT_CHAIN, MUSIC, SOUNDS, WALKERS,
+    CAMERA, COMBAT, FIGURE, HERO as HERO_MEMBERS, INIT_CHAIN, LEVELS, MUSIC, SOUNDS, WALKERS,
 };
 
 use guac_script::{
@@ -193,8 +193,10 @@ impl Run {
         scripts::add_scripted(&mut self.vm, &mut self.world);
         let report = r?;
         assert!(report.stopped.is_empty(), "strict mode stops by halting");
-        for hero in self.bench.heroes.values_mut() {
-            hero.step_engine(&self.bench.world, dt, &[], Surfaces::NONE);
+        let push = self.bench.pads[0].stick.push(self.bench.view);
+        for (h, hero) in &mut self.bench.heroes {
+            self.world
+                .step_scripted(*h, hero, &self.bench.world, push, dt, &[], Surfaces::NONE);
         }
         self.world.advance(dt, &mut self.bench);
         self.steps += 1;
@@ -336,6 +338,9 @@ fn run_on(mode: Mode, open: bool) -> (Run, HashMap<MemberId, String>) {
     let handles = headless_handles(&files);
     let objects = headless_objects(&handles);
     let mut config = scripts::hero_config(mode);
+    // The level's end's sequencing ticks the stream queue from `Macros_UI`
+    // since AS.53: `system.load level variation`, the TV's by `smash_config`.
+    guac_script::members::register(&mut config.members, LEVELS);
     let found = discovery(&mut config);
     let vm = scripts::init_chain(program, &files, &handles, &ORDER, config);
     let mut world = ScriptWorld::new(&files, &handles, objects);
@@ -843,6 +848,8 @@ fn the_members_he_reaches_stay_under_the_ceiling() {
             // The music controller's sound system update's (openspec AR.25).
             .chain(SOUNDS)
             .chain(MUSIC)
+            // The stream queue's `load level variation` (AS.53).
+            .chain(LEVELS)
             .any(|r| MemberId::named(r.namespace, r.name) == *m)
             || guac_script::Builtin::of(*m).is_some()
     };

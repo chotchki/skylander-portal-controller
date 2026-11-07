@@ -50,9 +50,10 @@ use std::collections::HashMap;
 use guac_formats::script::Class;
 use guac_motion::hero::Hero;
 use guac_motion::proxy::Surfaces;
-use guac_motion::seam::{BodyId, CAST_SLOP, Pose, Quat, Shape, Vec3};
+use guac_motion::seam::{BodyId, CAST_SLOP, PhysicsSeam, Pose, Quat, Shape, Vec3};
 use guac_motion::solid::HavokSolid;
 use guac_motion::steer::{Aim, MoveType, Physics as SteerPhysics};
+use guac_motion::stick::Push;
 use guac_script::{Access, Answer, Handle, HostFault, MemberId, Obj, OpCall, Value};
 
 use crate::script_engine::{
@@ -1034,6 +1035,7 @@ impl ScriptWorld {
     ) -> Result<(), HostFault> {
         if let Some(hero) = engine.hero(h) {
             hero.walk.velocity = v;
+            self.walk_written.insert(h);
             return Ok(());
         }
         match self.actors.get_mut(&h) {
@@ -2005,6 +2007,7 @@ impl ScriptWorld {
                 if let Some(a) = self.actors.get_mut(&h) {
                     a.attach = v;
                     a.hung = Vec3::ZERO;
+                    a.hung_facing = None;
                 }
                 // A hero hung has his controller off until he's let go
                 // (openspec AS.115); another's ground carries nobody here.
@@ -2283,34 +2286,32 @@ impl ScriptWorld {
                     .collect()
             }
             Member::Palette => {
-                // The running placement's, as the static member reads it;
-                // with none of its own, the actor it tells: a clone (openspec
-                // AS.52: a cutscene's own actors, cloned from their
-                // templates, on which the game systems' placement starts
-                // each scene's animations), or a file's placement told by
-                // anything but the game systems' (AS.97: the enemy system's
-                // action queue, whose jump plays the enemy's own clips and
-                // waits on them; a setup controller's Mabu). Told by the
-                // game systems a file's placement reads nothing still: the
-                // pit's intro, which tells `Enemy_Chompy(1)` its three clips,
-                // runs AH.8's 449 frames that way and 64 more with them
-                // played (AS.80; stand-in ledger: `told-palette`).
+                // The actor the block tells, every `control` on the dump
+                // reading that actor's clips (openspec AU.37: Pop Fizz's
+                // beast; AS.52: a cutscene's own actors, on which the game
+                // systems' placement starts each scene's animations; AS.97:
+                // the enemy system's action queue, a setup controller's
+                // Mabu), the running placement's where it holds none. Told
+                // by the game systems a file's placement reads nothing
+                // still: the pit's intro, which tells `Enemy_Chompy(1)` its
+                // three clips, runs AH.8's 449 frames that way and 64 more
+                // with them played (AS.80; stand-in ledger: `told-palette`).
                 let of = |w: &Self, h: Handle| {
                     let t = w.template_of(h)?;
                     w.palettes.get(&t).map(|p| (t, p.len()))
                 };
                 let scene = self.is_game_systems(at.placement);
-                let lengths = of(self, at.placement).or_else(|| {
-                    self.actor_of(Some(self.told))
-                        .filter(|&h| {
-                            h != at.placement
-                                && self
-                                    .actors
-                                    .get(&h)
-                                    .is_some_and(|a| a.obj.is_none() || !scene)
-                        })
-                        .and_then(|h| of(self, h))
-                });
+                let told = self
+                    .actor_of(Some(self.told))
+                    .filter(|&h| {
+                        h != at.placement
+                            && self
+                                .actors
+                                .get(&h)
+                                .is_some_and(|a| a.obj.is_none() || !scene)
+                    })
+                    .and_then(|h| of(self, h));
+                let lengths = told.or_else(|| of(self, at.placement));
                 match lengths {
                     Some((t, n)) => (0..n as u32)
                         .map(|slot| self.objs.value(Object::Clip { template: t, slot }))
@@ -3378,6 +3379,23 @@ impl ScriptWorld {
                 }
                 _ => None,
             };
+            // A skinned clone hung on an actor itself turns as that actor
+            // turns (openspec AU.37: Pop Fizz's beast, hung on him), by what
+            // it turned through, so a spin of its own goes on. What has no
+            // palette, a collider or a pivot, keeps the scripts' facing:
+            // turned, Dino-Rang's whirlwind misses. Stand-in ledger:
+            // `hung-turn`.
+            let skinned = self
+                .template_of(h)
+                .is_some_and(|t| self.palettes.contains_key(&t));
+            let owner_facing = match self.object(Some(node)) {
+                None if skinned => self
+                    .actor_of(Some(node))
+                    .filter(|&o| o != h)
+                    .and_then(|o| self.angles_within(o, engine, HUNG_DEPTH - 1))
+                    .map(|g| g.facing),
+                _ => None,
+            };
             // Its offset from what it hangs from, in that frame (openspec
             // AH.226); what it hangs from at once otherwise.
             let at = match self.hang_frame(h, engine) {
@@ -3391,6 +3409,12 @@ impl ScriptWorld {
                 if let Some(q) = turn {
                     a.angles = angles_of(q);
                 }
+                if let (Some(now), Some(last)) = (owner_facing, a.hung_facing)
+                    && now != last
+                {
+                    a.angles.facing = (a.angles.facing + now - last).rem_euclid(360.0);
+                }
+                a.hung_facing = owner_facing;
             }
             // A hung hero's body goes with his node (openspec AS.115), his
             // place being his controller's.
@@ -3569,6 +3593,63 @@ fn fall_point(hero: &Hero) -> Option<Vec3> {
     Some(hero.pivot - Vec3::Y * fallen.max(6.0 * METRES_PER_FOOT))
 }
 
+/// The top speed `Movement - Add Mover` leaves in the engine's numbers: a
+/// mover's walk is the scripts', and the engine's own model does nothing to
+/// it (openspec AU.37).
+const MOVER_TOP_SPEED: f32 = 10_000.0;
+
+impl ScriptWorld {
+    /// What the engine walks `hero` with this step, if it does (openspec
+    /// AU.37): none while he's one of the scripts' movers, whose velocity
+    /// the movement scripts keep and hand the engine, nor on a step a script
+    /// set his walk itself (Swarm's flight sets it every step and loses its
+    /// hits otherwise). Off them (`Movement - Remove Mover` hands the engine
+    /// his numbers: 31 of the sweep's 268 presses, and for good where an
+    /// attack cut short leaves him there) the engine's own velocity model
+    /// runs on him as it runs on every actor, the stick its input with a pad
+    /// as his `actorinfo.controller`, which `Movement - Activate/Deactivate
+    /// Controller` swaps for the inactive one off the movers alone. Stand-in
+    /// ledger: `engine-walk`.
+    pub fn engine_walk(&self, hero: Handle, push: Push) -> Option<(SteerPhysics, Aim)> {
+        let a = self.actors.get(&hero)?;
+        if a.physics.ground_max_speed >= MOVER_TOP_SPEED || self.walk_written.contains(&hero) {
+            return None;
+        }
+        let pad = self
+            .controllers
+            .iter()
+            .any(|c| a.controller == Value::Entity(*c));
+        let aim = match pad && push.held() {
+            true => Aim::Along {
+                heading: push.heading,
+                strength: push.strength,
+            },
+            false => Aim::Still,
+        };
+        Some((steer_physics(&a.physics), aim))
+    }
+
+    /// One game frame of a hero whose scripts walk him: the engine alone
+    /// while he's one of their movers, its velocity model on his own numbers
+    /// off them ([`ScriptWorld::engine_walk`]).
+    #[allow(clippy::too_many_arguments)]
+    pub fn step_scripted(
+        &self,
+        handle: Handle,
+        hero: &mut Hero,
+        seam: &dyn PhysicsSeam,
+        push: Push,
+        step: f32,
+        exclude: &[BodyId],
+        surfaces: &Surfaces,
+    ) {
+        match self.engine_walk(handle, push).filter(|_| !hero.hung) {
+            Some((physics, aim)) => hero.step_steered(seam, &physics, aim, step, exclude, surfaces),
+            None => hero.step_engine(seam, step, exclude, surfaces),
+        }
+    }
+}
+
 fn steer_physics(p: &crate::script_engine::Physics) -> SteerPhysics {
     SteerPhysics {
         ground_max_speed: p.ground_max_speed,
@@ -3721,6 +3802,23 @@ mod tests {
         };
         let handles = HashMap::new();
         ScriptWorld::new(&files, &handles, headless_objects(&handles))
+    }
+
+    /// AU.37: a walk a script sets holds the engine's model off him for that
+    /// step, and the step's end lets it go.
+    #[test]
+    fn a_walk_a_script_sets_stays_as_written_for_the_step() {
+        let (mut w, mut e) = (world(), bench());
+        let solid = guac_motion::tuning::eruptor_solid();
+        e.hero = Some(Hero::actor(solid, Vec3::ZERO, 0.0));
+        let mut him = Actor::blank();
+        him.physics.ground_max_speed = 20.0;
+        w.actors.insert(HERO, him);
+        assert!(w.engine_walk(HERO, Push::NONE).is_some(), "off the movers");
+        w.set_velocity(HERO, Vec3::X, &mut e).unwrap();
+        assert_eq!(w.engine_walk(HERO, Push::NONE), None);
+        w.advance(STEP, &mut e);
+        assert!(w.engine_walk(HERO, Push::NONE).is_some(), "the next step's");
     }
 
     /// AU.33: `animationinfo.walk` and `run` read as nothing, so a `turn to`
@@ -4966,6 +5064,79 @@ mod tests {
         assert_eq!(e.hero.as_ref().unwrap().walk.velocity, Vec3::X);
     }
 
+    /// AU.37: what hangs on an actor itself turns as he turns (Pop Fizz's
+    /// beast, hung on him), by what he turned through, so a spin of its own
+    /// goes on; what hangs on nothing keeps its facing.
+    #[test]
+    fn what_hangs_on_an_actor_turns_as_he_turns() {
+        const BEAST: Handle = 0x55;
+        const PIVOT: Handle = 0x56;
+        let mut e = bench();
+        let mut w = world();
+        let solid = guac_motion::tuning::eruptor_solid();
+        let mut him = Hero::actor(solid, Vec3::ZERO, 0.0);
+        him.facing = 10.0;
+        e.hero = Some(him);
+        w.actors.insert(HERO, Actor::blank());
+        let skinned = Obj { unit: 9, index: 1 };
+        w.set_palette(skinned, vec![1.0]);
+        let mut beast = Actor::blank();
+        beast.template = Some(skinned);
+        beast.attach = Value::Entity(HERO);
+        beast.angles.facing = 30.0;
+        w.actors.insert(BEAST, beast);
+        let mut pivot = Actor::blank();
+        pivot.template = Some(Obj { unit: 9, index: 2 });
+        pivot.attach = Value::Entity(HERO);
+        pivot.angles.facing = 30.0;
+        w.actors.insert(PIVOT, pivot);
+        let facing = |w: &ScriptWorld| w.actors[&BEAST].angles.facing;
+        w.place_hung(&mut e);
+        assert_eq!(facing(&w), 30.0, "as it was hung");
+        e.hero.as_mut().unwrap().facing = 50.0;
+        w.place_hung(&mut e);
+        assert_eq!(facing(&w), 70.0, "40 degrees with him");
+        assert_eq!(
+            w.actors[&PIVOT].angles.facing, 30.0,
+            "no palette, no turn: the scripts' facing stands"
+        );
+        w.actors.get_mut(&BEAST).unwrap().angles.facing = 100.0;
+        w.place_hung(&mut e);
+        assert_eq!(facing(&w), 100.0, "a turn of its own stays");
+        e.hero.as_mut().unwrap().facing = 350.0;
+        w.place_hung(&mut e);
+        assert_eq!(facing(&w), 40.0, "round through north");
+        // Let go and hung again, what he turned through unhung isn't its
+        // turn (the au-pop-fizz review).
+        let node = at(
+            "abstractplacement",
+            "attach node",
+            Some(Value::Entity(BEAST)),
+            None,
+        );
+        w.set(&node, Value::Null, &mut e).unwrap();
+        e.hero.as_mut().unwrap().facing = 100.0;
+        w.place_hung(&mut e);
+        w.set(&node, Value::Entity(HERO), &mut e).unwrap();
+        w.place_hung(&mut e);
+        assert_eq!(facing(&w), 40.0, "hung afresh");
+        e.hero.as_mut().unwrap().facing = 110.0;
+        w.place_hung(&mut e);
+        assert_eq!(facing(&w), 50.0, "turning with him again");
+        // A clone hung on itself (Dino-Rang's script hangs his on themselves)
+        // has no one to turn with: its own turn isn't turned again.
+        const ITSELF: Handle = 0x57;
+        let mut own = Actor::blank();
+        own.template = Some(skinned);
+        own.attach = Value::Entity(ITSELF);
+        own.angles.facing = 20.0;
+        w.actors.insert(ITSELF, own);
+        w.place_hung(&mut e);
+        w.actors.get_mut(&ITSELF).unwrap().angles.facing = 35.0;
+        w.place_hung(&mut e);
+        assert_eq!(w.actors[&ITSELF].angles.facing, 35.0, "its own turn, once");
+    }
+
     /// AH.50's hand: an actor hung on his node 7 sits there; posed again,
     /// the node moves what hangs from it only once the hung are placed
     /// (the frame's end); and read while he's turned since, it's his node's
@@ -5484,7 +5655,7 @@ mod fight_tests {
     /// Open level ground whose top is y = 0; the hero and the creatures
     /// bodies in it as the embedder keeps them.
     pub(super) struct Pit {
-        world: ParryWorld,
+        pub(super) world: ParryWorld,
         hero: Option<Hero>,
         bodies: HashMap<Handle, BodyId>,
     }
@@ -7829,13 +8000,148 @@ mod animation_tests {
             Err(HostFault::Nothing),
             "telling itself is no tell"
         );
-        // One with a palette of its own reads its own, told or not.
+        // One with a palette of its own reads its own told no one with one.
         let mine = Access {
             placement: C1,
             ..static_palette
         };
         w.told = Value::Entity(SYSTEMS);
         assert_eq!(w.elements(&mine, &mut e).unwrap(), clips);
+    }
+
+    /// AU.37: inside a `control` the static palette is the actor told, a
+    /// running placement's own palette or none: Pop Fizz's script reads his
+    /// beast's clips under a `control` of it, a Chompy's its target's.
+    #[test]
+    fn a_palette_read_under_a_control_reads_the_told_actors_first() {
+        const BEAST: Obj = Obj {
+            unit: 5,
+            index: 900,
+        };
+        const CLONE: Handle = 0x77;
+        let (mut w, mut e) = (world(), pit());
+        let own = palette(&mut w);
+        w.set_palette(BEAST, vec![2.0, 0.0, 3.0]);
+        let mut beast = chompy(Vec3::ZERO, 0.0);
+        beast.obj = None;
+        beast.template = Some(BEAST);
+        w.actors.insert(CLONE, beast);
+        let read = Access {
+            placement: C1,
+            receiver: None,
+            member: MemberId::named("animationinfo", "animation palette"),
+            other_point: None,
+            via: None,
+            op: None,
+        };
+        w.told = Value::Entity(C1);
+        assert_eq!(w.elements(&read, &mut e).unwrap(), own, "his own, untold");
+        w.told = Value::Entity(CLONE);
+        let told = w.elements(&read, &mut e).unwrap();
+        assert_eq!(told.len(), 3, "the beast's slots");
+        assert_ne!(told[0], own[0]);
+        // Its clip lasts its own length, not the running placement's.
+        let length = |w: &mut ScriptWorld, e: &mut dyn Engine, v: Value| {
+            w.get(
+                &Access {
+                    placement: C1,
+                    receiver: Some(v),
+                    member: MemberId::named("sequence", "raw duration"),
+                    other_point: None,
+                    via: None,
+                    op: None,
+                },
+                e,
+            )
+            .unwrap()
+        };
+        assert_eq!(length(&mut w, &mut e, told[2]), Value::Float(3.0));
+    }
+
+    /// AU.37: `Movement - Add Mover` leaves the engine a top speed of 10,000
+    /// and his walk is the scripts'; off the movers the engine walks him on
+    /// his own numbers, the stick its input while a pad is his controller,
+    /// and with the inactive controller he slows to a stop.
+    #[test]
+    fn a_hero_off_the_movers_walks_on_the_engines_model() {
+        const HERO: Handle = 0x77;
+        const STEP: f32 = 1.0 / 60.0;
+        let (mut w, e) = (world(), pit());
+        let pad = Value::Entity(w.controllers[0]);
+        let mut hero = chompy(Vec3::ZERO, 0.0);
+        hero.physics.ground_max_speed = 10_000.0;
+        hero.physics.ground_acceleration = 0.0;
+        hero.controller = Value::Entity(9);
+        w.actors.insert(HERO, hero);
+        let push = Push {
+            strength: 0.8,
+            heading: 45.0,
+        };
+        assert_eq!(w.engine_walk(HERO, push), None, "a mover");
+        assert_eq!(w.engine_walk(404, push), None, "no such actor");
+        let a = w.actors.get_mut(&HERO).unwrap();
+        a.physics.ground_max_speed = 25.0;
+        a.physics.ground_acceleration = 160.0;
+        a.physics.ground_deceleration = 80.0;
+        let (physics, aim) = w.engine_walk(HERO, push).unwrap();
+        assert_eq!(physics.ground_max_speed, 25.0);
+        assert_eq!(aim, Aim::Still, "the inactive controller");
+        w.actors.get_mut(&HERO).unwrap().controller = pad;
+        let along = Aim::Along {
+            heading: 45.0,
+            strength: 0.8,
+        };
+        assert_eq!(w.engine_walk(HERO, push).map(|x| x.1), Some(along));
+        assert_eq!(
+            w.engine_walk(HERO, Push::NONE).map(|x| x.1),
+            Some(Aim::Still),
+            "the stick let go"
+        );
+        // A 50 ft/s dash left on him: the model slows it; a mover's stays.
+        let solid = guac_motion::tuning::eruptor_solid();
+        let mut body = Hero::actor(solid, Vec3::ZERO, 0.0);
+        body.settle(&e.world, &[]);
+        body.walk.velocity = Vec3::new(0.0, 0.0, 50.0);
+        for _ in 0..60 {
+            w.step_scripted(
+                HERO,
+                &mut body,
+                &e.world,
+                Push::NONE,
+                STEP,
+                &[],
+                Surfaces::NONE,
+            );
+        }
+        assert!(
+            body.walk.velocity.length() < 1.0,
+            "{:?}",
+            body.walk.velocity
+        );
+        w.actors.get_mut(&HERO).unwrap().physics.ground_max_speed = 10_000.0;
+        body.walk.velocity = Vec3::new(0.0, 0.0, 5.0);
+        w.step_scripted(
+            HERO,
+            &mut body,
+            &e.world,
+            Push::NONE,
+            STEP,
+            &[],
+            Surfaces::NONE,
+        );
+        assert_eq!(body.walk.velocity.z, 5.0, "the scripts' walk is left alone");
+        // Hung on something the engine leaves him be, off the movers or on
+        // them: his rig has him, his walk kept for his letting go (the
+        // au-pop-fizz review).
+        let a = w.actors.get_mut(&HERO).unwrap();
+        a.physics.ground_max_speed = 25.0;
+        a.controller = pad;
+        body.hung = true;
+        body.walk.velocity = Vec3::new(0.0, 0.0, 5.0);
+        body.facing = 10.0;
+        w.step_scripted(HERO, &mut body, &e.world, push, STEP, &[], Surfaces::NONE);
+        assert_eq!(body.walk.velocity.z, 5.0, "hung");
+        assert_eq!(body.facing, 10.0, "hung, the stick turning nothing");
     }
 
     /// AS.78: a palette's clip read before any copy of it plays has its

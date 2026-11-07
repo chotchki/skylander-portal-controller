@@ -430,8 +430,17 @@ impl Run {
         let report = r?;
         assert!(report.stopped.is_empty(), "strict mode stops by halting");
         let dt = 1.0 / 60.0;
-        for hero in self.bench.heroes.values_mut() {
-            hero.step_engine(&self.bench.world, dt, &[HERO_BODY], Surfaces::NONE);
+        let push = self.bench.pads[0].stick.push(self.bench.view);
+        for (h, hero) in &mut self.bench.heroes {
+            self.world.step_scripted(
+                *h,
+                hero,
+                &self.bench.world,
+                push,
+                dt,
+                &[HERO_BODY],
+                Surfaces::NONE,
+            );
             hero.catch_fall();
         }
         self.world.advance(dt, &mut self.bench);
@@ -464,8 +473,17 @@ impl Run {
         self.bench.stand_props(&self.world);
         stopped.extend(r?.stopped);
         let dt = 1.0 / 60.0;
-        for hero in self.bench.heroes.values_mut() {
-            hero.step_engine(&self.bench.world, dt, &[HERO_BODY], Surfaces::NONE);
+        let push = self.bench.pads[0].stick.push(self.bench.view);
+        for (h, hero) in &mut self.bench.heroes {
+            self.world.step_scripted(
+                *h,
+                hero,
+                &self.bench.world,
+                push,
+                dt,
+                &[HERO_BODY],
+                Surfaces::NONE,
+            );
             hero.catch_fall();
         }
         self.world.advance(dt, &mut self.bench);
