@@ -6367,9 +6367,12 @@ fn pop_fizz_goes_into_his_beast_and_back_and_walks_on() {
                 load1()
             );
             assert!(in_it > 3.0, "{load}, punching {punching}: {in_it} m in it");
+            // To its end, the punches thrown fast enough that the meter runs
+            // out in one: the cut leaves him off the movers.
             let mut lasts = 0;
             while beast(&w).is_some() {
-                walks(&mut w, 1, punching);
+                let press = (punching && lasts % 24 < HELD).then_some(0);
+                pad_step(&mut w, Stick::new(0.7, -0.7), press);
                 lasts += 1;
                 assert!(lasts < 900, "{load}: the beast never ended");
             }
