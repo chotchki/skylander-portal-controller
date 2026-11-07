@@ -120,10 +120,13 @@ impl Places {
 /// one broken shut down, the bounce and a delayed effect) and the actor
 /// remover's (debris gone 1.5 s on), and a level's end-of-level sequencing
 /// once its `Game - Level End` adds it (openspec AS.53: the fanfare, the
-/// completion screen's stream, the movie, the level switch), and the
-/// notifications' queue (openspec AS.131: a hint's stay). The set's other
-/// update macros (the encounter's camera pans, the HUD's) stay off.
-pub const UPDATES: [&str; 12] = [
+/// completion screen's stream, the movie, the level switch), the
+/// notifications' queue (openspec AS.131: a hint's stay) and a zone title's
+/// end (the AS.153 review: `MainUI - Show Zone Title` hides the announce
+/// container until this has run its 2.4 s, so with it off the level's first
+/// area hid every hint after it for good). The set's other update macros
+/// (the encounter's camera pans, the HUD's) stay off.
+pub const UPDATES: [&str; 13] = [
     "Destructibles - System Update",
     "Destructibles - Bounce",
     "Destructibles - Delayed Particle",
@@ -134,6 +137,7 @@ pub const UPDATES: [&str; 12] = [
     "Gesture - Update",
     "System - End of Level Sequencing",
     "Notification - Manage Queue",
+    "Zone Title System Update",
     // A turret (openspec AS.76): waiting for its activation, then its game.
     "New Turret - Wait for Turret Activation",
     "New Turret - Update Turret",

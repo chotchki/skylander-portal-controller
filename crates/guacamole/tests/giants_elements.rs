@@ -421,3 +421,94 @@ fn a_heros_own_ground_mends_him_and_anothers_does_nothing() {
     assert!((105.0..=115.0).contains(&own), "{own}");
     assert!(w.stops.is_empty(), "{:#?}", w.stops);
 }
+
+/// The levels past 214 that place walls, on the listing as chapter 1's run
+/// (level 212 has no start the harness can stand him on, 204 no wall).
+const PAST_214: [&str; 13] = [
+    "level_200",
+    "level_201",
+    "level_202_arkeyancopter",
+    "level_203_the_machine",
+    "level_205_piratecards",
+    "level_206",
+    "level_207_arkus_adventure",
+    "level_208_ice",
+    "level_209_giantrobot",
+    "level_210_thevillage",
+    "level_211_final_level",
+    "level_215_enter_arkus",
+    "level_hub_2_stage_1",
+];
+
+/// The AS.153 review: every wall past 214, no level of which the story has
+/// walked yet. Each stands for an element not its own and opens for its own,
+/// on all eight surface definitions, and nothing stops. A wall a level's own
+/// trigger wakes (range 0: level 209's, its `202_TechAreaController.ai` off
+/// the listing) is named, not tried.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn every_levels_walls_open_for_their_own_element_alone() {
+    let t = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut tried, mut waiting) = (0, Vec::new());
+    for level in PAST_214 {
+        let mut w = Walk::joined(level);
+        let cutscene = w.run.vm.program().global_named("Cutscene State").unwrap();
+        for _ in 0..3600 {
+            let held = w.run.vm.global_peek(cutscene).map(|v| w.run.vm.value(v));
+            if held.and_then(|v| v.as_i32()) == Some(0) {
+                break;
+            }
+            w.still(1);
+        }
+        let walls: Vec<(String, i32, f32)> = w
+            .run
+            .files
+            .placed
+            .iter()
+            .filter(|p| p.obj.unit == LEVEL && p.activity_state == 4 && !p.waypoints.is_empty())
+            .filter(|p| {
+                p.script
+                    .as_deref()
+                    .is_some_and(|s| s.ends_with("/ElementalWallController.ai"))
+            })
+            .map(|p| (p.name.clone(), p.id, p.range))
+            .collect();
+        for (name, element, range) in walls {
+            if range <= 0.0 {
+                waiting.push(format!("{level}'s {name}"));
+                continue;
+            }
+            let (wall, _) = w.run.placed(&name);
+            // Gone with the wall it's linked to (level 201's two death walls).
+            if w.gone(wall) {
+                println!("{level}'s {name} went with its link");
+                continue;
+            }
+            let nodes = w.wall_nodes(&name);
+            let at = nodes[nodes.len() / 2] + Vec3::Y;
+            w.be((element + 1) % 8);
+            w.run.put(at, 0.0);
+            w.still(60);
+            assert!(!w.gone(wall), "{level}'s {name} opened for another");
+            w.be(element);
+            w.run.put(at, 0.0);
+            for _ in 0..240 {
+                w.still(1);
+                if w.gone(wall) {
+                    break;
+                }
+            }
+            assert!(w.gone(wall), "{level}'s {name} stood for {element}");
+            tried += 1;
+        }
+        assert!(w.stops.is_empty(), "{level}: {:#?}", w.stops);
+        println!("{level}: {:.1} s", t.elapsed().as_secs_f32());
+    }
+    println!(
+        "{tried} walls; on a level's trigger {waiting:?}; {:.1} s, load at end: {}",
+        t.elapsed().as_secs_f32(),
+        load()
+    );
+    assert_eq!(tried, 23);
+}

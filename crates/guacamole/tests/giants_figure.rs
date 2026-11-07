@@ -505,8 +505,8 @@ fn a_level_up_spawns_its_flourish_from_global_bld_s_models() {
 /// writes them back into the tag (on 2.0's VM Get read 0 and Set wrote
 /// nothing). The portal control's `Save - Get Tag Subtype Properties`
 /// reads the deco id so; its repose, legendary and lightforce flags it
-/// clears unless the tag's `toy load hint` is on its lists, and the TV's
-/// tag names none (AH.324). Eruptor's four on the disc's roster: the base
+/// clears unless the tag's `toy load hint` is on its lists (the TV's tag has
+/// named one since AS.153). Eruptor's four on the disc's roster: the base
 /// (0), Series 2 (0x800), LightCore (0x200) and an alternate deco's shape
 /// (0x403).
 #[test]

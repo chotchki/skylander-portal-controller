@@ -449,10 +449,11 @@ fn a_knock_onto_a_lip_doesnt_leave_him_on_it() {
     assert!(held > 0, "none reached a lip");
 }
 
-/// openspec AS.159: where a fight on level 214's top left Eruptor on the TV,
-/// 0.39 m into the cliff under its rim, in the air at his fall's full speed:
-/// every cast stopped at once, from every heading, and neither he nor the
-/// stick moved again. He comes out of the face, lands and walks.
+/// openspec AS.159: where Eruptor stopped on the TV (`runs/a7`), walking off
+/// level 214's top after a foe on the ledge below, no hit on him: 0.39 m into
+/// the cliff under its rim, in the air at his fall's full speed. Every cast
+/// stopped at once, from every heading, and neither he nor the stick moved
+/// again. He comes out of the face, lands and walks.
 #[test]
 #[ignore = "reads the Giants dump"]
 fn a_hero_in_214s_cliff_comes_out_and_lands() {
@@ -483,6 +484,56 @@ fn a_hero_in_214s_cliff_comes_out_and_lands() {
         println!("  the stick walks him {walked:.2}");
         assert!(walked > 1.0, "a dead stick: {walked}");
     }
+}
+
+/// The AS.159 review: what puts him in that cliff. Off the rim's 30° bank he
+/// leans up to 40°, and his lean turns upright in the air (AG.71) with no
+/// cast moving him, swinging his shape back into the face a centimetre or two
+/// a step. No step's move takes him in: a cast keeps him out, as far as it
+/// goes. Walked off where `runs/a7` was, after a foe on the ledge below, with
+/// the stick on him he's in the face and out of it again, and lands.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn his_lean_turning_upright_swings_him_into_214s_cliff() {
+    let mut run = joined(LEVEL_214);
+    let foe = Vec3::new(-224.56, -18.6, 826.84);
+    let gap = |run: &Run, h: &guac_motion::hero::Hero| {
+        h.wall_gap(&run.bench.world, &[HERO_BODY], 0.0)
+            .unwrap_or(0.0)
+            .min(0.0)
+    };
+    let (mut by_the_move, mut by_the_lean) = (0.0f32, 0.0f32);
+    for (x, z, aim) in [(-231.5f32, 831.6f32, -40.0f32), (-235.5, 832.0, -25.0)] {
+        run.put(Vec3::new(x, -14.5, z), 0.0);
+        pad(&mut run, Stick::new(0.0, 0.0));
+        for _ in 0..20 {
+            run.step_play().unwrap();
+        }
+        let d = foe - run.hero().pivot;
+        let heading = d.x.atan2(d.z).to_degrees() + aim;
+        let mut landed = false;
+        for _ in 0..200 {
+            let before = run.hero().clone();
+            let view = run.bench.view;
+            pad(&mut run, stick_for(view, heading));
+            run.step_play().unwrap();
+            let after = run.hero().clone();
+            let mut moved = after.clone();
+            moved.up = before.up;
+            let (was, went, now) = (gap(&run, &before), gap(&run, &moved), gap(&run, &after));
+            by_the_move += (was - went).max(0.0);
+            by_the_lean += (went - now).max(0.0);
+            if after.footing.supported && after.pivot.y < -18.0 {
+                landed = true;
+                break;
+            }
+        }
+        println!("from ({x}, {z}): at {}", run.hero().pivot);
+        assert!(landed, "hung at {}", run.hero().pivot);
+    }
+    println!("into the face by the moves {by_the_move:.3}, by the lean {by_the_lean:.3}");
+    assert!(by_the_lean > 0.1, "{by_the_lean}");
+    assert!(by_the_move < 0.005, "{by_the_move}");
 }
 
 /// openspec AS.159: where Tree Rex stood on the TV with the stick on the way
