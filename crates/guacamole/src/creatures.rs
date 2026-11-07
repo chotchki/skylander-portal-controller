@@ -646,6 +646,9 @@ pub(crate) struct CreatureShot {
 pub(crate) struct SpawnShot {
     pub name: String,
     pub at: [f32; 3],
+    /// Its facing, degrees (openspec AU.37: what hangs on a hero turns with
+    /// him).
+    pub facing: f32,
     pub drawn: bool,
     #[serde(skip)]
     pub handle: Handle,
@@ -780,9 +783,11 @@ pub(crate) fn report(vm: &guac_script::Vm, world: &ScriptWorld) -> CreaturesRepo
         .into_iter()
         .filter(|&c| !world.removed(c))
         .filter_map(|c| {
+            let a = world.actor(c)?;
             Some(SpawnShot {
                 name: world.name(c),
-                at: world.actor(c)?.position.to_array(),
+                at: a.position.to_array(),
+                facing: a.angles.facing,
                 drawn: false,
                 handle: c,
             })
