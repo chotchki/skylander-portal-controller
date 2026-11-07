@@ -448,6 +448,11 @@ pub struct ScriptWorld {
     /// Each template's animation palette: every slot's clip length,
     /// seconds at 100 %, 0 where a slot is empty.
     pub(crate) palettes: HashMap<Obj, Vec<f32>>,
+    /// Whether a creature held where it first stood is carried on: chapter
+    /// 1's alone, whose second cave clones Chompies into a closet the seam
+    /// doesn't let them out of (stand-in ledger: `wedged-walker`). Level 214's
+    /// Tree Rex stands that way and means it.
+    pub(crate) carries_wedged: bool,
     /// The placements that reset themselves this step: what a player was
     /// carrying among them he's carrying no more ([`add_scripted`]).
     pub(crate) went_round: Vec<Handle>,
@@ -857,6 +862,7 @@ impl ScriptWorld {
             sequences: Vec::new(),
             restarts: Vec::new(),
             palettes: HashMap::new(),
+            carries_wedged: false,
             went_round: Vec::new(),
             rigs: Default::default(),
             rig_held: Vec::new(),
@@ -1258,6 +1264,7 @@ impl ScriptWorld {
     /// moves ([`ScriptWorld::walk`], openspec AH.18): what the headless
     /// runs and the TV's fight listing (AH.25) do once the run is made.
     pub fn walk_first_fight(&mut self, unit: u16) -> usize {
+        self.carries_wedged = true;
         let walkers: Vec<Handle> = FIRST_FIGHT
             .iter()
             .filter_map(|n| self.placed_in(unit, n))

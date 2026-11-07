@@ -3430,6 +3430,7 @@ impl ScriptWorld {
             .map(|(h, _)| *h)
             .collect();
         walkers.sort_unstable();
+        let carries_wedged = self.carries_wedged;
         for h in walkers {
             let own: Vec<BodyId> = engine.body(h).into_iter().collect();
             let Some(a) = self.actors.get_mut(&h) else {
@@ -3464,7 +3465,7 @@ impl ScriptWorld {
             a.position = p;
             a.angles.facing = f;
             a.velocity = v;
-            if let Some(at) = wedged_step(w, p, v, physics.ground_max_speed, dt) {
+            if carries_wedged && let Some(at) = wedged_step(w, p, v, physics.ground_max_speed, dt) {
                 a.position = at;
             }
         }

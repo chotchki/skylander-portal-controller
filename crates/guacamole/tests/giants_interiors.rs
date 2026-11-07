@@ -152,9 +152,9 @@ fn pass(
 /// fade's 30 and the warp's 0.2 s), 0.84 m from where the oracle's
 /// re-entry stood him, his health kept, and the controller waits for the
 /// exit 81 steps after the darkness began (79 frames on the oracle), the
-/// screen clear. Walked into the exit's box (its third waypoint): back out
-/// 1 ft past its first, facing out of the cave, the controller checking for
-/// the way in again. Nothing stops.
+/// screen clear. The cave's own scene played out, walked into the exit's box
+/// (its third waypoint): back out 1 ft past its first, facing out of the
+/// cave, the controller checking for the way in again. Nothing stops.
 #[test]
 #[ignore = "reads the Giants dump"]
 fn chapter_1s_cave_is_entered_and_left_on_foot() {
@@ -223,6 +223,19 @@ fn chapter_1s_cave_is_entered_and_left_on_foot() {
         (exit.x - wp[2].x).hypot(exit.z - wp[2].z) < 0.01,
         "at the third waypoint: {exit}"
     );
+    // The cave's own scene first (AU.33: its Giant freed, on the listing).
+    let (mut waited, mut seen) = (0, false);
+    while waited < 3000 {
+        step(&mut run, &mut stops, None, [false; 4]);
+        waited += 1;
+        let hidden = guacamole::scripts::player_hud_hidden(&run.vm);
+        seen |= hidden;
+        if seen && !hidden {
+            break;
+        }
+    }
+    println!("the cave's scene over after {waited} steps");
+    assert!(seen && waited < 3000, "the scene came and went");
     let out = pass(&mut run, &mut stops, cave, [exit.x, exit.z], CHECKING, 900);
     println!("out of the cave: {out:?}");
     let (at, facing) = out.landed.expect("he landed outside");
