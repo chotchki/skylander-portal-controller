@@ -3521,8 +3521,9 @@ const HUNG_DEPTH: u8 = 8;
 
 /// How many attach nodes an actor's set holds: the scripts index up to 13
 /// on a hero. A node sits where [`ScriptWorld::set_nodes`] put it (a hero's
-/// off his model's attach list, AH.50), else at the actor's pivot
-/// (stand-in ledger: `nodes`).
+/// off his model's attach list, AH.50), else off its model's list
+/// ([`ScriptWorld::set_origin_nodes`]), else at the actor's pivot (stand-in
+/// ledger: `nodes`).
 pub const NODES: u32 = 32;
 
 #[cfg(test)]
@@ -6386,15 +6387,14 @@ mod fight_tests {
                 vec![material],
             )
             .unwrap();
+            let ground = Body {
+                id: BodyId(22),
+                kind: BodyKind::Static,
+                pose: Pose::at(Vec3::Y),
+                collider: Collider::Mesh(std::sync::Arc::new(mesh)),
+            };
             let mut e = pit();
-            e.world
-                .set_body(&Body {
-                    id: BodyId(22),
-                    kind: BodyKind::Static,
-                    pose: Pose::at(Vec3::Y),
-                    collider: Collider::Mesh(std::sync::Arc::new(mesh)),
-                })
-                .unwrap();
+            e.world = ParryWorld::new(&[ground]).unwrap();
             let mut w = world();
             let mut over = Actor::blank();
             over.position = Vec3::new(0.0, 2.0, 0.0);
