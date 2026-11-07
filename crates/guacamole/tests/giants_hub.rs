@@ -737,19 +737,21 @@ fn every_hub_stages_people_stand_talk_and_stop_the_hero() {
             // his talk back (a game left waiting on, it never came).
             if name == "Dreadbeard" {
                 let id = run.placement(name);
-                while run.vm.behaviour(id) != Some("wait for player") {
-                    assert!(run.steps < 20_000, "{stage}: the game's quit");
-                    stops.extend(run.step_play().unwrap());
+                for yes in [true, false] {
+                    while run.vm.behaviour(id) != Some("wait for player") {
+                        assert!(run.steps < 20_000, "{stage}: the game's quit");
+                        stops.extend(run.step_play().unwrap());
+                    }
+                    let again = talk(
+                        &mut run,
+                        &mut stops,
+                        at + guac_motion::seam::Vec3::new(1.5, 0.5, 1.5),
+                        |_| yes,
+                    );
+                    println!("{stage}: {name} again: {again:?}");
+                    assert!(again.cutscene.is_some(), "{stage}: {again:?}");
+                    assert!(again.ended.is_some(), "{stage}: {again:?}");
                 }
-                let again = talk(
-                    &mut run,
-                    &mut stops,
-                    at + guac_motion::seam::Vec3::new(1.5, 0.5, 1.5),
-                    |_| false,
-                );
-                println!("{stage}: {name} again: {again:?}");
-                assert!(again.cutscene.is_some(), "{stage}: {again:?}");
-                assert!(again.ended.is_some(), "{stage}: {again:?}");
             }
         }
         let branch = global(&run, "CutsceneMenu_LastPickedBranch");

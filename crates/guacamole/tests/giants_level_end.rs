@@ -1413,7 +1413,9 @@ fn chapter_1s_time_dare_is_missed_past_its_target() {
         .find(|o| o.kind == ObjectiveKind::Time)
         .expect("the time dare");
     println!("the time dare at {} s of {}", time.count, time.total);
-    assert!(time.count >= 36_000.0, "{}", time.count);
+    // The clock ran on from what it was set to: with the tick's stretch off
+    // it would read 36,000 and this would pass on the set alone.
+    assert!(time.count > 36_000.5, "{}", time.count);
     assert_eq!(time.status, Status::Open);
     assert!(stops.is_empty(), "{stops:#?}");
 }

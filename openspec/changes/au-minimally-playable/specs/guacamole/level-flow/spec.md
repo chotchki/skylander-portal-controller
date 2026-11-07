@@ -60,7 +60,7 @@ Every hub stage SHALL hold the people the original's holds at that point of the 
 
 #### Scenario: Walking into Flynn
 - **WHEN** the hero walks straight at Flynn or Cali
-- **THEN** he stops against them and doesn't come out the far side, Eruptor 2.2 m from Flynn's pivot and 1.8 m from Cali's, a giant at 120 % 3.9 m and 3.5 m, inside the 25 ft and 15 ft a talk starts from
+- **THEN** he stops against them and doesn't come out the far side, Eruptor 2.2 m from Flynn's pivot and 1.8 m from Cali's, the giants at 120 % up to 4.4 m and 4.0 m, inside the 25 ft and 15 ft a talk starts from
 
 #### Scenario: A store's yes
 - **WHEN** the kid answers yes to Auric's or Hatterson's question, or Brock's or Cali's
