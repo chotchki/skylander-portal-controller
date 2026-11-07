@@ -16,8 +16,10 @@ use crate::play::{Play, PlaySystems};
 use crate::theme::{Role, Step};
 use crate::tv_state::{Pen, TvAssets};
 
-/// Over the level and the HUD, under the join corner (960) and the modals.
-const ANNOUNCE_Z: i32 = 940;
+/// Over the level and the HUD's numbers, under everything that takes the
+/// screen: the darkness (870), the pause overlay, the completion screen, the
+/// portal's alert and the modals.
+const ANNOUNCE_Z: i32 = 860;
 /// The card's band, up from the screen's foot over the HUD's panel.
 const CARD_BOTTOM: f32 = 220.0;
 const HINT_TOP: f32 = 40.0;
@@ -116,7 +118,7 @@ fn show(
     *shown = Some((want, entities));
 }
 
-/// The enemy's name, centred in a band across the screen's middle.
+/// The enemy's name, centred in a band low on the screen.
 fn spawn_card(commands: &mut Commands, pen: &Pen, text: &str) -> Entity {
     commands
         .spawn((
@@ -176,6 +178,24 @@ mod tests {
         Line {
             string: Value::Null,
             text: text.map(str::to_owned),
+        }
+    }
+
+    /// openspec AS.131: the words sit over the HUD and under what takes the
+    /// screen, so a hint left up never covers a pause, a completion screen
+    /// or a modal.
+    #[test]
+    fn the_words_sit_under_what_takes_the_screen() {
+        assert!(ANNOUNCE_Z > crate::hud::DAMAGE_Z);
+        for over in [
+            crate::pause::OVERLAY_Z,
+            crate::completion::COMPLETION_Z,
+            crate::alert::ALERT_Z,
+            crate::yes_no::PROMPT_Z,
+            crate::defeat::RESTART_Z,
+            crate::arrival::ARRIVAL_Z,
+        ] {
+            assert!(ANNOUNCE_Z < over, "{over}");
         }
     }
 

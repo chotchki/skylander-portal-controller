@@ -13,7 +13,9 @@
 //!   notifications`, and `Notification - Manage Queue`, one of the loop's
 //!   update macros since AS.131, takes it off after its stay. Only the
 //!   hints: the collection counters and the player pokes the queue also
-//!   holds are the HUD's (stand-in ledger: `hud`).
+//!   holds are the HUD's (stand-in ledger: `hud`). A scene that hides the
+//!   interface hides them with it, as `UI - Adjust UI Visibility` leaves
+//!   the announce container's `hide state` over 0, and their stay waits.
 
 use guac_script::{Value, Vm};
 
@@ -61,8 +63,21 @@ pub fn enemy_card(vm: &Vm, world: &ScriptWorld) -> Option<Line> {
         })
 }
 
-/// The hints on the notifications' queue now, oldest first.
+/// The scripts hide the announcements: `UI Containers`' `announce container`
+/// holds a `hide state` over 0. False until the UI's scripts have made it.
+fn hidden(vm: &Vm) -> bool {
+    global(vm, "UI Containers")
+        .and_then(|c| field(vm, c, "announce container"))
+        .and_then(|c| field(vm, c, "hide state"))
+        .and_then(|s| s.as_f32())
+        .is_some_and(|s| s > 0.0)
+}
+
+/// The hints on the notifications' queue that show now, oldest first.
 pub fn hints(vm: &Vm, world: &ScriptWorld) -> Vec<Line> {
+    if hidden(vm) {
+        return Vec::new();
+    }
     let Some(all) = global(vm, "all notifications").and_then(|n| field(vm, n, "all notifications"))
     else {
         return Vec::new();
@@ -100,8 +115,9 @@ mod tests {
 
     /// A file in the original's shape, our ops: the current scene's `extra
     /// data` holding a card's structure (its sprite made when `sprite`), and
-    /// `all notifications` holding a hint, then a counter (`is a hint?` 0).
-    fn up(sprite: bool) -> Arc<Program> {
+    /// `all notifications` holding a hint, then a counter (`is a hint?` 0),
+    /// and `UI Containers`' announce container at `hide state`.
+    fn up(sprite: bool, hide_state: i32) -> Arc<Program> {
         let mut b = IgzBuilder::new();
         {
             let mut w = Writer::new(&mut b);
@@ -139,6 +155,14 @@ mod tests {
             let queue = w.b.object(0, "ScriptStructure", 0x20);
             w.text(queue, 0x08, "all notifications");
             w.refer(queue, 0x1C, queue_ty);
+            let box_ty = w.op(Class::DefineStructure, "UI Container");
+            let hide = w.variable("hide state", "ValueInfo", Some("IntMeasurement"));
+            let containers_ty = w.op(Class::DefineStructure, "UI Containers");
+            let announce = w.variable("announce container", "ScriptStructure", None);
+            w.refer(announce, 0x24, box_ty);
+            let containers = w.b.object(0, "ScriptStructure", 0x20);
+            w.text(containers, 0x08, "UI Containers");
+            w.refer(containers, 0x1C, containers_ty);
             let name = w.op(Class::DefineMacro, "the name");
             let line = w.op(Class::DefineMacro, "the line");
             let count = w.op(Class::DefineMacro, "the count");
@@ -188,6 +212,11 @@ mod tests {
                 &[El::Local(queue), El::Local(hint), El::Local(is_hint)],
                 one,
             );
+            let hide_at = w.int(hide_state);
+            w.set(
+                &[El::Local(containers), El::Local(announce), El::Local(hide)],
+                hide_at,
+            );
             refer(
                 w,
                 &[El::Local(queue), El::Local(hint), El::Local(text)],
@@ -226,6 +255,8 @@ mod tests {
                 (control_ty, vec![current]),
                 (note_ty, vec![is_hint, text]),
                 (queue_ty, vec![notes, hint, counter]),
+                (box_ty, vec![hide]),
+                (containers_ty, vec![announce]),
             ] {
                 let p = w.push(ty);
                 for v in vars {
@@ -249,8 +280,8 @@ mod tests {
         Arc::new(Program::link(&[unit]).unwrap())
     }
 
-    fn read(sprite: bool) -> (Option<String>, Vec<String>) {
-        let program = up(sprite);
+    fn read(sprite: bool, hide_state: i32) -> (Option<String>, Vec<String>) {
+        let program = up(sprite, hide_state);
         let files = Files {
             placed: vec![Placed::named(FILE, "Macros_GameSystems", Some(PATH), 4)],
             ..Files::default()
@@ -293,9 +324,20 @@ mod tests {
     #[test]
     fn the_card_reads_while_its_sprite_stands_and_the_queue_gives_its_hints() {
         assert_eq!(
-            read(true),
+            read(true, 0),
             (Some("the name".to_owned()), vec!["the line".to_owned()])
         );
-        assert_eq!(read(false).0, None, "no sprite, no card");
+        assert_eq!(read(false, 0).0, None, "no sprite, no card");
+    }
+
+    /// openspec AS.131: a scene hiding the announce container hides the
+    /// hints; the card's its own scene's and stays.
+    #[test]
+    fn a_hidden_announce_container_hides_the_hints_and_not_the_card() {
+        assert_eq!(
+            read(true, 1),
+            (Some("the name".to_owned()), Vec::new()),
+            "hidden"
+        );
     }
 }

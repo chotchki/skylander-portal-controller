@@ -60,11 +60,15 @@ Every hub stage SHALL hold the people the original's holds at that point of the 
 
 #### Scenario: Walking into Flynn
 - **WHEN** the hero walks straight at Flynn or Cali
-- **THEN** he stops against them and doesn't come out the far side
+- **THEN** he stops against them and doesn't come out the far side, Eruptor 2.2 m from Flynn's pivot and 1.8 m from Cali's, a giant at 120 % 3.9 m and 3.5 m, inside the 25 ft and 15 ft a talk starts from
 
 #### Scenario: A store's yes
 - **WHEN** the kid answers yes to Auric's or Hatterson's question, or Brock's or Cali's
-- **THEN** the talk ends with nothing shown, and Flynn's talk still starts after it
+- **THEN** the talk ends with nothing shown, his own talk and Flynn's still start after it, and the run holds what a no leaves
+
+#### Scenario: Dreadbeard's yes
+- **WHEN** the kid answers yes to Dreadbeard's question
+- **THEN** the game reads as quit: he says his quit line, nothing is won or lost, and his talk comes back
 
 #### Scenario: Persephone's upgrades
 - **WHEN** the kid talks to Persephone

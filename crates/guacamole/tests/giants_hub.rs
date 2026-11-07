@@ -599,7 +599,6 @@ const STAGE_PEOPLE: [(&[&str], &[&str]); 4] = [
             "Auric",
             "CS_Auric",
             "Hatterson",
-            "Hatterson(Orbit)",
             "Breakstone",
             "Background_Fairy",
             "MabuRepairGuy1",
@@ -705,6 +704,10 @@ fn every_hub_stages_people_stand_talk_and_stop_the_hero() {
             let id = run.placement(name);
             assert!(run.vm.removed(id), "{stage}: {name} took itself off");
         }
+        // Every stage's utilities controller takes him off at its STARTUP,
+        // and it's off the TV's listing (AS.138): no person of the TV's.
+        let (orbit, _) = run.placed("Hatterson(Orbit)");
+        assert!(!run.world.people().contains(&orbit), "{stage}: the orbit's");
         // A talk with each that has one, the stores and the arena said yes.
         let mut talks = Vec::new();
         for (name, yes) in [
@@ -730,6 +733,24 @@ fn every_hub_stages_people_stand_talk_and_stop_the_hero() {
             assert!(t.cutscene.is_some(), "{stage}: {name} talks: {t:?}");
             assert!(t.ended.is_some(), "{stage}: {name}'s talk ends: {t:?}");
             talks.push(t);
+            // The card game's yes reads as a game quit: his quit scene, and
+            // his talk back (a game left waiting on, it never came).
+            if name == "Dreadbeard" {
+                let id = run.placement(name);
+                while run.vm.behaviour(id) != Some("wait for player") {
+                    assert!(run.steps < 20_000, "{stage}: the game's quit");
+                    stops.extend(run.step_play().unwrap());
+                }
+                let again = talk(
+                    &mut run,
+                    &mut stops,
+                    at + guac_motion::seam::Vec3::new(1.5, 0.5, 1.5),
+                    |_| false,
+                );
+                println!("{stage}: {name} again: {again:?}");
+                assert!(again.cutscene.is_some(), "{stage}: {again:?}");
+                assert!(again.ended.is_some(), "{stage}: {again:?}");
+            }
         }
         let branch = global(&run, "CutsceneMenu_LastPickedBranch");
         println!("{stage}: the last menu's branch {branch:?}");

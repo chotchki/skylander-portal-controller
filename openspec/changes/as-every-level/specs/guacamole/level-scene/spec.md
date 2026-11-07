@@ -227,7 +227,7 @@ A hero walking into an interior's box on any level SHALL be taken to its room: t
 - **THEN** he stands outside its door with the bomb still over him, which opens the wall before the second key
 
 ### Requirement: An enemy's intro names him
-When a level's scripts play an enemy's intro with a name card, the TV SHALL show the enemy's name for as long as the scripts hold it, in the TV's own look, and any hint the scripts queue for after the scene for its stay. Neither SHALL show under a portal alert.
+When a level's scripts play an enemy's intro with a name card, the TV SHALL show the enemy's name for as long as the scripts hold it, in the TV's own look, and any hint the scripts queue for after the scene for its stay. Neither SHALL show under a portal alert, nor a hint while a scene hides the interface, and neither SHALL cover the pause overlay, the completion screen or a modal.
 
 #### Scenario: The lobber's intro
 - **WHEN** the hero sets off Setup_004B on level 214

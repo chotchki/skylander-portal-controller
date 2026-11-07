@@ -448,6 +448,9 @@ pub struct ScriptWorld {
     /// Each template's animation palette: every slot's clip length,
     /// seconds at 100 %, 0 where a slot is empty.
     pub(crate) palettes: HashMap<Obj, Vec<f32>>,
+    /// A card game answered with nothing shown, its pirate still to be told
+    /// it's quit (openspec AU.34: [`crate::prompt::quit_card_game`]).
+    pub(crate) card_game_answered: bool,
     /// Each template's palette's animation info as its file holds it, slot
     /// by slot (openspec AH.49): a template given none reads every slot a
     /// base clip with no layered bit.
@@ -845,6 +848,7 @@ impl ScriptWorld {
             sequences: Vec::new(),
             restarts: Vec::new(),
             palettes: HashMap::new(),
+            card_game_answered: false,
             clip_info: HashMap::new(),
             clip_state: HashMap::new(),
             hero_templates: HashMap::new(),
@@ -2344,7 +2348,8 @@ impl Host for WorldHost<'_, '_> {
         self.world.wakes(asleep)
     }
     fn answer(&mut self, name: &str, args: &[(&str, Value)]) -> bool {
-        crate::prompt::answer_screen(name) || crate::interiors::answer(self.world, name, args)
+        crate::prompt::answer_screen(self.world, name)
+            || crate::interiors::answer(self.world, name, args)
     }
 }
 
@@ -2730,12 +2735,13 @@ pub const HUB_SCRIPTS: [&str; 9] = [
 /// and on their paths (`MabuWalker`, steered with no body under them, as a
 /// scene's actors are, AS.52), the fairy circling the ship (each a `move
 /// from` itself: [`crate::script_members`]). In the rooms: Persephone, her
-/// fly-in the first time, Auric's store, Hatterson's (`Batterson`) and his
-/// orbit's, Dreadbeard at his card table, Breakstone. Each takes itself off
-/// until its adventure's done, so stage 1's first visit shows neither the
-/// Hermit nor Brock. Off it: the robot flying by (stage 1 past 5 adventures,
-/// a count no run reaches yet: AS.130).
-pub const HUB_PEOPLE: [&str; 15] = [
+/// fly-in the first time, Auric's store, Hatterson's (`Batterson`),
+/// Dreadbeard at his card table, Breakstone. Each takes itself off until its
+/// adventure's done, so stage 1's first visit shows neither the Hermit nor
+/// Brock. Off it: the robot flying by (stage 1 past 5 adventures, a count no
+/// run reaches yet: AS.130), and `Hatterson(Orbit)`, whom every stage's
+/// `_Utilities_Controller` takes off at its STARTUP (AS.138).
+pub const HUB_PEOPLE: [&str; 14] = [
     "/Flynn.ai",
     "/Cali.ai",
     "/Hermit.ai",
@@ -2743,7 +2749,6 @@ pub const HUB_PEOPLE: [&str; 15] = [
     "/Persephone.ai",
     "/Auric.ai",
     "/Batterson.ai",
-    "/Hatterson_Orbit.ai",
     "/Breakstone.ai",
     "/Barnsy.ai",
     "/Seraphina.ai",
@@ -6250,6 +6255,7 @@ mod tests {
             "C:/tfb/Content/Levels/Includes/GameElement_CardGame_Sky2/Scripts/CardPirate_Template.ai"
         ));
         assert!(!is_hub_person(&format!("{dir}/Scripts/GiantRobot.ai")));
+        assert!(!is_hub_person(&format!("{dir}/Scripts/Hatterson_Orbit.ai")));
     }
 
     /// openspec AS.98: a level's own people are its placements by name, by
