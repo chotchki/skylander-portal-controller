@@ -57,9 +57,10 @@
 //! by triangle alone it limited nothing and pinned him on the clearing's
 //! crease); off the ground it still stops the step there, as AG.16's
 //! replays have it (one of AG.39's landings comes a record early without
-//! that), but only for one step; over [`INSIDE`] into a triangle a cast that
-//! stops him at once with no plane against the motion gives way to the
-//! recovery alone; one a solid answers so goes on past it; and a second step's
+//! that), but only for one step; over [`INSIDE`] into a triangle, or any way
+//! into one once a step has got him nowhere, a cast that stops him at once
+//! with no plane against the motion gives way to the recovery alone; one a
+//! solid answers so goes on past it; and a second step's
 //! cast stopped at once on no plane at all, a triangle met from behind, is
 //! passed over (openspec AS.159, all four a reading: no recording has a hero
 //! in a cliff or pinned on a Chompy).
@@ -365,17 +366,23 @@ impl Proxy<'_> {
             };
             let travel = (hit.distance - back).clamp(0.0, len);
             // Stopped at once with no plane the motion runs into: a cast from
-            // deep in a triangle answers from inside it, whichever way he
-            // goes, so no solve moves him and he hangs where he is for good,
-            // stick and all (openspec AS.159: a knock put Eruptor 0.39 m into
-            // level 214's cliff). He leaves by the recovery alone, straight
-            // out of the plane he's deepest in. The step ends there: the rest
-            // of a walk from inside a closet's floor took a Chompy in deeper.
+            // inside a triangle answers from inside it, whichever way he goes,
+            // so no solve moves him and he hangs where he is for good, stick
+            // and all (openspec AS.159: Eruptor's lean turning upright off a
+            // rim swung him 0.39 m into level 214's cliff, no cast moving him,
+            // as AG.71's replays have his lean in the air). He leaves by the
+            // recovery alone, straight out of the plane he's deepest in, from
+            // over [`INSIDE`] in or, once a step has got him nowhere, from
+            // any depth: left a hair in, a bank's slope stopped every cast
+            // along it for good (the AS.159 review, `runs/s1`). The step ends
+            // there: the rest of a walk from inside a closet's floor took a
+            // Chompy in deeper.
+            let inside = if stalled { 0.0 } else { INSIDE };
             if travel <= 0.0
                 && squarest.is_none()
                 && let Some(deepest) = seen
                     .iter()
-                    .filter(|p| p.distance < -INSIDE)
+                    .filter(|p| p.distance < -inside)
                     .min_by(|a, b| a.distance.total_cmp(&b.distance))
             {
                 pos += deepest.normal * (RECOVERY * remaining);
@@ -787,7 +794,7 @@ mod tests {
         }
     }
 
-    fn inside(depth: f32, grounded: bool) -> Vec3 {
+    fn inside(depth: f32, grounded: bool, stalled: bool) -> Vec3 {
         let seam = Inside {
             normal: Vec3::NEG_Z,
             depth,
@@ -802,7 +809,7 @@ mod tests {
         };
         let falling = Vec3::new(5.0, -25.0, 0.0);
         proxy
-            .integrate(Vec3::ZERO, Vec3::Y, falling, 1.0 / 60.0, grounded, false)
+            .integrate(Vec3::ZERO, Vec3::Y, falling, 1.0 / 60.0, grounded, stalled)
             .pivot
     }
 
@@ -812,7 +819,7 @@ mod tests {
     #[test]
     fn a_hero_deep_in_a_plane_comes_out_of_it() {
         for grounded in [false, true] {
-            let out = inside(0.39, grounded);
+            let out = inside(0.39, grounded, false);
             assert!((out.z + RECOVERY / 60.0).abs() < 1e-5, "{out}");
             assert_eq!((out.x, out.y), (0.0, 0.0), "straight out of it");
         }
@@ -822,7 +829,15 @@ mod tests {
     /// the plane is the step's end.
     #[test]
     fn a_hero_barely_in_a_plane_stops_as_ever() {
-        assert_eq!(inside(INSIDE * 0.5, false), Vec3::ZERO);
+        assert_eq!(inside(INSIDE * 0.5, false, false), Vec3::ZERO);
+    }
+
+    /// The AS.159 review: that stop is one step's. A hero a hair in a plane
+    /// that got him nowhere last step comes out of it, or he stays for good.
+    #[test]
+    fn a_hero_barely_in_a_plane_comes_out_the_next_step() {
+        let out = inside(INSIDE * 0.5, false, true);
+        assert!((out.z + RECOVERY / 60.0).abs() < 1e-5, "{out}");
     }
 
     /// A seam with one solid, its plane facing +x, a hair into his shape, that

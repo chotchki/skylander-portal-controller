@@ -8,6 +8,7 @@ use std::collections::HashSet;
 
 use guac_motion::edge::WALKABLE_RANGE;
 use guac_motion::ground;
+use guac_motion::proxy::Surfaces;
 use guac_motion::seam::Vec3;
 use guac_motion::stick::{DEAD_ZONE, Stick};
 use guac_script::{Mode, Value};
@@ -506,4 +507,41 @@ fn a_hero_under_the_level_is_set_back() {
     let at = run.hero().pivot;
     println!("half a second on at {at:?}");
     assert!(at.y > 20.0, "hung under the level: {at:?}");
+}
+
+/// The AS.159 review, on `runs/s1` of au-pop-fizz's: the bank on level 214's
+/// third island, 61° off level, where that run's Eruptor wedged on his way to
+/// a fight, falling at 120 ft/s with the stick only turning him. The first
+/// spot is 19 cm in, the second 9, and the recovery out of a plane left him a
+/// hair in it, every cast along the bank stopped at once and no plane against
+/// it, for good. He slides off it, lands and walks. An engine's fall: no
+/// fight of the third island's is woken by the set-down.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_hero_a_hair_in_the_third_islands_bank_slides_off_it() {
+    let mut run = joined(LEVEL_214);
+    for spot in [
+        Vec3::new(658.4268, -17.78636, 484.40433),
+        Vec3::new(660.4773, -19.832815, 485.80066),
+    ] {
+        let start = run.hero().clone();
+        let hero = run.hero_mut();
+        hero.pivot = spot;
+        hero.up = Vec3::Y;
+        hero.walk.velocity = Vec3::new(0.0, -120.0, 0.0);
+        let world = &run.bench.world;
+        let mut h = run.hero().clone();
+        let mut landed = None;
+        for k in 0..240u32 {
+            h.step_engine(world, 1.0 / 60.0, &[HERO_BODY], Surfaces::NONE);
+            if h.footing.supported {
+                landed = Some(k);
+                break;
+            }
+        }
+        println!("{spot}: landed after {landed:?} steps at {}", h.pivot);
+        assert!(landed.is_some(), "still hanging at {}", h.pivot);
+        assert!(h.pivot.y < -22.0, "off the bank: {}", h.pivot);
+        *run.hero_mut() = start;
+    }
 }
