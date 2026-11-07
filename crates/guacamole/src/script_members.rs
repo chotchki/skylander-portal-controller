@@ -2525,13 +2525,17 @@ impl ScriptWorld {
             None => (named("_LHS").ok_or(HostFault::Nothing)?, true),
         };
         let point = self.point(target, engine).ok_or(HostFault::Nothing)?;
+        let walks = self.actors.get(&mover).is_some_and(|a| a.walker.is_some());
         let done = if toward {
             guac_motion::steer::reached(at, point, distance)
         } else {
-            // From itself it goes on along its facing, never clear of its own
-            // place (openspec AU.34: the hub's fairies; a reading, `steer::input`
-            // already heading a mover at its point along its facing).
-            self.actor_of(Some(target)) != Some(mover)
+            // One a scene moves from itself goes on along its facing, never
+            // clear of its own place (openspec AU.34: the hub's fairies; a
+            // reading, `steer::input` already heading a mover at its point
+            // along its facing). A creature's is clear at once: the Chompies
+            // ask it all through a fight, and walked on it they'd eat and
+            // chase on other steps.
+            (walks || self.actor_of(Some(target)) != Some(mover))
                 && guac_motion::steer::cleared(at, point, distance)
         };
         if self
@@ -4984,6 +4988,16 @@ mod fight_tests {
             ask(&mut w, &mut e, &from(Value::Object(WP), 0)),
             Answer::Run { .. }
         ));
+        // A creature's own place it's clear of at once, and it stands.
+        let creature = chompy(Vec3::new(0.0, 3.0, 0.0), 90.0);
+        w.actors.insert(C1, creature);
+        assert!(matches!(
+            ask(&mut w, &mut e, &from(Value::Entity(C1), 0)),
+            Answer::Run { .. }
+        ));
+        w.advance(STEP, &mut e);
+        let at = w.actor(C1).unwrap().position;
+        assert!(at.x.abs() < 1e-3, "it stands: {at}");
     }
 
     /// openspec AU.34: of those the engine doesn't walk, the people whose
