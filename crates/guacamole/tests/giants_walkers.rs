@@ -6433,17 +6433,18 @@ fn every_modelled_character_attacks_or_is_listed() {
             .count()
     };
     assert_eq!(hits_on(1), 67, "every first attack hits");
-    // A second attack landing in the next press's window counts, that press
-    // having started nothing of its own: Slam Bam's prison since chapter 1's
-    // way joined the listing and moved the draws (AU.33).
+    // A second attack landing in the next press's window counts, it having
+    // started something and that press nothing of its own: Slam Bam's prison
+    // since chapter 1's way joined the listing and moved the draws (AU.33).
     let second = table
         .iter()
         .filter(|f| {
             let of = |action| f.presses.iter().find(|p| p.action == action);
             of(2).is_some_and(|p| !p.hits.is_empty())
-                || of(3).is_some_and(|p| {
-                    !p.hits.is_empty() && p.press_slots.is_empty() && p.clones.is_empty()
-                })
+                || of(2).is_some_and(Press::read)
+                    && of(3).is_some_and(|p| {
+                        !p.hits.is_empty() && p.press_slots.is_empty() && p.clones.is_empty()
+                    })
         })
         .count();
     assert!(second >= 45, "{second} second attacks hit");

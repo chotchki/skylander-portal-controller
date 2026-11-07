@@ -458,31 +458,38 @@ mod tests {
         }
     }
 
-    /// A wall of two triangles at `x`, facing `facing` along x, tilted a
-    /// little about up as chapter 1's second cave's mouth's are.
-    fn wall(x: f32, facing: f32, base: u32) -> ([Vec3; 4], [[u32; 3]; 2]) {
-        let lean = facing * 0.05;
-        let at = |y: f32, z: f32| Vec3::new(x + z * lean, y, z);
+    /// A wall of two triangles facing `normal`, its plane `off` metres from
+    /// the origin behind that normal.
+    fn wall(normal: Vec3, off: f32, base: u32) -> ([Vec3; 4], [[u32; 3]; 2]) {
+        let (up, along) = (Vec3::Y, normal.cross(Vec3::Y));
+        let at = |a: f32, b: f32| -normal * off + up * a + along * b;
         (
-            [at(-9.0, -9.0), at(-9.0, 9.0), at(9.0, 9.0), at(9.0, -9.0)],
-            match facing > 0.0 {
-                true => [[base, base + 2, base + 1], [base, base + 3, base + 2]],
-                false => [[base, base + 1, base + 2], [base, base + 2, base + 3]],
-            },
+            [at(-9.0, -9.0), at(9.0, -9.0), at(9.0, 9.0), at(-9.0, 9.0)],
+            [[base, base + 1, base + 2], [base, base + 2, base + 3]],
         )
     }
 
-    /// The au-whole-story review: a sphere wider than the gap, inside both
-    /// walls at once, each pushing him off. No velocity keeps the two, and
-    /// a solve that gave up left eight of chapter 1's second cave's Chompies
-    /// in its mouths for good, falling and jumping on the spot. He goes on
-    /// along them; pushed at neither, nothing changes.
+    /// The au-whole-story review: a 3 ft sphere in chapter 1's second cave's
+    /// mouth, its walls' normals and his place as `Enemy_Chompy(12)` stood,
+    /// inside both at once, each pushing him off. No velocity keeps the two,
+    /// and a solve that gave up left eight of the cave's Chompies stood in
+    /// their mouths for good, falling and jumping on the spot. He goes on
+    /// along them.
     #[test]
     fn a_shape_wider_than_the_gap_goes_on_along_it() {
         use crate::parry::ParryWorld;
         use crate::seam::{Body, BodyKind, Collider, Mesh};
-        let (l, lt) = wall(-0.88, 1.0, 0);
-        let (r, rt) = wall(0.88, -1.0, 4);
+        let radius = 0.9144;
+        let (l, lt) = wall(
+            Vec3::new(-0.93499774, 0.0, 0.35465395),
+            radius - 0.050579 + KEEP,
+            0,
+        );
+        let (r, rt) = wall(
+            Vec3::new(0.91633713, 0.0, -0.40040767),
+            radius - 0.00084 + KEEP,
+            4,
+        );
         let mesh = Mesh::new(
             l.iter().chain(&r).copied().collect(),
             lt.iter().chain(&rt).copied().collect(),
@@ -498,28 +505,20 @@ mod tests {
         .unwrap();
         let proxy = Proxy {
             seam: &world,
-            shape: Shape::Sphere { radius: 0.9144 },
+            shape: Shape::Sphere { radius },
             centre: Vec3::ZERO,
             rotation: Quat::IDENTITY,
             exclude: &[],
             surfaces: Surfaces::NONE,
         };
-        let inside = proxy.planes(Vec3::ZERO, Vec3::Y, 0.1);
-        assert_eq!(
-            inside.iter().filter(|p| p.distance < 0.0).count(),
-            2,
-            "inside both: {inside:?}"
-        );
+        let inside = proxy.planes(Vec3::ZERO, Vec3::Y, CONTACT_REACH);
+        assert_eq!(inside.len(), 2, "both walls: {inside:?}");
         let step = 1.0 / 60.0;
-        for velocity in [
-            Vec3::new(0.0, -5.0, 0.0),
-            Vec3::new(0.0, 8.0, -6.0),
-            Vec3::new(-3.0, 8.0, -6.0),
-        ] {
+        // The jump the mouth lets him out on, and a stick along it.
+        for velocity in [Vec3::new(-6.74, 11.7, -11.36), Vec3::new(-2.4, 0.0, -5.5)] {
             let moved = proxy.integrate(Vec3::ZERO, Vec3::Y, velocity, step, false);
-            let along = moved.pivot.y.abs() + moved.pivot.z.abs();
             assert!(
-                along > velocity.y.abs() * step * 0.5,
+                moved.pivot.length() > velocity.length() * step * 0.3,
                 "{velocity}: {moved:?}"
             );
             assert_ne!(moved.velocity, Vec3::ZERO, "{velocity}");

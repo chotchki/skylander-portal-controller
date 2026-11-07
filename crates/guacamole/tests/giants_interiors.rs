@@ -456,6 +456,91 @@ fn bombs(run: &Run) -> Vec<Handle> {
         .collect()
 }
 
+/// Into the workshop and onto its bomb spawner: whether a bomb other than
+/// `not` was taken there.
+fn the_workshop_gives_one(run: &mut Run, stops: &mut Vec<String>, not: Handle) -> Option<u32> {
+    run.put(Vec3::new(20.0, -16.0, 20.0), 90.0);
+    for _ in 0..120 {
+        step(run, stops, None, [false; 4]);
+    }
+    let house = run.placed("Interior_Controller_Island_2_1").1;
+    let landed0 = run.world.landed.len();
+    run.put(house, 0.0);
+    for _ in 0..300 {
+        step(run, stops, None, [false; 4]);
+        if run.world.landed.len() > landed0 {
+            break;
+        }
+    }
+    assert!(run.world.landed.len() > landed0, "into the workshop");
+    for k in 0..900u32 {
+        let at = run.hero().pivot;
+        let far = (at.x - WORKSHOP_BOMBS[0]).hypot(at.z - WORKSHOP_BOMBS[1]) > 0.8;
+        step(run, stops, far.then_some(WORKSHOP_BOMBS), [false; 4]);
+        if bombs(run)
+            .into_iter()
+            .any(|b| b != not && behaviour(run, b).as_deref() == Some("following player"))
+        {
+            return Some(k);
+        }
+    }
+    None
+}
+
+/// The first bomb, taken by the first spawner.
+fn the_first_bomb(run: &mut Run, stops: &mut Vec<String>) -> Handle {
+    run.put(Vec3::new(36.0, -16.0, 27.9), 90.0);
+    for _ in 0..240 {
+        step(run, stops, None, [false; 4]);
+        if let Some(b) = bombs(run)
+            .into_iter()
+            .find(|b| behaviour(run, *b).as_deref() == Some("following player"))
+        {
+            return b;
+        }
+    }
+    panic!("the first bomb taken");
+}
+
+/// openspec AU.33's review: his figure off the portal with the bomb in his
+/// hands and the next on. The bomb's own `no players present` hands it on
+/// or it runs out, and either way no spawner stands empty for good: the
+/// soft lock the tool's let-go is there to stop. A hero beaten goes the same
+/// way, off by the deactivate path.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_bomb_held_through_a_swap_leaves_the_workshops_spawner_free() {
+    println!("load at start: {}", load());
+    let started = std::time::Instant::now();
+    let (mut run, mut stops) = joined(LEVEL_214);
+    let bomb = the_first_bomb(&mut run, &mut stops);
+    let values = run.figure_values().expect("his figure's words");
+    let gone = run.deactivate().unwrap_or_else(|h| panic!("{h}"));
+    println!("off: {gone:?}");
+    run.join_tag(eruptor_tag(values))
+        .unwrap_or_else(|h| panic!("{h}"));
+    let tool = run.vm.program().global_named("Player 1 Tool").unwrap();
+    let mut out = None;
+    for k in 0..1500u32 {
+        step(&mut run, &mut stops, None, [false; 4]);
+        if run.vm.global_peek(tool) == Some(Value::Null)
+            && behaviour(&run, bomb).as_deref() != Some("following player")
+        {
+            out = Some(k);
+            break;
+        }
+    }
+    let out = out.expect("let go of, its count run out");
+    let taken = the_workshop_gives_one(&mut run, &mut stops, bomb);
+    println!(
+        "let go after {out} steps, the workshop's taken after {taken:?}; {:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    assert!(taken.is_some(), "the workshop's own bomb");
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
 /// openspec AU.33: a bomb left to run out in his hands is no bomb he carries.
 /// Its count at 0 it bursts over him and stands back on the first spawner,
 /// and the workshop's spawner, which clones none while a player carries one,
@@ -468,18 +553,7 @@ fn a_bomb_run_out_in_his_hands_leaves_the_workshops_spawner_free() {
     println!("load at start: {}", load());
     let started = std::time::Instant::now();
     let (mut run, mut stops) = joined(LEVEL_214);
-    run.put(Vec3::new(36.0, -16.0, 27.9), 90.0);
-    let mut carried = None;
-    for _ in 0..240 {
-        step(&mut run, &mut stops, None, [false; 4]);
-        carried = bombs(&run)
-            .into_iter()
-            .find(|b| behaviour(&run, *b).as_deref() == Some("following player"));
-        if carried.is_some() {
-            break;
-        }
-    }
-    let bomb = carried.expect("the first bomb taken");
+    let bomb = the_first_bomb(&mut run, &mut stops);
     let mut out = None;
     for k in 0..1200u32 {
         step(&mut run, &mut stops, None, [false; 4]);
@@ -491,39 +565,7 @@ fn a_bomb_run_out_in_his_hands_leaves_the_workshops_spawner_free() {
     let out = out.expect("it ran out and stands on its spawner again");
     let tool = run.vm.program().global_named("Player 1 Tool").unwrap();
     assert_eq!(run.vm.global_peek(tool), Some(Value::Null), "his no more");
-    // Off where it can't be taken again, then the workshop.
-    run.put(Vec3::new(20.0, -16.0, 20.0), 90.0);
-    for _ in 0..120 {
-        step(&mut run, &mut stops, None, [false; 4]);
-    }
-    let house = run.placed("Interior_Controller_Island_2_1").1;
-    let landed0 = run.world.landed.len();
-    run.put(house, 0.0);
-    for _ in 0..300 {
-        step(&mut run, &mut stops, None, [false; 4]);
-        if run.world.landed.len() > landed0 {
-            break;
-        }
-    }
-    assert!(run.world.landed.len() > landed0, "into the workshop");
-    let mut taken = None;
-    for k in 0..900u32 {
-        let at = run.hero().pivot;
-        let far = (at.x - WORKSHOP_BOMBS[0]).hypot(at.z - WORKSHOP_BOMBS[1]) > 0.8;
-        step(
-            &mut run,
-            &mut stops,
-            far.then_some(WORKSHOP_BOMBS),
-            [false; 4],
-        );
-        if bombs(&run)
-            .into_iter()
-            .any(|b| b != bomb && behaviour(&run, b).as_deref() == Some("following player"))
-        {
-            taken = Some(k);
-            break;
-        }
-    }
+    let taken = the_workshop_gives_one(&mut run, &mut stops, bomb);
     println!(
         "ran out after {out} steps, the workshop's taken after {taken:?}; {:.1} s; load at end: {}",
         started.elapsed().as_secs_f64(),

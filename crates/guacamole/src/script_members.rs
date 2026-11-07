@@ -6460,6 +6460,25 @@ mod fight_tests {
         e.hero = Some(hero);
         w.actors.insert(HERO, Actor::blank());
         assert_eq!(type_under(&mut w, &mut e, HERO), Value::Int(0));
+        // How far over his ground he reads: how far he's fallen, a foot at
+        // least so gravity acts, 0 where his shape stands on a lip over
+        // nothing, and past the safe point trail's 5 ft either way.
+        let ground = get(&mut w, &mut e, "abstractplacement", "ground", HERO, HERO);
+        let over = |w: &mut ScriptWorld, e: &mut Pit, m: &str| {
+            let a = Access {
+                placement: HERO,
+                receiver: Some(Value::Entity(HERO)),
+                member: MemberId::named("positionmeasurement", m),
+                other_point: Some(ground),
+                via: None,
+                op: None,
+            };
+            w.get(&a, e).unwrap().as_f32().unwrap()
+        };
+        assert_eq!(over(&mut w, &mut e, "separation"), 1.0);
+        assert!(over(&mut w, &mut e, "vertical offset") > 5.0);
+        e.hero.as_mut().unwrap().footing.supported = true;
+        assert_eq!(over(&mut w, &mut e, "separation"), 0.0);
         e.hero = None;
         // A creature with a solid, far over the floor: still none.
         w.actors.insert(C1, chompy(Vec3::new(0.0, 500.0, 0.0), 0.0));

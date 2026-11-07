@@ -827,35 +827,60 @@ mod catch {
 
     /// AS.146's review: over nothing with his shape on the lip he stands, as
     /// on any ledge, a floor under his pivot or none: the support check is
-    /// the planes at his shape, the ground finder its own.
+    /// the planes at his shape, the ground finder its own. Eruptor and a
+    /// giant's twice his size, on a floor's edge and on a beam narrower than
+    /// either, walked to its side.
     #[test]
     fn a_lip_with_nothing_under_his_pivot_holds_him() {
-        let world = floor();
-        let mut over = walked(&world, 30);
-        let r = match over.solid().shape {
-            crate::seam::Shape::Capsule { radius, .. } | crate::seam::Shape::Sphere { radius } => {
-                radius
+        let beam = ParryWorld::new(&[Body {
+            id: BodyId(1),
+            kind: BodyKind::Static,
+            collider: Collider::Convex(crate::seam::Shape::Box {
+                half_extents: Vec3::new(0.2, 0.5, 5.0),
+                margin: 0.0,
+            }),
+            pose: crate::seam::Pose::new(Vec3::new(0.0, -0.5, 0.0), Quat::IDENTITY),
+        }])
+        .unwrap();
+        let floor = floor();
+        for (solid, what) in [
+            (eruptor_solid(), "Eruptor"),
+            (
+                crate::tuning::ERUPTOR_SHAPE
+                    .havok([crate::tuning::ERUPTOR_SCALE * 200.0; 3])
+                    .unwrap(),
+                "a giant",
+            ),
+        ] {
+            let r = match solid.shape {
+                crate::seam::Shape::Capsule { radius, .. }
+                | crate::seam::Shape::Sphere { radius } => radius,
+                s => panic!("{s:?}"),
+            };
+            for (world, edge) in [(&floor, 5.0), (&beam, 0.2)] {
+                let mut over = Hero::new(solid, Tuning::ERUPTOR, Vec3::ZERO, 0.0);
+                over.settle(world, &[]);
+                over.pivot.x = edge + r * 0.3;
+                // Gravity brings him onto the lip and sleeps there, as the
+                // mover update's does: it asks his separation, 0 once he's
+                // supported.
+                let mut settled = 0;
+                for _ in 0..60 {
+                    over.walk.velocity = match over.footing.supported {
+                        true => Vec3::ZERO,
+                        false => Vec3::new(0.0, -1.667, 0.0),
+                    };
+                    over.step_engine(world, 1.0 / 60.0, &[], Surfaces::NONE);
+                    settled = if over.footing.supported {
+                        settled + 1
+                    } else {
+                        0
+                    };
+                }
+                assert_eq!(over.footing.ground, None, "{what}: nothing under his pivot");
+                assert!(settled >= 30, "{what} on the lip at {edge}: {}", over.pivot);
             }
-            ref s => panic!("{s:?}"),
-        };
-        over.pivot = Vec3::new(5.0 + r * 0.3, over.pivot.y, 0.0);
-        // Gravity brings him onto the lip and sleeps there, as the mover
-        // update's does: it asks his separation, 0 once he's supported.
-        let mut settled = 0;
-        for _ in 0..60 {
-            over.walk.velocity = match over.footing.supported {
-                true => Vec3::ZERO,
-                false => Vec3::new(0.0, -1.667, 0.0),
-            };
-            over.step_engine(&world, 1.0 / 60.0, &[], Surfaces::NONE);
-            settled = if over.footing.supported {
-                settled + 1
-            } else {
-                0
-            };
         }
-        assert_eq!(over.footing.ground, None, "no floor under his pivot");
-        assert!(settled >= 30, "his shape on the lip: {}", over.pivot);
     }
 }
 
