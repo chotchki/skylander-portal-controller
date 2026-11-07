@@ -4247,16 +4247,16 @@ const GIANTS_OFF: [GiantOff; 7] = [
         load: "110_RobotGiant",
         stop: 125,
         top: 24.000002,
-        walked: 12.702467,
-        eye_moved: 12.890366,
+        walked: 13.009058,
+        eye_moved: 13.151064,
         writes: 711,
     },
     GiantOff {
         load: "110_RobotGiant_Legendary",
         stop: 125,
         top: 24.000002,
-        walked: 12.702467,
-        eye_moved: 12.890366,
+        walked: 13.009058,
+        eye_moved: 13.151064,
         writes: 711,
     },
     GiantOff {
@@ -4996,14 +4996,16 @@ fn a_hero_put_in_after_a_fall_back_has_the_scripts_view_again() {
     // From where (AG.170's tree, 2026-10-25): their eye at the first write
     // 0.195 m from where the chain's stood, 16.764 m from his feet (the
     // chain's 16.738 from Ninjini's). Ninjini stands on the 14 x 20 ft
-    // capsule his setup writes, which ends his fall-back walk 12.68 m on;
+    // capsule his setup writes, which ends his fall-back walk 13.0 m on, as
+    // the rest of the giants' do (12.68 m until a solve that gave up stopped
+    // stopping him: the au-whole-story review, 0.159 m from the chain's);
     // on the disc's 4 x 6 ft sphere (the fallback merge's tree) it ended
     // 13.74 m on, and these were 0.263 and 16.750 m (16.564).
     let (_, why) = walk.stop.as_ref().expect("his script stops in play");
     assert!(why.contains("Minion.ai #842"), "{why}");
     assert_eq!(walk.stop.as_ref().map(|s| s.0), Some(124));
     assert_eq!(
-        first.1, 0.19464792,
+        first.1, 0.15869054,
         "the first step's move from the chain's eye"
     );
     assert_eq!(first.2, 16.763998, "the eye from his feet");
@@ -6433,7 +6435,21 @@ fn every_modelled_character_attacks_or_is_listed() {
             .count()
     };
     assert_eq!(hits_on(1), 67, "every first attack hits");
-    assert!(hits_on(2) >= 45, "{} second attacks hit", hits_on(2));
+    // A second attack landing in the next press's window counts, it having
+    // started something and that press nothing of its own: Slam Bam's prison
+    // since chapter 1's way joined the listing and moved the draws (AU.33).
+    let second = table
+        .iter()
+        .filter(|f| {
+            let of = |action| f.presses.iter().find(|p| p.action == action);
+            of(2).is_some_and(|p| !p.hits.is_empty())
+                || of(2).is_some_and(Press::read)
+                    && of(3).is_some_and(|p| {
+                        !p.hits.is_empty() && p.press_slots.is_empty() && p.clones.is_empty()
+                    })
+        })
+        .count();
+    assert!(second >= 45, "{second} second attacks hit");
     let stops: BTreeSet<(&str, &str, u32)> = table
         .iter()
         .flat_map(|f| {

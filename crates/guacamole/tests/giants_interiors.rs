@@ -152,9 +152,9 @@ fn pass(
 /// fade's 30 and the warp's 0.2 s), 0.84 m from where the oracle's
 /// re-entry stood him, his health kept, and the controller waits for the
 /// exit 81 steps after the darkness began (79 frames on the oracle), the
-/// screen clear. Walked into the exit's box (its third waypoint): back out
-/// 1 ft past its first, facing out of the cave, the controller checking for
-/// the way in again. Nothing stops.
+/// screen clear. The cave's own scene played out, walked into the exit's box
+/// (its third waypoint): back out 1 ft past its first, facing out of the
+/// cave, the controller checking for the way in again. Nothing stops.
 #[test]
 #[ignore = "reads the Giants dump"]
 fn chapter_1s_cave_is_entered_and_left_on_foot() {
@@ -223,6 +223,19 @@ fn chapter_1s_cave_is_entered_and_left_on_foot() {
         (exit.x - wp[2].x).hypot(exit.z - wp[2].z) < 0.01,
         "at the third waypoint: {exit}"
     );
+    // The cave's own scene first (AU.33: its Giant freed, on the listing).
+    let (mut waited, mut seen) = (0, false);
+    while waited < 3000 {
+        step(&mut run, &mut stops, None, [false; 4]);
+        waited += 1;
+        let hidden = guacamole::scripts::player_hud_hidden(&run.vm);
+        seen |= hidden;
+        if seen && !hidden {
+            break;
+        }
+    }
+    println!("the cave's scene over after {waited} steps");
+    assert!(seen && waited < 3000, "the scene came and went");
     let out = pass(&mut run, &mut stops, cave, [exit.x, exit.z], CHECKING, 900);
     println!("out of the cave: {out:?}");
     let (at, facing) = out.landed.expect("he landed outside");
@@ -441,6 +454,125 @@ fn bombs(run: &Run) -> Vec<Handle> {
         .filter(|h| run.world.name(*h) == "Bomb_Template")
         .filter(|h| run.world.actor(*h).is_some_and(|a| !a.removed))
         .collect()
+}
+
+/// Into the workshop and onto its bomb spawner: whether a bomb other than
+/// `not` was taken there.
+fn the_workshop_gives_one(run: &mut Run, stops: &mut Vec<String>, not: Handle) -> Option<u32> {
+    run.put(Vec3::new(20.0, -16.0, 20.0), 90.0);
+    for _ in 0..120 {
+        step(run, stops, None, [false; 4]);
+    }
+    let house = run.placed("Interior_Controller_Island_2_1").1;
+    let landed0 = run.world.landed.len();
+    run.put(house, 0.0);
+    for _ in 0..300 {
+        step(run, stops, None, [false; 4]);
+        if run.world.landed.len() > landed0 {
+            break;
+        }
+    }
+    assert!(run.world.landed.len() > landed0, "into the workshop");
+    for k in 0..900u32 {
+        let at = run.hero().pivot;
+        let far = (at.x - WORKSHOP_BOMBS[0]).hypot(at.z - WORKSHOP_BOMBS[1]) > 0.8;
+        step(run, stops, far.then_some(WORKSHOP_BOMBS), [false; 4]);
+        if bombs(run)
+            .into_iter()
+            .any(|b| b != not && behaviour(run, b).as_deref() == Some("following player"))
+        {
+            return Some(k);
+        }
+    }
+    None
+}
+
+/// The first bomb, taken by the first spawner.
+fn the_first_bomb(run: &mut Run, stops: &mut Vec<String>) -> Handle {
+    run.put(Vec3::new(36.0, -16.0, 27.9), 90.0);
+    for _ in 0..240 {
+        step(run, stops, None, [false; 4]);
+        if let Some(b) = bombs(run)
+            .into_iter()
+            .find(|b| behaviour(run, *b).as_deref() == Some("following player"))
+        {
+            return b;
+        }
+    }
+    panic!("the first bomb taken");
+}
+
+/// openspec AU.33's review: his figure off the portal with the bomb in his
+/// hands and the next on. The bomb's own `no players present` hands it on
+/// or it runs out, and either way no spawner stands empty for good: the
+/// soft lock the tool's let-go is there to stop. A hero beaten goes the same
+/// way, off by the deactivate path.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_bomb_held_through_a_swap_leaves_the_workshops_spawner_free() {
+    println!("load at start: {}", load());
+    let started = std::time::Instant::now();
+    let (mut run, mut stops) = joined(LEVEL_214);
+    let bomb = the_first_bomb(&mut run, &mut stops);
+    let values = run.figure_values().expect("his figure's words");
+    let gone = run.deactivate().unwrap_or_else(|h| panic!("{h}"));
+    println!("off: {gone:?}");
+    run.join_tag(eruptor_tag(values))
+        .unwrap_or_else(|h| panic!("{h}"));
+    let tool = run.vm.program().global_named("Player 1 Tool").unwrap();
+    let mut out = None;
+    for k in 0..1500u32 {
+        step(&mut run, &mut stops, None, [false; 4]);
+        if run.vm.global_peek(tool) == Some(Value::Null)
+            && behaviour(&run, bomb).as_deref() != Some("following player")
+        {
+            out = Some(k);
+            break;
+        }
+    }
+    let out = out.expect("let go of, its count run out");
+    let taken = the_workshop_gives_one(&mut run, &mut stops, bomb);
+    println!(
+        "let go after {out} steps, the workshop's taken after {taken:?}; {:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    assert!(taken.is_some(), "the workshop's own bomb");
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
+/// openspec AU.33: a bomb left to run out in his hands is no bomb he carries.
+/// Its count at 0 it bursts over him and stands back on the first spawner,
+/// and the workshop's spawner, which clones none while a player carries one,
+/// clones its own; taken there. Until AU.33 the bomb stayed his, so the
+/// workshop stood empty and its wall and the key behind it stayed shut. The
+/// first run with no anchor stopped there. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_bomb_run_out_in_his_hands_leaves_the_workshops_spawner_free() {
+    println!("load at start: {}", load());
+    let started = std::time::Instant::now();
+    let (mut run, mut stops) = joined(LEVEL_214);
+    let bomb = the_first_bomb(&mut run, &mut stops);
+    let mut out = None;
+    for k in 0..1200u32 {
+        step(&mut run, &mut stops, None, [false; 4]);
+        if behaviour(&run, bomb).as_deref() == Some("wait to be grabbed") {
+            out = Some(k);
+            break;
+        }
+    }
+    let out = out.expect("it ran out and stands on its spawner again");
+    let tool = run.vm.program().global_named("Player 1 Tool").unwrap();
+    assert_eq!(run.vm.global_peek(tool), Some(Value::Null), "his no more");
+    let taken = the_workshop_gives_one(&mut run, &mut stops, bomb);
+    println!(
+        "ran out after {out} steps, the workshop's taken after {taken:?}; {:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    assert!(taken.is_some(), "the workshop's own bomb");
+    assert!(stops.is_empty(), "{stops:#?}");
 }
 
 /// openspec AS.96's review: level 214's workshop wall and the bomb's reach.

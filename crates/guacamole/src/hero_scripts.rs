@@ -507,17 +507,22 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     if source.chapter_1() {
         script_world.walk_first_fight(level);
         script_world.walk_goats(level);
-    } else {
-        for e in scripts::encounters(source.level()) {
-            let (walked, templates) = script_world.walk_encounter(level, e);
-            info!(level = %source.level(), walked, templates, "the level's encounter walks");
-        }
+    }
+    for e in scripts::encounters(source.level()) {
+        let (walked, templates) = script_world.walk_encounter(level, e);
+        info!(level = %source.level(), walked, templates, "the level's encounter walks");
     }
     for p in source.files.placed.iter().filter(|p| p.obj.unit == level) {
         if let Some(model) = &p.model
             && let Some((_, lengths)) = source.palettes.iter().find(|(owner, _)| owner == model)
         {
             script_world.set_palette(p.obj, lengths.clone());
+        }
+        if p.model
+            .as_deref()
+            .is_some_and(guacamole::hands::camera_rig_model)
+        {
+            script_world.set_rig(p.obj);
         }
     }
     // The level's music waits for its sounds (openspec AR.23).

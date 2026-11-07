@@ -500,12 +500,16 @@ fn the_census_is_the_discs() {
             census::LEVEL,
             census::LEVEL_PROPS,
             census::SPAWNS,
+            census::WALKER_SPAWNS,
             census::TURNTABLE_STATIC,
         ],
     );
     let (hero_glow_skinned, hero_glow_static): (Vec<WarmKey>, Vec<WarmKey>) =
         glows(&heroes).into_iter().partition(|k| k.mesh.skinned);
-    let hero_glow_static = beyond(&hero_glow_static, &[census::LEVEL_GLOW]);
+    let hero_glow_static = beyond(
+        &hero_glow_static,
+        &[census::LEVEL_GLOW, census::WALKER_GLOW],
+    );
     // The first fight's creatures and the skinned templates' clones (AH.25,
     // AG.150, AS.63), skinned in the hero's scene: what the heroes' and the
     // cards' tables don't hold (AS.63's rule draws a template whose key a
@@ -534,9 +538,17 @@ fn the_census_is_the_discs() {
     let particles = colour(&particles_all);
     let particles_beyond = beyond(
         &particles,
-        &[census::LEVEL, census::LEVEL_PROPS, census::SPAWNS],
+        &[
+            census::LEVEL,
+            census::LEVEL_PROPS,
+            census::SPAWNS,
+            census::WALKER_SPAWNS,
+        ],
     );
-    let particle_glow = beyond(&glows(&particles_all), &[census::LEVEL_GLOW]);
+    let particle_glow = beyond(
+        &glows(&particles_all),
+        &[census::LEVEL_GLOW, census::WALKER_GLOW],
+    );
     eprintln!(
         "the particles: {} keys, {} past the level's, its props' and its spawns'; {} level glow masks, {} past the level's",
         particles.len(),
@@ -544,6 +556,10 @@ fn the_census_is_the_discs() {
         glows(&particles_all).len(),
         particle_glow.len()
     );
+    // What every walker spawns is apart from the base's since openspec AU.19,
+    // asked of the warm when one's placed; the dump gives them together.
+    let spawn_rows: Vec<Row> = [census::SPAWNS, census::WALKER_SPAWNS].concat();
+    let glow_rows: Vec<Row> = [census::LEVEL_GLOW, census::WALKER_GLOW].concat();
     let checks = [
         check("the particles", &particles_beyond, census::PARTICLES, false),
         check(
@@ -561,13 +577,8 @@ fn the_census_is_the_discs() {
             census::LEVEL_PROPS,
             false,
         ),
-        check(
-            "what the scripts spawn",
-            &spawns_beyond,
-            census::SPAWNS,
-            false,
-        ),
-        check("the level's glow masks", &glow, census::LEVEL_GLOW, false),
+        check("what the scripts spawn", &spawns_beyond, &spawn_rows, false),
+        check("the level's glow masks", &glow, &glow_rows, false),
         check("the grass", &grass, census::GRASS, false),
         check("the warps", &warp, census::WARP, false),
         check("the heroes, skinned", &hero_skinned, census::HEROES, true),

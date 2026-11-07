@@ -210,6 +210,24 @@ fn census_entries() -> Vec<CensusKey> {
         .collect()
 }
 
+/// What the walkers' attacks draw past the start's census, as the warm takes
+/// it (openspec AU.19): asked once the first of them is placed.
+pub(crate) fn walker_census() -> Vec<CensusKey> {
+    let scene = Arc::new(Scene {
+        fog: true,
+        ..Scene::new()
+    });
+    census::walker_keys()
+        .into_iter()
+        .map(|key| CensusKey {
+            key,
+            material: census::material_for(&key),
+            scene: scene.clone(),
+            card: false,
+        })
+        .collect()
+}
+
 /// What [`begin`] spawns with.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct ExtraSpawner<'w, 's> {

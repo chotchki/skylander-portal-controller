@@ -496,7 +496,7 @@ fn the_roster_is_written_before_any_intro_work_starts() {
         "the entry as the disc holds it"
     );
     let creatures: guac_ir::palette::LevelPalettes = guac_ir::from_ron(
-        &fs::read_to_string(dir.join("levels/level_213_tutotial/palettes.v3.ron")).unwrap(),
+        &fs::read_to_string(dir.join("levels/level_213_tutotial/palettes.v4.ron")).unwrap(),
     )
     .unwrap();
     assert_eq!(

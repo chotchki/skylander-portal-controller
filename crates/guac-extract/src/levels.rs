@@ -28,8 +28,9 @@
 //!   file's placements, structures and sets. The same file in either IR
 //!   format.
 //! - The palettes (AH.22): every slot of each skinned model a placement
-//!   running a whitelisted script names ([`crate::scripts::WHITELIST`]: the
-//!   level's and the walkers' own, AG.162): chapter 1's Chompies and Norticus.
+//!   names ([`palettes`]; AS.54 past the first run's levels, AU.33 chapter
+//!   1's too, once its way past the first fight ran): a script waits on its
+//!   clips' ends, so a model read without them stalls it.
 //! - The nodes (openspec AH.138): each placed model's attach list, a skinned
 //!   one's nodes on its joints, so what a script hangs on a creature's node
 //!   rides it (Norticus' turban on his node 2). An extract written before it
@@ -238,12 +239,12 @@ pub const PLAYED: [&str; 10] = [
 /// run's levels' rule has its own ([`PALETTES_FIRST_RUN`]).
 pub const PALETTES_PAST_FIRST_RUN: u32 = 3;
 
-/// Chapter 1's palettes part's rule (the whitelist's, which holds its
-/// outro's actors' scripts since openspec AS.52, and the cinematics'
-/// camera rigs since AS.78), which its file's name carries,
-/// `palettes.v3.<ron|postcard>`, so an extract written under an older rule
+/// Chapter 1's palettes part's rule (since openspec AU.33 every skinned
+/// model a placement names, as past the first run's levels, for the way past
+/// its first fight; the whitelist's before), which its file's name carries,
+/// `palettes.v4.<ron|postcard>`, so an extract written under an older rule
 /// reads chapter 1's palettes again, and nothing else, on its next start.
-pub const PALETTES_FIRST_RUN: u32 = 3;
+pub const PALETTES_FIRST_RUN: u32 = 4;
 
 /// Where the cinematics' camera rigs' models sit: an animator camera's
 /// `anim owner` places one (openspec AS.78).
@@ -1041,28 +1042,18 @@ pub fn script(igz: &Igz<'_>) -> Result<usize, String> {
         .map_err(s)
 }
 
-/// The palettes part: every slot of each skinned model a placement running
-/// one of the level's whitelisted scripts or a walker's (AG.162) names, and
-/// each camera rig's a placement names (openspec AS.78: the cinematics'
-/// animator cameras, unscripted templates whose clips the shots last), each
-/// model once, in object order; past the first run's levels every skinned
-/// model any placement names, scripted or not (openspec AS.54: level 214's
-/// Chompy pods are unscripted templates its spawners clone and play clips
-/// on), since the TV runs each level's own scripts (AS.51). A model with no
-/// skeleton (a breakable, a coin) has none; one whose skeleton won't read
-/// refuses the part.
+/// The palettes part: every slot of each skinned model any placement names,
+/// scripted or not, each model once, in object order (openspec AS.54: level
+/// 214's Chompy pods are unscripted templates its spawners clone and play
+/// clips on; AS.78: the cinematics' animator cameras; AU.33: chapter 1's
+/// Giant, whose script waits on his clips' ends), since the TV runs each
+/// level's own scripts (AS.51). A model with no skeleton (a breakable, a
+/// coin) has none; one whose skeleton won't read refuses the part.
 pub fn palettes(
     igz: &Igz<'_>,
     level: &str,
     identity: DumpIdentity,
 ) -> Result<Read<LevelPalettes>, String> {
-    // The level's whitelisted scripts and the walkers' own (AG.162); a level
-    // off the whitelist runs none of its scripts, theirs included.
-    let mut listed = crate::scripts::level_scripts(level).to_vec();
-    if !listed.is_empty() {
-        listed.extend(crate::scripts::whitelisted_walker_scripts());
-    }
-    let every = !FIRST_RUN.contains(&level);
     let placements = FormatPlacements::read(igz).map_err(s)?;
     let mut creatures: BTreeMap<usize, &str> = BTreeMap::new();
     for a in &placements.actors {
@@ -1072,10 +1063,6 @@ pub fn palettes(
         let Some(info) = placements.models.get(&model) else {
             continue;
         };
-        let camera = info.info.name.is_some_and(is_camera_model);
-        if !every && !camera && !a.script.is_some_and(|p| crate::scripts::listed(&listed, p)) {
-            continue;
-        }
         creatures.insert(model, info.info.name.unwrap_or_default());
     }
     let mut palettes = Vec::new();

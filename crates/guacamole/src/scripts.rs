@@ -469,6 +469,21 @@ pub struct ScriptWorld {
     /// Each template's animation palette: every slot's clip length,
     /// seconds at 100 %, 0 where a slot is empty.
     pub(crate) palettes: HashMap<Obj, Vec<f32>>,
+    /// Whether a scene held the game as the last step ended
+    /// ([`crate::anchors::scene_holds`], [`add_scripted`]).
+    pub(crate) in_scene: bool,
+    /// The placements that reset themselves this step: what a player was
+    /// carrying among them he's carrying no more ([`add_scripted`]).
+    pub(crate) went_round: Vec<Handle>,
+    /// The templates whose model is a camera's rig (openspec AS.145).
+    pub(crate) rigs: std::collections::HashSet<Obj>,
+    /// Where the last rig posed left its nodes, in the level, each turned
+    /// as it stood: what a new shot's rig reads until it's posed itself. Let
+    /// go the step after that rig's taken off, so a later scene's first shot
+    /// reads none of an old scene's.
+    pub(crate) rig_held: Vec<(Vec3, Quat)>,
+    /// The rig `rig_held` is from.
+    pub(crate) rig_holder: Option<Handle>,
     /// A card game answered with nothing shown, its pirate still to be told
     /// it's quit (openspec AU.34: [`crate::prompt::quit_card_game`]).
     pub(crate) card_game_answered: bool,
@@ -874,6 +889,11 @@ impl ScriptWorld {
             sequences: Vec::new(),
             restarts: Vec::new(),
             palettes: HashMap::new(),
+            in_scene: false,
+            went_round: Vec::new(),
+            rigs: Default::default(),
+            rig_held: Vec::new(),
+            rig_holder: None,
             card_game_answered: false,
             clip_info: HashMap::new(),
             clip_state: HashMap::new(),
@@ -1404,6 +1424,13 @@ impl ScriptWorld {
     /// isn't loaded and reads none from the next step on, as one loaded at
     /// once (stand-in ledger: `level-request`).
     pub fn end_step(&mut self) {
+        if self
+            .rig_holder
+            .is_some_and(|h| self.actors.get(&h).is_none_or(|a| a.removed))
+        {
+            self.rig_holder = None;
+            self.rig_held.clear();
+        }
         let load = self.load_level;
         if load == Value::Null
             || self.level_change.as_ref().is_some_and(|c| c.value == load)
@@ -1638,6 +1665,13 @@ impl ScriptWorld {
         self.palettes.insert(template, lengths);
     }
 
+    /// `template`'s clones are a camera's rig (openspec AS.145): each shot
+    /// makes one, and it's drawn, so posed, a frame on, its nodes reading
+    /// where the last rig left them until then.
+    pub fn set_rig(&mut self, template: Obj) {
+        self.rigs.insert(template);
+    }
+
     /// The palette's clip lengths `template` has, if any.
     pub fn palette(&self, template: Obj) -> Option<&[f32]> {
         self.palettes.get(&template).map(Vec::as_slice)
@@ -1709,6 +1743,16 @@ impl ScriptWorld {
     /// [`ScriptWorld::place_hung`] sets what hangs from them there, turned
     /// as its node (AH.60).
     pub fn set_nodes(&mut self, actor: Handle, nodes: Vec<NodePose>) {
+        if self.is_rig(actor)
+            && let Some(a) = self.actors.get(&actor)
+        {
+            let facing = Quat::from_rotation_y(a.angles.facing.to_radians());
+            self.rig_held = nodes
+                .iter()
+                .map(|n| (a.position + facing * n.at, facing * n.turn))
+                .collect();
+            self.rig_holder = Some(actor);
+        }
         self.nodes.insert(actor, nodes);
     }
 
@@ -2156,10 +2200,18 @@ impl ScriptWorld {
                     && let Some(a) = self.as_made(h)
                 {
                     self.actors.insert(h, a);
+                    self.went_round.push(h);
                     return Ok(Answer::Done);
                 }
                 if let Some(k) = target.and_then(|h| self.actors.get_mut(&h)) {
                     k.buffer = k.buffer_loaded;
+                    // Its range as its file has it (openspec AU.33: chapter
+                    // 1's vista takes the quarry's placements' ranges to 0 at
+                    // its STARTUP and resets them at its SHUTDOWN; left at 0,
+                    // the jump pad on the way to the second post never woke).
+                    if let Some(p) = k.obj.and_then(|o| self.templates.get(&o)) {
+                        k.range = p.range;
+                    }
                     // A light the point-light manager took off goes back
                     // on with its template's values (openspec AH.65: the
                     // manager removes a light it returns to its pool and
@@ -2904,6 +2956,7 @@ pub fn encounters(level: &str) -> impl Iterator<Item = &'static Encounter> {
     ENCOUNTERS
         .iter()
         .chain(std::iter::once(&THIRD_ISLAND))
+        .chain(std::iter::once(&crate::chapter_1::WAY))
         .filter(move |e| e.level == level)
 }
 
@@ -3837,6 +3890,11 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
     if let Whitelist::Only { placements, .. } = &mut config.whitelist {
         placements.extend(passages(name).iter().map(|s| (*s).to_owned()));
         placements.extend(third_island_way(name).iter().map(|s| (*s).to_owned()));
+        placements.extend(
+            crate::chapter_1::passage(name)
+                .iter()
+                .map(|s| (*s).to_owned()),
+        );
     }
     // A hub stage's sky, its stage's controller, its background and its
     // way on (openspec AS.46, AS.47, AU.6); the filter cells Cali's dialogue
@@ -4877,6 +4935,8 @@ pub fn set_loot_index(vm: &mut Vm, world: &ScriptWorld, rarity: Rarity, index: f
 /// of those waits for this.
 pub fn add_scripted(vm: &mut Vm, world: &mut ScriptWorld) -> Vec<PlacementId> {
     let program = vm.program_arc();
+    world.in_scene = crate::anchors::scene_holds(vm);
+    let_go_of_tools(vm, world);
     let mut added: Vec<PlacementId> = world
         .adopt(&program)
         .into_iter()
@@ -4898,6 +4958,27 @@ pub fn add_scripted(vm: &mut Vm, world: &mut ScriptWorld) -> Vec<PlacementId> {
         }
     }
     added
+}
+
+/// What each player carries, as the tools' scripts hold it.
+const PLAYER_TOOLS: [&str; 2] = ["Player 1 Tool", "Player 2 Tool"];
+
+/// A tool that reset itself is no tool a player carries (openspec AU.33). A
+/// bomb's script lets go of it on a throw and on a reset while it's carried,
+/// not when its count runs out in his hands, so the bomb stood back on its
+/// spawner still his, and no other spawner cloned one (level 214's workshop,
+/// its wall and the second key past it). What lets go in the original isn't
+/// read (stand-in ledger: `tool-let-go`).
+fn let_go_of_tools(vm: &mut Vm, world: &mut ScriptWorld) {
+    for h in std::mem::take(&mut world.went_round) {
+        for name in PLAYER_TOOLS {
+            if let Some(g) = vm.program().global_named(name)
+                && vm.global_peek(g) == Some(Value::Entity(h))
+            {
+                vm.set_global_reference(g, Value::Null);
+            }
+        }
+    }
 }
 
 pub(crate) fn outside(why: String) -> Halt {
@@ -5833,7 +5914,10 @@ mod tests {
             assert!(l214.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
             assert!(!other.whitelist.lists(name, "C:/x/Any.ai"), "{name}");
             assert!(
-                !fight.whitelist.lists(name, "C:/x/Any.ai") || FIRST_FIGHT.contains(name),
+                !fight.whitelist.lists(name, "C:/x/Any.ai")
+                    || FIRST_FIGHT.contains(name)
+                    || crate::chapter_1::WAY.placements.contains(name)
+                    || crate::chapter_1::PASSAGE.contains(name),
                 "{name}"
             );
         }
@@ -6769,7 +6853,10 @@ mod tests {
     fn a_reset_brings_a_placement_taken_off_back() {
         let (mut w, grunt, _) = world();
         let file = w.actor(grunt).unwrap().position;
-        w.actors.get_mut(&grunt).unwrap().position = file + Vec3::X;
+        let range = w.actor(grunt).unwrap().range;
+        let k = w.actors.get_mut(&grunt).unwrap();
+        k.position = file + Vec3::X;
+        k.range = range + 50.0;
         assert_eq!(
             w.op(
                 &call(Class::Reset, Some(Value::Entity(grunt))),
@@ -6779,6 +6866,9 @@ mod tests {
             Ok(Answer::Done)
         );
         assert!(w.revived.is_empty(), "a standing one isn't revived");
+        // AU.33: its range as its file has it (chapter 1's vista takes the
+        // quarry's to 0 and resets them).
+        assert_eq!(w.actor(grunt).unwrap().range, range);
         assert_eq!(w.actor(grunt).unwrap().position, file + Vec3::X);
         w.op(
             &call(Class::Remove, Some(Value::Entity(grunt))),
@@ -6906,6 +6996,7 @@ mod tests {
             "still walked, its body made again"
         );
         assert!(w.revived.is_empty());
+        assert_eq!(w.went_round, [grunt], "what a player carried he lets go");
     }
 
     /// The as-214-walk review: a scripted template's clone joins the run

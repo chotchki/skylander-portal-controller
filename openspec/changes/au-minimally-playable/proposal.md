@@ -2,7 +2,7 @@
 
 ## Why
 
-Chapter 1 plays start to finish on the TV now (its fights, its outro, FMV02) and level 214 plays about half way, so chotchki called it on 2026-11-02: "I feel like we're getting close to a minimally playable game". Three gaps still stop a kid in the first session, and he agreed they're what minimal means ("yes that's what I mean, co-op isn't part of it"):
+Chapter 1 plays start to finish on the TV now (its fights, its outro, FMV02; AU.33 found on 2026-11-06 that was from the `end` anchor alone: past the pit the level had no listing until then) and level 214 plays about half way, so chotchki called it on 2026-11-02: "I feel like we're getting close to a minimally playable game". Three gaps still stop a kid in the first session, and he agreed they're what minimal means ("yes that's what I mean, co-op isn't part of it"):
 
 - **Only Eruptor fights.** Every other figure joins and walks on its own scripts, its attack buttons reaching no script (AH.29's answer for M3, "eruptor is fine").
 - **Nothing keeps story progress.** A figure's experience and gold are kept on the profile that placed it, but every session starts over at chapter 1 (AS.38: the host answers no `system.save state`).

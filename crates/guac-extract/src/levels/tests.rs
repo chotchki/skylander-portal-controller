@@ -542,14 +542,15 @@ fn every_level_part_is_named_and_complete_wants_them_all() {
         );
         assert_eq!(
             part_path(ir, LEVELS[0], PALETTES),
-            ir.level_path(LEVELS[0], "palettes.v3")
+            ir.level_path(LEVELS[0], "palettes.v4")
         );
     }
     // Named for its rule since AS.52 (its outro's actors), v3 since AS.78
-    // (its camera rigs), so an extract before it reads it again.
+    // (its camera rigs), v4 since AU.33 (every skinned model it places), so
+    // an extract before it reads it again.
     assert_eq!(
         part_path(crate::intros::IrFormat::Ron, LEVELS[0], PALETTES),
-        "levels/level_213_tutotial/palettes.v3.ron"
+        "levels/level_213_tutotial/palettes.v4.ron"
     );
     // A v2 file, the rule before AS.78's, is a part to read again too.
     m.levels.get_mut(LEVELS[0]).unwrap().parts.insert(
@@ -633,7 +634,7 @@ fn creature_level(script: Option<&'static str>) -> StageSpec {
 }
 
 #[test]
-fn the_palettes_follow_a_whitelisted_script_to_its_creature() {
+fn the_palettes_read_every_skinned_model_a_placement_names() {
     use guac_ir::palette::SlotEntry;
     const CHEST: &str = "C:/tfb/Content/Models/Objects/Treasure_Chest.mdl";
     // The chest runs the Chompy's script (by its file name, any case): its
@@ -737,32 +738,30 @@ fn the_palettes_follow_a_whitelisted_script_to_its_creature() {
             "{script}"
         );
     }
-    // Off the whitelist, or no script at all: no palette.
-    for script in [Some("Levels/Synthetic/Scripts/Chest_Unlisted.ai"), None] {
-        let r = palettes(parsed(&creature_level(script)), LEVEL, identity()).unwrap();
-        assert!(r.ir.palettes.is_empty(), "{script:?}");
-    }
-    // Past the first run's levels (openspec AS.54), every skinned model a
-    // placement names, its script listed, off the whitelist or none (a
-    // template a spawner clones): the TV runs each level's own scripts.
-    for script in [
-        Some("Levels/Synthetic/Scripts/Chest_Unlisted.ai"),
-        Some("Levels/Synthetic/Scripts/PortalEntry_Air.ai"),
-        None,
-    ] {
-        let r = palettes(
-            parsed(&creature_level(script)),
+    // On every level (openspec AS.54; chapter 1's since AU.33), every skinned
+    // model a placement names, its script listed, off the whitelist or none
+    // (a template a spawner clones): the TV runs each level's own scripts.
+    for (level, script) in [
+        (
             "level_999_elsewhere",
-            identity(),
-        )
-        .unwrap();
+            Some("Levels/Synthetic/Scripts/Chest_Unlisted.ai"),
+        ),
+        (
+            "level_999_elsewhere",
+            Some("Levels/Synthetic/Scripts/PortalEntry_Air.ai"),
+        ),
+        ("level_999_elsewhere", None),
+        (LEVEL, Some("Levels/Synthetic/Scripts/Chest_Unlisted.ai")),
+        (LEVEL, None),
+    ] {
+        let r = palettes(parsed(&creature_level(script)), level, identity()).unwrap();
         assert_eq!(
             r.ir.palettes
                 .iter()
                 .map(|p| p.owner.as_str())
                 .collect::<Vec<_>>(),
             [CHEST],
-            "{script:?}"
+            "{level} {script:?}"
         );
     }
     // Its file named for its rule there, chapter 1's for its own.
@@ -843,9 +842,6 @@ fn a_first_runs_camera_rig_has_its_palette_its_long_shot_in_blocks() {
             assert!(gap < 1e-5, "frame {frame}, joint {joint}: {gap:e}");
         }
     }
-    // A chest is no camera: none read with no script.
-    let r = palettes(parsed(&creature_level(None)), LEVEL, identity()).unwrap();
-    assert!(r.ir.palettes.is_empty());
 }
 
 /// AS.52: on a first run's level the outro's actors' palettes are read,

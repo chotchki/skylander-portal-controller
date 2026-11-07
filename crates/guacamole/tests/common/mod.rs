@@ -432,6 +432,7 @@ impl Run {
         let dt = 1.0 / 60.0;
         for hero in self.bench.heroes.values_mut() {
             hero.step_engine(&self.bench.world, dt, &[HERO_BODY], Surfaces::NONE);
+            hero.catch_fall();
         }
         self.world.advance(dt, &mut self.bench);
         self.steps += 1;
@@ -465,6 +466,7 @@ impl Run {
         let dt = 1.0 / 60.0;
         for hero in self.bench.heroes.values_mut() {
             hero.step_engine(&self.bench.world, dt, &[HERO_BODY], Surfaces::NONE);
+            hero.catch_fall();
         }
         self.world.advance(dt, &mut self.bench);
         self.steps += 1;
@@ -1095,10 +1097,9 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     if chapter_1 {
         world.walk_first_fight(LEVEL);
         world.walk_goats(LEVEL);
-    } else {
-        for e in scripts::encounters(level) {
-            world.walk_encounter(LEVEL, e);
-        }
+    }
+    for e in scripts::encounters(level) {
+        world.walk_encounter(LEVEL, e);
     }
     let (meshes, start) = level_bodies(&igzs[LEVEL as usize], level);
     let parry = ParryWorld::new(&meshes).expect("the level's collision");
