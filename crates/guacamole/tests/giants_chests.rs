@@ -860,3 +860,166 @@ fn a_legendary_treasure_pays_out_and_stays_collected() {
         load()
     );
 }
+
+/// The best of four headings the stick walks the hero, a good second of each.
+fn stick_reach(s: &mut Story) -> f32 {
+    let from = s.run.hero().pivot;
+    let mut best = 0.0f32;
+    for heading in [0.0f32, 90.0, 180.0, 270.0] {
+        for _ in 0..40 {
+            s.run.bench.pads[0] = Pad {
+                stick: stick_for(s.run.bench.view, heading),
+                actions: [false; 4],
+                connected: true,
+            };
+            let stops = s.run.step_play().unwrap();
+            s.stops.extend(stops.iter().map(ToString::to_string));
+        }
+        best = best.max(s.run.hero().pivot.distance(from));
+    }
+    best
+}
+
+/// The hero on his feet: on the portal, his health read and the scene off
+/// him.
+fn left_free(s: &mut Story, what: &str) {
+    let minion = s.run.minion.expect("the hero left the portal");
+    assert!(!s.run.vm.removed(minion), "{what}: the hero's off");
+    assert!(s.run.health().is_some(), "{what}: his health gone");
+    let cutscene = s.run.vm.program().global_named("Cutscene State").unwrap();
+    for _ in 0..600 {
+        let held = s.run.vm.global_peek(cutscene).map(|v| s.run.vm.value(v));
+        if held.and_then(|v| v.as_i32()) == Some(0) {
+            break;
+        }
+        s.step([false; 4]);
+    }
+    let held = s.run.vm.global_peek(cutscene).map(|v| s.run.vm.value(v));
+    assert_eq!(held.and_then(|v| v.as_i32()), Some(0), "{what}: held");
+    let reach = stick_reach(s);
+    assert!(reach > 0.5, "{what}: a dead stick, {reach}");
+}
+
+/// AS.158's review: a box's stale scratch reached past the first box. Every
+/// box on chapter 1 and 214 in one run, the hero swapped between them, each
+/// leaves the hero walking: the outfit registered once a run holds for a
+/// second box and a second hero. A swap's next hero is a new `Minions` entry
+/// on the same run.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn every_box_in_a_run_leaves_each_hero_walking() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    for level in [CHAPTER_1, LEVEL_214] {
+        let mut s = Story::joined(level, Session::new(Some(HOST.into())));
+        past_the_intro(&mut s);
+        let boxes: Vec<(Handle, Vec3, String)> = s
+            .run
+            .files
+            .placed
+            .iter()
+            .filter(|p| p.obj.unit == LEVEL && p.activity_state == 4)
+            .filter(|p| {
+                p.script
+                    .as_deref()
+                    .is_some_and(|x| x.ends_with("/Hat_Pickup.ai"))
+            })
+            .map(|p| {
+                (
+                    s.run.handles[&p.obj],
+                    Vec3::from_array(p.position),
+                    p.name.clone(),
+                )
+            })
+            .collect();
+        assert!(!boxes.is_empty(), "{level}");
+        for (k, (h, at, name)) in boxes.iter().enumerate() {
+            if k % 2 == 1 {
+                s.run.deactivate().unwrap();
+                for _ in 0..30 {
+                    s.step([false; 4]);
+                }
+                s.run.join().unwrap();
+                for _ in 0..120 {
+                    s.step([false; 4]);
+                }
+            }
+            let took = mash_off(&mut s, *h, *at, 2400);
+            println!("{level} {name}: off after {took:?} steps");
+            assert!(took.is_some(), "{level}'s {name} stayed");
+            left_free(&mut s, name);
+        }
+        assert!(s.stops.is_empty(), "{level}: {:#?}", s.stops);
+    }
+    println!(
+        "{:.1} s, load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
+
+/// AS.151's review: every story level's legendary treasure, a hero set down
+/// by it. Its scene ends, it pays once, the hero's left free and nothing
+/// stops: no level's treasure waits on the menu the TV doesn't have.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn every_levels_legendary_treasure_pays_and_frees_the_hero() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let mut none = Vec::new();
+    for level in [CHAPTER_1, LEVEL_214].into_iter().chain(LEVELS) {
+        let mut s = Story::joined(level, Session::new(Some(HOST.into())));
+        past_the_intro(&mut s);
+        let found: Vec<(Handle, Vec3, String)> = s
+            .run
+            .files
+            .placed
+            .iter()
+            .filter(|p| p.obj.unit == LEVEL && p.activity_state == 4)
+            .filter(|p| {
+                p.script
+                    .as_deref()
+                    .is_some_and(|x| x.ends_with("/Loot_Specials.ai"))
+            })
+            .map(|p| {
+                (
+                    s.run.handles[&p.obj],
+                    Vec3::from_array(p.position),
+                    p.name.clone(),
+                )
+            })
+            .collect();
+        if found.is_empty() {
+            none.push(level);
+        }
+        for (h, at, name) in &found {
+            let gold = s.gold();
+            let by = beside(&mut s, *at);
+            s.run.put(by, 0.0);
+            // In a room its interior's controller wakes (range 0): as it would.
+            s.run.world.wake(*h);
+            let start = s.run.steps;
+            while !s.run.world.removed(*h) {
+                assert!(
+                    s.run.steps < start + 1500,
+                    "{level}'s {name}: {:?}",
+                    s.behaviour(*h)
+                );
+                s.step([false; 4]);
+            }
+            let paid = s.gold() - gold;
+            println!(
+                "{level} {name}: off after {} steps, {paid} gold",
+                s.run.steps - start
+            );
+            assert!(paid > 0, "{level}'s {name} paid nothing");
+            left_free(&mut s, name);
+        }
+        assert!(s.stops.is_empty(), "{level}: {:#?}", s.stops);
+    }
+    println!(
+        "none on {none:?}; {:.1} s, load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
