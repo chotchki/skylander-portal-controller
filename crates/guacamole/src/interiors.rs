@@ -45,9 +45,9 @@
 //! As the original's warp control belongs to the player's slot, a warp
 //! whose minion's figure came off the portal while it was owed lands the
 //! hero who came in after him.
-//! The atmospheric zone the switch names isn't drawn yet (AG.155: the TV
-//! keeps the level's start zone), and the darkness is drawn as a black
-//! screen of that alpha, the mask's own art not drawn ([`darkness`]).
+//! The atmospheric zone the switch names lights the room (openspec AS.127,
+//! [`crate::atmospherics`]), and the darkness is drawn as a black screen of
+//! that alpha, the mask's own art not drawn ([`darkness`]).
 
 use guac_motion::seam::Vec3;
 use guac_script::{Handle, PlacementId, Value, Vm};

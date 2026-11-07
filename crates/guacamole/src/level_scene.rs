@@ -11,7 +11,8 @@
 //!   `0xAA8`, tfbshadow's `player_shadow`, is the original's
 //!   shadow map's and draws nothing.
 //! - The light ([`level_lights`], [`view_scene`]): the atmospheric zone the
-//!   level's definition sets up at its start (AG.41: AG.13 found the game
+//!   level's definition sets up at its start, then the one its scripts
+//!   switch it to (openspec AS.127, [`crate::atmospherics`]; AG.41: AG.13 found the game
 //!   lights and fogs the opening area by it, not by the level file's
 //!   `_worldLight1`-`3`), each light travelling the way it faces, as AE.13
 //!   reads the sprite rig, and the placed point lights; fog from a

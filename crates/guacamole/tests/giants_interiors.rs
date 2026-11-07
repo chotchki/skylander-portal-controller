@@ -247,6 +247,10 @@ fn chapter_1s_cave_is_entered_and_left_on_foot() {
     );
     assert!((facing - 290.0).abs() < 0.01, "{facing}");
     assert_eq!(out.landed_at.unwrap() - out.dark_at.unwrap(), 42);
+    // The exterior's zone again (openspec AS.127), as it was before the way
+    // in.
+    let zone = guacamole::atmospherics::read(&run.vm).expect("the manager's zone");
+    assert_eq!((zone.to, zone.from), (0, None));
     println!(
         "dark {dark}, landed {landed}, waiting {done}; out: {out:?}; {:.1} s; load at end: {}",
         started.elapsed().as_secs_f64(),
@@ -315,6 +319,67 @@ fn a_swap_asked_in_the_caves_fade_waits_for_the_room() {
     }
     assert!(seen, "the room's scene ran");
     println!("load at end: {}", load());
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
+/// openspec AS.127: the cave's zone switches ride its darkness: the
+/// manager's zone goes from the exterior's to the room's under the black,
+/// and every zone the run asks is one the level's atmosphere part holds, so
+/// the TV can light it.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn the_caves_zones_switch_under_its_darkness_and_the_part_holds_them() {
+    use guacamole::atmospherics;
+    println!("load at start: {}", load());
+    let level = guac_extract::levels::FIRST_RUN[0];
+    let (mut run, mut stops) = joined(level);
+    let part = {
+        let bytes = guac_formats::iga::Archive::parse(
+            &std::fs::read(guac_extract::levels::archive_path(
+                &dump().join("PS3_GAME/USRDIR"),
+                level,
+            ))
+            .unwrap(),
+        )
+        .map(|a| {
+            let e = a.find("level.bld").unwrap();
+            a.read(e).unwrap().into_owned()
+        })
+        .unwrap();
+        let igz = guac_formats::igz::Igz::parse(&bytes).unwrap();
+        guac_extract::levels::atmosphere(&igz, level, identity())
+            .unwrap()
+            .ir
+    };
+    let cave = handle(&run, "Interior_controller_Cave");
+    run.put(Vec3::new(11.0, 22.4, -28.5), 105.0);
+    let mut zones: Vec<(i32, f32)> = Vec::new();
+    let mut seen = |run: &Run| {
+        let now = atmospherics::read(&run.vm).expect("the manager's zone");
+        atmospherics::lit(&part, &now).unwrap_or_else(|e| panic!("{e}"));
+        let dark = guacamole::interiors::darkness(&run.vm, &run.world);
+        if zones.last().is_none_or(|z| z.0 != now.to) {
+            zones.push((now.to, dark));
+        }
+    };
+    for _ in 0..10 {
+        step(&mut run, &mut stops, None, [false; 4]);
+        seen(&run);
+    }
+    let mut k = 0;
+    while behaviour(&run, cave).as_deref() != Some(INSIDE) {
+        step(&mut run, &mut stops, Some([16.5, -30.2]), [false; 4]);
+        seen(&run);
+        k += 1;
+        assert!(k < 900, "into the room");
+    }
+    println!("zones {zones:?} after {k} steps; load at end: {}", load());
+    assert_eq!(zones.first().map(|z| z.0), Some(0), "the exterior's");
+    assert!(zones.len() >= 2, "the room's own: {zones:?}");
+    assert!(
+        zones[1..].iter().all(|z| z.1 >= 0.5),
+        "under the darkness: {zones:?}"
+    );
     assert!(stops.is_empty(), "{stops:#?}");
 }
 

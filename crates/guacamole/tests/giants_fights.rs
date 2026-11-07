@@ -318,7 +318,10 @@ fn level_214s_carried_bomb_counts_down_over_him() {
             // there as it moves, a step behind at most, 20 units across.
             let timer = run.world.clones().into_iter().find(|h| {
                 run.world.name(*h) == "Bomb_Timer"
-                    && run.world.actor(*h).is_some_and(|a| a.id == q.value as i32 && !a.removed)
+                    && run
+                        .world
+                        .actor(*h)
+                        .is_some_and(|a| a.id == q.value as i32 && !a.removed)
             });
             if let Some(a) = timer.and_then(|h| run.world.actor(h))
                 && let Some((x, _)) = run.world.viewport().project(a.position)
