@@ -73,3 +73,33 @@ Every hub stage SHALL hold the people the original's holds at that point of the 
 #### Scenario: Persephone's upgrades
 - **WHEN** the kid talks to Persephone
 - **THEN** she says her line, her upgrade menu backs out to its no branch, the scene ends and she idles
+
+### Requirement: A chest opens, pays and stays opened
+
+A treasure chest on any level SHALL rise for a hero within its reach, ask him to mash, open after three seconds of it and fling out its level's value in treasure to walk up, each piece paying the figure that takes it; opened, it SHALL stay gone on a restart and in later sessions.
+
+#### Scenario: Opening chapter 1's first chest
+
+- **WHEN** a hero stands by chapter 1's first chest and mashes the fourth action for three seconds
+- **THEN** it opens, its treasure lands around it and pays him as he walks it up
+- **AND** after Restart chapter, and after a quit and a new session, the chest isn't there
+
+### Requirement: A hat box gives its hat
+
+A hat box SHALL shake open the same way and its hat SHALL be kept in the story save, the box gone from then on. Until hats are worn, a taken hat SHALL be named on the TV and worn by no one, and nothing SHALL hold the hero after it.
+
+#### Scenario: Taking a hat
+
+- **WHEN** a hero mashes a hat box open
+- **THEN** the hat's name shows, the box runs to its end and he walks on
+- **AND** that box isn't there on a restart
+
+### Requirement: The hub's doors open by the story
+
+Each door on the hub SHALL draw and swing open for a hero near it, and a room whose door asks for more adventures than are done SHALL stay shut. Flynn and Cali SHALL stay reachable on every stage.
+
+#### Scenario: Stage 1 after level 214
+
+- **WHEN** a hero walks stage 1 with two adventures done
+- **THEN** Cali's door opens for him and the crane deck's and gun deck's stay shut
+

@@ -63,7 +63,7 @@ pub(crate) const TABS: [&str; 3] = ["completion-tab-0", "completion-tab-1", "com
 /// The archives the art comes from: the screen's own, and `global.bld`'s
 /// bitmap font.
 const SCREEN: &str = "misc/ui_objectivesscreen.bld";
-const FONT_ARCHIVE: &str = "permanent/global.bld";
+pub(crate) const FONT_ARCHIVE: &str = "permanent/global.bld";
 
 /// The original's screen units to the TV's design pixels (its 640 by 480
 /// containers on a 1920 by 1080 design: 2.25 a unit on the height, kept at
@@ -137,9 +137,9 @@ pub(crate) struct CompletionScreen;
 
 /// One image of the screen's, with the size its template gives it.
 #[derive(Clone)]
-struct Piece {
-    image: Handle<Image>,
-    size: Vec2,
+pub(crate) struct Piece {
+    pub(crate) image: Handle<Image>,
+    pub(crate) size: Vec2,
 }
 
 /// What the screen draws with, read off the extract's interface part when
@@ -147,9 +147,32 @@ struct Piece {
 /// `contemp` bitmap font with its atlas.
 #[derive(Clone)]
 pub(crate) struct Art {
-    pieces: HashMap<&'static str, Piece>,
+    pub(crate) pieces: HashMap<&'static str, Piece>,
     font: Font,
     atlas: Handle<Image>,
+}
+
+#[cfg(test)]
+impl Art {
+    /// `pieces` with an empty font, for a layout test.
+    pub(crate) fn for_tests(pieces: HashMap<&'static str, Piece>) -> Self {
+        Self {
+            pieces,
+            font: Font {
+                name: None,
+                source: None,
+                height: 1.0,
+                base_line: 0.0,
+                char_padding: 0.0,
+                kern_amount: 0.0,
+                color: [1.0; 4],
+                atlas: String::new(),
+                atlas_size: [1, 1],
+                glyphs: Vec::new(),
+            },
+            atlas: Handle::default(),
+        }
+    }
 }
 
 /// The art loaded for the screen on show, or why there's none.
@@ -338,10 +361,24 @@ pub(crate) fn load_art(
     images: &mut Assets<Image>,
     formats: CompressedImageFormats,
 ) -> Result<Art, String> {
+    load_art_of(dir, ir, SCREEN, &ART, images, formats)
+}
+
+/// `names`' images off `archive`'s templates at the sizes they give, and
+/// `global.bld`'s bitmap font with its atlas: what a screen in the disc's art
+/// draws with (openspec AU.5, AU.29).
+pub(crate) fn load_art_of(
+    dir: &Path,
+    ir: IrFormat,
+    archive: &str,
+    names: &[&'static str],
+    images: &mut Assets<Image>,
+    formats: CompressedImageFormats,
+) -> Result<Art, String> {
     let read = |archive: &str| {
         guacamole::interface_host::read_record(dir, ir, &guac_extract::interface::path(ir, archive))
     };
-    let screen = read(SCREEN)?;
+    let screen = read(archive)?;
     let global = read(FONT_ARCHIVE)?;
     let mut image = |rel: &str| -> Result<Handle<Image>, String> {
         let bytes = std::fs::read(dir.join(rel)).map_err(|e| format!("{rel}: {e}"))?;
@@ -357,12 +394,12 @@ pub(crate) fn load_art(
         Ok(images.add(img))
     };
     let mut pieces = HashMap::new();
-    for name in ART {
+    for &name in names {
         let t = screen
             .templates
             .iter()
             .find(|t| t.name == name)
-            .ok_or_else(|| format!("{SCREEN} holds no {name}"))?;
+            .ok_or_else(|| format!("{archive} holds no {name}"))?;
         let Content::Image(a) = &t.content else {
             return Err(format!("{name} draws no image"));
         };
@@ -518,7 +555,13 @@ fn words(
 /// `text` in the bitmap font, one image node a glyph cut from its atlas,
 /// laid out by the interface's measure (`guac_interface::text::glyphs`),
 /// `size` design pixels for the font's own height.
-fn bitmap_text(parent: &mut ChildSpawnerCommands, art: &Art, text: &str, size: f32, color: Color) {
+pub(crate) fn bitmap_text(
+    parent: &mut ChildSpawnerCommands,
+    art: &Art,
+    text: &str,
+    size: f32,
+    color: Color,
+) {
     let units: Vec<u16> = text.encode_utf16().collect();
     let m = Metrics::new(&art.font);
     let quads = glyphs(&m, f32::MAX, Justify::Left, &units);

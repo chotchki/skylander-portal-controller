@@ -11,19 +11,28 @@
 //!   it doesn't read), then Yes and No, the focus on Yes when the original's
 //!   prompt starts there. It's a modal as Restart chapter's is: the router
 //!   hands it the pads, a move left or right goes between the two, South
-//!   presses the focused one. Laid out in the TV's own look for now (stand-in
+//!   presses the focused one. In the disc's art where the extract's
+//!   interface part holds it, as AU.5's screen takes the objectives screen's
+//!   (openspec AU.29, AU design decision 2): `global.bld`'s yes and no
+//!   backdrops, desaturated off the focus, and its bitmap font on a box of
+//!   the clean text box's colour; the TV's own look without it (stand-in
 //!   ledger: `yes-no`).
 
-use bevy::input_focus::{FocusCause, InputFocus};
+use bevy::image::CompressedImageFormats;
+use bevy::input_focus::tab_navigation::TabIndex;
+use bevy::input_focus::{AutoFocus, FocusCause, InputFocus};
 use bevy::math::CompassOctant;
 use bevy::prelude::*;
-use bevy::ui_widgets::Activate;
+use bevy::render::renderer::RenderDevice;
+use bevy::ui_widgets::{Activate, Button};
 use guac_script::Value;
 use guacamole::prompt::{self, Prompt};
 use guacamole::scripts::{ScriptClone, ScriptRuntime, ScriptWorld, WorldHost};
 use serde::Serialize;
 use tracing::{info, warn};
 
+use crate::completion::{Art, FONT_ARCHIVE, bitmap_text, load_art_of};
+use crate::hero_scripts::ScriptSource;
 use crate::input::{FocusId, TvInput};
 use crate::pause::ShownAt;
 use crate::theme::{Role, Step, TvTheme};
@@ -41,6 +50,32 @@ pub(crate) const PROMPT_NO: &str = "prompt-no";
 /// The question's line where its string doesn't read.
 pub(crate) const UNREAD_LINE: &str = "Yes or no?";
 
+/// `global.bld`'s templates the buttons draw, by name: each focused, and
+/// off the focus.
+const YES_ON: &str = "UI_ButtonBackdrop_Yes";
+const NO_ON: &str = "UI_ButtonBackdrop_No";
+const YES_OFF: &str = "UI_ButtonBackdrop_Yes_Desat";
+const NO_OFF: &str = "UI_ButtonBackdrop_No_Desat";
+const PROMPT_ART: [&str; 4] = [YES_ON, NO_ON, YES_OFF, NO_OFF];
+
+/// The original's screen units to the TV's design pixels, as the completion
+/// screen's; the question's and a button's line heights in them; and the
+/// box's fill, the clean text box's blur backdrop, its 16-unit corners.
+const UNIT: f32 = 2.0;
+const QUESTION_SIZE: f32 = 56.0;
+const BUTTON_SIZE: f32 = 40.0;
+const BOX_FILL: Color = Color::srgba(0.03, 0.05, 0.16, 0.86);
+const BOX_CORNER: f32 = 16.0 * UNIT;
+const QUESTION_COLOR: Color = Color::WHITE;
+const BUTTON_COLOR: Color = Color::srgb(0.03, 0.05, 0.16);
+
+/// A button on the disc's art: its backdrop focused, and off the focus.
+#[derive(Component, Debug, Clone, PartialEq)]
+pub(crate) struct ArtChoice {
+    on: Handle<Image>,
+    off: Handle<Image>,
+}
+
 /// The question the run waits on, as its last step left it.
 #[derive(Resource, Debug, Default, Clone, PartialEq)]
 pub(crate) struct Asked(pub(crate) Option<Prompt>);
@@ -57,7 +92,7 @@ pub(crate) struct PromptOpen(pub(crate) bool);
 
 /// The modal's root, for the dialogue UI whose question it asks.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
-pub(crate) struct PromptScreen(Value);
+pub(crate) struct PromptScreen(Value, bool);
 
 /// The answers run, for `/api/_test/tv`: each question's text and the answer.
 #[derive(Resource, Debug, Default, Clone, PartialEq)]
@@ -82,7 +117,7 @@ impl Plugin for YesNoPlugin {
                     .run_if(resource_exists::<ScriptRuntime>)
                     .run_if(resource_exists::<ScriptWorld>),
             )
-            .add_systems(Update, (open, moves, show).chain());
+            .add_systems(Update, (open, moves, show, art_focus).chain());
     }
 }
 
@@ -207,16 +242,56 @@ fn on_choice(
     }
 }
 
+/// Each button on the disc's art shows its backdrop for the focus.
+fn art_focus(
+    focus: Option<Res<InputFocus>>,
+    mut choices: Query<(Entity, &ArtChoice, &mut ImageNode)>,
+) {
+    let focused = focus.and_then(|f| f.get());
+    for (e, art, mut node) in &mut choices {
+        let want = if focused == Some(e) {
+            &art.on
+        } else {
+            &art.off
+        };
+        if node.image != *want {
+            node.image = want.clone();
+        }
+    }
+}
+
+/// The modal's art off the run's extract, once a session.
+fn prompt_art(
+    source: Option<&ScriptSource>,
+    images: &mut Assets<Image>,
+    device: Option<&RenderDevice>,
+) -> Result<Art, String> {
+    let formats = device.map_or(CompressedImageFormats::BC, |d| {
+        CompressedImageFormats::from_features(d.features())
+    });
+    match source.and_then(ScriptSource::extract) {
+        Some((dir, ir)) => load_art_of(dir, *ir, FONT_ARCHIVE, &PROMPT_ART, images, formats),
+        None => Err("the run's extract isn't known".into()),
+    }
+}
+
 /// Spawns the modal for the question up and despawns one no longer up,
 /// telling the shots. Needs the TV's font and theme; headless tests without
 /// them draw nothing, the question answered all the same.
+#[allow(clippy::too_many_arguments)]
 fn show(
     mut commands: Commands,
     open: Res<PromptOpen>,
     asked: Res<Asked>,
     (assets, theme, time): (Option<Res<TvAssets>>, Option<Res<TvTheme>>, Res<Time<Real>>),
+    (source, mut images, device): (
+        Option<Res<ScriptSource>>,
+        ResMut<Assets<Image>>,
+        Option<Res<RenderDevice>>,
+    ),
     mut redrawn: MessageWriter<Redrawn>,
     mut shown: Local<Option<(Value, Entity)>>,
+    mut art: Local<Option<Result<Art, String>>>,
 ) {
     let want = asked.0.as_ref().filter(|_| open.0);
     if shown.map(|(ui, _)| ui) == want.map(|p| p.ui) {
@@ -232,10 +307,116 @@ fn show(
         return;
     };
     let pen = Pen::new(&assets, &theme);
-    let entity = spawn(&mut commands, &pen, want);
+    let loaded = art.get_or_insert_with(|| {
+        let a = prompt_art(source.as_deref(), &mut images, device.as_deref());
+        if let Err(why) = &a {
+            warn!(reason = %why, "the question's art didn't load: the TV's own style");
+        }
+        a
+    });
+    let entity = match loaded.as_ref().ok() {
+        Some(a) => spawn_art(&mut commands, a, want),
+        None => spawn(&mut commands, &pen, want),
+    };
     commands.entity(entity).insert(ShownAt(time.elapsed()));
     *shown = Some((want.ui, entity));
     redrawn.write(Redrawn::Alert);
+}
+
+/// A button on the disc's art: its backdrop at its template's size with
+/// `text` centred on it in the bitmap font.
+fn art_button(
+    parent: &mut ChildSpawnerCommands,
+    art: &Art,
+    text: &str,
+    id: &'static str,
+    (on, off): (&'static str, &'static str),
+    focused: bool,
+) {
+    let (Some(on), Some(off)) = (art.pieces.get(on), art.pieces.get(off)) else {
+        return;
+    };
+    let mut button = parent.spawn((
+        Button,
+        TabIndex(0),
+        FocusId(id),
+        Node {
+            flex_shrink: 0.0,
+            width: px(on.size.x * UNIT),
+            height: px(on.size.y * UNIT),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        ImageNode::new(if focused {
+            on.image.clone()
+        } else {
+            off.image.clone()
+        }),
+        ArtChoice {
+            on: on.image.clone(),
+            off: off.image.clone(),
+        },
+    ));
+    if focused {
+        button.insert(AutoFocus);
+    }
+    button.with_children(|b| bitmap_text(b, art, text, BUTTON_SIZE, BUTTON_COLOR));
+}
+
+/// The question in the disc's art (the module docs): its line, then the
+/// disc's Yes and No, the focus where the original's prompt starts.
+fn spawn_art(commands: &mut Commands, art: &Art, p: &Prompt) -> Entity {
+    let line = p.text.as_deref().unwrap_or(UNREAD_LINE).to_owned();
+    commands
+        .spawn((
+            PromptScreen(p.ui, true),
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(0),
+                top: px(0),
+                width: percent(100),
+                height: percent(100),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            GlobalZIndex(PROMPT_Z),
+        ))
+        .with_children(|root| {
+            root.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: px(32),
+                    padding: UiRect::axes(px(64), px(40)),
+                    border_radius: BorderRadius::all(px(BOX_CORNER)),
+                    ..default()
+                },
+                BackgroundColor(BOX_FILL),
+            ))
+            .with_children(|panel| {
+                bitmap_text(panel, art, &line, QUESTION_SIZE, QUESTION_COLOR);
+                panel
+                    .spawn(Node {
+                        flex_direction: FlexDirection::Row,
+                        column_gap: px(32),
+                        ..default()
+                    })
+                    .with_children(|choices| {
+                        art_button(
+                            choices,
+                            art,
+                            "Yes",
+                            PROMPT_YES,
+                            (YES_ON, YES_OFF),
+                            p.yes_first,
+                        );
+                        art_button(choices, art, "No", PROMPT_NO, (NO_ON, NO_OFF), !p.yes_first);
+                    });
+            });
+        })
+        .id()
 }
 
 /// The question over the level, dimmed: its line, then Yes and No.
@@ -244,7 +425,7 @@ fn spawn(commands: &mut Commands, pen: &Pen, p: &Prompt) -> Entity {
     let line = p.text.as_deref().unwrap_or(UNREAD_LINE).to_owned();
     commands
         .spawn((
-            PromptScreen(p.ui),
+            PromptScreen(p.ui, false),
             Node {
                 position_type: PositionType::Absolute,
                 left: px(0),
@@ -303,6 +484,8 @@ pub struct PromptShot {
     pub yes_first: bool,
     /// Every line drawn on the modal, the buttons' included; none drawn.
     pub texts: Vec<String>,
+    /// Drawn in the disc's art, not the TV's own look.
+    pub art: bool,
     /// When the modal was spawned, on the frame log's clock.
     pub shown_ms: Option<f64>,
 }
@@ -338,9 +521,17 @@ impl PromptShots<'_, '_> {
             PromptShot {
                 question: p.text.clone(),
                 yes_first: p.yes_first,
-                texts: drawn
-                    .map(|(root, _, _)| self.tree.walk(root).0)
-                    .unwrap_or_default(),
+                // The disc's art draws its lines glyph by glyph.
+                texts: match drawn {
+                    Some((_, s, _)) if s.1 => vec![
+                        p.text.clone().unwrap_or_else(|| UNREAD_LINE.into()),
+                        "Yes".into(),
+                        "No".into(),
+                    ],
+                    Some((root, _, _)) => self.tree.walk(root).0,
+                    None => Vec::new(),
+                },
+                art: drawn.is_some_and(|(_, s, _)| s.1),
                 shown_ms: drawn.and_then(|(_, _, at)| at.map(|a| a.0.as_secs_f64() * 1e3)),
             }
         });
@@ -355,8 +546,11 @@ mod tests {
     use bevy::time::TimeUpdateStrategy;
     use guac_server::config::WindowMode;
 
+    use std::collections::HashMap;
+
     use super::*;
     use crate::cards::PortalCards;
+    use crate::completion::Piece;
     use crate::input::{PostedPresses, TestPress};
     use crate::test_support::tv::portal_app;
 
@@ -388,6 +582,85 @@ mod tests {
             text: Some(LINE.into()),
             yes_first,
             page: Value::Entity(ui + 1),
+        }
+    }
+
+    /// openspec AU.29: a button on the disc's art draws its backdrop for the
+    /// focus: focused its own, off it the desaturated one, moved as the
+    /// focus moves.
+    #[test]
+    fn the_discs_buttons_show_their_backdrop_for_the_focus() {
+        let mut app = App::new();
+        app.init_resource::<InputFocus>()
+            .add_systems(Update, art_focus);
+        let (on, off): (Handle<Image>, Handle<Image>) = (
+            Handle::default(),
+            Handle::Uuid(Default::default(), Default::default()),
+        );
+        let choice = || ArtChoice {
+            on: on.clone(),
+            off: off.clone(),
+        };
+        let a = app
+            .world_mut()
+            .spawn((choice(), ImageNode::new(off.clone())))
+            .id();
+        let b = app
+            .world_mut()
+            .spawn((choice(), ImageNode::new(on.clone())))
+            .id();
+        app.world_mut()
+            .resource_mut::<InputFocus>()
+            .set(a, FocusCause::Navigated);
+        app.update();
+        let image = |app: &App, e| app.world().get::<ImageNode>(e).unwrap().image.clone();
+        assert_eq!(image(&app, a), on);
+        assert_eq!(image(&app, b), off);
+        app.world_mut()
+            .resource_mut::<InputFocus>()
+            .set(b, FocusCause::Navigated);
+        app.update();
+        assert_eq!(image(&app, a), off);
+        assert_eq!(image(&app, b), on);
+    }
+
+    /// openspec AU.29: the modal on the disc's art puts the focus where the
+    /// original's prompt starts, each button on its backdrop for it.
+    #[test]
+    fn the_discs_modal_starts_where_the_originals_prompt_does() {
+        for yes_first in [true, false] {
+            let mut app = App::new();
+            let on = |n: u128| {
+                Handle::<Image>::Uuid(bevy::asset::uuid::Uuid::from_u128(n), Default::default())
+            };
+            let piece = |image| Piece {
+                image,
+                size: Vec2::new(227.0, 102.0),
+            };
+            let pieces = HashMap::from([
+                (YES_ON, piece(on(1))),
+                (NO_ON, piece(on(2))),
+                (YES_OFF, piece(on(3))),
+                (NO_OFF, piece(on(4))),
+            ]);
+            let art = Art::for_tests(pieces);
+            let p = question(0x70, yes_first);
+            let mut commands_queue = bevy::ecs::world::CommandQueue::default();
+            let mut commands = Commands::new(&mut commands_queue, app.world());
+            spawn_art(&mut commands, &art, &p);
+            commands_queue.apply(app.world_mut());
+            let mut q = app
+                .world_mut()
+                .query::<(&FocusId, &ImageNode, Option<&AutoFocus>)>();
+            let drawn: Vec<(&'static str, Handle<Image>, bool)> = q
+                .iter(app.world())
+                .map(|(id, image, auto)| (id.0, image.image.clone(), auto.is_some()))
+                .collect();
+            let of = |id: &str| drawn.iter().find(|d| d.0 == id).unwrap().clone();
+            assert_eq!(of(PROMPT_YES).2, yes_first);
+            assert_eq!(of(PROMPT_NO).2, !yes_first);
+            assert_eq!(of(PROMPT_YES).1, on(if yes_first { 1 } else { 3 }));
+            assert_eq!(of(PROMPT_NO).1, on(if yes_first { 4 } else { 2 }));
         }
     }
 

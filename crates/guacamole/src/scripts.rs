@@ -6343,6 +6343,8 @@ mod tests {
             assert!(is_hub(stage));
             let c = level_config(Mode::Play, &files, 4, stage);
             for script in [
+                "Utilities_Controller.ai",
+                "Hub2_Door.ai",
                 "SkyDome_Controller.ai",
                 "Hub2_Stage_1_Controller.ai",
                 "Hub2_Stage_4_Controller.ai",
