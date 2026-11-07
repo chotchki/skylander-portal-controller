@@ -214,10 +214,12 @@ fn another_character_under_the_alert_comes_in_as_the_scene_ends() {
     put(&mut app, bobs(2));
     until(&mut app, "the scene running on", |a| mode(a) == Mode::Level);
     unlock(&mut app);
+    // The next frame: the backstop is a long way off.
+    frames(&mut app, 2);
+    assert!(!lifted(&app), "the scene let go");
     until(&mut app, "the swap", |a| {
         hero(a).is_some_and(|h| h != first)
     });
-    assert!(!lifted(&app));
     assert_eq!(
         app.world().resource::<Play>().hero_slot(),
         Some(SlotIndex::new(2).unwrap())
