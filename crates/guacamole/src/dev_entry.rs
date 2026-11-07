@@ -830,7 +830,8 @@ fn rest_camera(
 }
 
 /// `POST /api/_test/tv/entry`'s body: `interior` names the controller an
-/// `interior` anchor sets him down by, and only that anchor takes one.
+/// `interior` anchor sets him down by, `by` the placement a `by` anchor
+/// does, and only that anchor takes one.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EntryBody {
@@ -850,27 +851,6 @@ impl EntryBody {
             }
             (a, None, None) if !a.names_a_place() => Some(None),
             _ => None,
-        }
-    }
-}
-
-/// `POST /api/_test/tv/entry`'s body: `interior` names the controller an
-/// `interior` anchor sets him down by, and only that anchor takes one.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct EntryBody {
-    anchor: Anchor,
-    seed: Option<u32>,
-    interior: Option<String>,
-    by: Option<String>,
-}
-
-impl EntryBody {
-    /// The name its anchor takes, under that anchor's own key.
-    fn named(&self) -> Option<String> {
-        match self.anchor {
-            Anchor::By => self.by.clone(),
-            _ => self.interior.clone(),
         }
     }
 }
