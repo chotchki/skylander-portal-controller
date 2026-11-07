@@ -186,7 +186,9 @@ mod tests {
     /// or a modal.
     #[test]
     fn the_words_sit_under_what_takes_the_screen() {
-        assert!(ANNOUNCE_Z > crate::hud::DAMAGE_Z);
+        for under in [crate::hud::HUD_Z, crate::hud::DAMAGE_Z] {
+            assert!(ANNOUNCE_Z > under, "{under}");
+        }
         for over in [
             crate::pause::OVERLAY_Z,
             crate::completion::COMPLETION_Z,
