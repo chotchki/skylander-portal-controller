@@ -6541,8 +6541,9 @@ mod fight_tests {
         w.actors.insert(HERO, Actor::blank());
         assert_eq!(type_under(&mut w, &mut e, HERO), Value::Int(0));
         // How far over his ground he reads: how far he's fallen, a foot at
-        // least so gravity acts, 0 where his shape stands on a lip over
-        // nothing, and past the safe point trail's 5 ft either way.
+        // least so gravity acts, on a lip over nothing as anywhere (openspec
+        // AS.155), 0 with ground under him, and past the safe point trail's
+        // 5 ft either way.
         let ground = get(&mut w, &mut e, "abstractplacement", "ground", HERO, HERO);
         let over = |w: &mut ScriptWorld, e: &mut Pit, m: &str| {
             let a = Access {
@@ -6566,6 +6567,10 @@ mod fight_tests {
         assert_eq!(over(&mut w, &mut e, "separation"), 1.0);
         assert!(over(&mut w, &mut e, "vertical offset") > 5.0);
         e.hero.as_mut().unwrap().footing.supported = true;
+        assert_eq!(over(&mut w, &mut e, "separation"), 1.0);
+        let hero = e.hero.as_mut().unwrap();
+        hero.footing.height = Some(0.01);
+        hero.footing.ground = Some(Vec3::Y);
         assert_eq!(over(&mut w, &mut e, "separation"), 0.0);
         e.hero = None;
         // With a solid, far over the floor: the same.
