@@ -448,6 +448,11 @@ pub struct ScriptWorld {
     /// Each template's animation palette: every slot's clip length,
     /// seconds at 100 %, 0 where a slot is empty.
     pub(crate) palettes: HashMap<Obj, Vec<f32>>,
+    /// The templates whose model is a camera's rig (openspec AS.145).
+    pub(crate) rigs: std::collections::HashSet<Obj>,
+    /// Where the last rig posed left its nodes, in the level, each turned
+    /// as it stood: what a new shot's rig reads until it's posed itself.
+    pub(crate) rig_held: Vec<(Vec3, Quat)>,
     /// Each template's palette's animation info as its file holds it, slot
     /// by slot (openspec AH.49): a template given none reads every slot a
     /// base clip with no layered bit.
@@ -845,6 +850,8 @@ impl ScriptWorld {
             sequences: Vec::new(),
             restarts: Vec::new(),
             palettes: HashMap::new(),
+            rigs: Default::default(),
+            rig_held: Vec::new(),
             clip_info: HashMap::new(),
             clip_state: HashMap::new(),
             hero_templates: HashMap::new(),
@@ -1599,6 +1606,13 @@ impl ScriptWorld {
         self.palettes.insert(template, lengths);
     }
 
+    /// `template`'s clones are a camera's rig (openspec AS.145): each shot
+    /// makes one, and it's drawn, so posed, a frame on, its nodes reading
+    /// where the last rig left them until then.
+    pub fn set_rig(&mut self, template: Obj) {
+        self.rigs.insert(template);
+    }
+
     /// The palette's clip lengths `template` has, if any.
     pub fn palette(&self, template: Obj) -> Option<&[f32]> {
         self.palettes.get(&template).map(Vec::as_slice)
@@ -1670,6 +1684,15 @@ impl ScriptWorld {
     /// [`ScriptWorld::place_hung`] sets what hangs from them there, turned
     /// as its node (AH.60).
     pub fn set_nodes(&mut self, actor: Handle, nodes: Vec<NodePose>) {
+        if self.is_rig(actor)
+            && let Some(a) = self.actors.get(&actor)
+        {
+            let facing = Quat::from_rotation_y(a.angles.facing.to_radians());
+            self.rig_held = nodes
+                .iter()
+                .map(|n| (a.position + facing * n.at, facing * n.turn))
+                .collect();
+        }
         self.nodes.insert(actor, nodes);
     }
 

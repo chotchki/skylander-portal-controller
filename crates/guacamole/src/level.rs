@@ -731,34 +731,6 @@ fn merged(refused: impl IntoIterator<Item = arithmetic::Refused>) -> Vec<arithme
     out
 }
 
-/// The walkers the extract's scripts part holds (AG.27), whose archives
-/// give the spawn and particle parts what their attacks spawn (openspec
-/// AU.1); none for an extract made before them.
-fn listed_walkers(source: &LevelSource) -> Vec<String> {
-    guac_extract::scripts::read_walkers(&source.dir)
-        .map(|w| w.listed)
-        .unwrap_or_default()
-}
-
-/// One spawn archive's file of a part: `None`, logged, for a walker's that
-/// doesn't read (his clones draw nothing; the rest still do), the error for
-/// the base's (`global.bld`'s and a fighter's), which fail the part.
-fn walker_tolerant<T>(
-    archive: &str,
-    base: &[String],
-    rel: &str,
-    read: Result<T, String>,
-) -> Result<Option<T>, String> {
-    match read {
-        Ok(t) => Ok(Some(t)),
-        Err(why) if !base.iter().any(|b| b == archive) => {
-            warn!(file = rel, reason = %why, "a walker's spawn file didn't read: what his attacks spawn draws nothing");
-            Ok(None)
-        }
-        Err(why) => Err(why),
-    }
-}
-
 /// The extract's spawn part (AH.22): every model the base's spawn archives'
 /// placements name, as props draw them. A walker's are built when he's
 /// placed ([`Level::ask_figure`], openspec AU.19): no level pays for figures
@@ -791,6 +763,8 @@ struct FigureRead {
     drawn: guacamole::level_scene::Drawn,
     /// Each model's path and its segments, by index into `meshes`.
     models: Vec<(String, Vec<(usize, u16)>)>,
+    /// His emitters, each generator's material by index into `drawn`.
+    particles: Vec<(Arc<guac_ir::particle::Emitter>, Vec<Option<usize>>)>,
     meshes: VecDeque<Mesh>,
     images: VecDeque<(ImageKey, Image)>,
     depth_bias: Vec<f32>,
@@ -805,6 +779,32 @@ fn read_figure(
     let archive = guac_extract::scripts::character_archive(load_file);
     let models = read_spawn_archive(source, &archive)?;
     let (mut drawn, ranges) = guacamole::props::models_drawn(&models);
+    // His emitters, their materials after the models': a file that doesn't
+    // read leaves them undrawn, as the level's part does its own.
+    let emitters = match read_emitters(source, &archive) {
+        Ok(e) => vec![e],
+        Err(why) => {
+            warn!(load_file, reason = %why, "a walker's emitters didn't read");
+            Vec::new()
+        }
+    };
+    let (sparks, index) = guacamole::particles::drawn(&emitters);
+    let spark_materials = drawn.materials.len();
+    drawn.extend_materials(&sparks);
+    let particles = index
+        .into_iter()
+        .filter_map(|(name, generators)| {
+            let emitter = emitters
+                .iter()
+                .flat_map(|a| &a.emitters)
+                .find(|e| e.name == name)?;
+            let materials = generators
+                .iter()
+                .map(|(_, m)| m.map(|m| spark_materials + usize::from(m)))
+                .collect();
+            Some((Arc::new(emitter.clone()), materials))
+        })
+        .collect();
     let parts = models
         .iter()
         .zip(&ranges)
@@ -849,6 +849,7 @@ fn read_figure(
     Ok(FigureRead {
         drawn,
         models: parts,
+        particles,
         meshes,
         images: images.into(),
         depth_bias,
@@ -881,23 +882,27 @@ impl FigureDraws {
     }
 }
 
-/// The extract's particle part (AH.87): every emitter each spawn archive
-/// places, with its generators, every walker's among them (openspec AU.1).
+/// The extract's particle part (AH.87): every emitter the base's spawn
+/// archives place, with its generators. A walker's are read with his spawn
+/// models when he's placed ([`read_figure`], openspec AU.19).
 fn read_particles(source: &LevelSource) -> Result<Vec<guac_ir::particle::Emitters>, String> {
-    let base = guac_extract::particles::archives();
-    let mut out = Vec::new();
-    for archive in guac_extract::particles::archives_with(&listed_walkers(source)) {
-        let rel = guac_extract::particles::path(source.ir, &archive);
-        let read = read_ir::<guac_ir::particle::Emitters>(source.ir, &source.dir.join(&rel))
-            .and_then(|e| match e.identity == source.identity {
-                true => Ok(e),
-                false => Err(format!("{rel} is another dump's")),
-            });
-        if let Some(e) = walker_tolerant(&archive, &base, &rel, read)? {
-            out.push(e);
-        }
+    guac_extract::particles::archives()
+        .iter()
+        .map(|archive| read_emitters(source, archive))
+        .collect()
+}
+
+/// One spawn archive's emitters.
+fn read_emitters(
+    source: &LevelSource,
+    archive: &str,
+) -> Result<guac_ir::particle::Emitters, String> {
+    let rel = guac_extract::particles::path(source.ir, archive);
+    let e = read_ir::<guac_ir::particle::Emitters>(source.ir, &source.dir.join(&rel))?;
+    match e.identity == source.identity {
+        true => Ok(e),
+        false => Err(format!("{rel} is another dump's")),
     }
-    Ok(out)
 }
 
 /// A segment with nothing in it but its material.
@@ -1554,6 +1559,16 @@ impl Level {
                 .entry(load_file.to_owned())
                 .or_insert(FigureDraws::Asked);
         }
+    }
+
+    /// `formats` in place of the level's, handing the last back: none holds
+    /// a placed walker's draws where they stand.
+    #[cfg(test)]
+    pub(crate) fn stall_figures(
+        &mut self,
+        formats: Option<CompressedImageFormats>,
+    ) -> Option<CompressedImageFormats> {
+        std::mem::replace(&mut self.formats, formats)
     }
 
     /// Whether what `load_file`'s attacks draw is in the level loaded: true
@@ -2434,6 +2449,19 @@ fn figure_materials(
             })
             .collect();
         loaded.spawns.entry(path.clone()).or_insert(parts);
+    }
+    for (emitter, generators) in &read.particles {
+        let materials = generators
+            .iter()
+            .map(|m| m.map(|m| handles[m].clone()))
+            .collect();
+        loaded
+            .emitters
+            .entry(emitter.name.clone())
+            .or_insert_with(|| EmitterDraw {
+                emitter: emitter.clone(),
+                materials,
+            });
     }
     read.models.len()
 }
@@ -3333,12 +3361,10 @@ mod tests {
     use guacamole::level_scene::level_lights;
     use std::path::Path;
 
-    /// AU.1, AU.19: the particle part reads every walker's file the scripts
-    /// part lists beside the base's, a walker's that doesn't read leaving his
-    /// alone out, the base's still read, where a base file missing fails the
-    /// part; the spawn models are the base's alone at a level's load, a
-    /// walker's read by himself once he's placed (one that doesn't read an
-    /// error of his own).
+    /// AU.19: the spawn and particle parts are the base's alone at a level's
+    /// load, a base file missing failing the part; a walker's are read by
+    /// himself once he's placed, one whose models don't read an error of his
+    /// own, one whose emitters don't drawing none.
     #[test]
     fn a_levels_load_reads_no_walkers_spawn_models_and_a_placed_one_reads_his_own() {
         use guac_ir::particle::Emitters;
@@ -3431,11 +3457,7 @@ mod tests {
                 .iter()
                 .map(|e| e.archive.as_str())
                 .collect::<Vec<_>>(),
-            [
-                "permanent/global.bld",
-                "character/009_eruptor.bld",
-                spyro.as_str()
-            ]
+            ["permanent/global.bld", "character/009_eruptor.bld"]
         );
         // A base file missing fails the part.
         std::fs::remove_file(
@@ -3466,24 +3488,42 @@ mod tests {
     #[test]
     fn a_placed_walkers_models_go_into_the_level_and_again_into_the_next() {
         use guac_ir::spawn::SpawnModels;
+        fn write_spyro(dir: &Path, source: &LevelSource) {
+            let spyro = guac_extract::scripts::character_archive("016_Spyro");
+            let rel = dir.join(IrFormat::Ron.spawn_path(&spyro));
+            std::fs::create_dir_all(rel.parent().unwrap()).unwrap();
+            let spawns = SpawnModels {
+                identity: source.identity.clone(),
+                archive: spyro,
+                props: vec![guac_ir::level::Prop {
+                    path: "spyro_fireball.mdl".into(),
+                    skeleton: None,
+                    materials: Vec::new(),
+                    segments: Vec::new(),
+                    idle: None,
+                }],
+                refused: Vec::new(),
+            };
+            std::fs::write(rel, guac_ir::to_ron(&spawns).unwrap()).unwrap();
+            let archive = spawns.archive;
+            let rel = dir.join(guac_extract::particles::path(IrFormat::Ron, &archive));
+            std::fs::create_dir_all(rel.parent().unwrap()).unwrap();
+            let emitters = guac_ir::particle::Emitters {
+                identity: source.identity.clone(),
+                archive,
+                emitters: vec![guac_ir::particle::Emitter {
+                    name: "spyro_spark".into(),
+                    object: 7,
+                    generators: Vec::new(),
+                    unread: Vec::new(),
+                }],
+                refused: Vec::new(),
+            };
+            std::fs::write(rel, guac_ir::to_ron(&emitters).unwrap()).unwrap();
+        }
         let tmp = tempfile::tempdir().unwrap();
         let source = write_level(tmp.path(), &lights());
-        let spyro = guac_extract::scripts::character_archive("016_Spyro");
-        let rel = tmp.path().join(IrFormat::Ron.spawn_path(&spyro));
-        std::fs::create_dir_all(rel.parent().unwrap()).unwrap();
-        let spawns = SpawnModels {
-            identity: source.identity.clone(),
-            archive: spyro,
-            props: vec![guac_ir::level::Prop {
-                path: "spyro_fireball.mdl".into(),
-                skeleton: None,
-                materials: Vec::new(),
-                segments: Vec::new(),
-                idle: None,
-            }],
-            refused: Vec::new(),
-        };
-        std::fs::write(rel, guac_ir::to_ron(&spawns).unwrap()).unwrap();
+        write_spyro(tmp.path(), &source);
         let mut app = level_app(tmp.path(), source.clone(), false);
         until(&mut app, &["ready"], |_| {});
         fn level(app: &App) -> &Level {
@@ -3507,13 +3547,34 @@ mod tests {
                 .spawn_models()
                 .is_some_and(|m| m.contains_key("spyro_fireball.mdl"))
         };
+        let sparks = |app: &App| {
+            level(app)
+                .emitters()
+                .is_some_and(|(e, _)| e.contains_key("spyro_spark"))
+        };
         assert!(!drawn(&app));
+        assert!(!sparks(&app), "the load read no walker's emitters");
         let deadline = Instant::now() + Duration::from_secs(5);
         while !level(&app).figure_ready("016_Spyro") {
             assert!(Instant::now() < deadline, "his draws never came");
             app.update();
         }
         assert!(drawn(&app), "in the level by the time he's ready");
+        assert!(sparks(&app), "his emitters with them");
+        // The next level reads them again, the portal's figures going into
+        // it as they stood, and he isn't ready until they're in it.
+        let next = tempfile::tempdir().unwrap();
+        let second = write_level(next.path(), &lights());
+        write_spyro(next.path(), &second);
+        send_source(&mut app, &second, false);
+        assert!(!level(&app).figure_ready("016_Spyro"), "asked again");
+        until(&mut app, &["ready"], |_| {});
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !level(&app).figure_ready("016_Spyro") {
+            assert!(Instant::now() < deadline, "his draws never came again");
+            app.update();
+        }
+        assert!(drawn(&app) && sparks(&app), "in the next");
     }
 
     fn state(app: &App) -> String {

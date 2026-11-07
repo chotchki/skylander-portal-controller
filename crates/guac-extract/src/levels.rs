@@ -28,8 +28,9 @@
 //!   file's placements, structures and sets. The same file in either IR
 //!   format.
 //! - The palettes (AH.22): every slot of each skinned model a placement
-//!   running a whitelisted script names ([`crate::scripts::WHITELIST`]: the
-//!   level's and the walkers' own, AG.162): chapter 1's Chompies and Norticus.
+//!   names ([`palettes`]; AS.54 past the first run's levels, AU.33 chapter
+//!   1's too, once its way past the first fight ran): a script waits on its
+//!   clips' ends, so a model read without them stalls it.
 //! - The nodes (openspec AH.138): each placed model's attach list, a skinned
 //!   one's nodes on its joints, so what a script hangs on a creature's node
 //!   rides it (Norticus' turban on his node 2). An extract written before it

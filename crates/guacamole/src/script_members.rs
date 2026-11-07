@@ -780,6 +780,15 @@ impl ScriptWorld {
     }
 
     fn node_within(&self, a: Handle, i: u32, engine: &mut dyn Engine, depth: u8) -> Option<Vec3> {
+        // A new shot's rig stands at the origin until it's drawn and posed
+        // (openspec AS.145): the view holds, and what hangs on it.
+        if self.rig_unposed(a) {
+            return Some(
+                self.rig_held
+                    .get(i as usize)
+                    .map_or(self.view.eye, |(at, _)| *at),
+            );
+        }
         let pivot = self.position_within(a, engine, depth)?;
         let Some(off) = self.nodes.get(&a).and_then(|n| n.get(i as usize)) else {
             return Some(pivot);
@@ -792,6 +801,9 @@ impl ScriptWorld {
     /// posed it ([`ScriptWorld::set_nodes`]): its own turned by the actor's
     /// facing as it stands. None for a node never posed.
     fn node_turn(&self, a: Handle, i: u32, engine: &mut dyn Engine, depth: u8) -> Option<Quat> {
+        if self.rig_unposed(a) {
+            return self.rig_held.get(i as usize).map(|(_, turn)| *turn);
+        }
         let node = self.nodes.get(&a)?.get(i as usize)?;
         let facing = self
             .angles_within(a, engine, depth)
@@ -2338,6 +2350,16 @@ impl ScriptWorld {
         a.template.or(a.obj)
     }
 
+    /// Whether `h` is a camera's rig ([`ScriptWorld::set_rig`]).
+    pub(crate) fn is_rig(&self, h: Handle) -> bool {
+        self.template_of(h).is_some_and(|t| self.rigs.contains(&t))
+    }
+
+    /// Whether `h` is a rig no pose has reached yet.
+    fn rig_unposed(&self, h: Handle) -> bool {
+        !self.nodes.contains_key(&h) && self.is_rig(h)
+    }
+
     /// A clip's length, seconds at 100 %: 0 for an empty slot or anything
     /// that isn't a clip (a sound plays nothing here).
     /// Slot `slot` of `template`'s palette: its file's animation info and
@@ -3287,6 +3309,13 @@ impl ScriptWorld {
                 self.object(Some(node)),
                 Some(Object::Facet(_, Facet::Ground))
             ) {
+                continue;
+            }
+            // The first shot's rig, unposed, has no last place to read: what
+            // hangs on it stays where it stands until it's posed.
+            if self.rig_held.is_empty()
+                && matches!(self.object(Some(node)), Some(Object::Node(owner, _)) if self.rig_unposed(owner))
+            {
                 continue;
             }
             let turn = match self.object(Some(node)) {
@@ -4564,6 +4593,66 @@ mod tests {
 
     /// An actor others hang from in the tests below.
     const OWNER: Handle = 0x6000_0021;
+
+    /// openspec AS.145: each shot's rig is a clone drawn, so posed, a frame
+    /// after it's made. Until then its node reads where the last rig left
+    /// it, turned as it was, so the view and what hangs there hold instead
+    /// of standing at the rig's origin; posed, it reads its own. The first
+    /// shot's has no last: the view reads where it stands, and what hangs
+    /// on the rig stays put. Any other clone unposed reads its pivot.
+    #[test]
+    fn a_rigs_node_unposed_reads_as_its_last() {
+        const RIG: Obj = Obj { unit: 0, index: 77 };
+        const LAST: Handle = 0x6000_0031;
+        const NEXT: Handle = 0x6000_0032;
+        const HUNG: Handle = 0x6000_0033;
+        const PLAIN: Handle = 0x6000_0034;
+        let mut e = bench();
+        let mut w = world();
+        w.set_rig(RIG);
+        let clone = |at: Vec3, template: Option<Obj>| {
+            let mut a = Actor::blank();
+            a.position = at;
+            a.template = template;
+            a
+        };
+        w.actors.insert(LAST, clone(Vec3::ZERO, Some(RIG)));
+        w.actors.insert(NEXT, clone(Vec3::ZERO, Some(RIG)));
+        w.actors
+            .insert(PLAIN, clone(Vec3::new(2.0, 0.0, 0.0), None));
+        let mut hung = Actor::blank();
+        hung.position = Vec3::new(8.0, 8.0, 8.0);
+        hung.attach = w.objs.value(Object::Node(NEXT, 0));
+        w.actors.insert(HUNG, hung);
+        w.view.eye = Vec3::new(1.0, 1.0, 1.0);
+        // The first shot's: nothing to read, and what hangs stays.
+        assert_eq!(w.node(NEXT, 0, &mut e), Some(w.view.eye));
+        w.place_hung_actors(&mut e);
+        assert_eq!(w.actors[&HUNG].position, Vec3::new(8.0, 8.0, 8.0));
+        // A shot posed: the next, unposed, reads it.
+        let turned = Quat::from_rotation_y(90f32.to_radians());
+        let at = Vec3::new(30.0, 40.0, 50.0);
+        w.set_nodes(LAST, vec![NodePose { at, turn: turned }]);
+        assert_eq!(w.node(NEXT, 0, &mut e), Some(at));
+        assert_eq!(w.node_turn(NEXT, 0, &mut e, HUNG_DEPTH), Some(turned));
+        w.place_hung_actors(&mut e);
+        assert_eq!(w.actors[&HUNG].position, at);
+        // Posed, it reads its own, and the next after it reads that.
+        let own = Vec3::new(-3.0, 4.0, -5.0);
+        w.set_nodes(
+            NEXT,
+            vec![NodePose {
+                at: own,
+                turn: Quat::IDENTITY,
+            }],
+        );
+        assert_eq!(w.node(NEXT, 0, &mut e), Some(own));
+        w.place_hung_actors(&mut e);
+        assert_eq!(w.actors[&HUNG].position, own);
+        assert_eq!(w.rig_held[0].0, own);
+        // Not a rig: at its pivot, as ever.
+        assert_eq!(w.node(PLAIN, 0, &mut e), Some(Vec3::new(2.0, 0.0, 0.0)));
+    }
 
     /// openspec AS.115: a hero hung on a node rides it, his controller's
     /// step taking nothing from it and the host carrying his body as the

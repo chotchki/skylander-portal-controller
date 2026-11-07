@@ -3072,6 +3072,45 @@ mod tests {
         shots.kept()
     }
 
+    /// AU.19: a walker placed before the start comes in once what his attacks
+    /// draw is in the level, his model ready well before it: the portal holds
+    /// him, then the level takes him.
+    #[test]
+    fn a_walker_comes_in_once_what_his_attacks_draw_is_in() {
+        use guac_formats::script::builder::WalkerFault;
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = walker_app(tmp.path(), WalkerFault::None);
+        until(&mut app, "the level", |a| {
+            a.world().resource::<Level>().walkable().is_some()
+        });
+        // His draws on their way, and staying so.
+        let formats = app.world_mut().resource_mut::<Level>().stall_figures(None);
+        place(&mut app, 0, WALKER_TOY, "Synthetic");
+        until(&mut app, "his model", |a| {
+            let play = a.world().resource::<Play>();
+            let ready = |c: &Candidate| matches!(c.model, Model3d::Ready(_));
+            play.candidate.as_ref().is_some_and(ready)
+        });
+        for _ in 0..30 {
+            app.update();
+            assert_eq!(mode(&app), Mode::Portal, "held for his draws");
+        }
+        app.world_mut()
+            .resource_mut::<Level>()
+            .stall_figures(formats);
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+    }
+
+    /// AU.19: every walker's attack keys wait for his model, the base's the
+    /// start's pass warmed; with no GPU there's nothing to wait on.
+    #[test]
+    fn a_walkers_model_waits_on_the_walkers_keys_the_bases_doesnt() {
+        let gpu = Warm::new(true);
+        assert!(walker_keys_warm(&gpu, "009_Eruptor"));
+        assert!(!walker_keys_warm(&gpu, "016_Spyro"));
+        assert!(walker_keys_warm(&Warm::new(false), "016_Spyro"));
+    }
+
     /// AG.27: a character with his own scripts in the part, no table of
     /// measured numbers, walks on what his setup wrote: his speed level and
     /// turn class into his description's movement parameters (ground max

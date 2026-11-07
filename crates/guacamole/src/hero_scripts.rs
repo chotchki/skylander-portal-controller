@@ -499,6 +499,12 @@ fn install_from(world: &mut World, source: &ScriptSource) {
         {
             script_world.set_palette(p.obj, lengths.clone());
         }
+        if p.model
+            .as_deref()
+            .is_some_and(guacamole::hands::camera_rig_model)
+        {
+            script_world.set_rig(p.obj);
+        }
     }
     // The level's music waits for its sounds (openspec AR.23).
     hold_music(world, source, level);

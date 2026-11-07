@@ -107,7 +107,12 @@ pub fn held<'p>(
 /// where every level's animator rig lives (`214_Recovered.mdl`,
 /// `201_Intro.mdl`).
 fn camera_rig(palette: &Palette) -> bool {
-    palette.owner.contains("/Models/Cameras/")
+    camera_rig_model(&palette.owner)
+}
+
+/// Whether `model` is a camera's rig's, by the path a placement names it.
+pub fn camera_rig_model(model: &str) -> bool {
+    model.contains("/Models/Cameras/")
 }
 
 /// What a drawn actor's clips pose as the TV draws it (openspec AS.141):
