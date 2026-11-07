@@ -1093,12 +1093,6 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
         {
             world.set_palette_of(p.obj, pal);
         }
-        if p.model
-            .as_deref()
-            .is_some_and(guacamole::hands::camera_rig_model)
-        {
-            world.set_rig(p.obj);
-        }
     }
     if chapter_1 {
         world.walk_first_fight(LEVEL);
