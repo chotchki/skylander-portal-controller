@@ -150,7 +150,7 @@ impl Story {
     }
 
     fn gold(&self) -> u32 {
-        self.run.figure_values().map_or(0, |v| v.gold.into())
+        self.run.figure_values().map_or(0, |v| v.gold)
     }
 }
 
@@ -503,7 +503,7 @@ fn a_hat_box_gives_its_hat_and_stays_taken() {
             back[0].map(|v| vm.value(v)).and_then(|v| v.as_i32())
         })
     };
-    assert_eq!(collected(&mut s, id as i32), Some(1));
+    assert_eq!(collected(&mut s, id), Some(1));
     let cutscene = s.run.vm.program().global_named("Cutscene State").unwrap();
     let held = s.run.vm.global_peek(cutscene).map(|v| s.run.vm.value(v));
     assert_eq!(held.and_then(|v| v.as_i32()), Some(0), "the hero left held");
