@@ -233,6 +233,12 @@ struct Placement {
     behaviour: Option<u32>,
     shutdown: bool,
     locals: IdMap<Sym, u32>,
+    /// Its variables of a name `locals` holds under another declaration's
+    /// kind: what a `find variable` made on it alongside its script's own
+    /// (crate docs, Variables, structures and sets; openspec AU.53: the
+    /// arena's wave master flags its commander clone's `commander` value,
+    /// beside the clone's own `commander` reference).
+    others: Vec<(Sym, CellKind, u32)>,
     stopped: Option<Halt>,
     inert: bool,
     /// Taken off by a `remove`: never ticked again.
@@ -967,6 +973,7 @@ impl Vm {
             behaviour: None,
             shutdown: false,
             locals: IdMap::default(),
+            others: Vec::new(),
             stopped: None,
             inert,
             removed: false,
@@ -1008,9 +1015,8 @@ impl Vm {
         moved.sort_unstable_by_key(|&(_, c)| c);
         for (k, c) in moved {
             self.found.remove(&k);
-            let p = &mut self.placements[id as usize];
-            p.locals.insert(k.1, c);
-            p.listed = true;
+            self.keep_local(id, k.1, c);
+            self.placements[id as usize].listed = true;
         }
         id
     }
@@ -1282,6 +1288,7 @@ impl Vm {
         p.started = false;
         p.behaviour = None;
         p.locals.clear();
+        p.others.clear();
         p.listed = false;
         p.active = 0.0;
         self.unlist(id);
@@ -1511,6 +1518,26 @@ impl Vm {
         let sym = self.program.find_sym(name)?;
         let c = *self.placements.get(id as usize)?.locals.get(&sym)?;
         Some(self.cells[c as usize].value)
+    }
+
+    /// Every variable a placement holds by `name`: the one its locals key
+    /// by it, then those kept beside it under other containers.
+    #[cfg(test)]
+    pub(crate) fn locals_named(&self, id: PlacementId, name: &str) -> Vec<Value> {
+        let Some(sym) = self.program.find_sym(name) else {
+            return Vec::new();
+        };
+        let Some(p) = self.placements.get(id as usize) else {
+            return Vec::new();
+        };
+        let others = p.others.iter().filter(|(n, _, _)| *n == sym).map(|o| o.2);
+        p.locals
+            .get(&sym)
+            .copied()
+            .into_iter()
+            .chain(others)
+            .map(|c| self.cells[c as usize].value)
+            .collect()
     }
 
     /// A macro frame's variable, by name: what a call left there before its
@@ -3580,11 +3607,18 @@ impl Vm {
         host: &mut dyn Host,
     ) -> Result<Option<u32>, Fault> {
         let p = &self.placements[pid as usize];
+        let kind = cell_kind(decl.container);
         let mut existing = p
             .locals
             .get(&name)
             .copied()
-            .filter(|&c| Some(self.cells[c as usize].kind) == cell_kind(decl.container));
+            .filter(|&c| Some(self.cells[c as usize].kind) == kind)
+            .or_else(|| {
+                p.others
+                    .iter()
+                    .find(|(n, k, _)| *n == name && Some(*k) == kind)
+                    .map(|(_, _, c)| *c)
+            });
         // A tag its file gives the placement is one of its variables from
         // the start, holding the tag's value.
         let is_tag = p.obj.is_some_and(|o| self.tag(o, name, decl).is_some());
@@ -3593,7 +3627,7 @@ impl Vm {
             && let Some(obj) = p.obj
         {
             let c = self.tag_cell(obj, name, decl, host)?;
-            self.placements[pid as usize].locals.insert(name, c);
+            self.keep_local(pid, name, c);
             existing = Some(c);
         }
         let p = &self.placements[pid as usize];
@@ -3615,9 +3649,8 @@ impl Vm {
         let listed = p.listed;
         let make = |vm: &mut Self| -> Result<u32, Fault> {
             let c = vm.new_cell(decl, None, 0)?;
-            let p = &mut vm.placements[pid as usize];
-            p.locals.insert(name, c);
-            p.listed = true;
+            vm.keep_local(pid, name, c);
+            vm.placements[pid as usize].listed = true;
             Ok(c)
         };
         Ok(match filter {
@@ -3653,8 +3686,12 @@ impl Vm {
                     None if listed && declared => Some(make(self)?),
                     _ => None,
                 };
-                if found.is_some() {
-                    self.placements[pid as usize].locals.remove(&name);
+                if let Some(c) = found {
+                    let p = &mut self.placements[pid as usize];
+                    if p.locals.get(&name) == Some(&c) {
+                        p.locals.remove(&name);
+                    }
+                    p.others.retain(|(_, _, o)| *o != c);
                 }
                 found
             }
@@ -5153,12 +5190,41 @@ impl Vm {
         let Some(id) = self.run.placement else {
             return unsupported("a placement's variable outside any placement");
         };
-        if let Some(&c) = self.placements[id as usize].locals.get(&name) {
-            return Ok(c);
+        let kind = cell_kind(decl.container);
+        let p = &self.placements[id as usize];
+        if let Some(&c) = p.locals.get(&name) {
+            // Its own, unless a find made one of this name under another
+            // declaration first: then the declaration picks.
+            if kind.is_none() || Some(self.cells[c as usize].kind) == kind {
+                return Ok(c);
+            }
+            if let Some(&(_, _, c)) = p
+                .others
+                .iter()
+                .find(|(n, k, _)| *n == name && Some(*k) == kind)
+            {
+                return Ok(c);
+            }
         }
         let c = self.new_cell(decl, None, 0)?;
-        self.placements[id as usize].locals.insert(name, c);
+        self.keep_local(id, name, c);
         Ok(c)
+    }
+
+    /// `c` kept as the placement's variable `name`: in its locals, or beside
+    /// them when they hold `name` under another kind already.
+    fn keep_local(&mut self, id: PlacementId, name: Sym, c: u32) {
+        let kind = self.cells[c as usize].kind;
+        let p = &mut self.placements[id as usize];
+        match p.locals.get(&name) {
+            Some(&old) if old != c && self.cells[old as usize].kind != kind => {
+                p.others.retain(|(n, k, _)| !(*n == name && *k == kind));
+                p.others.push((name, kind, c));
+            }
+            _ => {
+                p.locals.insert(name, c);
+            }
+        }
     }
 
     fn global_cell(&mut self, g: GlobalId) -> Result<u32, Fault> {
