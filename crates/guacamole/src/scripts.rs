@@ -2940,11 +2940,21 @@ pub const HUB_DOORS: [&str; 2] = ["/Utilities_Controller.ai", "/Hub2_Door.ai"];
 /// and at his stall after it, Flynn and Cali on its third ship (AS.142).
 /// Walked, his scene never ended (a reading: its `Turn to Target` left to
 /// the walk's steering, as Cali's was at AU.6).
-pub const LEVEL_PEOPLE: [(&str, &str); 4] = [
+pub const LEVEL_PEOPLE: [(&str, &str); 11] = [
     ("level_214_tutotial_2", "Moneybags_end"),
     ("level_214_tutotial_2", "Auric_store"),
     ("level_214_tutotial_2", "Flynn_Island_3"),
     ("level_214_tutotial_2", "Cali_Island_3"),
+    // Level 201's (openspec AU.53): Flynn by the landing, Quigley by the
+    // door to the life mage and on the cliff path, Brock in the practice
+    // pit's scenes, running over the bridge and in his arena, Auric's store.
+    ("level_201", "Flynn"),
+    ("level_201", "Quigley_1"),
+    ("level_201", "Quigley_2"),
+    ("level_201", "Brock NPC"),
+    ("level_201", "NPC_RunningDude"),
+    ("level_201", "Brock"),
+    ("level_201", "Auric-STORE"),
 ];
 
 /// Whether a placement whose script is `script` is one of the hub's
@@ -3031,6 +3041,7 @@ pub fn encounters(level: &str) -> impl Iterator<Item = &'static Encounter> {
         .iter()
         .chain(std::iter::once(&THIRD_ISLAND))
         .chain(std::iter::once(&crate::chapter_1::WAY))
+        .chain(std::iter::once(&crate::level_201::WAY))
         .filter(move |e| e.level == level)
 }
 
@@ -3286,7 +3297,7 @@ pub const ELEMENTAL_SCRIPTS: [&str; 22] = [
 /// timer, the mute mix and the jukebox controller run on 36 other levels
 /// too (the story levels' beat timer, the hub stages' jukeboxes and radios,
 /// the arena challenges'; the as-214-alive review's whole-disc listing).
-pub const MUSIC_SCRIPTS: [&str; 20] = [
+pub const MUSIC_SCRIPTS: [&str; 33] = [
     "Music_Level_Controller.ai",
     "snd_combat_watcher_213.ai",
     "snd_interior_watcher_213.ai",
@@ -3307,6 +3318,20 @@ pub const MUSIC_SCRIPTS: [&str; 20] = [
     "snd_jukebox_controller.ai",
     "snd_mixtype_music_mute.ai",
     "time_till_next_beat.ai",
+    // Level 201's (openspec AU.53), by their path under its folder.
+    "Level_201/Scripts/snd_201_interior_furnace_house_2.ai",
+    "Level_201/Scripts/snd_201_interior_furnace_house_4.ai",
+    "Level_201/Scripts/snd_arena_approach_switcher_201.ai",
+    "Level_201/Scripts/snd_backtrack_watcher.ai",
+    "Level_201/Scripts/snd_combat_switcher_201.ai",
+    "Level_201/Scripts/snd_combat_watcher_201.ai",
+    "Level_201/Scripts/snd_dynamic_sound_controller_201.ai",
+    "Level_201/Scripts/snd_explore_reset_201.ai",
+    "Level_201/Scripts/snd_interior_life_house_music_fade_201.ai",
+    "Level_201/Scripts/snd_interior_watcher_201.ai",
+    "Level_201/Scripts/snd_life_switcher_201.ai",
+    "Level_201/Scripts/snd_puzzle_switcher_201.ai",
+    "Level_201/Scripts/snd_undead_switcher_201.ai",
 ];
 
 /// Chapter 1's end (openspec AS.15), every tick: `Temp_Level_Ender`, asleep
@@ -3607,6 +3632,10 @@ pub fn hold_music_while(
 /// file name, any case.
 pub fn is_music_script(path: &str) -> bool {
     guac_extract::scripts::listed(&MUSIC_SCRIPTS, path)
+        // One named by its path under its level's folder (level 201's).
+        || MUSIC_SCRIPTS
+            .iter()
+            .any(|s| s.contains('/') && path.ends_with(s))
 }
 
 /// The VM's config for the TV's run (openspec AH.27): AH.17's with AH.20's
@@ -4006,6 +4035,20 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
         placements.extend(third_island_way(name).iter().map(|s| (*s).to_owned()));
         placements.extend(
             crate::chapter_1::passage(name)
+                .iter()
+                .map(|s| (*s).to_owned()),
+        );
+        placements.extend(
+            crate::level_201::passage(name)
+                .iter()
+                .map(|s| (*s).to_owned()),
+        );
+    }
+    // Level 201's own scripts, by their path under its folder (openspec
+    // AU.53).
+    if let Whitelist::Only { scripts, .. } = &mut config.whitelist {
+        scripts.extend(
+            crate::level_201::own_scripts(name)
                 .iter()
                 .map(|s| (*s).to_owned()),
         );
