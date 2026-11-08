@@ -97,26 +97,6 @@ fn every_stages_doors_stand_by_their_unlock_values() {
         }
         let cali = run.placed("Door_Cali's_Room").0;
         assert_eq!(behaviour(&run, cali).as_deref(), Some(OPENS), "{level}");
-        // The game room waits on its lock, a puzzle nothing on the TV plays
-        // (openspec AS.154; stand-in ledger: `game-room`).
-        let locks = run.files.placed.iter().any(|p| p.name == "PuzzleLock");
-        if locks {
-            let room = run.placed("Door_Game_Room").0;
-            assert_eq!(
-                behaviour(&run, room).as_deref(),
-                Some("check for unlock"),
-                "{level}"
-            );
-            assert!(run.vm.inert().contains(&run.placed("PuzzleLock").0));
-        }
-        let room = run.placed("Door_Game_Room").0;
-        println!(
-            "{level}: game room behind a lock: {locks}, its door {:?}",
-            behaviour(&run, room)
-        );
-        if !locks {
-            assert_ne!(behaviour(&run, room).as_deref(), Some("check for unlock"));
-        }
         // Its art: a door's own clone, standing.
         let door1 = run
             .vm
@@ -149,6 +129,26 @@ fn every_stages_doors_stand_by_their_unlock_values() {
                 matches!(now.as_deref(), Some(OPENS | CLOSES)),
                 "{level}: {now:?}"
             ),
+        }
+        // The game room's door on the same deck, awake with him there (the
+        // hub's intro resets the range it woke it at to its file's, AU.53),
+        // waits on its lock, a puzzle nothing on the TV plays (openspec
+        // AS.154; stand-in ledger: `game-room`).
+        let locks = run.files.placed.iter().any(|p| p.name == "PuzzleLock");
+        let room = run.placed("Door_Game_Room").0;
+        println!(
+            "{level}: game room behind a lock: {locks}, its door {:?}",
+            behaviour(&run, room)
+        );
+        if locks {
+            assert_eq!(
+                behaviour(&run, room).as_deref(),
+                Some("check for unlock"),
+                "{level}"
+            );
+            assert!(run.vm.inert().contains(&run.placed("PuzzleLock").0));
+        } else {
+            assert_ne!(behaviour(&run, room).as_deref(), Some("check for unlock"));
         }
     }
     println!(
