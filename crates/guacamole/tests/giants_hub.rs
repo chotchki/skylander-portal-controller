@@ -1081,7 +1081,7 @@ fn a_save_past_level_201_reaches_the_hubs_definition() {
 
     let mut carried = Session::new(Some("host".into()));
     carried.live = Some(Live {
-        layout: id,
+        layout: id.clone(),
         slot,
         header,
         just_done: vec![2],
@@ -1093,7 +1093,7 @@ fn a_save_past_level_201_reaches_the_hubs_definition() {
     // The stored save with level 201 marked just done, as the `test-hooks`
     // key asks a resume: the carried words' count and first visit.
     let mut marked = Session::new(Some("host".into()));
-    marked.stored = Some((id.clone(), values));
+    marked.stored = Some((id, values));
     let resumed = titled_step(&mut marked, &[2]);
     assert_eq!(marked.report.start.as_deref(), Some("stored"));
     assert_eq!(global(&resumed, "Levels_Completed"), Some(Value::Int(3)));
