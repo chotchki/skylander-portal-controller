@@ -91,8 +91,8 @@ use guac_motion::seam::{Body, BodyId, BodyKind};
 use guac_script::Obj;
 use guacamole::character::warm::WarmKey;
 use guacamole::character::{
-    CharacterMaterial, CharacterUniform, FrameGlow, LEVEL_LIGHTS, ScenePointLights,
-    reference_material, remaster, spawn_alpha_clear, static_mesh,
+    CharacterMaterial, CharacterUniform, FrameGlow, LEVEL_LIGHTS, SceneLights, remaster,
+    spawn_alpha_clear, static_mesh,
 };
 use guacamole::frame::{self, Frame};
 use guacamole::level_scene::{
@@ -1073,16 +1073,20 @@ pub(crate) struct LevelReport {
     pub built_ms: Option<u64>,
     pub uploaded_ms: Option<u64>,
     pub ready_ms: Option<u64>,
-    /// Times every material was lit again (a camera's move, a fog change).
+    /// Times the level was lit again (a zone's lights, fog or sky moving):
+    /// since AS.148 the level's buffer rewritten, no material.
     pub relit: u64,
     /// How long the last of those took on the frame's thread, ms.
     pub relit_ms: Option<f64>,
     /// The atmospheric zone the level is lit from, the scripts' last ask of
-    /// it and the zones refused or their sky's share left, each with why
-    /// (openspec AS.127).
+    /// it and the zones refused, each with why (openspec AS.127).
     pub zone: Option<i32>,
     pub zone_asked: Option<guacamole::atmospherics::ZoneNow>,
     pub zones_refused: Vec<String>,
+    /// The sky dome's share of the fog, percent, and the colour it takes,
+    /// as the sky draws them (openspec AS.164).
+    pub sky_share: Option<i32>,
+    pub sky_colour: Option<[u8; 3]>,
     /// From the Giants pick to ready.
     pub pick_to_ready_ms: Option<u64>,
     pub shown: bool,
@@ -1462,21 +1466,27 @@ pub(crate) struct PlacedDraw {
 pub(crate) struct Loaded {
     pub(crate) root: Entity,
     materials: Vec<Handle<CharacterMaterial>>,
-    /// Each material's spec model and alpha reference, for its uniform;
-    /// `None` for one that didn't build.
-    reference: Vec<Option<(guac_ir::shading::Material, f32)>>,
     /// The materials with scroll tracks, by index.
     scrolling: Vec<(usize, Vec<Scroll>)>,
     lights: LevelLights,
     pub(crate) keys: Vec<WarmKey>,
-    /// The fog the uniforms are lit with.
+    /// The fog the level's buffer is lit with.
     lit_fog: LevelFog,
     /// What a zone switch relights from (openspec AS.127), the zone the
-    /// uniforms are lit from and whether the lights moved since.
+    /// buffer is lit from and whether its lights or sky moved since.
     atmosphere: guac_ir::level::Atmosphere,
     lights_part: guac_ir::level::Lights,
     lit_zone: Option<guac_ir::level::AtmosphericZone>,
     relight: bool,
+    /// The sky dome's share of the fog, the start's zone's for the run, and
+    /// its fog now (openspec AS.164, [`guacamole::atmospherics::sky`]).
+    sky_share: f32,
+    sky_fog: LevelFog,
+    /// What the level's buffer holds ([`LEVEL_LIGHTS`]: its lights, fog,
+    /// the sky's fog and the frame's point lights), and what was last
+    /// written to it.
+    scene_lights: SceneLights,
+    scene_written: Option<SceneLights>,
     camera: Option<Entity>,
     shown_at: Option<Duration>,
     /// Its solids, spawned with it.
@@ -1967,7 +1977,9 @@ impl Plugin for LevelPlugin {
             // Before the assets' events go out, so the frame draws it lit.
             .add_systems(
                 PostUpdate,
-                (light_level, light_frame).before(bevy::asset::AssetEventSystems),
+                (light_level, light_frame, write_scene_lights)
+                    .chain()
+                    .before(bevy::asset::AssetEventSystems),
             )
             .add_systems(
                 PostUpdate,
@@ -2362,6 +2374,8 @@ fn step_level(mut level: ResMut<Level>, mut warm: ResMut<Warm>, mut s: LevelSpaw
         Stage::Uploading(mut up) => {
             if upload(&mut up, level, &mut s) {
                 let loaded = spawn_level(*up, &mut s);
+                level.report.sky_share = Some((loaded.sky_share * 100.0).round() as i32);
+                level.report.sky_colour = loaded.lit_zone.as_ref().map(sky_colour);
                 level.report.uploaded_ms = level.ms();
                 level.stage = wait(Box::new(loaded), level, &warm, &s);
             } else {
@@ -2496,11 +2510,6 @@ fn figure_materials(
     for (m, handle) in read.drawn.materials.iter().zip(&handles) {
         let at = loaded.materials.len();
         loaded.materials.push(handle.clone());
-        loaded.reference.push(
-            reference_material(m)
-                .ok()
-                .map(|r| (r, m.states.alpha_test.unwrap_or(0.0))),
-        );
         if !m.scrolls.is_empty() {
             loaded.scrolling.push((at, m.scrolls.clone()));
         }
@@ -2714,6 +2723,7 @@ fn upload(up: &mut Uploading, level: &Level, s: &mut LevelSpawner) -> bool {
     let scene = world_scene(&up.built.lights, &up.fog);
     let start = up.materials.len();
     let end = (start + MATERIALS_PER_FRAME).min(up.built.drawn.materials.len());
+    let sky = up.built.drawn.sky_materials();
     for (k, m) in up.built.drawn.materials[start..end].iter().enumerate() {
         let texture = |t: &model::TextureSlot| -> Handle<Image> {
             let key = (
@@ -2733,6 +2743,10 @@ fn upload(up: &mut Uploading, level: &Level, s: &mut LevelSpawner) -> bool {
         let material = match CharacterMaterial::from_ir(m, &scene, texture) {
             Ok(mut material) => {
                 material.uniform = level_uniform(material.uniform);
+                // The sky's copies fog by the sky's share (openspec AS.164).
+                if sky[start + k] {
+                    material.uniform = material.uniform.lit_by_scene_as_sky();
+                }
                 // A grass shell's or a warp's pass and numbers (AG.24).
                 if let Some(effect) = up.built.drawn.effect(start + k) {
                     effect.apply(&mut material);
@@ -2755,9 +2769,8 @@ fn upload(up: &mut Uploading, level: &Level, s: &mut LevelSpawner) -> bool {
 }
 
 /// A level material's uniform as it draws: lit in the world's frame with
-/// its point lights off the level's buffer ([`LEVEL_LIGHTS`], openspec
-/// AH.65), a multiplying rim's strength in light (AG.79). The upload and a
-/// fog's relight both finish it here, so a relight keeps the rim's.
+/// its lights and fog off the level's buffer ([`LEVEL_LIGHTS`], openspec
+/// AH.65, AS.148), a multiplying rim's strength in light (AG.79).
 pub(crate) fn level_uniform(u: CharacterUniform) -> CharacterUniform {
     u.lit_by_scene().multiplies_in_light()
 }
@@ -2835,16 +2848,6 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
             }),
         ));
     }
-    let reference = built
-        .drawn
-        .materials
-        .iter()
-        .map(|m| {
-            reference_material(m)
-                .ok()
-                .map(|r| (r, m.states.alpha_test.unwrap_or(0.0)))
-        })
-        .collect();
     let scrolling = built
         .drawn
         .materials
@@ -2915,16 +2918,32 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
         .enumerate()
         .map(|(i, p)| (p.placed.emitter.object, i))
         .collect();
+    let start_zone = built.atmosphere.start_zone().cloned();
+    // The start's zone sets the sky's share up (openspec AS.164); the
+    // load refused a share it can't draw, so none here is 0.
+    let sky_share = start_zone
+        .as_ref()
+        .and_then(|z| guacamole::level_scene::sky_share(z).ok())
+        .unwrap_or(0.0);
+    let sky_fog = start_zone.as_ref().map_or(LevelFog::NONE, |z| {
+        guacamole::atmospherics::sky(sky_share, z)
+    });
+    let mut scene_lights = SceneLights::dark();
+    scene_lights.set_scene(&world_scene(&built.lights, &fog));
+    set_sky_fog(&mut scene_lights, &sky_fog);
     Loaded {
         root,
         materials,
-        reference,
         scrolling,
         lights: built.lights,
         keys: built.keys.iter().map(|(k, _)| *k).collect(),
         lit_fog: fog,
-        lit_zone: built.atmosphere.start_zone().cloned(),
+        lit_zone: start_zone,
         relight: false,
+        sky_share,
+        sky_fog,
+        scene_lights,
+        scene_written: None,
         atmosphere: built.atmosphere,
         lights_part: built.lights_part,
         camera: None,
@@ -3201,17 +3220,15 @@ fn keep_sky_about_the_eye(
     }
 }
 
-/// A fog change relights every material: the level's in its scene, the
-/// hero's in his ([`Level::light_also`]), each in the world's frame, which
-/// the shader turns by the view it draws for, so a camera that moves
-/// rewrites none (lit in view space, a following camera rewrote all of
-/// chapter 1's 471 every frame it moved, and every frame at rest too, since
-/// the eased camera's rotation jitters by float noise).
-fn light_level(
-    mut level: ResMut<Level>,
-    fog: Res<LevelFog>,
-    mut materials: ResMut<Assets<CharacterMaterial>>,
-) {
+/// A zone's lights, fog or sky moving relights the level (openspec AS.148):
+/// its buffer's directional lights, fog and the sky's fog rewritten
+/// ([`LEVEL_LIGHTS`], [`write_scene_lights`]), which every level material,
+/// prop, clone and the hero read, each in the world's frame the shader
+/// turns by the view it draws for, so neither a camera that moves nor a
+/// transition rewrites a material (lit in view space, a following camera
+/// rewrote all of chapter 1's 471 every frame it moved; lit per material, a
+/// transition's relight took a frame of 26-39.5 ms on level 201's house).
+fn light_level(mut level: ResMut<Level>, fog: Res<LevelFog>) {
     let level = &mut *level;
     let Some(loaded) = level.stage.loaded_mut() else {
         return;
@@ -3223,24 +3240,43 @@ fn light_level(
     loaded.lit_fog = *fog;
     loaded.relight = false;
     level.report.relit += 1;
-    let scene = world_scene(&loaded.lights, &fog);
-    for (h, reference) in loaded.materials.iter().zip(&loaded.reference) {
-        let Some((reference, alpha)) = reference else {
-            continue;
-        };
-        if let Some(mut m) = materials.get_mut(h) {
-            // Its scroll's rows and an effect's numbers (AG.24) kept.
-            let kept = (m.uniform.uv_u, m.uniform.uv_v, m.uniform.effect);
-            m.uniform = level_uniform(CharacterUniform::new(reference, &scene, *alpha));
-            (m.uniform.uv_u, m.uniform.uv_v, m.uniform.effect) = kept;
-        }
-    }
-    relight(
-        &loaded.also,
-        &hero_scene(&loaded.lights, &fog, Mat4::IDENTITY),
-        &mut materials,
-    );
+    loaded
+        .scene_lights
+        .set_scene(&world_scene(&loaded.lights, &fog));
+    let sky = loaded.sky_fog;
+    set_sky_fog(&mut loaded.scene_lights, &sky);
     level.report.relit_ms = Some(started.elapsed().as_secs_f64() * 1e3);
+}
+
+/// The sky dome's colour a zone stands at, as a disc stores one.
+fn sky_colour(zone: &guac_ir::level::AtmosphericZone) -> [u8; 3] {
+    let [r, g, b, _] = zone.fog.sky_dome_colour;
+    [r, g, b]
+}
+
+/// The sky's fog into the buffer's slot, its colour decoded as the scene's
+/// fog's is.
+fn set_sky_fog(scene: &mut SceneLights, sky: &LevelFog) {
+    scene.set_sky_fog(remaster::linear(sky.colour), sky.near, sky.far);
+}
+
+/// The level's buffer written when what it holds moved ([`light_level`],
+/// [`light_frame`]): the same size every time, so the render world writes
+/// the GPU's buffer in place and no material's bind group changes.
+/// Headless (no renderer) there's no buffer; what it would hold is kept.
+fn write_scene_lights(mut level: ResMut<Level>, buffers: Option<ResMut<Assets<ShaderBuffer>>>) {
+    let Some(loaded) = level.stage.loaded_mut() else {
+        return;
+    };
+    if loaded.scene_written == Some(loaded.scene_lights) {
+        return;
+    }
+    loaded.scene_written = Some(loaded.scene_lights);
+    if let Some(mut buffers) = buffers
+        && let Some(mut b) = buffers.get_mut(&LEVEL_LIGHTS)
+    {
+        *b = loaded.scene_lights.buffer();
+    }
 }
 
 /// The zone the scripts have the level in now (openspec AS.127), as
@@ -3266,11 +3302,11 @@ fn read_zone(
     }
 }
 
-/// The level's lights and fog follow the zone asked (openspec AS.127,
-/// [`guacamole::atmospherics`]): a zone the same as the one lit rewrites
-/// nothing, one the TV can't draw leaves the level as it was, named in the
-/// report, and any other sets the lights, the fog and the mark
-/// [`light_level`] relights by. A zone's sky share stays undrawn, named.
+/// The level's lights, fog and sky follow the zone asked (openspec AS.127,
+/// AS.164, [`guacamole::atmospherics`]): a zone the same as the one lit
+/// rewrites nothing, one the TV can't draw leaves the level as it was,
+/// named in the report, and any other sets the lights, the fog, the sky's
+/// fog at the share set up and the mark [`light_level`] relights by.
 fn follow_zone(mut level: ResMut<Level>, asked: Res<ZoneAsked>, mut fog: ResMut<LevelFog>) {
     let Some(now) = asked.0 else {
         return;
@@ -3298,9 +3334,7 @@ fn follow_zone(mut level: ResMut<Level>, asked: Res<ZoneAsked>, mut fog: ResMut<
     if loaded.lit_zone.as_ref() == Some(&zone) {
         return;
     }
-    if let Some(why) = guacamole::atmospherics::sky_left(&zone) {
-        refuse(&mut level.report, why);
-    }
+    let sky = guacamole::atmospherics::sky(loaded.sky_share, &zone);
     let lit = (
         guacamole::level_scene::level_lights(&loaded.lights_part, &zone),
         LevelFog::from_zone(&zone.fog),
@@ -3312,15 +3346,16 @@ fn follow_zone(mut level: ResMut<Level>, asked: Res<ZoneAsked>, mut fog: ResMut<
         }
     };
     level.report.zone = Some(zone.id);
+    level.report.sky_colour = Some(sky_colour(&zone));
     loaded.lit_zone = Some(zone);
-    // A point of the way the materials already show (a transition's start,
-    // the zone it leaves): every relight rewrites every material, which the
-    // render world prepares again (the au-polish review: a frame of 26-38 ms
-    // each on level 201's house against 17), so none for nothing.
-    if loaded.lights.directional == lights.directional && *fog == zone_fog {
+    // A point of the way the level already shows (a transition's start, the
+    // zone it leaves) rewrites nothing.
+    if loaded.lights.directional == lights.directional && *fog == zone_fog && loaded.sky_fog == sky
+    {
         return;
     }
     loaded.lights.directional = lights.directional;
+    loaded.sky_fog = sky;
     loaded.relight = true;
     if *fog != zone_fog {
         *fog = zone_fog;
@@ -3331,13 +3366,13 @@ fn follow_zone(mut level: ResMut<Level>, asked: Res<ZoneAsked>, mut fog: ResMut<
 /// AH.65, [`LEVEL_LIGHTS`]): the level's placed ones and those its scripts
 /// lit ([`ScriptWorld::lit_lights`]), the nearest the hero (else the
 /// level's start) first ([`arithmetic::frame_point_lights`]). Rewritten
-/// only when they change, one buffer whatever the level holds: every level
-/// material, prop, clone and the hero read their point lights off it.
+/// only when they change ([`write_scene_lights`]), one buffer whatever the
+/// level holds: every level material, prop, clone and the hero read their
+/// point lights off it.
 fn light_frame(
     mut level: ResMut<Level>,
     scripts: Option<Res<ScriptWorld>>,
     heroes: Query<&HeroBody>,
-    buffers: Option<ResMut<Assets<ShaderBuffer>>>,
 ) {
     let level = &mut *level;
     let Some(loaded) = level.stage.loaded_mut() else {
@@ -3370,11 +3405,7 @@ fn light_frame(
         .collect();
     // Headless (no renderer) there's no buffer to write; the report holds
     // the lights.
-    if let Some(mut buffers) = buffers
-        && let Some(mut b) = buffers.get_mut(&LEVEL_LIGHTS)
-    {
-        *b = ScenePointLights::new(&frame).buffer();
-    }
+    loaded.scene_lights.set_points(&frame);
 }
 
 /// A level part's glow mask (openspec AH.65): a child of the part drawing
@@ -5252,11 +5283,53 @@ mod tests {
         );
     }
 
-    /// openspec AS.127: a zone switch relights the level from the atmosphere
-    /// part's zone of that id: its lights and fog reach every material, a
-    /// transition relights at its steps, the zone already lit rewrites
-    /// nothing, and one the part doesn't hold leaves the level as it was,
-    /// named in the report.
+    /// What the level's buffer last had written (openspec AS.148).
+    fn written(app: &App) -> SceneLights {
+        app.world()
+            .resource::<Level>()
+            .loaded()
+            .unwrap()
+            .scene_written
+            .unwrap()
+    }
+
+    /// Every level material's uniform, in order.
+    fn uniforms(app: &App) -> Vec<CharacterUniform> {
+        let materials = app
+            .world()
+            .resource::<Level>()
+            .loaded()
+            .unwrap()
+            .materials
+            .clone();
+        let assets = app.world().resource::<Assets<CharacterMaterial>>();
+        materials
+            .iter()
+            .map(|h| assets.get(h).unwrap().uniform)
+            .collect()
+    }
+
+    /// How many times a character material changed since the app was made
+    /// (openspec AS.148: what the render world prepares again).
+    #[derive(Resource, Default)]
+    struct MaterialsChanged(usize);
+
+    fn count_material_changes(
+        mut events: MessageReader<AssetEvent<CharacterMaterial>>,
+        mut changed: ResMut<MaterialsChanged>,
+    ) {
+        changed.0 += events
+            .read()
+            .filter(|e| matches!(e, AssetEvent::Modified { .. }))
+            .count();
+    }
+
+    /// openspec AS.127 and AS.148: a zone switch relights the level from the
+    /// atmosphere part's zone of that id: its lights and fog reach the
+    /// level's buffer, which every level material reads, and no material is
+    /// rewritten; a transition relights at its steps, the zone already lit
+    /// rewrites nothing, and one the part doesn't hold leaves the level as it
+    /// was, named in the report.
     #[test]
     fn a_zone_switch_relights_the_level() {
         use guacamole::atmospherics::ZoneNow;
@@ -5280,23 +5353,12 @@ mod tests {
         let rel = source.ir.level_path(LEVEL, ATMOSPHERE);
         std::fs::write(tmp.path().join(rel), guac_ir::to_ron(&part).unwrap()).unwrap();
         let mut app = level_app(tmp.path(), source, false);
+        app.init_resource::<MaterialsChanged>()
+            .add_systems(Last, count_material_changes);
         until(&mut app, &["ready"], |_| {});
         app.update();
-        let materials = app
-            .world()
-            .resource::<Level>()
-            .loaded()
-            .unwrap()
-            .materials
-            .clone();
-        let lit = |app: &App| -> Vec<CharacterUniform> {
-            let assets = app.world().resource::<Assets<CharacterMaterial>>();
-            materials
-                .iter()
-                .map(|h| assets.get(h).unwrap().uniform)
-                .collect()
-        };
         let relit = |app: &App| report(app).relit;
+        let changed = |app: &App| app.world().resource::<MaterialsChanged>().0;
         let ask = |app: &mut App, to, from, remaining| {
             app.world_mut().resource_mut::<ZoneAsked>().0 = Some(ZoneNow {
                 to,
@@ -5306,8 +5368,14 @@ mod tests {
             app.update();
             app.update();
         };
-        let start = lit(&app);
-        let before = relit(&app);
+        let start = written(&app);
+        let materials = uniforms(&app);
+        let (before, changes) = (relit(&app), changed(&app));
+        assert_eq!(
+            start.fog_colour.truncate(),
+            Vec3::from_array(remaster::linear([115, 83, 49])),
+            "the start's zone in the buffer from the load"
+        );
         // The zone it's lit from: nothing rewritten.
         ask(&mut app, 0, None, 0.0);
         assert_eq!(relit(&app), before, "the same zone");
@@ -5318,31 +5386,39 @@ mod tests {
         // Half way there, then there.
         ask(&mut app, 5, Some(0), 50.0);
         assert_eq!(relit(&app), before + 1, "a step of the way");
-        let half = lit(&app);
-        assert_ne!(half[0].fog_colour, start[0].fog_colour);
+        let half = written(&app);
+        assert_ne!(half.fog_colour, start.fog_colour);
         ask(&mut app, 5, None, 0.0);
         assert_eq!(relit(&app), before + 2);
         assert_eq!(report(&app).zone, Some(5));
         let whole = *app.world().resource::<LevelFog>();
         assert_eq!(whole, LevelFog::from_zone(&room.fog).unwrap());
-        let there = lit(&app);
-        assert_ne!(there[0].fog_colour, half[0].fog_colour);
+        let there = written(&app);
+        assert_ne!(there.fog_colour, half.fog_colour);
         assert_eq!(
-            there[0].fog_colour.truncate(),
+            there.fog_colour.truncate(),
             Vec3::from_array(remaster::linear([200, 20, 20]))
         );
         let (lights_now, _) = app.world().resource::<Level>().lighting().unwrap();
+        let room_lights = level_lights(&l, &room).unwrap();
         assert_eq!(
-            lights_now.directional,
-            level_lights(&l, &room).unwrap().directional,
+            lights_now.directional, room_lights.directional,
             "the hero's lit by it too"
         );
+        let room_scene = world_scene(&room_lights, &whole);
+        assert_eq!(
+            there.ambient_stored[0].truncate(),
+            Vec3::from_array(room_scene.lights[0].ambient_stored)
+        );
+        // No material was rewritten on the way: each reads the buffer.
+        assert_eq!(changed(&app), changes, "a material changed");
+        assert_eq!(uniforms(&app), materials);
         // Asked again, nothing: and a zone off the part leaves it as it was.
         ask(&mut app, 5, None, 0.0);
         assert_eq!(relit(&app), before + 2);
         ask(&mut app, 9, None, 0.0);
         assert_eq!(relit(&app), before + 2);
-        assert_eq!(lit(&app)[0].fog_colour, there[0].fog_colour);
+        assert_eq!(written(&app).fog_colour, there.fog_colour);
         assert_eq!(report(&app).zone, Some(5));
         let refused = report(&app).zones_refused;
         assert_eq!(refused.len(), 1, "{refused:?}");
@@ -5350,19 +5426,105 @@ mod tests {
         // The same fog under other lights relights all the same.
         ask(&mut app, 6, None, 0.0);
         assert_eq!(relit(&app), before + 3, "its lights alone");
-        assert_ne!(lit(&app)[0].light_ambient[0], there[0].light_ambient[0]);
-        assert_eq!(lit(&app)[0].fog_colour, there[0].fog_colour);
+        assert_ne!(written(&app).ambient[0], there.ambient[0]);
+        assert_eq!(written(&app).fog_colour, there.fog_colour);
         // Back: the start's zone again, whole.
         ask(&mut app, 0, None, 0.0);
         assert_eq!(relit(&app), before + 4);
-        assert_eq!(lit(&app)[0].fog_colour, start[0].fog_colour);
+        assert_eq!(written(&app), start);
+        assert_eq!(changed(&app), changes);
+    }
+
+    /// openspec AS.164: the sky's fog in the level's buffer: none while the
+    /// share set up at the start is 0, whatever the zones the scripts
+    /// switch to ask (chapter 1's death area's 100 %); a start's share
+    /// fogging it in each zone's sky colour, slid with the transition, the
+    /// sky's materials alone reading it.
+    #[test]
+    fn the_sky_takes_the_share_set_up_in_the_colour_of_the_zone() {
+        use guacamole::atmospherics::ZoneNow;
+        let run = |start_share: i32| {
+            let tmp = tempfile::tempdir().unwrap();
+            let source = write_level(tmp.path(), &lights());
+            let mut part = atmosphere();
+            part.zones[0].fog.sky_dome_percent = start_share;
+            let mut storm = zone();
+            storm.id = 1;
+            storm.fog.sky_dome_percent = 100;
+            storm.fog.sky_dome_colour = [41, 0, 29, 0];
+            part.zones.push(storm);
+            let rel = source.ir.level_path(LEVEL, ATMOSPHERE);
+            std::fs::write(tmp.path().join(rel), guac_ir::to_ron(&part).unwrap()).unwrap();
+            let mut app = level_app(tmp.path(), source, false);
+            until(&mut app, &["ready"], |_| {});
+            app.update();
+            let mut seen = vec![(written(&app), report(&app).sky_colour)];
+            for (from, remaining) in [(Some(0), 50.0), (None, 0.0)] {
+                app.world_mut().resource_mut::<ZoneAsked>().0 = Some(ZoneNow {
+                    to: 1,
+                    from,
+                    remaining,
+                });
+                app.update();
+                app.update();
+                seen.push((written(&app), report(&app).sky_colour));
+            }
+            assert!(
+                report(&app).zones_refused.is_empty(),
+                "{:?}",
+                report(&app).zones_refused
+            );
+            assert_eq!(report(&app).sky_share, Some(start_share));
+            let materials = app
+                .world()
+                .resource::<Level>()
+                .loaded()
+                .unwrap()
+                .materials
+                .clone();
+            let assets = app.world().resource::<Assets<CharacterMaterial>>();
+            let sky: Vec<bool> = materials
+                .iter()
+                .map(|h| {
+                    assets.get(h).unwrap().uniform.misc.w == guacamole::character::SKY_FROM_SCENE
+                })
+                .collect();
+            assert_eq!(
+                sky,
+                [false, true],
+                "the sky's copy alone reads the sky's fog"
+            );
+            let fogged = assets.get(&materials[1]).unwrap().key.shader.switches().fog;
+            (seen, fogged)
+        };
+        // The start's 0 %: the storm's 100 % fogs no sky.
+        let (seen, fogged) = run(0);
+        assert!(!fogged, "keyed unfogged");
+        for (lit, colour) in &seen {
+            let none = LevelFog::NONE;
+            assert_eq!(lit.sky_fog_range, Vec4::new(none.near, none.far, 0.0, 0.0));
+            assert!(colour.is_some());
+        }
+        // A start's 100 %: the sky whole in the colour of the way.
+        let (seen, fogged) = run(100);
+        assert!(fogged, "keyed fogged");
+        let colours: Vec<[u8; 3]> = seen.iter().map(|(_, c)| c.unwrap()).collect();
+        assert_eq!(colours, [[128, 128, 128], [85, 64, 79], [41, 0, 29]]);
+        for ((lit, _), colour) in seen.iter().zip(colours) {
+            let f = LevelFog::sky([colour[0], colour[1], colour[2], 0], 1.0);
+            assert_eq!(lit.sky_fog_range, Vec4::new(f.near, f.far, 0.0, 0.0));
+            assert_eq!(
+                lit.sky_fog_colour.truncate(),
+                Vec3::from_array(remaster::linear(colour))
+            );
+        }
     }
 
     /// AG.41: the fog AG.13 read reaches every level material: the level's
     /// read sets the TV's `LevelFog` to its start's zone's, 30.48 m to
-    /// 335.28 m, and every material is made with it (the sky's too, which
-    /// owns its fog off); a new one relights every material from the camera
-    /// it was lit for.
+    /// 335.28 m, every material made keyed for it (the sky owning its fog
+    /// off), and the level's buffer holds it; a new one rewrites the buffer
+    /// (openspec AS.148), each material reading it.
     #[test]
     fn the_start_zones_fog_reaches_every_level_material() {
         let tmp = tempfile::tempdir().unwrap();
@@ -5371,6 +5533,7 @@ mod tests {
         let mut app = level_app(tmp.path(), source, false);
         assert_eq!(*app.world().resource::<LevelFog>(), LevelFog::NONE);
         until(&mut app, &["ready"], |_| {});
+        app.update();
         let fog = *app.world().resource::<LevelFog>();
         assert_eq!(fog, LevelFog::from_zone(&zone().fog).unwrap());
         assert_eq!(fog.colour, [115, 83, 49]);
@@ -5381,30 +5544,35 @@ mod tests {
             .unwrap()
             .materials
             .clone();
-        let uniforms = |app: &App| -> Vec<(CharacterUniform, bool)> {
+        let keyed = |app: &App| -> Vec<(f32, bool)> {
             let assets = app.world().resource::<Assets<CharacterMaterial>>();
             materials
                 .iter()
                 .map(|h| {
                     let m = assets.get(h).unwrap();
-                    (m.uniform, m.key.shader.switches().fog)
+                    (m.uniform.misc.w, m.key.shader.switches().fog)
                 })
                 .collect()
         };
-        let fogged: Vec<bool> = uniforms(&app).iter().map(|(_, f)| *f).collect();
-        assert_eq!(fogged, [true, false], "the ground fogged, the sky not");
-        for (u, _) in uniforms(&app) {
-            assert!(
-                u.fog_range
-                    .abs_diff_eq(Vec4::new(30.48, 335.28, 0.0, 0.0), 1e-4),
-                "{:?}",
-                u.fog_range
-            );
-            assert_eq!(
-                u.fog_colour.truncate(),
-                Vec3::from_array(remaster::linear([115, 83, 49]))
-            );
-        }
+        assert_eq!(
+            keyed(&app),
+            [
+                (guacamole::character::LIGHTS_FROM_SCENE, true),
+                (guacamole::character::SKY_FROM_SCENE, false)
+            ],
+            "the ground fogged, the sky not, both off the buffer"
+        );
+        let lit = written(&app);
+        assert!(
+            lit.fog_range
+                .abs_diff_eq(Vec4::new(30.48, 335.28, 0.0, 0.0), 1e-4),
+            "{:?}",
+            lit.fog_range
+        );
+        assert_eq!(
+            lit.fog_colour.truncate(),
+            Vec3::from_array(remaster::linear([115, 83, 49]))
+        );
         // Made-up numbers, none of AG.13's.
         let fog = LevelFog {
             colour: [90, 60, 30],
@@ -5413,35 +5581,34 @@ mod tests {
         };
         app.insert_resource(fog);
         app.update();
-        let lit = world_scene(&level_lights(&l, &zone()).unwrap(), &fog);
-        for (u, _) in uniforms(&app) {
-            assert_eq!(u.fog_range, Vec4::new(30.0, 300.0, 0.0, 0.0));
-            assert_eq!(
-                u.fog_colour.truncate(),
-                Vec3::from_array(remaster::linear([90, 60, 30]))
-            );
-            assert!(
-                u.light_travel[0]
-                    .truncate()
-                    .abs_diff_eq(Vec3::from_array(lit.lights[0].travel), 1e-6)
-            );
-            assert_eq!(u.misc.w, guacamole::character::LIGHTS_FROM_SCENE);
-        }
+        let scene = world_scene(&level_lights(&l, &zone()).unwrap(), &fog);
+        let lit = written(&app);
+        assert_eq!(lit.fog_range, Vec4::new(30.0, 300.0, 0.0, 0.0));
+        assert_eq!(
+            lit.fog_colour.truncate(),
+            Vec3::from_array(remaster::linear([90, 60, 30]))
+        );
+        assert!(
+            lit.travel[0]
+                .truncate()
+                .abs_diff_eq(Vec3::from_array(scene.lights[0].travel), 1e-6)
+        );
         assert_eq!(app.world().resource::<Level>().report().relit, 1);
     }
 
-    /// AG.79 and AH.65: what the upload hands each level material stays
-    /// through a fog's relight: the sky's sort bias (its blended parts first,
-    /// in the scene's order) and a multiplying rim's strength in light, which
-    /// the relight once put back to the bare strength (the coins brown again
-    /// past the first zone change).
+    /// AG.79, AH.65 and AS.148: what the upload hands each level material
+    /// stays through a fog's relight, which rewrites no material: the sky's
+    /// sort bias (its blended parts first, in the scene's order) and a
+    /// multiplying rim's strength in light, which a relight that rebuilt
+    /// each uniform once put back to the bare strength (the coins brown
+    /// again past the first zone change).
     #[test]
     fn a_fog_relight_keeps_the_skys_bias_and_a_multiplying_rims_strength() {
         let tmp = tempfile::tempdir().unwrap();
-        let l = lights();
-        let source = write_level(tmp.path(), &l);
+        let source = write_level(tmp.path(), &lights());
         let mut app = level_app(tmp.path(), source, false);
         until(&mut app, &["ready"], |_| {});
+        app.update();
         let materials = app
             .world()
             .resource::<Level>()
@@ -5462,17 +5629,16 @@ mod tests {
         // The ground, then the sky's copy: only the sky ranks.
         let biases: Vec<f32> = drawn(&app).iter().map(|d| d.0).collect();
         assert_eq!(biases, [0.0, arithmetic::sky_bias(0)]);
-        // The made-up level has no multiplying rim: the ground gets one, so
-        // the relight has a strength to keep.
+        // A multiplying rim's strength in light, as the upload leaves it.
         {
-            let mut level = app.world_mut().resource_mut::<Level>();
-            let loaded = level.stage.loaded_mut().unwrap();
-            let (ground, _) = loaded.reference[0].as_mut().unwrap();
-            ground.rim = Some(guac_ir::shading::Rim {
-                weights: guac_ir::shading::Weights::MULTIPLY,
-                ..guac_ir::shading::Rim::new(2.0)
-            });
+            let h = materials[0].clone();
+            let mut assets = app.world_mut().resource_mut::<Assets<CharacterMaterial>>();
+            let mut m = assets.get_mut(&h).unwrap();
+            m.uniform.fixed_alpha.w = 2.0;
+            m.uniform = m.uniform.multiplies_in_light();
         }
+        let before = drawn(&app);
+        assert_eq!(before[0], (0.0, remaster::in_light(2.0)), "in light");
         app.insert_resource(LevelFog {
             colour: [90, 60, 30],
             near: 30.0,
@@ -5480,9 +5646,7 @@ mod tests {
         });
         app.update();
         assert_eq!(app.world().resource::<Level>().report().relit, 1);
-        let after = drawn(&app);
-        assert_eq!(after[0], (0.0, remaster::in_light(2.0)), "in light");
-        assert_eq!(after[1].0, arithmetic::sky_bias(0), "the sky's still first");
+        assert_eq!(drawn(&app), before, "the relight rewrote no material");
     }
 
     /// AG.19: the keys the level asks the warm for are exactly the keys its

@@ -38,16 +38,17 @@ pub use glow::{
 pub use key::{KeyError, MaterialKey, Pass, SceneBits, ShaderKey, StateKey};
 pub use material::{
     CharacterMaterial, CharacterTextures, CharacterUniform, LEVEL_LIGHTS, LIGHTS_FROM_SCENE,
-    LIGHTS_IN_VIEW, LIGHTS_IN_WORLD, MaterialError, NO_SCENE_LIGHTS, ScenePointLights,
+    LIGHTS_IN_VIEW, LIGHTS_IN_WORLD, MaterialError, NO_SCENE_LIGHTS, SKY_FROM_SCENE, SceneLights,
     reference_material,
 };
 pub use mesh::{MeshError, SpawnedCharacter, segment_mesh, spawn_character, static_mesh};
 pub use warm::{MeshShape, WarmError, WarmKey};
 
 /// Embeds the shader, registers [`CharacterMaterial`] and puts its two scene
-/// buffers in place, every point light dark: [`NO_SCENE_LIGHTS`], which
-/// every material binds unless it reads a scene's, and [`LEVEL_LIGHTS`],
-/// which the level rewrites as its lights move (openspec AH.65). Marks
+/// buffers in place, every light dark: [`NO_SCENE_LIGHTS`], which every
+/// material binds unless it reads a scene's, and [`LEVEL_LIGHTS`], which the
+/// level rewrites as its lights move (openspec AH.65) and its zone changes
+/// (AS.148). Marks
 /// which parts cast a shadow ([`shadow::mark_casters`], AG.23).
 pub struct CharacterShadingPlugin;
 
@@ -64,7 +65,7 @@ impl Plugin for CharacterShadingPlugin {
     // there whichever was added first.
     fn finish(&self, app: &mut App) {
         if let Some(mut buffers) = app.world_mut().get_resource_mut::<Assets<ShaderBuffer>>() {
-            let dark = ScenePointLights::new(&[]).buffer();
+            let dark = SceneLights::dark().buffer();
             let _ = buffers.insert(NO_SCENE_LIGHTS.id(), dark.clone());
             let _ = buffers.insert(LEVEL_LIGHTS.id(), dark);
         }

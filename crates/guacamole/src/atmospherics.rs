@@ -15,14 +15,22 @@
 //! so a transition relights at [`STEPS`] points of its way, never each frame;
 //! a zone the same as the one lit rewrites nothing.
 //!
-//! The sky's share of a zone's fog isn't drawn: the sky keeps the look its
-//! start's zone gave it, and a zone asking another is named in the report
-//! (stand-in ledger: `zone-sky`).
+//! The sky dome takes its share of the fog as the manager leaves it (openspec
+//! AS.164, [`sky`]): its colour, `fog color of sky dome`, slides over every
+//! transition as the fog's does, from the zone left to the one gone to (set
+//! at once when the one left has its fog off, kept when neither has any);
+//! its share, `fog of sky dome`, is set only where a zone is set up and
+//! never over a transition. The TV holds the share its start's zone sets up
+//! for the level's run: a trigger volume's zone or a switch with no
+//! transition time sets another up in the original, and a zone with its fog
+//! off left at a transition's end keeps the colour it had, which the TV
+//! doesn't follow (stand-in ledger: `zone-sky`). A zone's depth of field,
+//! shadow volume and yon-ignore colour aren't drawn.
 
 use guac_ir::level::{Atmosphere, AtmosphericZone, ZoneFog, ZoneLight};
 use guac_script::{Value, Vm};
 
-use crate::level_scene::{LevelError, LevelFog, sky_fogged};
+use crate::level_scene::{LevelError, LevelFog};
 
 /// How many points of a transition's way relight the level.
 pub const STEPS: f32 = 8.0;
@@ -156,6 +164,7 @@ fn fog(a: &ZoneFog, b: &ZoneFog, left: f32) -> ZoneFog {
         range: FOG_OFF_RANGE,
         ..*on
     };
+    let left_sky = a.sky_dome_colour;
     let (a, b) = match (a.on != 0, b.on != 0) {
         (true, false) => (*a, off(a)),
         (false, true) => (off(b), *b),
@@ -166,8 +175,14 @@ fn fog(a: &ZoneFog, b: &ZoneFog, left: f32) -> ZoneFog {
         start: mix(a.start, b.start, left),
         range: mix(a.range, b.range, left),
         colour: bytes(a.colour, b.colour, left),
+        // Its share isn't the manager's to slide ([`sky`]).
         sky_dome_percent: b.sky_dome_percent,
-        sky_dome_colour: b.sky_dome_colour,
+        // Slid as the colour is, nothing moving it between two fogs off.
+        sky_dome_colour: if a.on == 0 && b.on == 0 {
+            left_sky
+        } else {
+            bytes(a.sky_dome_colour, b.sky_dome_colour, left)
+        },
         yon_colour: bytes(a.yon_colour, b.yon_colour, left),
     }
 }
@@ -202,12 +217,10 @@ pub fn lit(atmosphere: &Atmosphere, now: &ZoneNow) -> Result<AtmosphericZone, St
     Ok(lit)
 }
 
-/// Why a zone's sky share goes undrawn (the module docs), by the zone; none
-/// for one the sky draws as it stands.
-pub fn sky_left(zone: &AtmosphericZone) -> Option<String> {
-    sky_fogged(zone)
-        .err()
-        .map(|e: LevelError| format!("zone {}: {e}", zone.id))
+/// The sky's fog (the module docs): `share` (0 to 1, the zone set up's) of
+/// the sky colour `lit` stands at.
+pub fn sky(share: f32, lit: &AtmosphericZone) -> LevelFog {
+    LevelFog::sky(lit.fog.sky_dome_colour, share)
 }
 
 #[cfg(test)]
@@ -323,7 +336,7 @@ mod tests {
     }
 
     /// AS.127: a zone the part doesn't hold, or a fog the TV can't draw, is
-    /// refused by name; a sky share is left, named, the rest lit.
+    /// refused by name; one asking a sky share is lit (AS.164).
     #[test]
     fn a_zone_the_tv_cant_draw_is_refused_by_name() {
         let mut odd = zone(2, 10, 2);
@@ -336,7 +349,65 @@ mod tests {
         assert!(lit(&a, &now(9)).unwrap_err().contains("zone 9"));
         assert!(lit(&a, &now(2)).unwrap_err().contains("fog on"));
         assert_eq!(lit(&a, &now(3)).unwrap(), sky);
-        assert_eq!(sky_left(&zone(0, 100, 1)), None);
-        assert!(sky_left(&sky).unwrap().contains("skydome"));
+    }
+
+    /// AS.164: the sky's colour slides over a switch as the fog's does,
+    /// from the zone left to the one gone to; the share is the one set up,
+    /// whatever the zones on the way ask: chapter 1's start's 0 % through
+    /// its death area's 100 % zones fogs no sky, a start's 100 % fogs it
+    /// whole in each zone's colour.
+    #[test]
+    fn the_skys_colour_slides_and_its_share_stays_the_one_set_up() {
+        let (mut start, mut storm) = (zone(0, 100, 1), zone(1, 20, 1));
+        start.fog.sky_dome_colour = [128, 128, 128, 0];
+        storm.fog.sky_dome_percent = 100;
+        storm.fog.sky_dome_colour = [41, 0, 29, 0];
+        let half = blended(&start, &storm, 50.0);
+        assert_eq!(half.fog.sky_dome_colour, [85, 64, 79, 0]);
+        assert_eq!(
+            blended(&start, &storm, 100.0).fog.sky_dome_colour,
+            [128, 128, 128, 0]
+        );
+        assert_eq!(
+            blended(&start, &storm, 0.0).fog.sky_dome_colour,
+            [41, 0, 29, 0]
+        );
+        // The start's 0 % set up: no sky fog anywhere on the way.
+        let share = crate::level_scene::sky_share(&start).unwrap();
+        for at in [100.0, 50.0, 0.0] {
+            assert_eq!(
+                sky(share, &blended(&start, &storm, at)),
+                LevelFog::NONE,
+                "{at}"
+            );
+        }
+        // A 100 % start: the sky whole in the colour of the way.
+        let whole = sky(1.0, &half);
+        assert_eq!(whole.colour, [85, 64, 79]);
+        assert!(whole.far <= 0.0, "{whole:?}");
+    }
+
+    /// AS.164: from a zone with its fog off the sky's colour is the next
+    /// one's at once; into one it stays the one it leaves; between two
+    /// with none nothing moves it.
+    #[test]
+    fn the_skys_colour_follows_the_managers_fog_rules() {
+        let (mut on, mut off) = (zone(0, 100, 1), zone(1, 200, 0));
+        on.fog.sky_dome_colour = [10, 20, 30, 0];
+        off.fog.sky_dome_colour = [200, 100, 0, 0];
+        assert_eq!(
+            blended(&off, &on, 75.0).fog.sky_dome_colour,
+            [10, 20, 30, 0]
+        );
+        assert_eq!(
+            blended(&on, &off, 25.0).fog.sky_dome_colour,
+            [10, 20, 30, 0]
+        );
+        let mut other = off;
+        other.fog.sky_dome_colour = [0, 0, 0, 0];
+        assert_eq!(
+            blended(&off, &other, 50.0).fog.sky_dome_colour,
+            [200, 100, 0, 0]
+        );
     }
 }

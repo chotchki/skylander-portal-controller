@@ -12,8 +12,10 @@
 // (AG.21): with `misc.w` 1 the directional lights' travels and the point
 // lights' positions are the world's, turned into view space by the view
 // drawn for, so a camera that moves rewrites no material. With `misc.w` 2
-// (AH.65) the point lights come off the scene's buffer instead, in the
-// world's frame too, so a light the scripts move rewrites one buffer.
+// every light and the fog come off the scene's buffer instead, in the
+// world's frame too, so a light the scripts move (AH.65) or a zone's
+// transition (AS.148) rewrites one buffer; with 3 the sky's fog stands for
+// the level's (AS.164).
 //
 // WESL flattens a block an `@if` holds into the block around it, so each
 // such block's names are its own.
@@ -87,11 +89,21 @@ struct Character {
 @group(constants::MATERIAL_BIND_GROUP) @binding(15) var rim_map: texture_2d<f32>;
 @group(constants::MATERIAL_BIND_GROUP) @binding(16) var rim_sampler: sampler;
 
-// A scene's three point lights, as the uniform's three arrays.
+// A scene's lights and fogs, as the uniform's arrays, then the sky's fog.
 struct SceneLights {
     position: array<vec4<f32>, 3>,
     colour: array<vec4<f32>, 3>,
     falloff: array<vec4<f32>, 3>,
+    travel: array<vec4<f32>, 3>,
+    ambient: array<vec4<f32>, 3>,
+    diffuse: array<vec4<f32>, 3>,
+    specular: array<vec4<f32>, 3>,
+    ambient_stored: array<vec4<f32>, 3>,
+    diffuse_stored: array<vec4<f32>, 3>,
+    fog_colour: vec4<f32>,
+    fog_range: vec4<f32>,
+    sky_fog_colour: vec4<f32>,
+    sky_fog_range: vec4<f32>,
 }
 
 @group(constants::MATERIAL_BIND_GROUP) @binding(19) var<storage, read> scene_lights: SceneLights;
@@ -204,19 +216,79 @@ fn mapped_normal(texel: vec4<f32>, normal: vec3<f32>, tangent: vec3<f32>, bitang
     return normalize(y * bitangent - x * tangent + z * normal);
 }
 
+// Whether the lights and the fog come off the scene's buffer (`misc.w` 2
+// or 3).
+fn lights_from_scene() -> bool {
+    return character.misc.w > 1.5;
+}
+
+// Whether the fog is the sky's (`misc.w` 3).
+fn sky_fog_from_scene() -> bool {
+    return character.misc.w > 2.5;
+}
+
 // Directional light `i`'s travel in view space ([`light_travel`] and
 // [`point_position`] read the uniform's frame off `misc.w`).
 fn light_travel(i: u32) -> vec3<f32> {
-    let travel = character.light_travel[i].xyz;
+    var travel = character.light_travel[i].xyz;
+    if lights_from_scene() {
+        travel = scene_lights.travel[i].xyz;
+    }
     if character.misc.w > 0.5 {
         return (view.view_from_world * vec4<f32>(travel, 0.0)).xyz;
     }
     return travel;
 }
 
-// Whether the point lights come off the scene's buffer (`misc.w` 2).
-fn lights_from_scene() -> bool {
-    return character.misc.w > 1.5;
+// Directional light `i`'s colours, off the uniform or the scene's buffer.
+fn light_diffuse(i: u32) -> vec3<f32> {
+    if lights_from_scene() {
+        return scene_lights.diffuse[i].rgb;
+    }
+    return character.light_diffuse[i].rgb;
+}
+
+fn light_specular(i: u32) -> vec3<f32> {
+    if lights_from_scene() {
+        return scene_lights.specular[i].rgb;
+    }
+    return character.light_specular[i].rgb;
+}
+
+fn light_ambient_stored(i: u32) -> vec3<f32> {
+    if lights_from_scene() {
+        return scene_lights.ambient_stored[i].rgb;
+    }
+    return character.light_ambient_stored[i].rgb;
+}
+
+fn light_diffuse_stored(i: u32) -> vec3<f32> {
+    if lights_from_scene() {
+        return scene_lights.diffuse_stored[i].rgb;
+    }
+    return character.light_diffuse_stored[i].rgb;
+}
+
+// The fog's colour and its near and far along the view: the uniform's, the
+// level's off the scene's buffer, or the sky's.
+fn fog_colour() -> vec3<f32> {
+    if sky_fog_from_scene() {
+        return scene_lights.sky_fog_colour.rgb;
+    }
+    if lights_from_scene() {
+        return scene_lights.fog_colour.rgb;
+    }
+    return character.fog_colour.rgb;
+}
+
+fn fog_range() -> vec4<f32> {
+    if sky_fog_from_scene() {
+        return scene_lights.sky_fog_range;
+    }
+    if lights_from_scene() {
+        return scene_lights.fog_range;
+    }
+    return character.fog_range;
 }
 
 // Point light `j`'s position in view space.
@@ -265,8 +337,8 @@ fn lit_layer(
 @if(CHAR_DIRECTIONAL) {
     var lights = vec3<f32>(0.0);
     for (var i = 0u; i < 3u; i++) {
-        let diffuse = character.light_diffuse_stored[i].rgb * max(facing(n, light_travel(i)), 0.0);
-        lights += character.light_ambient_stored[i].rgb + diffuse;
+        let diffuse = light_diffuse_stored(i) * max(facing(n, light_travel(i)), 0.0);
+        lights += light_ambient_stored(i) + diffuse;
     }
     base = c.rgb * pow(max(2.0 * lights, vec3<f32>(0.0)), vec3<f32>(character.shadow.y));
 }
@@ -277,7 +349,7 @@ fn lit_layer(
     for (var i = 0u; i < 3u; i++) {
         let travel = light_travel(i);
         let difference = max(facing(mapped, travel), 0.0) - max(facing(g, travel), 0.0);
-        detail += character.light_diffuse[i].rgb * difference;
+        detail += light_diffuse(i) * difference;
     }
     base = c.rgb + detail * layer.y;
 }
@@ -292,7 +364,7 @@ fn lit_layer(
 @if(CHAR_NORMAL_MAP || CHAR_GEOMETRIC_NORMAL)
         r = normalize(travel - n * (2.0 * dot(travel, n)));
         let s = pow(max(dot(eye, r), SPECULAR_FLOOR), layer.x);
-        sheen += character.light_specular[i].rgb * s;
+        sheen += light_specular(i) * s;
     }
     lit += spec * sheen;
 }
@@ -453,9 +525,9 @@ fn shade(in: Interpolants) -> vec4<f32> {
     colour = lerp3(colour, character.replace.rgb, character.replace.a);
 @if(CHAR_FOG) {
     let depth = -in.position.z;
-    let range = character.fog_range;
+    let range = fog_range();
     let fog = clamp((depth - range.x) / (range.y - range.x), 0.0, 1.0);
-    colour = lerp3(colour, character.fog_colour.rgb, fog);
+    colour = lerp3(colour, fog_colour(), fog);
 }
 
     return vec4<f32>(colour, alpha);
