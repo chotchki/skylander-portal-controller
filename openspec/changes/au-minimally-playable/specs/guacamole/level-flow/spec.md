@@ -153,7 +153,7 @@ A level's legendary treasure SHALL be collected as a hero comes within 15 ft of 
 - **THEN** he's paid 100 gold and it's gone, on a restart and a session on
 
 ### Requirement: A collected ship part hangs on the ship
-The hub's ship SHALL hang one part of each kind (an engine, a masthead, a paint, a roof): a new game's defaults, and from then a legendary treasure a kid collects in its kind's place, kept in the save so a later session's hub hangs it too, a save made before the TV hung them included. The Dragon Engine hung SHALL open the galley's stair, so a hero walks down to Hatterson. Picking among the parts held is the treasure menu's, AK's.
+The hub's ship SHALL hang at most one part of each kind (an engine, a masthead, a paint, a roof; 19 on the disc): a new game's three defaults, no paint, and from then a legendary treasure a kid collects in its kind's place, kept in the save so a later session's hub hangs it too, a save made before the TV hung them included. The Dragon Engine hung SHALL open the galley's stair, so a hero walks down to Hatterson. Picking among the parts held is the treasure menu's, AK's.
 
 #### Scenario: Level 214's propeller roof
 - **WHEN** a hero collects level 214's legendary treasure and reaches the hub
