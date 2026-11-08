@@ -902,6 +902,10 @@ fn the_life_areas_first_vine_bridge_carries_him_over() {
     assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
 }
 
+/// A life area bridge's leg: its pan and where he's set down on it, the
+/// activator it opens, where its bridge's walk starts and the far side.
+type Leg = (&'static str, [f32; 3], &'static str, [f32; 2], [f32; 2]);
+
 /// openspec AS.183: the life area past its island's ambush. Its battle's
 /// end is set as it leaves it (the initializer taken off: the TV doesn't
 /// run the battle, AS.200); then each later bridge from its pan, as the
@@ -944,9 +948,7 @@ fn the_life_areas_later_bridges_and_its_teleporter_carry_him() {
             .map(|(_, _, pose)| pose.position)
             .collect()
     };
-    // Each pan, the activator it opens, where its bridge's walk starts and
-    // the far side.
-    let legs: [(&str, [f32; 3], &str, [f32; 2], [f32; 2]); 3] = [
+    let legs: [Leg; 3] = [
         (
             "Pan_Activate(1)",
             [58.68, 30.0, -57.63],
