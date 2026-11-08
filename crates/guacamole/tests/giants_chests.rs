@@ -1085,58 +1085,29 @@ fn bombs(s: &Story) -> Vec<Handle> {
 }
 
 /// openspec AS.106: what level 214's rooms hold that plays without a screen
-/// of its own. In the workshop, Rob stands, a speaker with his line;
-/// the legendary treasure behind its wall, the wall opened by the room's own
-/// bomb (a run's first burst reaches 20 ft, so it takes two: AS.96's
-/// review), is taken into the collection for its gold; the pretzel heals a
-/// hurt hero who walks into it. In the south room, by one door the pub, the
-/// card pirate whose game isn't open yet stands and talks; by its other the
-/// brewery, whose food heals him too. Both people are
-/// the level's people the TV draws, on their scripts; the card game itself
-/// stays off. Nothing stops.
+/// of its own. In the workshop the pretzel heals a hurt hero who walks into
+/// it, and the legendary treasure behind its wall, the wall opened by the
+/// room's own bomb (a run's first burst reaches 20 ft, so it takes two:
+/// AS.96's review), is taken into the collection for its gold. The south
+/// room is two rooms by its two doors, each waking its own actors (the
+/// controllers' `interior_set`s): by one the pub, by the other the brewery,
+/// whose food heals him too. Nothing stops.
 #[test]
 #[ignore = "reads the Giants dump"]
-fn level_214s_rooms_play_their_treasure_food_and_talkers() {
+fn level_214s_rooms_give_their_treasure_and_food() {
     let started = std::time::Instant::now();
     println!("load at start: {}", load());
     let mut s = Story::joined(LEVEL_214, Session::new(Some(HOST.into())));
     past_the_intro(&mut s);
-    let person = |s: &Story, name: &str| {
-        let (h, _) = s.run.placed(name);
-        let running = s
-            .run
-            .vm
-            .placement_of(h)
-            .is_some_and(|id| !s.run.vm.removed(id) && !s.run.vm.inert().contains(&h));
-        let a = s.run.world.actor(h).unwrap();
-        (
-            s.run.world.people().contains(&h) && running && a.active && !a.removed,
-            s.behaviour(h),
-        )
-    };
     // The workshop.
     let landed = into_the_room(&mut s, "Interior_Controller_Island_2_1");
     println!("in the workshop at {landed}");
-    let (rob, rob_at) = s.run.placed("Rob");
-    s.walk(&[[rob_at.x + 3.0, rob_at.z - 4.0]]);
-    let mut rob_seen = Vec::new();
-    for _ in 0..120 {
-        s.step([false; 4]);
-        let (drawn, b) = person(&s, "Rob");
-        assert!(drawn, "Rob drawn: {b:?}");
-        if rob_seen.last() != Some(&b) {
-            rob_seen.push(b);
-        }
-    }
-    // His script has no behaviour of its own: its STARTUP makes him a
-    // speaker with his line, which the dialogue system plays.
-    println!("Rob: {rob_seen:?}");
-    assert!(!s.run.world.removed(rob));
     // The pretzel, hurt.
     let (pretzel, pretzel_at) = s.run.placed("Food_Pretzle(1)");
     let minion = s.run.minion.expect("joined");
     assert!(guacamole::scripts::set_health(&mut s.run.vm, minion, 100));
-    s.walk(&[[pretzel_at.x, pretzel_at.z]]);
+    // Round the workbench by the room's north side.
+    s.walk(&[[388.0, 224.0], [pretzel_at.x, pretzel_at.z]]);
     for _ in 0..180 {
         if s.run.world.removed(pretzel) {
             break;
@@ -1208,89 +1179,7 @@ fn level_214s_rooms_play_their_treasure_food_and_talkers() {
     );
     assert!(paid > 0, "the treasure paid nothing");
     left_free(&mut s, "the treasure");
-    // The south room.
-    let landed = into_the_room(&mut s, "Interior_Controller_Island_2_3");
-    println!("in the south room at {landed}");
-    // Auric's scene, which the room sets off as he comes in (AS.98), played
-    // out first.
-    let scene_from = s.run.steps;
-    for _ in 0..3000 {
-        if cutscene_name(&s.run).is_none() {
-            let mut clear = true;
-            for _ in 0..30 {
-                s.step([false; 4]);
-                clear &= cutscene_name(&s.run).is_none();
-            }
-            if clear {
-                break;
-            }
-        }
-        s.step([false; 4]);
-    }
-    println!(
-        "Auric's scene over {} steps on, he at {}",
-        s.run.steps - scene_from,
-        s.run.hero().pivot
-    );
-    assert!(
-        cutscene_name(&s.run).is_none(),
-        "{:?}",
-        cutscene_name(&s.run)
-    );
-    let (_, pirate_at) = s.run.placed("CardGame_not_Yet");
-    // Round the room's middle table by its north side.
-    s.walk(&[[390.0, 136.0], [380.0, 136.0], [380.0, 131.5]]);
-    println!(
-        "by the card pirate at {} ({:.1} m)",
-        s.run.hero().pivot,
-        s.run.hero().pivot.distance(pirate_at)
-    );
-    let mut pirate_seen = Vec::new();
-    for _ in 0..120 {
-        s.step([false; 4]);
-        let (drawn, b) = person(&s, "CardGame_not_Yet");
-        assert!(drawn, "the card pirate drawn: {b:?}");
-        if pirate_seen.last() != Some(&b) {
-            pirate_seen.push(b);
-        }
-    }
-    println!("the card pirate: {pirate_seen:?}");
-    assert!(pirate_seen.iter().all(Option::is_some));
-    let (game, _) = s.run.placed("CardGame_Template(1)");
-    assert!(
-        s.run
-            .vm
-            .placement_of(game)
-            .is_none_or(|id| s.run.vm.removed(id))
-            || s.run.vm.inert().contains(&game),
-        "the card game itself stays off: {:?}",
-        s.behaviour(game)
-    );
-    // Out by the pub's exit, and in by the room's other door: the same room
-    // as the brewery, whose actors wake by that door (the controllers'
-    // `interior_set`s), its food among them.
-    let (pub_door, _) = s.run.placed("Interior_Controller_Island_2_3");
-    let exit = s
-        .run
-        .vm
-        .placement_of(pub_door)
-        .and_then(|id| s.run.vm.local(id, "exit teleporter"))
-        .and_then(|v| match s.run.vm.value(v) {
-            Value::Entity(e) => s.run.world.actor(e).map(|a| a.position),
-            _ => None,
-        })
-        .expect("the pub's exit");
-    let landed0 = s.run.world.landed.len();
-    s.run.put(exit, 0.0);
-    for _ in 0..300 {
-        s.step([false; 4]);
-        if s.run.world.landed.len() > landed0 {
-            break;
-        }
-    }
-    for _ in 0..120 {
-        s.step([false; 4]);
-    }
+    // The south room by the brewery's door.
     let landed = into_the_room(&mut s, "Interior_Controller_Island_2_2");
     println!("in the brewery at {landed}");
     let (food, food_at) = s.run.placed("Chinese_Food(1)");

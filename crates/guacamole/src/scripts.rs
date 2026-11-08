@@ -2946,11 +2946,9 @@ pub const HUB_DOORS: [&str; 2] = ["/Utilities_Controller.ai", "/Hub2_Door.ai"];
 /// second cave, Norticus at the top of its jump pads, who leads the hero
 /// on and fades away, Rizzo by the life area, Norticus by the air area at
 /// the quarry, who leads him to the way on and stands there, and the Mabu
-/// at work along the way. Level 214's rooms' talkers (AS.106): Rob in the
-/// workshop, the card pirate in the south room. Walked, Auric's scene
-/// never ended (a reading:
+/// at work along the way. Walked, Auric's scene never ended (a reading:
 /// its `Turn to Target` left to the walk's steering, as Cali's was at AU.6).
-pub const LEVEL_PEOPLE: [(&str, &str); 29] = [
+pub const LEVEL_PEOPLE: [(&str, &str); 27] = [
     ("level_213_tutotial", "2.NPC_Norticus_First_Cave"),
     ("level_213_tutotial", "Slave_1_hammer(3)"),
     ("level_213_tutotial", "Slave_Carry(3)"),
@@ -2971,8 +2969,6 @@ pub const LEVEL_PEOPLE: [(&str, &str); 29] = [
     ("level_214_tutotial_2", "Auric_store"),
     ("level_214_tutotial_2", "Flynn_Island_3"),
     ("level_214_tutotial_2", "Cali_Island_3"),
-    ("level_214_tutotial_2", "Rob"),
-    ("level_214_tutotial_2", "CardGame_not_Yet"),
     // Level 201's (openspec AU.53): Flynn by the landing, Quigley by the
     // door to the life mage and on the cliff path, Brock in the practice
     // pit's scenes, running over the bridge and in his arena, Auric's store.
@@ -4144,12 +4140,6 @@ pub const PASSAGES: [(&str, &[&str]); 1] = [(
         "MoneyBags Temp_Teleporter",
         "Ship_part_2(1)",
         "214_Final_Island_IGC",
-        // The rooms' people who only talk (openspec AS.106): Rob in the
-        // workshop and the card pirate in the south room, whose game isn't
-        // open yet (`CardGame_Not_yet.ai`; the game itself, the same pirate
-        // as `CardGame_Template(1)`, stays off: the backlog's card game).
-        "Rob",
-        "CardGame_not_Yet",
     ],
 )];
 
@@ -6715,17 +6705,12 @@ mod tests {
         }
         // A template of theirs isn't one.
         assert!(!is_level_person("level_213_tutotial", "Slave_1_hammer(1)"));
-        // Level 214's rooms' talkers (AS.106), listed by name; the card game
-        // itself, the same pirate, isn't.
+        // Level 214's rooms' talkers stay off till they pose (AS.106,
+        // AS.180): each would draw in its bind pose.
         for name in ["Rob", "CardGame_not_Yet"] {
-            assert!(is_level_person("level_214_tutotial_2", name), "{name}");
-            assert!(passages("level_214_tutotial_2").contains(&name), "{name}");
+            assert!(!is_level_person("level_214_tutotial_2", name), "{name}");
+            assert!(!passages("level_214_tutotial_2").contains(&name), "{name}");
         }
-        assert!(!is_level_person(
-            "level_214_tutotial_2",
-            "CardGame_Template(1)"
-        ));
-        assert!(!passages("level_214_tutotial_2").contains(&"CardGame_Template(1)"));
         world.walk(0x10A);
         assert_eq!(world.people(), [0x10B], "a walked one isn't");
     }
