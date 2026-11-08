@@ -35,8 +35,9 @@
 //!   (its STARTUP takes it off once it's there, so it waits for the save as
 //!   a chest does), spins up in a scene of its own and pays out its
 //!   definition's gold past the same report, passed here. Equipping a ship
-//!   part is the treasure menu's, a screen the TV doesn't have
-//!   (stand-in ledger: `ship-parts`).
+//!   part is the treasure menu's, a screen the TV doesn't have: the TV
+//!   equips one as it's collected ([`crate::ship_parts`], openspec AS.157;
+//!   stand-in ledger: `ship-parts`).
 
 use std::collections::HashMap;
 
@@ -67,7 +68,7 @@ pub const HAT_SCRIPTS: [&str; 3] = ["/Hat_Pickup.ai", "/Hat_Lid.ai", "/UI_Theatr
 /// `Legendary_Treasure_*` a level places, walked up to, spun and paid out in
 /// a scene of its own, and each level's `Def_Ship_Part_<level>.ai`, which
 /// defines what it pays. Equipping one is the treasure menu's, a screen the
-/// TV doesn't have.
+/// TV doesn't have ([`crate::ship_parts`] equips it as it's collected).
 pub const LEGENDARY_SCRIPTS: [&str; 17] = [
     "/Loot_Specials.ai",
     "/Def_Ship_Part_200.ai",
@@ -153,6 +154,16 @@ fn hat_boxes(vm: &Vm, world: &ScriptWorld) -> Vec<PlacementId> {
 /// The legendary treasures the run holds, by their placements.
 fn legendary(vm: &Vm, world: &ScriptWorld) -> Vec<PlacementId> {
     placed_by(vm, world, LEGENDARY_SCRIPTS[0])
+}
+
+/// The legendary treasures in their `show player`, the report of what was
+/// collected: what equips its ship part (openspec AS.157,
+/// [`crate::ship_parts::on_collection`]).
+pub(crate) fn legendary_showing(vm: &Vm, world: &ScriptWorld) -> Vec<PlacementId> {
+    legendary(vm, world)
+        .into_iter()
+        .filter(|&id| vm.behaviour(id) == Some(SHOWING))
+        .collect()
 }
 
 fn local(vm: &Vm, id: PlacementId, name: &str) -> Option<Value> {

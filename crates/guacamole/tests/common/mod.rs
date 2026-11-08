@@ -866,6 +866,10 @@ pub struct Setup {
     /// Placements listed past the TV's listing, by name (the same, for a
     /// script others share that only these should run).
     pub placements: &'static [&'static str],
+    /// A hub stage's ship part streams linked after the level, their
+    /// scripts listed, as the TV's load links them (openspec AS.157,
+    /// `ship_parts::streams`); they join the run once its save is in.
+    pub streams: bool,
 }
 
 /// The interface records of the script part's archives (`ARCHIVES`, by
@@ -999,6 +1003,18 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     let usr = dump.join("PS3_GAME/USRDIR");
     let chapter_1 = level == levels::LEVELS[0];
     let level_archive = format!("level/{level}.bld");
+    let on_disc: Vec<String> = std::fs::read_dir(usr.join("level"))
+        .expect("the dump's levels")
+        .filter_map(|e| {
+            let name = e.ok()?.file_name().into_string().ok()?;
+            name.strip_suffix(".bld").map(str::to_owned)
+        })
+        .collect();
+    // A hub stage's ship part streams after the level (openspec AS.157).
+    let streams = match setup.streams {
+        true => guacamole::ship_parts::streams(level, on_disc.iter().map(String::as_str)),
+        false => Vec::new(),
+    };
     let archives: Vec<String> = ARCHIVES
         .iter()
         .enumerate()
@@ -1006,6 +1022,13 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
             true => level_archive.clone(),
             false => (*a).to_owned(),
         })
+        .chain(streams.iter().map(|s| format!("level/{s}.bld")))
+        .collect();
+    let stream_units: Vec<u16> = (ARCHIVES.len()..archives.len()).map(|u| u as u16).collect();
+    let roles: Vec<Role> = ARCHIVES
+        .iter()
+        .map(|(_, r)| *r)
+        .chain(stream_units.iter().map(|_| Role::Other))
         .collect();
     let part: Vec<Vec<u8>> = archives
         .iter()
@@ -1016,10 +1039,10 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     let units: Vec<Unit<'_, '_>> = igzs
         .iter()
         .zip(&graphs)
-        .zip(ARCHIVES)
-        .map(|((igz, graph), (_, role))| Unit {
+        .zip(&roles)
+        .map(|((igz, graph), role)| Unit {
             name: "part",
-            role,
+            role: *role,
             igz,
             graph,
         })
@@ -1029,6 +1052,7 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     let layout = layout();
     let read: Vec<(u16, &Igz<'_>)> = [1u16, 2, LEVEL, ERUPTOR]
         .iter()
+        .chain(&stream_units)
         .map(|&u| (u, &igzs[u as usize]))
         .collect();
     let files = Files::read(&read).unwrap();
@@ -1042,6 +1066,7 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
         &files,
         LEVEL,
     );
+    config = guacamole::ship_parts::with_streams(config, &files, &stream_units);
     if setup.no_music {
         config = scripts::without_music(config);
     }
@@ -1061,6 +1086,7 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     let mut vm = scripts::init_chain(program, &files, &handles, &ORDER, config);
     let mut world = ScriptWorld::new(&files, &handles, objects);
     world.set_inert(vm.inert());
+    world.ship_parts.units = stream_units;
     // Its intro waits for the hero, as the TV's install holds it (openspec
     // AS.47); one a test lists past the TV's listing (`Setup::scripts`) too.
     let intro: Option<String> = scripts::intro(level).map(str::to_owned).or_else(|| {
@@ -1088,19 +1114,11 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     if setup.interface {
         let records = match chapter_1 {
             true => interface_records(),
-            false => interface_records_of(&archives),
+            false => interface_records_of(&archives[..ARCHIVES.len()]),
         };
         world.set_interface(interface_part_with(&igzs, records).keeper);
     }
-    world.set_levels(Arc::new(
-        std::fs::read_dir(usr.join("level"))
-            .expect("the dump's levels")
-            .filter_map(|e| {
-                let name = e.ok()?.file_name().into_string().ok()?;
-                name.strip_suffix(".bld").map(str::to_owned)
-            })
-            .collect(),
-    ));
+    world.set_levels(Arc::new(on_disc.into_iter().collect()));
     let template = files
         .placed
         .iter()
@@ -1118,6 +1136,19 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
             && let Some(pal) = palettes.palettes.iter().find(|x| &x.owner == model)
         {
             world.set_palette_of(p.obj, pal);
+        }
+    }
+    // The streams' templates' too (openspec AS.157: the engines turn).
+    for (&u, name) in world.ship_parts.units.clone().iter().zip(&streams) {
+        let palettes = levels::palettes(&igzs[u as usize], name, identity())
+            .expect("a stream's palettes")
+            .ir;
+        for p in files.placed.iter().filter(|p| p.obj.unit == u) {
+            if let Some(model) = &p.model
+                && let Some(pal) = palettes.palettes.iter().find(|x| &x.owner == model)
+            {
+                world.set_palette_of(p.obj, pal);
+            }
         }
     }
     if chapter_1 {

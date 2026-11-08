@@ -576,6 +576,12 @@ pub fn step(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<Option<Ended>, 
     if crate::treasure::answer_hats(vm, host.world) > 0 {
         info!("a hat the TV can't put on: kept, and left off");
     }
+    // A legendary treasure's ship part equipped as it's collected (openspec
+    // AS.157; stand-in ledger: `ship-parts`): a stop costs the part alone.
+    if let Err(h) = crate::ship_parts::on_collection(vm, host) {
+        warn!(%h, "a collected ship part's equip stopped: it stays as the save had it");
+        host.world.ship_parts.stopped = Some(h.to_string());
+    }
     crate::turret::step(vm, host.world);
     if let Some((current, name, time)) = cutscene(vm)
         && time > 0.0

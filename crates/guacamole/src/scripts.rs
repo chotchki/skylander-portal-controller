@@ -542,6 +542,9 @@ pub struct ScriptWorld {
     pub(crate) skipped_cutscene: Option<Value>,
     /// A hat's outfit registered for this run (`treasure::answer_hat_load`).
     pub(crate) hat_load_answered: bool,
+    /// The ship part streams the run links and what's been done with them
+    /// (openspec AS.157, [`crate::ship_parts`]).
+    pub ship_parts: crate::ship_parts::ShipParts,
     /// Whether [`crate::level_end`] skips any cutscene in play as it skips a
     /// listed one: a dev entry's settle on a level with an intro, so its
     /// anchor sets him down past the intro as before AS.81 played it.
@@ -926,6 +929,7 @@ impl ScriptWorld {
             streams: Default::default(),
             skipped_cutscene: None,
             hat_load_answered: false,
+            ship_parts: Default::default(),
             skip_cutscenes: false,
             level_end_asked: false,
             level_end_movie: None,
