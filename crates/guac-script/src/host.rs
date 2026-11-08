@@ -266,7 +266,10 @@ impl Builtin {
     }
 
     pub fn of(id: MemberId) -> Option<Self> {
-        Self::ALL.into_iter().find(|b| b.id() == id)
+        // Hashed once: the VM asks this of every member on every path.
+        static IDS: std::sync::LazyLock<[(MemberId, Builtin); 14]> =
+            std::sync::LazyLock::new(|| Builtin::ALL.map(|b| (b.id(), b)));
+        IDS.iter().find(|(m, _)| *m == id).map(|(_, b)| *b)
     }
 }
 

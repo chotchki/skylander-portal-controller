@@ -373,6 +373,10 @@ pub struct Program {
     ops_by_obj: HashMap<Obj, OpId>,
     globals_by_obj: HashMap<Obj, GlobalId>,
     names: HashMap<Obj, String>,
+    /// Each named file variable's id by its name, the first unit's first
+    /// ([`Program::global_named`]): made once the link's done, so a lookup
+    /// a native makes every step reads one entry rather than every global.
+    globals_by_name: HashMap<String, GlobalId>,
     /// Each placement's tags in its `_tagList`, by the placement's object:
     /// variables its scripts find on it by name (crate docs, `find
     /// variable`).
@@ -453,15 +457,27 @@ impl Program {
 
     /// A file variable by its name (`toy data`), first unit first.
     pub fn global_named(&self, name: &str) -> Option<GlobalId> {
-        let mut found: Vec<_> = self
-            .globals
-            .iter()
-            .enumerate()
-            .filter(|(_, (o, _))| self.names.get(o).is_some_and(|n| n == name))
-            .map(|(i, (o, _))| (*o, i as GlobalId))
+        self.globals_by_name.get(name).copied()
+    }
+
+    /// Each named file variable by its name, the lowest object of a name
+    /// standing for it: what [`Program::global_named`] reads.
+    fn index_globals(&mut self) {
+        let mut first: HashMap<&str, (Obj, GlobalId)> = HashMap::new();
+        for (i, (o, _)) in self.globals.iter().enumerate() {
+            let Some(name) = self.names.get(o) else {
+                continue;
+            };
+            let at = (*o, i as GlobalId);
+            first
+                .entry(name.as_str())
+                .and_modify(|best| *best = (*best).min(at))
+                .or_insert(at);
+        }
+        self.globals_by_name = first
+            .into_iter()
+            .map(|(n, (_, g))| (n.to_owned(), g))
             .collect();
-        found.sort();
-        found.first().map(|(_, g)| *g)
     }
 
     /// An object's `_name`, for one an op reaches that has one.
@@ -711,6 +727,7 @@ impl<'l, 'u, 'a> Linker<'l, 'u, 'a> {
             }
         }
         self.finish();
+        self.p.index_globals();
         Ok(self.p)
     }
 
