@@ -3688,10 +3688,16 @@ impl Vm {
                 };
                 if let Some(c) = found {
                     let p = &mut self.placements[pid as usize];
+                    p.others.retain(|(_, _, o)| *o != c);
                     if p.locals.get(&name) == Some(&c) {
                         p.locals.remove(&name);
+                        // One of another container left by the name takes
+                        // its key, so its script still reads it.
+                        if let Some(k) = p.others.iter().position(|(n, _, _)| *n == name) {
+                            let (_, _, o) = p.others.remove(k);
+                            p.locals.insert(name, o);
+                        }
                     }
-                    p.others.retain(|(_, _, o)| *o != c);
                 }
                 found
             }

@@ -480,6 +480,82 @@ fn a_find_beside_a_local_of_another_container_makes_a_variable_of_its_own() {
     }
 }
 
+/// AU.53's review: of two variables of one name, the one a find made
+/// first taken off by filter 3 leaves the other, its script's own of the
+/// other container, holding what it held. The finder makes its number
+/// before the owner's first tick, so the number is the one keyed by the
+/// name, and takes it off a tick later.
+#[test]
+fn a_variable_taken_off_leaves_its_namesake_of_another_container() {
+    let mut owner_obj = None;
+    let (p, obj) = program_and_objects(|w| {
+        let commander = w.variable("commander", "ScriptReference", None);
+        let a = actor(w);
+        owner_obj = Some(a);
+        let (n, taken, hit) = (var(w, "n"), var(w, "taken"), var(w, "hit"));
+        script(
+            w,
+            "C:/tfb/Synthetic/Finder.ai",
+            |_| {},
+            |_| {},
+            |w| {
+                behaviour(w, |w| {
+                    w.inc(&[El::Local(n)]);
+                    let one = w.int(1);
+                    let (c, _) = check(w, n, 1, one);
+                    let (f, fo) = find(w, "commander", "ValueInfo", INT, 2, &[El::Local(a)]);
+                    let seven = w.int(7);
+                    w.set(&[El::Local(fo)], seven);
+                    w.end_block(f);
+                    w.end_block(c);
+                    let two = w.int(2);
+                    let (c, _) = check(w, n, 1, two);
+                    let (f, fo) = find(w, "commander", "ValueInfo", INT, 3, &[El::Local(a)]);
+                    let r = w.rhs(INT, &[El::Local(fo)]);
+                    w.set(&[El::Local(taken)], r);
+                    w.end_block(f);
+                    w.end_block(c);
+                });
+            },
+        );
+        let info = script(
+            w,
+            "C:/tfb/Synthetic/Owner.ai",
+            |_| {},
+            |_| {},
+            |w| {
+                behaviour(w, |w| {
+                    let me = [El::Member("optoplevelbehavior", "my")];
+                    let c = check_ref(w, &[El::Local(commander)], 1, &me);
+                    w.inc(&[El::Local(hit)]);
+                    w.end_block(c);
+                    setref(w, &[El::Local(commander)], &me);
+                });
+            },
+        );
+        w.declare(info, &[commander]);
+    });
+    let a = obj.at(owner_obj.unwrap());
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let finder = vm.add(0x10, "Finder", 0);
+    let owner = vm.add_at(0x20, "Owner", 1, a);
+    let mut host = Engine::default();
+    for step in 1..=3 {
+        vm.step(&mut host).unwrap();
+        assert_eq!(
+            vm.local(owner, "hit"),
+            (step > 1).then_some(Value::Int(step - 1)),
+            "the reference kept, step {step}"
+        );
+    }
+    assert_eq!(vm.local(finder, "taken"), Some(Value::Int(7)));
+    assert_eq!(
+        vm.locals_named(owner, "commander"),
+        [Value::Entity(0x20)],
+        "the number gone, the reference keyed"
+    );
+}
+
 #[test]
 fn a_removed_placement_finishes_its_tick_then_never_runs_and_cant_be_told() {
     let mut objs = Vec::new();

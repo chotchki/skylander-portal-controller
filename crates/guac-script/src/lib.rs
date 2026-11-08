@@ -486,6 +486,8 @@
 //!   master makes a number `commander` on its commander clone, whose
 //!   script's `commander` is a reference it checks against nothing; one
 //!   cell for both read the number there and the clone took itself off).
+//!   Filter 3 taking one of them off leaves the other as it was. The
+//!   embedder's read by name gets the one made first.
 //!   On anything else it's a table per owner. Filter 4 and the
 //!   skip operand stop as unsupported: what they select is a reading not
 //!   yet settled.
