@@ -328,9 +328,11 @@ pub struct Run {
     /// tilts his model to the ground; stand-in ledger: `upright`).
     pub lean: Option<(Vec3, Quat)>,
     /// With `GUAC_SURFACE_CENSUS` set, the clones seen standing for actors
-    /// (openspec AS.168, `Actor::stands_for_actors`) and those the hero came
-    /// within 3 m of, each logged once as it's first seen.
-    pub surfaces: (HashSet<Handle>, HashSet<Handle>),
+    /// (openspec AS.168, `Actor::stands_for_actors`), those the hero came
+    /// within 3 m of and the people that came within a metre of one (a
+    /// person's ground is what the ray caster meets, AS.166), each logged
+    /// once as it's first seen.
+    pub surfaces: (HashSet<Handle>, HashSet<Handle>, HashSet<(Handle, Handle)>),
     /// His figure's toy id: Eruptor's 9, or [`Setup::character`]'s.
     pub toy: u16,
 }
@@ -516,6 +518,12 @@ impl Run {
             return;
         }
         let hero = self.bench.heroes.get(&self.hero).map(|h| h.pivot);
+        let people: Vec<(Handle, Vec3)> = self
+            .world
+            .people()
+            .into_iter()
+            .filter_map(|p| self.world.actor(p).map(|a| (p, a.position)))
+            .collect();
         for (h, solid, pose) in self.world.creature_bodies() {
             let Some(a) = self.world.actor(h) else {
                 continue;
@@ -557,6 +565,21 @@ impl Run {
                     "SURFACE-NEAR {name} at ({:.2}, {:.2}, {:.2}) step {}, the hero at ({:.2}, {:.2}, {:.2})",
                     at.x, at.y, at.z, self.steps, p.x, p.y, p.z
                 );
+            }
+            for &(person, p) in &people {
+                if p.distance(at) < 1.0 + reach && self.surfaces.2.insert((h, person)) {
+                    println!(
+                        "SURFACE-PERSON {name} at ({:.2}, {:.2}, {:.2}) step {}, {} at ({:.2}, {:.2}, {:.2})",
+                        at.x,
+                        at.y,
+                        at.z,
+                        self.steps,
+                        self.world.name(person),
+                        p.x,
+                        p.y,
+                        p.z
+                    );
+                }
             }
         }
     }

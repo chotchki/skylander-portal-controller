@@ -6467,6 +6467,8 @@ mod fight_tests {
             e.bodies.insert(C1, own.id);
             e.bodies.insert(C3, cask.id);
             let mut w = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+            // Chapter 1's run: whose people its placements are (AS.176).
+            w.set_level("level_213_tutotial");
             w.actors.get_mut(&C3).unwrap().solid.acts_as_actor_surface = 0;
             let a = w.actors.get_mut(&h).unwrap();
             let mut c = chompy(Vec3::ZERO, 90.0);
@@ -6490,10 +6492,10 @@ mod fight_tests {
             }
             (off, w.actor(h).unwrap().position)
         };
-        assert_eq!(
-            ScriptWorld::new(&files, &handles, headless_objects(&handles)).people(),
-            [C1]
-        );
+        let mut chapter_1 = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        assert!(chapter_1.people().is_empty(), "on no level, no level's");
+        chapter_1.set_level("level_213_tutotial");
+        assert_eq!(chapter_1.people(), [C1]);
         let (off, at) = walk(C1, 1, up);
         assert!(off < 0.01, "on the ramp: {off}");
         assert!(
