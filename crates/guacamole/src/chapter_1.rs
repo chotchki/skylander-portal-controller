@@ -74,7 +74,7 @@ pub const WAY: Encounter = Encounter {
 };
 
 /// What takes the way on past them, listed and never walked.
-pub const PASSAGE: [&str; 76] = [
+pub const PASSAGE: [&str; 85] = [
     "213_Gigantus_IGC",
     // The first cave's scene's people (openspec AS.105): Norticus in his
     // turban, a Mabu hammering and one carrying a brick, each its own
@@ -157,6 +157,21 @@ pub const PASSAGE: [&str; 76] = [
     "PvP_JumpPad_NORMAL(10)",
     "Spinner",
     "Spike_Floor_Spawner(1)",
+    // The Mabu at work along the way (openspec AS.166), each on its own
+    // script with what it holds: three hammering and four carrying a brick
+    // (one of them by the pit to the second cave, the rest in the quarry),
+    // turning to the hero as he comes by, and one by each of the air and
+    // death areas in a beanie, who talks as he comes near. Drawn as the
+    // level's people ([`crate::scripts::LEVEL_PEOPLE`]).
+    "Slave_1_hammer",
+    "Slave_1_hammer(2)",
+    "Slave_1_hammer(4)",
+    "Slave_Carry",
+    "Slave_Carry(1)",
+    "Slave_Carry(2)",
+    "Slave_Carry(4)",
+    "Slave_Air_Element",
+    "Slave_Death_Element",
 ];
 
 /// The placements [`PASSAGE`] lists for the level whose archive is `level`.

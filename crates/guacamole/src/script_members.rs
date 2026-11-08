@@ -2808,10 +2808,20 @@ impl ScriptWorld {
     /// velocity a script writes never also flies it
     /// ([`ScriptWorld::move_actors`]). The aim lasts the tick it was asked
     /// for, as a creature's does. One taken off, hung on something or
-    /// walked as a creature since is let go.
+    /// walked as a creature since is let go. One of the people the TV draws
+    /// whose solid meets the level stands on the ground under each step
+    /// (openspec AS.166: chapter 1's Norticus at the quarry leads the hero
+    /// up its slope, 5.5 m in all, where at the height he stood he'd end
+    /// under it), within 2 m over it to 4 m under it, keeping its height
+    /// over none; a scene's actors stay at the height they stand.
     pub(crate) fn move_scene_walks(&mut self, dt: f32, engine: &mut dyn Engine) {
         let mut walking: Vec<Handle> = self.scene_walks.keys().copied().collect();
         walking.sort_unstable();
+        let people = self.people();
+        let mut bodies = self.actor_bodies(engine);
+        bodies.extend(people.iter().filter_map(|p| engine.body(*p)));
+        bodies.sort_unstable();
+        bodies.dedup();
         for h in walking {
             if engine.hero(h).is_some() {
                 self.move_hero_walk(h, dt, engine);
@@ -2843,7 +2853,21 @@ impl ScriptWorld {
                 true,
                 dt,
             );
-            a.position += frame.velocity * dt;
+            let next = a.position + frame.velocity * dt;
+            let grounded =
+                a.solid.interacts_with_level_mesh != 0 && people.binary_search(&h).is_ok();
+            let ground = grounded
+                .then(|| {
+                    guac_motion::ground::ray(
+                        engine.seam(),
+                        next + Vec3::Y * 2.0,
+                        Vec3::NEG_Y,
+                        6.0,
+                        &bodies,
+                    )
+                })
+                .flatten();
+            a.position = Vec3::new(next.x, ground.map_or(next.y, |hit| hit.point.y), next.z);
             a.angles.facing = frame.facing;
             a.velocity = frame.velocity * FEET_PER_METRE;
         }
@@ -5642,7 +5666,7 @@ mod fight_tests {
 
     use super::*;
     use crate::script_engine::{Actor, NodePose, Pad, Physics, Solid, Walker};
-    use crate::scripts::{Files, headless_objects};
+    use crate::scripts::{Files, Placed, headless_objects};
 
     pub(super) const C1: Handle = 0x6100_0001;
     const C2: Handle = 0x6100_0002;
@@ -6051,6 +6075,95 @@ mod fight_tests {
             (at - Vec3::new(8.0, at.y, 6.0)).length() <= 2.0 * FOOT,
             "{at}"
         );
+    }
+
+    /// AS.166: one of the people the TV draws, its solid meeting the level,
+    /// led up a slope by `move to` stands on the ground under each step, as
+    /// chapter 1's Norticus at the quarry climbs its slope; a scene's actor
+    /// and a person whose solid meets no level stay at the height they
+    /// stand; past the ramp's end, over nothing, a person keeps its height.
+    #[test]
+    fn a_person_led_up_a_slope_stands_on_the_ground() {
+        // y = x / 4 from x = -20 to 20.
+        let ramp = Mesh::new(
+            vec![
+                Vec3::new(-20.0, -5.0, -20.0),
+                Vec3::new(20.0, 5.0, -20.0),
+                Vec3::new(20.0, 5.0, 20.0),
+                Vec3::new(-20.0, -5.0, 20.0),
+            ],
+            vec![[0, 3, 2], [0, 2, 1]],
+            vec![0, 0],
+        )
+        .unwrap();
+        let ground = Body {
+            id: BodyId(1),
+            kind: BodyKind::Static,
+            pose: Pose::at(Vec3::ZERO),
+            collider: Collider::Mesh(std::sync::Arc::new(ramp)),
+        };
+        let person = Obj { unit: 3, index: 50 };
+        let actor = Obj { unit: 3, index: 51 };
+        let up = Obj { unit: 9, index: 7 };
+        let past = Obj { unit: 9, index: 8 };
+        let files = Files {
+            placed: vec![
+                Placed::named(person, "4.NPC_Norticus at end", None, 4),
+                Placed::named(actor, "213_Gigantus_Norticus", None, 4),
+            ],
+            points: HashMap::from([
+                (up, Vec3::new(14.0, 3.5, 0.0)),
+                (past, Vec3::new(30.0, 3.5, 0.0)),
+            ]),
+            ..Files::default()
+        };
+        let handles = HashMap::from([(person, C1), (actor, C2)]);
+        // Each walked toward `to` until reached or 300 frames: its heights
+        // off the ramp under it at each frame, its last place.
+        let walk = |h: Handle, meets_level: i32, to: Obj| {
+            let mut e = pit();
+            e.world = ParryWorld::new(std::slice::from_ref(&ground)).unwrap();
+            let mut w = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+            let a = w.actors.get_mut(&h).unwrap();
+            let mut c = chompy(Vec3::ZERO, 90.0);
+            c.obj = a.obj;
+            c.walker = None;
+            c.solid.interacts_with_level_mesh = meets_level;
+            *a = c;
+            let mut off = 0.0f32;
+            let mut call = move_to(Value::Object(to), 1);
+            call.placement = h;
+            call.receiver = Value::Entity(h);
+            for _ in 0..300 {
+                if matches!(ask(&mut w, &mut e, &call), Answer::Run { .. }) {
+                    break;
+                }
+                w.advance(STEP, &mut e);
+                let at = w.actor(h).unwrap().position;
+                if at.x <= 20.0 {
+                    off = off.max((at.y - at.x / 4.0).abs());
+                }
+            }
+            (off, w.actor(h).unwrap().position)
+        };
+        assert_eq!(
+            ScriptWorld::new(&files, &handles, headless_objects(&handles)).people(),
+            [C1]
+        );
+        let (off, at) = walk(C1, 1, up);
+        assert!(off < 0.01, "on the ramp: {off}");
+        assert!(
+            (at.x - 14.0).abs() < 1.0 && (at.y - 3.5).abs() < 0.3,
+            "{at}"
+        );
+        for (h, meets_level) in [(C2, 1), (C1, 0)] {
+            let (_, at) = walk(h, meets_level, up);
+            assert!(at.y.abs() < 1e-6, "at its height: {at}");
+            assert!(at.x > 13.0, "walked all the same: {at}");
+        }
+        // Off the ramp's end at 5 m, over nothing: at the height it left it.
+        let (_, at) = walk(C1, 1, past);
+        assert!(at.x > 25.0 && (at.y - 5.0).abs() < 0.05, "{at}");
     }
 
     /// AS.68: a scene walk steps from its actor's velocity, which is its

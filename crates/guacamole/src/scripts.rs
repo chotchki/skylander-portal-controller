@@ -2894,12 +2894,29 @@ pub const HUB_DOORS: [&str; 2] = ["/Utilities_Controller.ai", "/Hub2_Door.ai"];
 /// and at his stall after it, Flynn and Cali on its third ship (AS.142),
 /// and chapter 1's first cave's (AS.105): Norticus, who leads the hero in
 /// once the cave's scene lets him go, and the two Mabu at work, who turn to
-/// him as he comes by. Walked, Auric's scene never ended (a reading: its
-/// `Turn to Target` left to the walk's steering, as Cali's was at AU.6).
-pub const LEVEL_PEOPLE: [(&str, &str); 7] = [
+/// him as he comes by. Past the cave (AS.166): Snuckels by the pit to the
+/// second cave, Norticus at the top of its jump pads, who leads the hero
+/// on and fades away, Rizzo by the life area, Norticus by the air area at
+/// the quarry, who leads him to the way on and stands there, and the Mabu
+/// at work along the way. Walked, Auric's scene never ended (a reading:
+/// its `Turn to Target` left to the walk's steering, as Cali's was at AU.6).
+pub const LEVEL_PEOPLE: [(&str, &str); 20] = [
     ("level_213_tutotial", "2.NPC_Norticus_First_Cave"),
     ("level_213_tutotial", "Slave_1_hammer(3)"),
     ("level_213_tutotial", "Slave_Carry(3)"),
+    ("level_213_tutotial", "1.NPC_Snuckels"),
+    ("level_213_tutotial", "3.NPC_Norticus"),
+    ("level_213_tutotial", "3.NPC_Rizzo_Life_Elemental_Area"),
+    ("level_213_tutotial", "4.NPC_Norticus at end"),
+    ("level_213_tutotial", "Slave_1_hammer"),
+    ("level_213_tutotial", "Slave_1_hammer(2)"),
+    ("level_213_tutotial", "Slave_1_hammer(4)"),
+    ("level_213_tutotial", "Slave_Carry"),
+    ("level_213_tutotial", "Slave_Carry(1)"),
+    ("level_213_tutotial", "Slave_Carry(2)"),
+    ("level_213_tutotial", "Slave_Carry(4)"),
+    ("level_213_tutotial", "Slave_Air_Element"),
+    ("level_213_tutotial", "Slave_Death_Element"),
     ("level_214_tutotial_2", "Moneybags_end"),
     ("level_214_tutotial_2", "Auric_store"),
     ("level_214_tutotial_2", "Flynn_Island_3"),
@@ -6574,7 +6591,23 @@ mod tests {
             assert!(is_level_person("level_213_tutotial", name), "{name}");
             assert!(!is_level_person("level_214_tutotial_2", name), "{name}");
         }
-        assert!(!is_level_person("level_213_tutotial", "Slave_Carry(2)"));
+        // Its people past the cave (AS.166), each listed too.
+        for name in [
+            "1.NPC_Snuckels",
+            "3.NPC_Norticus",
+            "3.NPC_Rizzo_Life_Elemental_Area",
+            "4.NPC_Norticus at end",
+            "Slave_1_hammer",
+            "Slave_Carry(2)",
+            "Slave_Air_Element",
+            "Slave_Death_Element",
+        ] {
+            assert!(is_level_person("level_213_tutotial", name), "{name}");
+            assert!(!is_level_person("level_214_tutotial_2", name), "{name}");
+            assert!(crate::chapter_1::PASSAGE.contains(&name), "{name}");
+        }
+        // A template of theirs isn't one.
+        assert!(!is_level_person("level_213_tutotial", "Slave_1_hammer(1)"));
         world.walk(0x10A);
         assert_eq!(world.people(), [0x10B], "a walked one isn't");
     }
