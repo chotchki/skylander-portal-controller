@@ -285,7 +285,7 @@ A hub stage SHALL show what the adventures done open, by what the host's save ho
 - **THEN** the Hermit's scene plays through its movie, the hero handed over on the main deck
 
 ### Requirement: A level's zone lights it
-From a level's first step the TV SHALL light and fog it by the atmospheric zone its scripts have it in, blending over a transition at no more than 8 points of its way, none of them a frame past the slow-frame log's 50 ms. A zone whose fog the TV can't draw, or that the level's part doesn't hold, SHALL leave the level as it was, named in the report; a zone's share of the sky's fog is left undrawn, named.
+From a level's first step the TV SHALL light and fog it by the atmospheric zone its scripts have it in, blending over a transition at no more than 8 points of its way with no frame past 20 ms of its own, and SHALL fog its sky by the share its start's zone sets up, in the sky colour the transition slides. A zone whose fog the TV can't draw, or that the level's part doesn't hold, SHALL leave the level as it was, named in the report.
 
 #### Scenario: Level 214 from its start
 - **WHEN** level 214's scripts switch from the start's zone to their own in their first steps
@@ -293,7 +293,15 @@ From a level's first step the TV SHALL light and fog it by the atmospheric zone 
 
 #### Scenario: Into the cave
 - **WHEN** the hero walks into chapter 1's cave
-- **THEN** the room's zone lights it from under the darkness, and the exterior's lights it again once he's out
+- **THEN** the room's zone lights it from under the darkness, and the exterior's lights it again once he's out, no frame of either transition past 20 ms
+
+#### Scenario: A start zone asking a share of the sky
+- **WHEN** level 206, whose start zone asks the sky dome take all of its fog, is asked for
+- **THEN** it loads, its sky drawn in its zone's sky colour, and nothing is refused for the share
+
+#### Scenario: Chapter 1's sky through a timed switch
+- **WHEN** chapter 1's scripts switch over time to a zone asking a share of the sky's fog
+- **THEN** the sky keeps the start zone's share, none, only its colour following the zone
 
 ### Requirement: A carried bomb shows its count
 Each count of a carried bomb SHALL show as its number over the bomb, from the disc's own font, sliding up and fading out over the 2 s its timer stands, a new number at each count until it bursts.
