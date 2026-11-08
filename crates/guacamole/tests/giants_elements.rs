@@ -29,11 +29,19 @@ const AIR_WALL: &str = "ElementalWallController(3)";
 struct Walk {
     run: Run,
     stops: Vec<String>,
+    /// The host's story save, answered each step (openspec AS.156: a hat
+    /// box wakes once the run's save is in, AU.39); none, as before.
+    session: Option<guacamole::story_save::Session>,
 }
 
 impl Walk {
     /// A level from its start with its hero joined and settled.
     fn joined(level: &str) -> Walk {
+        Walk::joined_as(level, None)
+    }
+
+    /// [`Walk::joined`] with `character` in Eruptor's place.
+    fn joined_as(level: &str, character: Option<Character>) -> Walk {
         let (mut run, _) = run_on_level(
             Mode::Play,
             level,
@@ -41,6 +49,7 @@ impl Walk {
                 interface: true,
                 props: true,
                 sounds: true,
+                character,
                 ..Setup::default()
             },
         );
@@ -52,19 +61,43 @@ impl Walk {
         if level == LEVEL_214 {
             stops.extend(skip_214s_intro(&mut run).iter().map(ToString::to_string));
         }
-        let mut w = Walk { run, stops };
+        let mut w = Walk {
+            run,
+            stops,
+            session: None,
+        };
         w.still(120);
         w
     }
 
     fn step(&mut self, stick: Stick) {
+        self.act(stick, [false; 4]);
+    }
+
+    fn act(&mut self, stick: Stick, actions: [bool; 4]) {
         self.run.bench.pads[0] = Pad {
             stick,
-            actions: [false; 4],
+            actions,
             connected: true,
         };
         let stops = self.run.step_play().unwrap();
         self.stops.extend(stops.iter().map(ToString::to_string));
+        if let Some(session) = self.session.as_mut() {
+            let run = &mut self.run;
+            let mut spawn = guacamole::scripts::headless_spawner(1 << 50);
+            let mut engine = guacamole::script_engine::NoEngine;
+            let mut host = guacamole::scripts::WorldHost {
+                world: &mut run.world,
+                engine: &mut engine,
+                generator: &mut run.generator,
+                spawn: &mut spawn,
+            };
+            guacamole::story_save::serve(&mut run.vm, &mut host, session, LEVEL_214)
+                .unwrap_or_else(|h| panic!("{h}"));
+            if session.take_write().is_some() {
+                session.written(&mut run.world.save, Ok(()));
+            }
+        }
     }
 
     fn still(&mut self, steps: u32) {
@@ -567,4 +600,295 @@ fn each_areas_own_placements_wake_for_a_hero_inside() {
         assert!(!w.run.vm.inert().contains(&h), "{name} off the listing");
         assert!(!w.run.vm.asleep(id), "{name} asleep");
     }
+}
+
+/// Level 214's earth area (openspec AS.156): its rocks, its tools, its key.
+impl Walk {
+    /// On the stick to each point in turn, within 1 m, at most 900 steps a
+    /// point.
+    fn walk_on(&mut self, points: &[[f32; 2]]) {
+        for &to in points {
+            for _ in 0..900 {
+                let at = self.run.hero().pivot;
+                if (to[0] - at.x).hypot(to[1] - at.z) <= 1.0 {
+                    break;
+                }
+                let heading = (to[0] - at.x).atan2(to[1] - at.z).to_degrees();
+                let s = self.stick_along(heading);
+                self.step(s);
+            }
+            let at = self.run.hero().pivot;
+            assert!(
+                (to[0] - at.x).hypot(to[1] - at.z) <= 1.0,
+                "walking to {to:?}: stopped at {at}"
+            );
+        }
+    }
+
+    fn behaviour_of(&self, h: Handle) -> Option<String> {
+        self.run
+            .vm
+            .placement_of(h)
+            .and_then(|id| self.run.vm.behaviour(id))
+            .map(str::to_owned)
+    }
+
+    /// The bomb he carries.
+    fn carried(&self) -> Option<Handle> {
+        self.run
+            .world
+            .clones()
+            .into_iter()
+            .filter(|h| self.run.world.name(*h) == "Bomb_Template")
+            .filter(|h| !self.run.world.removed(*h))
+            .find(|b| self.behaviour_of(*b).as_deref() == Some("following player"))
+    }
+
+    /// The earth area's rocks still standing, by name.
+    fn rocks(&self) -> Vec<String> {
+        self.run
+            .files
+            .placed
+            .iter()
+            .filter(|p| p.obj.unit == LEVEL && p.position[0] < -700.0)
+            .filter(|p| {
+                p.name.starts_with("Rock_Breakable_Full(")
+                    || p.name.starts_with("Super_Hard_Rocks(")
+            })
+            .filter(|p| !self.run.world.taken_off(p.obj))
+            .map(|p| p.name.clone())
+            .collect()
+    }
+
+    /// Toward `rock`, his first attack every 12 steps, close in on a touch
+    /// of the stick, until it's gone, at most 900 steps: the rocks it took.
+    fn smash(&mut self, rock: &str) -> Vec<String> {
+        let (h, at) = self.run.placed(rock);
+        let before = self.rocks();
+        for k in 0..900 {
+            if self.gone(h) {
+                break;
+            }
+            let me = self.run.hero().pivot;
+            let heading = (at.x - me.x).atan2(at.z - me.z).to_degrees();
+            let s = self.stick_along(heading);
+            let s = match (at.x - me.x).hypot(at.z - me.z) > 2.0 {
+                true => s,
+                false => Stick::new(s.x * 0.3, s.y * 0.3),
+            };
+            self.act(s, [k % 12 == 0, false, false, false]);
+        }
+        assert!(
+            self.gone(h),
+            "{rock} stands, he at {}",
+            self.run.hero().pivot
+        );
+        self.still(60);
+        let after = self.rocks();
+        before.into_iter().filter(|n| !after.contains(n)).collect()
+    }
+
+    /// Facing `to`, △ tapped, then `steps` at rest.
+    fn tap_toward(&mut self, to: [f32; 2], steps: u32) {
+        let at = self.run.hero().pivot;
+        let heading = (to[0] - at.x).atan2(to[1] - at.z).to_degrees();
+        for _ in 0..6 {
+            let s = self.stick_along(heading);
+            self.step(Stick::new(s.x * 0.3, s.y * 0.3));
+        }
+        self.act(Stick::new(0.0, 0.0), [false, false, false, true]);
+        self.still(steps);
+    }
+}
+
+/// openspec AS.156: level 214's earth area past its wall, as Crusher, the
+/// earth Giant, plays it. His attacks break the super hard rocks
+/// (`Super_hard_Rock.ai` answers his damage's crystal-rock property) that
+/// shut the area's bomb spawner off; its bomb, carried and thrown, breaks a
+/// rock where it bursts; his attacks clear the corridor, the stairs' way up
+/// past the next two hard rocks and the east side; the key behind them is
+/// taken, turned in the door (△) and the door opens on the hat box, which
+/// mashed open gives its hat: collected in the save, the box gone, the hero
+/// walking after. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_earth_area_opens_to_crusher_on_to_its_hat_box() {
+    let t = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let mut w = Walk::joined_as(LEVEL_214, Some(CRUSHER));
+    w.session = Some(guacamole::story_save::Session::new(Some(
+        "01HOSTPROFILE".into(),
+    )));
+    assert_eq!(w.element(), EARTH, "Crusher's an earth Skylander");
+    let wall = "ElementalWallController(2)";
+    let (wall_h, _) = w.run.placed(wall);
+    let nodes = w.wall_nodes(wall);
+    w.run.put(nodes[nodes.len() / 2] + Vec3::Y, 0.0);
+    for _ in 0..240 {
+        w.still(1);
+        if w.gone(wall_h) {
+            break;
+        }
+    }
+    assert!(w.gone(wall_h), "the wall stood for him");
+    let all = w.rocks().len();
+    // The hard rocks before the bomb spawner, by his attacks.
+    w.walk_on(&[[-825.0, -575.0], [-836.0, -577.0]]);
+    let hard = w.smash("Super_Hard_Rocks(2)");
+    println!("his attack took {hard:?}");
+    assert!(hard.iter().any(|n| n.starts_with("Super_Hard")));
+    // The bomb, taken and thrown at the corridor's rocks.
+    w.walk_on(&[[-848.0, -573.0]]);
+    for _ in 0..600 {
+        if w.carried().is_some() {
+            break;
+        }
+        let at = w.run.hero().pivot;
+        let heading = (-855.5 - at.x).atan2(-571.0 - at.z).to_degrees();
+        let s = w.stick_along(heading);
+        w.step(s);
+    }
+    let bomb = w.carried().expect("the area's bomb taken");
+    w.walk_on(&[[-846.0, -569.0]]);
+    let before = w.rocks();
+    w.tap_toward([-836.0, -563.0], 240);
+    let blown: Vec<String> = before
+        .into_iter()
+        .filter(|n| !w.rocks().contains(n))
+        .collect();
+    println!("the bomb's burst took {blown:?}");
+    assert!(!blown.is_empty(), "the bomb broke no rock");
+    assert_ne!(w.behaviour_of(bomb).as_deref(), Some("following player"));
+    // The corridor north, the stairs up west, the hard rocks there.
+    w.walk_on(&[[-836.0, -570.0], [-829.0, -566.0]]);
+    for rock in [
+        "Rock_Breakable_Full(3)",
+        "Rock_Breakable_Full(1)",
+        "Rock_Breakable_Full(4)",
+        "Rock_Breakable_Full(12)",
+    ] {
+        if w.rocks().iter().any(|n| n == rock) {
+            w.smash(rock);
+        }
+    }
+    w.walk_on(&[[-829.0, -560.0], [-829.0, -552.0]]);
+    if w.rocks().iter().any(|n| n == "Rock_Breakable_Full(11)") {
+        w.smash("Rock_Breakable_Full(11)");
+    }
+    w.walk_on(&[
+        [-840.0, -549.0],
+        [-846.0, -549.0],
+        [-850.0, -549.0],
+        [-854.0, -549.0],
+        [-858.0, -549.0],
+        [-860.0, -545.0],
+        [-861.0, -540.0],
+    ]);
+    assert!(w.run.hero().pivot.y > 3.0, "up the stairs");
+    if w.rocks().iter().any(|n| n == "Super_Hard_Rocks(5)") {
+        w.smash("Super_Hard_Rocks(5)");
+    }
+    // The key, walked into.
+    let key = |w: &Walk| {
+        w.run
+            .world
+            .clones()
+            .into_iter()
+            .filter(|h| w.run.world.name(*h) == "Key Pickup" && !w.run.world.removed(*h))
+            .find(|h| w.run.world.actor(*h).unwrap().position.x < -700.0)
+    };
+    let k = key(&w).expect("the area's key laid");
+    w.walk_on(&[
+        [-861.0, -536.0],
+        [-861.0, -532.0],
+        [-858.0, -527.0],
+        [-845.0, -526.0],
+        [-833.0, -525.0],
+        [-831.0, -524.8],
+    ]);
+    w.still(60);
+    assert_eq!(
+        w.behaviour_of(k).as_deref(),
+        Some("grabbed by player"),
+        "the key"
+    );
+    // Back down, through the main room east to the door.
+    w.walk_on(&[
+        [-845.0, -526.0],
+        [-858.0, -527.0],
+        [-861.0, -532.0],
+        [-861.0, -536.0],
+        [-860.0, -541.0],
+        [-858.0, -549.0],
+        [-850.0, -549.0],
+        [-840.0, -549.0],
+        [-829.0, -552.0],
+        [-829.0, -560.0],
+        [-829.0, -566.0],
+        [-820.0, -570.0],
+    ]);
+    for rock in [
+        "Super_Hard_Rocks(4)",
+        "Super_Hard_Rocks(3)",
+        "Rock_Breakable_Full(5)",
+    ] {
+        if w.rocks().iter().any(|n| n == rock) {
+            w.smash(rock);
+        }
+    }
+    w.walk_on(&[
+        [-806.0, -565.0],
+        [-806.0, -561.0],
+        [-804.0, -556.0],
+        [-798.0, -550.0],
+        [-792.0, -546.0],
+        [-791.6, -545.0],
+    ]);
+    let (door, _) = w.run.placed("Door_Template(1)");
+    w.tap_toward([-791.6, -542.0], 60);
+    for _ in 0..600 {
+        if w.behaviour_of(door).as_deref() == Some("done") {
+            break;
+        }
+        w.still(1);
+    }
+    assert_eq!(w.behaviour_of(door).as_deref(), Some("done"), "the door");
+    // The hat box, mashed open, its hat taken.
+    let (hat, _) = w.run.placed("HatBox_Pickup(1)");
+    let id = w.run.world.actor(hat).unwrap().id;
+    w.walk_on(&[[-792.0, -538.0], [-793.0, -531.0]]);
+    for k in 0..1800u32 {
+        if w.gone(hat) {
+            break;
+        }
+        w.act(Stick::new(0.0, 0.0), [false, false, false, k % 8 < 2]);
+    }
+    assert!(w.gone(hat), "the hat box: {:?}", w.behaviour_of(hat));
+    let collected = w.run.with_host(|vm, host| {
+        let (_, back) = vm
+            .call_with(
+                None,
+                "Save - Collection Get/Set - Hat Collectable",
+                &[("hat id", Value::Int(id)), ("collected", Value::Int(-1))],
+                &["collected"],
+                host,
+            )
+            .unwrap();
+        back[0].map(|v| vm.value(v)).and_then(|v| v.as_i32())
+    });
+    assert_eq!(collected, Some(1), "the hat collected");
+    let from = w.run.hero().pivot;
+    for _ in 0..90 {
+        let s = w.stick_along(180.0);
+        w.step(s);
+    }
+    let walked = (w.run.hero().pivot - from).length();
+    println!(
+        "{} of {all} rocks left; walked {walked:.1} m after the box; {:.1} s, load at end: {}",
+        w.rocks().len(),
+        t.elapsed().as_secs_f32(),
+        load()
+    );
+    assert!(walked > 1.0, "the stick dead after the box");
+    assert!(w.stops.is_empty(), "{:#?}", w.stops);
 }
