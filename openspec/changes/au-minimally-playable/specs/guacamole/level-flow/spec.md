@@ -156,8 +156,8 @@ A level's legendary treasure SHALL be collected as a hero comes within 15 ft of 
 A hero landing on level 201 SHALL play it to its end with nothing but the pads: each setup's fight woken by its own trigger, its doors opened by their keys, its push blocks, the practice pit, the eyeball doors and the collapsing bridge, its enemy intros with their cards, and the arena's waves to Brock's battle, its outro and the hub.
 
 #### Scenario: The life wall's triggers
-- **WHEN** a hero walks past the life wall's first trigger and then into the cave's
-- **THEN** the wall's controller wakes for the life area, the landing's people are taken off, and it sleeps while he's in the cave
+- **WHEN** a hero walks through the cave's trigger box by Setup_002's door and later past the climb's trigger
+- **THEN** the wall's controller sleeps while he's in the cave's box, and past the climb it wakes for the life area with the landing's people taken off
 
 #### Scenario: The arena's commander
 - **WHEN** the castle's script starts its battle and the wave master sets up its commander
