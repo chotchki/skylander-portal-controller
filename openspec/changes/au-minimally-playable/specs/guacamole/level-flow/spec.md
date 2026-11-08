@@ -152,6 +152,17 @@ A level's legendary treasure SHALL be collected as a hero comes within 15 ft of 
 - **WHEN** a hero walks up to the Eagle Paint on chapter 1
 - **THEN** he's paid 100 gold and it's gone, on a restart and a session on
 
+### Requirement: A collected ship part hangs on the ship
+The hub's ship SHALL hang one part of each kind (an engine, a masthead, a paint, a roof): a new game's defaults, and from then a legendary treasure a kid collects in its kind's place, kept in the save so a later session's hub hangs it too, a save made before the TV hung them included. The Dragon Engine hung SHALL open the galley's stair, so a hero walks down to Hatterson. Picking among the parts held is the treasure menu's, AK's.
+
+#### Scenario: Level 214's propeller roof
+- **WHEN** a hero collects level 214's legendary treasure and reaches the hub
+- **THEN** its roof hangs on the ship's cabin where the default sail stood
+
+#### Scenario: The Dragon Engine
+- **WHEN** the save holds the Dragon Engine collected
+- **THEN** it hangs on the ship, the galley's blocker is gone and a hero walks down its stair to Hatterson
+
 ### Requirement: Level 201 played to its end on foot
 A hero landing on level 201 SHALL play it to its end with nothing but the pads: each setup's fight woken by its own trigger, its doors opened by their keys, its push blocks, the practice pit, the eyeball doors and the collapsing bridge, its jump pads out of the pits below its way, its four enemy intros with their cards for their scripts' 3.0, 2.2, 2.5 and 2.5 s, and the arena's waves to Brock's battle, its outro and the hub.
 
