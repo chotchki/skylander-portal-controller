@@ -3156,14 +3156,20 @@ pub const ROUTE_SCRIPTS: [&str; 6] = [
 /// `BombTImer.ai`): each count of a carried bomb past its first clones a
 /// timer at it, its id the count, which follows the bomb by `move to`
 /// (steered with no body: it has no shape) and fades its sprite out over
-/// 2 s, then takes itself off. Its sprite the TV draws nowhere yet.
-pub const BOMB_SCRIPTS: [&str; 6] = [
+/// 2 s, then takes itself off. Its sprite the TV draws nowhere yet. And
+/// the tools a spawner of another id clones (AS.156, `Tools_Master.ai`):
+/// the mining pick (id 0) by level 214's earth area, taken by a hero
+/// walking up to it and carried over him, its strikes at the rock he faces
+/// on △ each breaking it down a size (`Breakable_Rock.ai`), so any earth
+/// hero mines the rocks a Giant smashes; the pick stood there inert before.
+pub const BOMB_SCRIPTS: [&str; 7] = [
     "Tools_Spawner.ai",
     "Bomb_Rocket_Template.ai",
     "UI_Controller_Prompt.ai",
     "StoneWall_Game2_Version.ai",
     "Pan_Show_Bomb.ai",
     "BombTImer.ai",
+    "Tools_Master.ai",
 ];
 
 /// The locked doors and their keys (openspec AS.84), every tick, by script:
@@ -7757,7 +7763,7 @@ mod tests {
     /// manager that reads the throw and the pan to the first bomb run every
     /// tick by script, the bomb hints by name; the hints' script on any
     /// other placement (chapter 1's fifteen) stays off. AS.68: the
-    /// countdown's numbers run. AS.60: its ship by name.
+    /// countdown's numbers run. AS.60: its ship by name. AS.156: the tools.
     #[test]
     fn level_214s_bombs_and_their_walls_run_on_the_tvs_listing() {
         let c = smash_config(Mode::Play);
@@ -7769,6 +7775,14 @@ mod tests {
                 "{script}"
             );
         }
+        // AS.156: the tools' own script, the earth area's pick among them.
+        assert_eq!(
+            c.whitelist.listing(
+                "Mining_Pick",
+                "C:/tfb/Content/Levels/Includes/GameElement_Tools_Include/Scripts/Tools_Master.ai"
+            ),
+            guac_script::Listed::Every
+        );
         let hints = "C:/tfb/Content/Levels/Level_214/Scripts/Hints_Passive.ai";
         for name in BOMB_HINTS {
             assert!(c.whitelist.lists(name, hints), "{name}");

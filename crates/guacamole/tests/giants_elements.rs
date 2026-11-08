@@ -42,6 +42,15 @@ impl Walk {
 
     /// [`Walk::joined`] with `character` in Eruptor's place.
     fn joined_as(level: &str, character: Option<Character>) -> Walk {
+        Walk::joined_listing(level, character, &[])
+    }
+
+    /// [`Walk::joined_as`] with `scripts` listed past the TV's listing.
+    fn joined_listing(
+        level: &str,
+        character: Option<Character>,
+        scripts: &'static [&'static str],
+    ) -> Walk {
         let (mut run, _) = run_on_level(
             Mode::Play,
             level,
@@ -50,6 +59,7 @@ impl Walk {
                 props: true,
                 sounds: true,
                 character,
+                scripts,
                 ..Setup::default()
             },
         );
@@ -890,5 +900,96 @@ fn level_214s_earth_area_opens_to_crusher_on_to_its_hat_box() {
         load()
     );
     assert!(walked > 1.0, "the stick dead after the box");
+    assert!(w.stops.is_empty(), "{:#?}", w.stops);
+}
+
+/// openspec AS.156: the earth area's mining pick for any earth hero, not a
+/// Giant (Eruptor, his toy's element earth): taken off its spawner by
+/// walking up to it, carried over him, and struck with △ at the rock he
+/// faces until it's mined away, a size a strike. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_earth_area_pick_mines_a_rock_for_any_earth_hero() {
+    println!("load at start: {}", load());
+    let mut w = Walk::joined(LEVEL_214);
+    w.be(EARTH);
+    let wall = "ElementalWallController(2)";
+    let nodes = w.wall_nodes(wall);
+    w.run.put(nodes[nodes.len() / 2] + Vec3::Y, 0.0);
+    w.still(240);
+    let pick = |w: &Walk| {
+        w.run
+            .world
+            .clones()
+            .into_iter()
+            .find(|h| w.run.world.name(*h) == "Mining_Pick" && !w.run.world.removed(*h))
+    };
+    let p = pick(&w).expect("the pick on its spawner");
+    assert_eq!(w.behaviour_of(p).as_deref(), Some("wait to be grabbed"));
+    w.walk_on(&[[-825.0, -575.0], [-818.3, -567.0]]);
+    for _ in 0..300 {
+        if w.behaviour_of(p).as_deref() == Some("following  player") {
+            break;
+        }
+        let at = w.run.hero().pivot;
+        let heading = (-818.3 - at.x).atan2(-564.35 - at.z).to_degrees();
+        let s = w.stick_along(heading);
+        w.step(s);
+    }
+    assert_eq!(
+        w.behaviour_of(p).as_deref(),
+        Some("following  player"),
+        "taken"
+    );
+    w.walk_on(&[[-822.0, -566.0], [-824.0, -566.0]]);
+    let rock = "Rock_Breakable_Full(3)";
+    let (h, at) = w.run.placed(rock);
+    // What stands of it: the placement, then the half and the quarter each
+    // strike leaves in its place.
+    let left = |w: &Walk| -> Vec<String> {
+        let mut out: Vec<String> = w
+            .run
+            .world
+            .clones()
+            .into_iter()
+            .filter(|c| !w.run.world.removed(*c))
+            .filter(|c| w.run.world.name(*c).starts_with("Rock_Breakable_"))
+            .filter(|c| w.run.world.actor(*c).unwrap().position.distance(at) < 3.0)
+            .map(|c| w.run.world.name(c))
+            .collect();
+        if !w.gone(h) {
+            out.push(rock.to_owned());
+        }
+        out
+    };
+    let mut strikes = 0;
+    let mut mining = false;
+    let mut sizes = Vec::new();
+    for k in 0..1800u32 {
+        let now = left(&w);
+        if sizes.last() != Some(&now) {
+            sizes.push(now.clone());
+        }
+        if now.is_empty() {
+            break;
+        }
+        let me = w.run.hero().pivot;
+        let heading = (at.x - me.x).atan2(at.z - me.z).to_degrees();
+        let s = w.stick_along(heading);
+        let tap = k % 8 < 2;
+        strikes += u32::from(k % 8 == 0);
+        w.act(
+            Stick::new(s.x * 0.25, s.y * 0.25),
+            [false, false, false, tap],
+        );
+        mining |= w.behaviour_of(p).as_deref() == Some("mining pick");
+    }
+    println!(
+        "{rock} mined in {strikes} taps, {sizes:?}; load at end: {}",
+        load()
+    );
+    assert!(mining, "the pick never struck");
+    assert!(left(&w).is_empty(), "{rock} stands: {sizes:?}");
+    assert!(sizes.len() >= 3, "a size a strike: {sizes:?}");
     assert!(w.stops.is_empty(), "{:#?}", w.stops);
 }
