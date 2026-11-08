@@ -151,3 +151,18 @@ A level's legendary treasure SHALL be collected as a hero comes within 15 ft of 
 #### Scenario: Chapter 1's Eagle Paint
 - **WHEN** a hero walks up to the Eagle Paint on chapter 1
 - **THEN** he's paid 100 gold and it's gone, on a restart and a session on
+
+### Requirement: Level 201 played to its end on foot
+A hero landing on level 201 SHALL play it to its end with nothing but the pads: each setup's fight woken by its own trigger, its doors opened by their keys, its push blocks, the practice pit, the eyeball doors and the collapsing bridge, its enemy intros with their cards, and the arena's waves to Brock's battle, its outro and the hub.
+
+#### Scenario: The life wall's triggers
+- **WHEN** a hero walks past the life wall's first trigger and then into the cave's
+- **THEN** the wall's controller wakes for the life area, the landing's people are taken off, and it sleeps while he's in the cave
+
+#### Scenario: The arena's commander
+- **WHEN** the castle's script starts its battle and the wave master sets up its commander
+- **THEN** the commander stays to command its waves, through the half battle and Brock's to the heavy elf's reveal and his fight
+
+#### Scenario: Into the hub
+- **WHEN** the arena's outro ends
+- **THEN** the level asks for the hub's first stage

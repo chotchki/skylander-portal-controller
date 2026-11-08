@@ -2671,7 +2671,9 @@ pub const FIRST_FIGHT: [&str; 11] = [
 /// whose solid meets neither actors nor the level; and the templates whose
 /// clones stand in the world as solid platforms where their scripts leave
 /// them, never walked (openspec AU.53: level 201's bridge, its planks cloned
-/// along it, walked onto and dropped from under the hero).
+/// along it, walked onto and dropped from under the hero; named here in
+/// place of the engine's own rule for what an actor stands on, stand-in
+/// ledger: `platforms`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Encounter {
     pub level: &'static str,
