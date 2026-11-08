@@ -546,7 +546,6 @@ impl Run {
                     half_height,
                     ..
                 } => radius.hypot(half_height),
-                _ => 0.0,
             };
             if let Some(p) = hero
                 && p.distance(at) < 3.0 + reach
