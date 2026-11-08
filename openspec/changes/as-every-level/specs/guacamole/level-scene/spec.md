@@ -285,7 +285,7 @@ A hub stage SHALL show what the adventures done open, by what the host's save ho
 - **THEN** the Hermit's scene plays through its movie, the hero handed over on the main deck
 
 ### Requirement: A level's zone lights it
-From a level's first step the TV SHALL light and fog it by the atmospheric zone its scripts have it in, blending over a transition at a few points of its way with no stall the frame log shows. A zone whose fog the TV can't draw, or that the level's part doesn't hold, SHALL leave the level as it was, named in the report; a zone's share of the sky's fog is left undrawn, named.
+From a level's first step the TV SHALL light and fog it by the atmospheric zone its scripts have it in, blending over a transition at no more than 8 points of its way, none of them a frame past the slow-frame log's 50 ms. A zone whose fog the TV can't draw, or that the level's part doesn't hold, SHALL leave the level as it was, named in the report; a zone's share of the sky's fog is left undrawn, named.
 
 #### Scenario: Level 214 from its start
 - **WHEN** level 214's scripts switch from the start's zone to their own in their first steps
