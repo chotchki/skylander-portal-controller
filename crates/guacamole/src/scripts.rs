@@ -2950,12 +2950,29 @@ pub const HUB_DOORS: [&str; 2] = ["/Utilities_Controller.ai", "/Hub2_Door.ai"];
 /// and at his stall after it, Flynn and Cali on its third ship (AS.142),
 /// and chapter 1's first cave's (AS.105): Norticus, who leads the hero in
 /// once the cave's scene lets him go, and the two Mabu at work, who turn to
-/// him as he comes by. Walked, Auric's scene never ended (a reading: its
-/// `Turn to Target` left to the walk's steering, as Cali's was at AU.6).
-pub const LEVEL_PEOPLE: [(&str, &str); 14] = [
+/// him as he comes by. Past the cave (AS.166): Snuckels by the pit to the
+/// second cave, Norticus at the top of its jump pads, who leads the hero
+/// on and fades away, Rizzo by the life area, Norticus by the air area at
+/// the quarry, who leads him to the way on and stands there, and the Mabu
+/// at work along the way. Walked, Auric's scene never ended (a reading:
+/// its `Turn to Target` left to the walk's steering, as Cali's was at AU.6).
+pub const LEVEL_PEOPLE: [(&str, &str); 27] = [
     ("level_213_tutotial", "2.NPC_Norticus_First_Cave"),
     ("level_213_tutotial", "Slave_1_hammer(3)"),
     ("level_213_tutotial", "Slave_Carry(3)"),
+    ("level_213_tutotial", "1.NPC_Snuckels"),
+    ("level_213_tutotial", "3.NPC_Norticus"),
+    ("level_213_tutotial", "3.NPC_Rizzo_Life_Elemental_Area"),
+    ("level_213_tutotial", "4.NPC_Norticus at end"),
+    ("level_213_tutotial", "Slave_1_hammer"),
+    ("level_213_tutotial", "Slave_1_hammer(2)"),
+    ("level_213_tutotial", "Slave_1_hammer(4)"),
+    ("level_213_tutotial", "Slave_Carry"),
+    ("level_213_tutotial", "Slave_Carry(1)"),
+    ("level_213_tutotial", "Slave_Carry(2)"),
+    ("level_213_tutotial", "Slave_Carry(4)"),
+    ("level_213_tutotial", "Slave_Air_Element"),
+    ("level_213_tutotial", "Slave_Death_Element"),
     ("level_214_tutotial_2", "Moneybags_end"),
     ("level_214_tutotial_2", "Auric_store"),
     ("level_214_tutotial_2", "Flynn_Island_3"),
@@ -3206,14 +3223,23 @@ pub const ROUTE_SCRIPTS: [&str; 6] = [
 /// `BombTImer.ai`): each count of a carried bomb past its first clones a
 /// timer at it, its id the count, which follows the bomb by `move to`
 /// (steered with no body: it has no shape) and fades its sprite out over
-/// 2 s, then takes itself off. Its sprite the TV draws nowhere yet.
-pub const BOMB_SCRIPTS: [&str; 6] = [
+/// 2 s, then takes itself off. Its sprite the TV draws nowhere yet. And
+/// the tools a spawner of another id clones (AS.156, `Tools_Master.ai`):
+/// the mining pick (id 0) by level 214's earth area, taken by a hero
+/// walking up to it and carried over him, its strikes at the rock he faces
+/// on △ each breaking it down a size (`Breakable_Rock.ai`), so any earth
+/// hero mines the area's breakable rocks; its super hard ones (the bomb's
+/// way and the key's) stand to the pick, for a Giant or a bomb. The pick
+/// stood there inert before; no running spawner on the story's other
+/// levels clones a tool of this script.
+pub const BOMB_SCRIPTS: [&str; 7] = [
     "Tools_Spawner.ai",
     "Bomb_Rocket_Template.ai",
     "UI_Controller_Prompt.ai",
     "StoneWall_Game2_Version.ai",
     "Pan_Show_Bomb.ai",
     "BombTImer.ai",
+    "Tools_Master.ai",
 ];
 
 /// The locked doors and their keys (openspec AS.84), every tick, by script:
@@ -6675,7 +6701,29 @@ mod tests {
             assert!(is_level_person("level_213_tutotial", name), "{name}");
             assert!(!is_level_person("level_214_tutotial_2", name), "{name}");
         }
-        assert!(!is_level_person("level_213_tutotial", "Slave_Carry(2)"));
+        // Its people past the cave (AS.166), each listed too.
+        for name in [
+            "1.NPC_Snuckels",
+            "3.NPC_Norticus",
+            "3.NPC_Rizzo_Life_Elemental_Area",
+            "4.NPC_Norticus at end",
+            "Slave_1_hammer",
+            "Slave_Carry(2)",
+            "Slave_Air_Element",
+            "Slave_Death_Element",
+        ] {
+            assert!(is_level_person("level_213_tutotial", name), "{name}");
+            assert!(!is_level_person("level_214_tutotial_2", name), "{name}");
+            assert!(crate::chapter_1::PASSAGE.contains(&name), "{name}");
+        }
+        // A template of theirs isn't one.
+        assert!(!is_level_person("level_213_tutotial", "Slave_1_hammer(1)"));
+        // Level 214's rooms' talkers stay off till they pose (AS.106,
+        // AS.180): each would draw in its bind pose.
+        for name in ["Rob", "CardGame_not_Yet"] {
+            assert!(!is_level_person("level_214_tutotial_2", name), "{name}");
+            assert!(!passages("level_214_tutotial_2").contains(&name), "{name}");
+        }
         world.walk(0x10A);
         assert_eq!(world.people(), [0x10B], "a walked one isn't");
     }
@@ -6774,7 +6822,27 @@ mod tests {
             assert_eq!(intro(stage), Some(placement));
             assert!(c.whitelist.lists(placement, "C:/x/Any.ai"), "{stage}");
         }
-        for other in ["level_213_tutotial", "level_214_tutotial_2", "level_201"] {
+        // Every story level, each of whose card pirates (`CardPirate_Template.ai`,
+        // a hub person's script: 27 placements on every story level but 212
+        // and 213) stays off its listing (AS.106).
+        for other in [
+            "level_200",
+            "level_201",
+            "level_202_arkeyancopter",
+            "level_203_the_machine",
+            "level_204_choices",
+            "level_205_piratecards",
+            "level_206",
+            "level_207_arkus_adventure",
+            "level_208_ice",
+            "level_209_giantrobot",
+            "level_210_thevillage",
+            "level_211_final_level",
+            "level_212_defend_the_ship",
+            "level_213_tutotial",
+            "level_214_tutotial_2",
+            "level_215_enter_arkus",
+        ] {
             assert!(!is_hub(other));
             let c = level_config(Mode::Play, &files, 4, other);
             for script in HUB_SCRIPTS {
@@ -7886,7 +7954,7 @@ mod tests {
     /// manager that reads the throw and the pan to the first bomb run every
     /// tick by script, the bomb hints by name; the hints' script on any
     /// other placement (chapter 1's fifteen) stays off. AS.68: the
-    /// countdown's numbers run. AS.60: its ship by name.
+    /// countdown's numbers run. AS.60: its ship by name. AS.156: the tools.
     #[test]
     fn level_214s_bombs_and_their_walls_run_on_the_tvs_listing() {
         let c = smash_config(Mode::Play);
@@ -7898,6 +7966,14 @@ mod tests {
                 "{script}"
             );
         }
+        // AS.156: the tools' own script, the earth area's pick among them.
+        assert_eq!(
+            c.whitelist.listing(
+                "Mining_Pick",
+                "C:/tfb/Content/Levels/Includes/GameElement_Tools_Include/Scripts/Tools_Master.ai"
+            ),
+            guac_script::Listed::Every
+        );
         let hints = "C:/tfb/Content/Levels/Level_214/Scripts/Hints_Passive.ai";
         for name in BOMB_HINTS {
             assert!(c.whitelist.lists(name, hints), "{name}");

@@ -237,6 +237,13 @@ As the hero comes into chapter 1's first cave, its scene SHALL stand Norticus in
 - **WHEN** the cave's scene lets the hero go
 - **THEN** Norticus walks ahead of him in his turban and no other turban is left in the cave
 
+### Requirement: Chapter 1's people past its first cave
+Past chapter 1's first cave the TV SHALL draw its people where their scripts have them, each in what it wears and holds: the Mabu by the pit, Norticus at the second cave's top, who leads the hero on and goes, the Mabu by the life area, Norticus at the quarry, who leads him 5.4 m up its slope and stands at its top on the ground, and the Mabu at work along the way, each within 0.2 m of the ground under it on the disc's walk. A hero SHALL get past each on foot.
+
+#### Scenario: Up the quarry's slope
+- **WHEN** the hero walks up the quarry's slope from the air area
+- **THEN** Norticus walks ahead of him on the slope in his turban, stands at its top within 0.3 m of the ground, and the hero walks on past him
+
 ### Requirement: An enemy's intro names him
 When a level's scripts play an enemy's intro with a name card, the TV SHALL show the enemy's name for as long as the scripts hold it, in the TV's own look, and any hint the scripts queue for after the scene for its stay. Neither SHALL show under a portal alert, nor a hint while a scene hides the interface, and neither SHALL cover the pause overlay, the completion screen or a modal.
 
@@ -272,6 +279,13 @@ A level's sky SHALL draw through the view with its translation taken out, its co
 #### Scenario: Past the dome
 - **WHEN** the camera stands further from the level's origin than its dome reaches, as on level 214's second and third islands, 750-830 m out of a dome reaching 585 m
 - **THEN** the sky fills the view behind the level, with no black past it
+
+### Requirement: A level's sky glows in its own order
+Where a level's sky layers glow, the TV SHALL lay their glow in the order the sky's layers draw, after the level's colour and before any other part's glow, so a held view draws the same glow whatever order its parts reach the renderer in or wherever the camera stands: by their depth alone, 30 % of level 214's held cloud sea came out up to 17 levels apart on two builds that drew nothing else differently.
+
+#### Scenario: Level 214's cloud sea held
+- **WHEN** level 214 is held at one view on two builds that differ in nothing drawn
+- **THEN** both draw the same frame
 
 ### Requirement: A camera's rig holds its last clip
 A camera's rig SHALL hold the pose its last clip reached once none plays, what hangs on it staying there, rather than looping its first shot under them: looped, level 201's pod flew 200 m back for 58 steps and 214's ship swept through the sail's last shot every 3.13 s.
@@ -372,3 +386,10 @@ Anything a level's scripts make whose collision is a shape, solid to actors and 
 #### Scenario: Level 214's turrets
 - **WHEN** a hero walks at either of the third island's turrets from any side
 - **THEN** he stops 4.8 m from its middle, against its base's rim, and gets in from there
+
+### Requirement: Level 214's earth area plays through
+Past level 214's earth wall a Giant's attacks SHALL break the super hard rocks, the area's bomb SHALL be taken, carried and thrown to break the rocks where it bursts, its mining pick SHALL be taken by any hero and struck at a rock with the tap to break it a size a strike, and its key SHALL open its door on the hat box, which mashed open SHALL give its hat: Crusher's way breaks 23 of the area's 36 rocks on the disc.
+
+#### Scenario: Crusher through the earth area
+- **WHEN** Crusher walks in past the wall
+- **THEN** his attacks, the area's bomb and its key take him to the hat box, which gives its hat

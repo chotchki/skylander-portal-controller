@@ -75,6 +75,25 @@ pub const CLEAR_BIAS: f32 = 1.0e6;
 /// Where a level's glow masks sort: after the [`AlphaClear`], in their own
 /// depth order among themselves.
 pub const LEVEL_GLOW_BIAS: f32 = 2.0e6;
+/// Where the sky's glow masks sort (openspec AS.172): after the
+/// [`AlphaClear`] and before the level's other masks, in the sky's own order
+/// as its colour copies draw (`level_scene::sky_bias`), a rank a 10 km step
+/// on. A mask writes alpha unblended, so the last one drawn over a pixel is
+/// its glow; by their meshes' depths the sky's would go in an order the
+/// camera picks (level 214's held view drew its ranks 4, 3, 5, 2), not the
+/// colour's.
+pub const SKY_GLOW_BIAS: f32 = 1.5e6;
+/// The sky ranks [`sky_glow_bias`] keeps apart; a rank past them sorts with
+/// the last. On the 1.00 disc a sky ranks 67 materials at most (level 203)
+/// but glows at rank 31 at most (level 200), so no two glowing ranks share
+/// a bias.
+pub const SKY_GLOW_RANKS: usize = 45;
+
+/// A sky material's glow mask's sort bias, its rank its colour copy's
+/// (`level_scene::sky_rank`); one past [`SKY_GLOW_RANKS`] sorts as the last.
+pub fn sky_glow_bias(rank: usize) -> f32 {
+    SKY_GLOW_BIAS + crate::level_scene::SKY_BIAS_STEP * rank.min(SKY_GLOW_RANKS - 1) as f32
+}
 
 /// The fullscreen triangle an [`AlphaClear`] draws, in clip space.
 pub const CLEAR_MESH: Handle<Mesh> = uuid_handle!("5a7e0b8c-2f61-4d1e-8c3a-9b0d4e6f1a01");
@@ -693,6 +712,57 @@ mod tests {
             assert!(corner[0] >= p[0][0] && corner[1] >= p[0][1]);
             assert!(corner[0] + corner[1] <= p[1][0] + p[1][1]);
         }
+    }
+
+    /// openspec AS.172: the sky's glow masks sort after the clear and before
+    /// the level's other masks, in the sky's own order wherever their meshes
+    /// stand from the eye. Level 214's held view at (-371, -6, 726) gave its
+    /// four masks in view these depths, by rank 2 to 5, which drew them
+    /// ranks 4, 3, 5, 2 at one bias; the sky reaches about 2 km there.
+    #[test]
+    fn the_skys_masks_keep_the_skys_order() {
+        use crate::level_scene::{sky_bias, sky_rank};
+        for rank in 0..60 {
+            assert_eq!(sky_rank(sky_bias(rank)), Some(rank));
+        }
+        for bias in [0.0, -1.0, 250.0, CLEAR_BIAS, LEVEL_GLOW_BIAS] {
+            assert_eq!(sky_rank(bias), None, "{bias}");
+        }
+        let held: [(usize, f32); 4] = [(2, -105.2), (3, -281.7), (4, -285.7), (5, -253.9)];
+        let order = |bias: &dyn Fn(usize) -> f32, depths: &[(usize, f32)]| {
+            let mut v: Vec<(f32, usize)> = depths.iter().map(|&(r, d)| (bias(r) + d, r)).collect();
+            v.sort_by(|a, b| a.0.total_cmp(&b.0));
+            v.into_iter().map(|(_, r)| r).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            order(&|_| LEVEL_GLOW_BIAS, &held),
+            [4, 3, 5, 2],
+            "as it drew"
+        );
+        assert_eq!(order(&sky_glow_bias, &held), [2, 3, 4, 5]);
+        // Any depths within 2 km either side keep the ranks, after the clear
+        // and before any other mask (each within its far plane, 610 m).
+        let mut seed = 0x2545_F491_u32;
+        for _ in 0..200 {
+            let depths: Vec<(usize, f32)> = (0..SKY_GLOW_RANKS)
+                .map(|r| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 17;
+                    seed ^= seed << 5;
+                    (r, (seed % 4000) as f32 - 2000.0)
+                })
+                .collect();
+            let ranks = order(&sky_glow_bias, &depths);
+            assert!(ranks.windows(2).all(|w| w[0] < w[1]), "{ranks:?}");
+            for (r, d) in depths {
+                let at = sky_glow_bias(r) + d;
+                assert!(
+                    at > CLEAR_BIAS + 610.0 && at < LEVEL_GLOW_BIAS - 610.0,
+                    "{r} {d}"
+                );
+            }
+        }
+        assert_eq!(sky_glow_bias(500), sky_glow_bias(SKY_GLOW_RANKS - 1));
     }
 
     #[test]

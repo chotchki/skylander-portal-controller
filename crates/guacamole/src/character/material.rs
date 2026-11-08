@@ -539,14 +539,17 @@ impl CharacterMaterial {
     /// for a part without a glow attribute, which writes none (the level's
     /// depth hides what's behind it, and its alpha was cleared to none). The
     /// mask reads no shadow, so its key drops the received one (AG.23): a
-    /// shadowed part's mask is its unshadowed twin's pipeline.
+    /// shadowed part's mask is its unshadowed twin's pipeline. A sky
+    /// material's mask keeps the sky's order (AS.172,
+    /// [`super::glow::SKY_GLOW_BIAS`]).
     pub fn level_glow(&self) -> Option<Self> {
         if !self.glows {
             return None;
         }
         let mut m = self.clone();
         m.key = m.key.level_glow();
-        m.depth_bias = super::glow::LEVEL_GLOW_BIAS;
+        m.depth_bias = crate::level_scene::sky_rank(self.depth_bias)
+            .map_or(super::glow::LEVEL_GLOW_BIAS, super::glow::sky_glow_bias);
         Some(m)
     }
 
@@ -1379,6 +1382,15 @@ mod tests {
         assert_eq!(twin.uniform, m.uniform);
         assert_eq!(twin.depth_bias, super::super::glow::LEVEL_GLOW_BIAS);
         const { assert!(super::super::glow::LEVEL_GLOW_BIAS > super::super::glow::CLEAR_BIAS) };
+        // A sky material's mask keeps its colour copy's rank (AS.172).
+        for rank in [0, 3, 13] {
+            let mut sky = m.clone();
+            sky.depth_bias = crate::level_scene::sky_bias(rank);
+            assert_eq!(
+                sky.level_glow().unwrap().depth_bias,
+                super::super::glow::sky_glow_bias(rank)
+            );
+        }
         // Opaque as its part is, it sorts with the blended ones.
         assert_eq!(m.alpha_mode(), AlphaMode::Opaque);
         assert_eq!(twin.alpha_mode(), AlphaMode::Blend);

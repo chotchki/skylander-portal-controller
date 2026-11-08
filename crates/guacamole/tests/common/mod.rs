@@ -331,6 +331,8 @@ pub struct Run {
     /// (openspec AS.168, `Actor::stands_for_actors`) and those the hero came
     /// within 3 m of, each logged once as it's first seen.
     pub surfaces: (HashSet<Handle>, HashSet<Handle>),
+    /// His figure's toy id: Eruptor's 9, or [`Setup::character`]'s.
+    pub toy: u16,
 }
 
 /// His model's turn off his facing alone for a recorded `[tilt, heading,
@@ -569,7 +571,10 @@ impl Run {
     /// `values` (AH.23), the request now, the activation after the
     /// definition's first tick.
     pub fn join_with(&mut self, values: Values) -> Result<(), Halt> {
-        self.join_tag(eruptor_tag(values))
+        self.join_tag(Tag {
+            toy_id: u32::from(self.toy),
+            ..eruptor_tag(values)
+        })
     }
 
     /// [`Run::join_with`] with the figure's tag given: a toy's own serial
@@ -862,6 +867,19 @@ pub fn eruptor_rig(part: &[Vec<u8>]) -> guacamole::hands::Rig {
     }
 }
 
+/// A character's rig off his file ([`Setup::character`]), as Eruptor's is.
+pub fn character_rig(part: &[Vec<u8>], load_file: &str) -> guacamole::hands::Rig {
+    let globals = guac_extract::models::Globals::new(&part[1], &part[0]).expect("the globals");
+    let read = guac_extract::models::read(&part[3], load_file, identity(), Some(&globals))
+        .expect("his model");
+    guacamole::hands::Rig {
+        model: read.model,
+        palette: read.palette,
+        nodes: read.nodes,
+        scale: guac_motion::tuning::ERUPTOR_SCALE,
+    }
+}
+
 /// Each live-table member the registry doesn't hold, as a value cell of its
 /// registered type, by name: the discovery aid.
 pub fn discovery(config: &mut guac_script::Config) -> HashMap<MemberId, String> {
@@ -931,7 +949,31 @@ pub struct Setup {
     /// Streams left out of those, by archive: as one whose parts didn't
     /// extract is.
     pub streams_left_out: &'static [&'static str],
+    /// Another character in Eruptor's place (openspec AS.156: Crusher, the
+    /// earth Giant whose attacks break a super hard rock): his file linked
+    /// as Eruptor's unit, his scripts listed as the TV lists a walker's
+    /// (`scripts::with_walkers`), his figure's toy on the portal. His body
+    /// in the seam stays Eruptor's controller's.
+    pub character: Option<Character>,
 }
+
+/// A character a run joins in Eruptor's place ([`Setup::character`]).
+#[derive(Debug, Clone, Copy)]
+pub struct Character {
+    /// His file under the dump's `USRDIR`, e.g. `character/102_titan_earth.bld`.
+    pub archive: &'static str,
+    /// His load file, as the roster names it, e.g. `102_Titan_Earth`.
+    pub load_file: &'static str,
+    /// His toy id.
+    pub toy: u16,
+}
+
+/// Crusher, the earth Giant.
+pub const CRUSHER: Character = Character {
+    archive: "character/102_titan_earth.bld",
+    load_file: "102_Titan_Earth",
+    toy: 102,
+};
 
 /// The interface records of the script part's archives (`ARCHIVES`, by
 /// unit), read off the dump in memory by guac-extract's own reader, once a
@@ -1082,9 +1124,10 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     let archives: Vec<String> = ARCHIVES
         .iter()
         .enumerate()
-        .map(|(u, (a, _))| match u as u16 == LEVEL {
-            true => level_archive.clone(),
-            false => (*a).to_owned(),
+        .map(|(u, (a, _))| match u as u16 {
+            LEVEL => level_archive.clone(),
+            ERUPTOR => setup.character.map_or(*a, |c| c.archive).to_owned(),
+            _ => (*a).to_owned(),
         })
         .chain(streams.iter().map(|s| format!("level/{s}.bld")))
         .collect();
@@ -1146,6 +1189,14 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
         scripts.extend(setup.scripts.iter().map(|s| (*s).to_owned()));
         placements.extend(setup.placements.iter().map(|s| (*s).to_owned()));
     }
+    let walker = setup.character.map(|c| {
+        scripts::walker_scripts(&program, &files, &[(c.load_file.to_owned(), ERUPTOR)])
+            .pop()
+            .expect("his scripts")
+    });
+    if let Some(w) = &walker {
+        config = scripts::with_walkers(config, std::slice::from_ref(w));
+    }
     let found = discovery(&mut config);
     let mut vm = scripts::init_chain(program, &files, &handles, &ORDER, config);
     let mut world = ScriptWorld::new(&files, &handles, objects);
@@ -1188,13 +1239,21 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     }
     world.set_levels(Arc::new(on_disc.into_iter().collect()));
     world.set_level(level);
-    let template = files
-        .placed
-        .iter()
-        .find(|p| p.name == "009_Eruptor")
-        .expect("Eruptor's template")
-        .obj;
-    let rig = eruptor_rig(&part);
+    let template = match &walker {
+        Some(w) => w.template.expect("his template"),
+        None => {
+            files
+                .placed
+                .iter()
+                .find(|p| p.name == "009_Eruptor")
+                .expect("Eruptor's template")
+                .obj
+        }
+    };
+    let rig = match setup.character {
+        Some(c) => character_rig(&part, c.load_file),
+        None => eruptor_rig(&part),
+    };
     world.set_palette_of(template, &rig.palette);
     // The creatures' palettes, by the model each placement names.
     let palettes = levels::palettes(&igzs[LEVEL as usize], level, identity())
@@ -1285,6 +1344,7 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
             idle0: 0.0,
             lean: None,
             surfaces: Default::default(),
+            toy: setup.character.map_or(9, |c| c.toy),
         },
         found,
     )

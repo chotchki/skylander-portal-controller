@@ -7,7 +7,8 @@
 //!
 //! No recording of the level past the cave exists: the walk is the one its
 //! scripts and its collision leave. He starts in the cave's box, so the pit's
-//! fight is `giants_route`'s.
+//! fight is `giants_route`'s. The level's people past the cave are met on
+//! the way, each drawn, on the ground and in its hat (openspec AS.166).
 
 use guac_motion::seam::Vec3;
 use guac_motion::stick::Stick;
@@ -23,6 +24,47 @@ const CHAPTER_1: &str = "level_213_tutotial";
 struct Walk {
     run: Run,
     stops: Vec<String>,
+    people: Vec<Met>,
+    hats: Vec<String>,
+}
+
+const TURBAN: &str = "Turban_hat";
+const BEANIE: &str = "Propellar_Beenie";
+
+/// Chapter 1's people past its first cave (openspec AS.166), each with the
+/// hat its script puts on it, if any.
+const PEOPLE: [(&str, Option<&str>); 13] = [
+    ("1.NPC_Snuckels", Some(BEANIE)),
+    ("Slave_Carry(2)", None),
+    ("3.NPC_Norticus", Some(TURBAN)),
+    ("3.NPC_Rizzo_Life_Elemental_Area", Some(BEANIE)),
+    ("4.NPC_Norticus at end", Some(TURBAN)),
+    ("Slave_Air_Element", Some(BEANIE)),
+    ("Slave_1_hammer(2)", None),
+    ("Slave_1_hammer(4)", None),
+    ("Slave_Carry(1)", None),
+    ("Slave_Carry(4)", None),
+    ("Slave_1_hammer", None),
+    ("Slave_Carry", None),
+    ("Slave_Death_Element", Some(BEANIE)),
+];
+
+/// How near the hero a person is met: within its 150 ft range, and as near
+/// as the way goes by the furthest of them (the death area's Mabu, 32 m).
+const MEETS: f32 = 35.0;
+
+/// One of [`PEOPLE`] as the walk met it: drawn by the TV within [`MEETS`]
+/// of the hero (among its people, its script running, on and not taken
+/// off), the behaviours its script went through while so, the furthest it
+/// stood off the ground under it, and over none (three of the quarry's Mabu
+/// stand on its art past its collision) the furthest from its placement.
+#[derive(Debug, Default)]
+struct Met {
+    first: Option<(u32, Vec3)>,
+    behaviours: Vec<String>,
+    off_ground: f32,
+    off_placement: f32,
+    hats: Vec<String>,
 }
 
 impl Walk {
@@ -34,6 +76,9 @@ impl Walk {
         };
         let stopped = self.run.step_play().unwrap();
         self.stops.extend(stopped.iter().map(ToString::to_string));
+        if self.run.steps.is_multiple_of(10) {
+            self.watch_people();
+        }
     }
 
     fn still(&mut self, steps: u32) {
@@ -176,6 +221,93 @@ impl Walk {
         panic!("{:?} didn't end", cutscene_name(&self.run));
     }
 
+    /// Each of [`PEOPLE`] drawn near him, what it wears and where it stands
+    /// (openspec AS.166), and every hat on someone: a hat whose wearer is
+    /// gone or taken off would hang over nothing (the first cave's turban
+    /// lay on the floor with no Norticus until AS.105).
+    fn watch_people(&mut self) {
+        let me = self.run.hero().pivot;
+        let world = &self.run.world;
+        let vm = &self.run.vm;
+        let drawn = world.people();
+        let inert = vm.inert();
+        let live = |h: Handle| world.actor(h).is_some_and(|a| a.active && !a.removed);
+        let hats: Vec<(Handle, String, Option<Handle>)> = world
+            .clones()
+            .into_iter()
+            .filter(|h| live(*h))
+            .filter_map(|h| {
+                let n = world.name(h);
+                [TURBAN, BEANIE].contains(&n.as_str()).then(|| {
+                    let owner = world.node_owner(world.actor(h).unwrap().attach);
+                    (h, n, owner)
+                })
+            })
+            .collect();
+        for (h, n, owner) in &hats {
+            // The outro's three Mabu leave theirs as the scene takes them
+            // off: their script takes no hat off, as the others' do.
+            let outro = owner.is_some_and(|o| world.name(o).starts_with("213_Outro_Mabu_"));
+            if !owner.is_some_and(live) && !outro {
+                self.hats.push(format!(
+                    "step {}: {n} {h} on {:?}, at {}",
+                    self.run.steps,
+                    owner.map(|o| world.name(o)),
+                    world.actor(*h).unwrap().position
+                ));
+            }
+        }
+        let bodies: Vec<guac_motion::seam::BodyId> = self
+            .run
+            .bench
+            .bodies
+            .values()
+            .chain(self.run.bench.ids.values())
+            .copied()
+            .collect();
+        for (k, (name, hat)) in PEOPLE.iter().enumerate() {
+            let (h, placed) = self.run.placed(name);
+            let a = world.actor(h).unwrap();
+            let running = vm
+                .placement_of(h)
+                .is_some_and(|id| !vm.removed(id) && !inert.contains(&h));
+            if !(drawn.contains(&h) && running && live(h)) || a.position.distance(me) > MEETS {
+                continue;
+            }
+            let met = &mut self.people[k];
+            met.first.get_or_insert((self.run.steps, a.position));
+            let b = vm
+                .placement_of(h)
+                .and_then(|id| vm.behaviour(id))
+                .unwrap_or("-");
+            if met.behaviours.last().is_none_or(|l| l != b) {
+                met.behaviours.push(b.to_owned());
+            }
+            let ground = guac_motion::ground::ray(
+                &self.run.bench.world,
+                a.position + Vec3::Y * 2.0,
+                Vec3::NEG_Y,
+                6.0,
+                &bodies,
+            )
+            .map(|hit| (a.position.y - hit.point.y).abs());
+            match ground {
+                Some(off) => met.off_ground = met.off_ground.max(off),
+                None => met.off_placement = met.off_placement.max(a.position.distance(placed)),
+            }
+            let worn = hats.iter().filter(|(_, _, o)| *o == Some(h)).count();
+            let wants = usize::from(hat.is_some());
+            let wearing = hats
+                .iter()
+                .filter(|(_, n, o)| *o == Some(h) && Some(n.as_str()) == *hat)
+                .count();
+            if worn != wants || wearing != wants {
+                met.hats
+                    .push(format!("step {}: {worn} hats", self.run.steps));
+            }
+        }
+    }
+
     fn foes(&self, names: impl IntoIterator<Item = String>) -> Vec<Handle> {
         names.into_iter().map(|n| self.run.placed(&n).0).collect()
     }
@@ -199,6 +331,8 @@ fn into_the_cave() -> Walk {
     let mut w = Walk {
         run,
         stops: Vec::new(),
+        people: PEOPLE.iter().map(|_| Met::default()).collect(),
+        hats: Vec::new(),
     };
     w.still(60);
     w.run.put(Vec3::new(15.6, 22.4, -31.0), 90.0);
@@ -305,7 +439,10 @@ fn through_the_second_cave(w: &mut Walk) {
 
 /// The quarry: the vista, the first post, Setup_003, the two blocks,
 /// Setup_004, the pad up to the second post (asleep for good if the vista's
-/// reset left its range at 0), Setup_005, the last post.
+/// reset left its range at 0), Setup_005, the last post. Norticus leads the
+/// hero up from the air area and stands at the top of the slope, at his
+/// last waypoint, (-47.7, 194.4), so the walk goes by him (openspec AS.166:
+/// he's the level's people, on the ground of his walk).
 fn through_the_quarry(w: &mut Walk) {
     w.still(120);
     assert_eq!(
@@ -328,7 +465,6 @@ fn through_the_quarry(w: &mut Walk) {
         [-46.0, 163.0],
         [-47.6, 175.0],
         [-49.0, 188.0],
-        [-47.7, 194.4],
         [-50.0, 205.0],
         [-52.0, 221.0],
     ]);
@@ -438,5 +574,60 @@ fn chapter_1_is_walked_from_its_cave_to_its_end() {
         w.run.world.level_change().map(|c| c.name.as_str()),
         Some("level_214_tutotial_2")
     );
+    people_met(&w);
     assert!(w.stops.is_empty(), "{:#?}", w.stops);
+}
+
+/// openspec AS.166: each of chapter 1's people past its first cave met on
+/// the way, drawn on its model, standing on the ground (within 0.3 m), or
+/// over none where it's placed, and in its hat, no hat anywhere hanging on no one; Norticus at the top of the
+/// second cave's pads leads the hero on and goes, his turban with him;
+/// Norticus at the quarry leads him up its slope and stands at the top of
+/// it, at his last waypoint; the Mabu carrying by the pit turns to him.
+fn people_met(w: &Walk) {
+    let skinned: Vec<String> = skinned_models().into_iter().map(|(p, _)| p).collect();
+    for hat in [TURBAN, BEANIE] {
+        assert!(clones_drawn(&w.run, &skinned, hat), "{hat} drawn");
+    }
+    for ((name, _), met) in PEOPLE.iter().zip(&w.people) {
+        println!("{name}: {met:?}");
+        let (at, _) = met.first.unwrap_or_else(|| panic!("{name} never met"));
+        let model = w
+            .run
+            .files
+            .placed
+            .iter()
+            .find(|p| p.obj.unit == LEVEL && p.name == *name)
+            .and_then(|p| p.model.clone())
+            .unwrap();
+        assert!(skinned.contains(&model), "{name}'s {model} drawn");
+        assert!(met.off_ground < 0.3, "{name} off the ground at {at:?}");
+        assert!(met.off_placement < 0.05, "{name} off its placement");
+        assert!(met.hats.is_empty(), "{name}: {:?}", met.hats);
+    }
+    assert!(w.hats.is_empty(), "{:#?}", w.hats);
+    let behaviours = |name: &str| {
+        let k = PEOPLE.iter().position(|(n, _)| *n == name).unwrap();
+        w.people[k].behaviours.clone()
+    };
+    assert!(
+        behaviours("3.NPC_Norticus").contains(&"advance with player".to_owned()),
+        "{:?}",
+        behaviours("3.NPC_Norticus")
+    );
+    assert!(w.gone(w.run.placed("3.NPC_Norticus").0), "he's gone on");
+    let end = w.run.placed("4.NPC_Norticus at end").0;
+    assert_eq!(
+        behaviours("4.NPC_Norticus at end")
+            .last()
+            .map(String::as_str),
+        Some("flynn end talker")
+    );
+    let at = w.run.world.actor(end).unwrap().position;
+    println!("Norticus at the quarry's top at {at}");
+    assert!(
+        (at.x + 47.68).hypot(at.z - 194.37) < 1.0 && (at.y + 128.57).abs() < 0.3,
+        "at his last waypoint: {at}"
+    );
+    assert!(behaviours("Slave_Carry(2)").contains(&"turn to player".to_owned()));
 }
