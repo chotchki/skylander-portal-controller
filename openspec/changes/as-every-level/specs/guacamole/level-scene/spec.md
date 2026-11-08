@@ -395,11 +395,11 @@ Past level 214's earth wall a Giant's attacks SHALL break the super hard rocks, 
 - **THEN** his attacks, the area's bomb and its key take him to the hat box, which gives its hat
 
 ### Requirement: What hangs on someone taken off
-When a level's scripts take off an actor something hangs on, a hat, a tool, a lid or an effect, the TV SHALL draw nothing of what hangs on him, nor of what hangs on that, while he's off, and SHALL draw it on him again if he's put back. What hangs on him stays in the level for its scripts.
+When a level's scripts take off an actor something hangs on, a hat, a tool, a lid or an effect, the TV SHALL draw nothing of what hangs on him, nor of what hangs on that, while he's off, and SHALL draw it on him again if he's put back. What hangs on him stays in the level for its scripts: chapter 1's outro takes its three Mabu off with their beanies 2.2 m up on them.
 
 #### Scenario: Chapter 1's outro
 - **WHEN** chapter 1's outro ends and takes its three Mabu off
-- **THEN** none of their beanies hangs over where they stood behind the completion screen
+- **THEN** none of their three beanies hangs 2.2 m up over where they stood behind the completion screen
 
 #### Scenario: A bomb thrown
 - **WHEN** a hero throws level 214's workshop bomb at its wall and it bursts
@@ -417,4 +417,4 @@ When a scene jumps one of a level's people to a waypoint, the TV SHALL fly him o
 
 #### Scenario: Brock's jump
 - **WHEN** level 201's practice pit's last scene jumps Brock off the yard
-- **THEN** he rises well over the yard and comes down on the ground by his landing
+- **THEN** he rises 6.7 m over the yard and comes down on the ground within 0.5 m of his landing
