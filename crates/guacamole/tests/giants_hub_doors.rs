@@ -115,6 +115,24 @@ fn every_stages_doors_stand_by_their_unlock_values() {
             !run.world.removed(run.placed("Galley_Blocker").0),
             "{level}"
         );
+        // The game room's door, on the upper deck with the crane deck's: on
+        // stage 1, behind its lock, it sleeps at its file's range while he's
+        // on the main deck (the hub's intro wakes it and resets the range at
+        // its end, AU.53). Later stages differ: stage 2's scripts wake it
+        // at the start, stage 3's leave it asleep until he's there.
+        let locks = run.files.placed.iter().any(|p| p.name == "PuzzleLock");
+        let room = run.placed("Door_Game_Room").0;
+        let file = run
+            .files
+            .placed
+            .iter()
+            .find(|p| p.name == "Door_Game_Room")
+            .map(|p| p.range);
+        let start = run.world.actor(room).map(|a| (a.active, a.range));
+        println!("{level}: the game room's door at the start {start:?}, its file's range {file:?}");
+        if locks {
+            assert_eq!(start, file.map(|r| (false, r)), "{level}: the game room");
+        }
         // The crane deck's stands far off the deck, asleep past stage 2's
         // range: a hero by it wakes it.
         let (crane, at) = run.placed("Door_Crane_Deck");
@@ -130,12 +148,13 @@ fn every_stages_doors_stand_by_their_unlock_values() {
                 "{level}: {now:?}"
             ),
         }
-        // The game room's door on the same deck, awake with him there (the
-        // hub's intro resets the range it woke it at to its file's, AU.53),
+        // The game room's door on the same deck, awake with him there,
         // waits on its lock, a puzzle nothing on the TV plays (openspec
-        // AS.154; stand-in ledger: `game-room`).
-        let locks = run.files.placed.iter().any(|p| p.name == "PuzzleLock");
-        let room = run.placed("Door_Game_Room").0;
+        // AS.154; stand-in ledger: `game-room`), and with none opens to him.
+        assert!(
+            run.world.actor(room).is_some_and(|a| a.active),
+            "{level}: the game room awake"
+        );
         println!(
             "{level}: game room behind a lock: {locks}, its door {:?}",
             behaviour(&run, room)
@@ -148,7 +167,7 @@ fn every_stages_doors_stand_by_their_unlock_values() {
             );
             assert!(run.vm.inert().contains(&run.placed("PuzzleLock").0));
         } else {
-            assert_ne!(behaviour(&run, room).as_deref(), Some("check for unlock"));
+            assert_eq!(behaviour(&run, room).as_deref(), Some(OPENS), "{level}");
         }
     }
     println!(
