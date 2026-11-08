@@ -261,7 +261,7 @@ pub(crate) fn fetch(
     // loads, their streamed parts in; one that doesn't extract is left out,
     // its part off the ship.
     let base = parts.load(std::sync::atomic::Ordering::Relaxed) + sounds;
-    let streams = streams_of(&mut dir, name, job.ir, &|done, total| {
+    let (streams, streamed) = streams_of(&mut dir, name, job.ir, &|done, total| {
         send(FetchEvent::Parts {
             done: base + done,
             total: base + total,
@@ -276,10 +276,12 @@ pub(crate) fn fetch(
         )
         .with_streams(streams),
         kind,
-        parts_read: stage.parts_read,
-        parts_kept: stage.parts_kept,
-        written: stage.files.written,
-        bytes: stage.files.bytes,
+        // What its streams read and kept with it (the au-ship-parts review:
+        // the report counted the stage's alone).
+        parts_read: stage.parts_read + streamed.parts_read,
+        parts_kept: stage.parts_kept + streamed.parts_kept,
+        written: stage.files.written + streamed.files.written,
+        bytes: stage.files.bytes + streamed.files.bytes,
         failed,
         sounds: stage.sounds.as_ref().map(SoundsAsked::of),
         opened: opened_after,
@@ -289,18 +291,19 @@ pub(crate) fn fetch(
 
 /// The files `name` streams in (openspec AS.157,
 /// [`guacamole::ship_parts::streams`]) extracted in `dir`: those whose
-/// streamed parts are all in, by archive. One whose part doesn't extract,
-/// or all of them on an error, is left out, logged.
+/// streamed parts are all in, by archive, and what their stage read and
+/// kept. One whose part doesn't extract, or all of them on an error, is
+/// left out, logged.
 fn streams_of(
     dir: &mut guac_extract::extract::IdentityDir,
     name: &str,
     ir: guac_extract::intros::IrFormat,
     progress: &(dyn Fn(usize, usize) + Sync),
-) -> Vec<String> {
+) -> (Vec<String>, Streamed) {
     let on_disc = levels::on_disc(dir.manifest());
     let streams = guacamole::ship_parts::streams(name, on_disc.iter().map(|l| l.name.as_str()));
     if streams.is_empty() {
-        return streams;
+        return (streams, Streamed::default());
     }
     let names: Vec<&str> = streams.iter().map(String::as_str).collect();
     match stages::extract_streams(dir, &names, ir, &|e| {
@@ -312,16 +315,30 @@ fn streams_of(
             for f in &stage.failed {
                 warn!(stream = %f.level, part = %f.part, reason = %f.reason, "a stream's part didn't extract: it's left out");
             }
-            streams
+            let streamed = Streamed {
+                parts_read: stage.parts_read,
+                parts_kept: stage.parts_kept,
+                files: stage.files,
+            };
+            let kept = streams
                 .into_iter()
                 .filter(|s| !stage.failed.iter().any(|f| &f.level == s))
-                .collect()
+                .collect();
+            (kept, streamed)
         }
         Err(e) => {
             warn!(level = %name, reason = %e, "the level's streams didn't extract: none load");
-            Vec::new()
+            (Vec::new(), Streamed::default())
         }
     }
+}
+
+/// What a level's streams' stage read and kept.
+#[derive(Debug, Default)]
+struct Streamed {
+    parts_read: usize,
+    parts_kept: usize,
+    files: stages::Files,
 }
 
 /// The ask waiting and the fetch running.

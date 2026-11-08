@@ -1581,8 +1581,6 @@ impl ScriptWorld {
         true
     }
 
-    /// The disc's levels by archive name, which a request's text is held
-    /// against ([`ScriptWorld::end_step`]).
     /// The level whose run this is, by archive (openspec AS.176).
     pub fn set_level(&mut self, level: &str) {
         self.level = Some(level.to_owned());
@@ -1593,6 +1591,8 @@ impl ScriptWorld {
         self.level.as_deref()
     }
 
+    /// The disc's levels by archive name, which a request's text is held
+    /// against ([`ScriptWorld::end_step`]).
     pub fn set_levels(&mut self, levels: Arc<std::collections::HashSet<String>>) {
         self.levels = Some(levels);
     }

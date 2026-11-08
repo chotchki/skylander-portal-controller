@@ -3087,6 +3087,77 @@ mod tests {
         assert!(!rt.vm.inert().contains(&h), "the setup runs");
     }
 
+    /// openspec AS.157, the au-ship-parts review: the TV's install with a
+    /// stream linked after the level gives the stream's placements their
+    /// palettes as it gives the level's (the ship's engines turn on their
+    /// own clips), lists the scripts they name, and hands the run the
+    /// stream's unit and part id for its start.
+    #[test]
+    fn the_tvs_install_gives_a_streams_placements_their_palettes() {
+        use guac_formats::script::builder::{SMASH_FAR, SMASH_FAR_MODEL, SMASH_SETUP};
+        let tmp = tempfile::tempdir().unwrap();
+        write_smash(tmp.path(), BARREL_AT);
+        let stream = "ship_part_900".to_owned();
+        let to = tmp.path().join(guac_extract::levels::script_path(&stream));
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::copy(
+            tmp.path().join(guac_extract::levels::script_path(LEVEL)),
+            to,
+        )
+        .unwrap();
+        let linked =
+            level_scripts::load_with_streams(tmp.path(), LEVEL, std::slice::from_ref(&stream))
+                .unwrap();
+        let [unit] = linked.streams[..] else {
+            panic!("{:?}", linked.streams)
+        };
+        let placed = |name: &str| {
+            linked
+                .placements
+                .placed
+                .iter()
+                .find(|p| p.name == name && p.obj.unit == unit)
+                .unwrap()
+                .clone()
+        };
+        let far = placed(SMASH_FAR).obj;
+        let script = placed(SMASH_SETUP).script.expect("the setup's script");
+        let mut world = World::new();
+        install(
+            &mut world,
+            Part {
+                program: Arc::new(linked.program),
+                files: linked.placements,
+                order: linked.order,
+                fighters: linked.fighters,
+                streams: linked.streams,
+                stream_ids: linked.stream_ids,
+                walkers: Vec::new(),
+                left_out: Vec::new(),
+                layout: None,
+                palettes: vec![(SMASH_FAR_MODEL.to_owned(), vec![0.0, 0.5])],
+                sounds: None,
+                interface: None,
+                level: LEVEL.to_owned(),
+                levels: Vec::new(),
+                extract: None,
+                interface_keys: Vec::new(),
+            },
+        );
+        let w = world.resource::<ScriptWorld>();
+        assert_eq!(w.palette(far), Some(&[0.0, 0.5][..]), "the stream's");
+        assert_eq!(w.ship_parts.units, [unit]);
+        assert_eq!(w.ship_parts.ids, [900]);
+        let rt = world.resource::<ScriptRuntime>();
+        assert!(
+            rt.vm
+                .config()
+                .whitelist
+                .lists("the stream's setup", &script),
+            "{script}"
+        );
+    }
+
     /// The TV's install with the interface's part (openspec AT.9, the
     /// review's): the run's members registered as the model's (`value set`
     /// a set reference on the host, a sprite's `width` the host's), the

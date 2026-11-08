@@ -2723,5 +2723,12 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
         );
         let again = fetch(&dump, &job, stage, &|_| {}).unwrap();
         assert_eq!(again.source.streams, f.source.streams);
+        // The report counts the streams' parts with the stage's (the
+        // au-ship-parts review): read the first time, kept the second.
+        assert!(f.parts_read >= 2 * STREAMED.len(), "{}", f.parts_read);
+        assert_eq!(
+            (again.parts_read, again.parts_kept),
+            (0, f.parts_read + f.parts_kept)
+        );
     }
 }

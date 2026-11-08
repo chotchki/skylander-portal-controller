@@ -5951,6 +5951,15 @@ mod fight_tests {
             .filter(|h| w.actor(*h).is_some_and(Actor::stands_for_actors))
             .collect();
         assert_eq!(stands, [plank], "a mesh shape stands for none either");
+        // A clone the engine walks as a creature is a creature's body, never
+        // one to stand on (the au-ship-parts review).
+        let mut walking = clone(3, solid);
+        walking.walker = Some(Box::new(Walker {
+            body: None,
+            aim: guac_motion::steer::Aim::Still,
+            along: 0,
+        }));
+        assert!(!walking.stands_for_actors());
         // Let go: no longer solid to actors, falling at 60 ft/s²; the one
         // that never stood given the same gravity stays put.
         let fall = |a: &mut Actor| {

@@ -66,6 +66,27 @@ pub fn level_palettes(
         .collect())
 }
 
+/// [`level_palettes`] of `level` with those of the files it streams in
+/// (openspec AS.157: the ship's engines turn on their own clips); a stream
+/// whose part doesn't read is left out, its clones holding their idles.
+pub fn palettes_with_streams(
+    dir: &Path,
+    level: &str,
+    streams: &[String],
+    ir: IrFormat,
+) -> Result<Vec<(String, Vec<f32>)>, String> {
+    let mut palettes = level_palettes(dir, level, ir)?;
+    for s in streams {
+        match level_palettes(dir, s, ir) {
+            Ok(more) => palettes.extend(more),
+            Err(why) => {
+                tracing::warn!(stream = %s, reason = %why, "a stream's palettes didn't read: its clones hold their idles");
+            }
+        }
+    }
+    Ok(palettes)
+}
+
 /// What `load_file`'s skinned spawns play off the extract (openspec AU.37):
 /// his beast's or his knives' palette, read when he's placed as the rest of
 /// his spawns are ([`crate::scripts::ScriptWorld::set_rigs`]). Why not when
@@ -245,8 +266,35 @@ pub fn load(dir: &Path, level: &str) -> Result<Linked, String> {
 /// [`load`] with the files `level` streams in (`streams`, by archive: a hub
 /// stage's ship parts, openspec AS.157) linked after its own, each its
 /// script part's entry; their placements run from no start
-/// ([`Linked::streams`]).
+/// ([`Linked::streams`]). A stream whose script part doesn't read is left
+/// out, as one whose parts didn't extract is: a stream costs its own part,
+/// never the level's run.
 pub fn load_with_streams(dir: &Path, level: &str, streams: &[String]) -> Result<Linked, String> {
+    let readable: Vec<String> = streams
+        .iter()
+        .filter(|s| match stream_reads(dir, s) {
+            Ok(()) => true,
+            Err(why) => {
+                tracing::warn!(stream = %s, reason = %why, "a stream's script part doesn't read: it's left out");
+                false
+            }
+        })
+        .cloned()
+        .collect();
+    link(dir, level, &readable)
+}
+
+/// Whether `stream`'s script part reads as a graph, or why not.
+fn stream_reads(dir: &Path, stream: &str) -> Result<(), String> {
+    let rel = levels::script_path(stream);
+    let bytes = std::fs::read(dir.join(&rel)).map_err(|e| format!("{rel}: {e}"))?;
+    let igz = Igz::parse(&bytes).map_err(|e| format!("{rel}: {e}"))?;
+    Graph::read(&igz).map_err(|e| format!("{rel}: {e}"))?;
+    Ok(())
+}
+
+/// [`load_with_streams`]'s link, every one of `streams` read.
+fn link(dir: &Path, level: &str, streams: &[String]) -> Result<Linked, String> {
     // The walkers the part was made with (AG.27); none for an extract made
     // before them.
     let list = scripts::read_walkers(dir)?;
@@ -533,8 +581,26 @@ mod tests {
                 "unit {u}'s placements"
             );
         }
-        let e = load_with_streams(tmp.path(), LEVEL, &["ship_part_999".to_owned()]).unwrap_err();
-        assert!(e.contains("ship_part_999"), "{e}");
+        // One missing and one that doesn't read are left out, the others
+        // and the level linked all the same (the au-ship-parts review: one
+        // stream's script part took the hub's whole run).
+        let bad = "ship_part_902".to_owned();
+        let path = tmp.path().join(levels::script_path(&bad));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, b"not an igz").unwrap();
+        let some = [
+            names[0].clone(),
+            "ship_part_999".to_owned(),
+            bad,
+            names[1].clone(),
+        ];
+        let linked = load_with_streams(tmp.path(), LEVEL, &some).unwrap();
+        assert_eq!(linked.files, 7);
+        assert_eq!(linked.streams, [5, 6]);
+        assert_eq!(linked.stream_ids, [900, 901]);
+        let none = load_with_streams(tmp.path(), LEVEL, &["ship_part_999".to_owned()]).unwrap();
+        assert!(none.streams.is_empty() && none.stream_ids.is_empty());
+        assert_eq!(none.files, 5);
     }
 
     /// The level's palettes part (openspec AH.27): each palette by its
@@ -598,6 +664,26 @@ mod tests {
         std::fs::copy(&path, &other).unwrap();
         let e = level_palettes(tmp.path(), "level_212", ir).unwrap_err();
         assert!(e.contains(&format!("holds {LEVEL}'s palettes")), "{e}");
+        // openspec AS.157 (the au-ship-parts review): a stream's palettes
+        // beside the level's, one whose part doesn't read left out.
+        let stream = "ship_part_900";
+        let mut theirs = palettes.clone();
+        theirs.level = stream.into();
+        theirs.palettes[0].owner = "C:/x/Engine.mdl".into();
+        let at = tmp
+            .path()
+            .join(levels::part_path(ir, stream, levels::PALETTES));
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::fs::write(&at, guac_ir::to_ron(&theirs).unwrap()).unwrap();
+        let both = palettes_with_streams(
+            tmp.path(),
+            LEVEL,
+            &[stream.to_owned(), "ship_part_999".to_owned()],
+            ir,
+        )
+        .unwrap();
+        let owners: Vec<&str> = both.iter().map(|(o, _)| o.as_str()).collect();
+        assert_eq!(owners, ["C:/x/Coin.mdl", "C:/x/Engine.mdl"]);
     }
 
     /// An extract dir holding the synthetic part with the walkers (AG.27)

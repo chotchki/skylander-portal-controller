@@ -2132,19 +2132,9 @@ fn receive_level(
         AsyncComputeTaskPool::get().spawn(async move {
             level_scripts::load_with_streams(&dir, &name, &streams).map(|mut linked| {
                 linked.layout = level_scripts::figure_layout(&dir, ir);
-                linked.palettes = level_scripts::level_palettes(&dir, &name, ir);
-                // The streams' templates' clips (openspec AS.157): the
+                // With the streams' templates' clips (openspec AS.157): the
                 // engines' own scripts play them.
-                if let Ok(palettes) = &mut linked.palettes {
-                    for s in &streams {
-                        match level_scripts::level_palettes(&dir, s, ir) {
-                            Ok(more) => palettes.extend(more),
-                            Err(why) => {
-                                warn!(stream = %s, reason = %why, "a stream's palettes didn't read: its clones hold their idles");
-                            }
-                        }
-                    }
-                }
+                linked.palettes = level_scripts::palettes_with_streams(&dir, &name, &streams, ir);
                 // The sounds its units' archives play (openspec AR.9).
                 linked.sounds = Some(guacamole::sounds::load(&dir, ir, &linked.program.units));
                 // The original's interface its scripts write (openspec AT.9).
