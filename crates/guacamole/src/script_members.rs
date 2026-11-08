@@ -6818,6 +6818,12 @@ mod fight_tests {
         }
         assert!(w.actor(C1).unwrap().position.y > 1.0, "up");
         w.actors.get_mut(&C1).unwrap().solid.shape = 1;
+        // Given back over the floor, it falls on to it rather than being
+        // set down on it at once (the review: the ground a ray meets under
+        // it is a landing only once the step reaches it).
+        w.advance(STEP, &mut e);
+        let y = w.actor(C1).unwrap().position.y;
+        assert!(y > 1.0, "still falling: {y}");
         for _ in 0..60 {
             w.advance(STEP, &mut e);
         }

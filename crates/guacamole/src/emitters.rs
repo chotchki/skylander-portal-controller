@@ -422,16 +422,21 @@ pub(crate) fn step_systems(
     };
     for (entity, mut system, mut transform) in &mut systems {
         let system = &mut *system;
+        // Out of play only through what it hangs on, so it emits again if
+        // that's put back (openspec AS.186's review).
+        let mut waits = false;
         match system.source {
             Source::Clone(clone) => {
                 let world = world.as_deref();
                 // Out of play once taken off or once what it hangs on is
                 // (openspec AS.186: an emitter hung on an actor taken off
                 // emits no more, as a clone hung so draws nothing).
-                let in_play = world.is_some_and(|w| {
-                    w.actor(clone.to_bits()).is_some_and(|a| !a.removed)
-                        && !w.hangs_on_nothing(clone.to_bits())
-                });
+                let on = world
+                    .and_then(|w| w.actor(clone.to_bits()))
+                    .is_some_and(|a| !a.removed);
+                let hung_off = world.is_some_and(|w| w.hangs_on_nothing(clone.to_bits()));
+                let in_play = on && !hung_off;
+                waits = on && hung_off;
                 if in_play
                     && let Some(place) =
                         world.and_then(|w| place_of(clone, w, transforms.get(clone).ok()))
@@ -447,7 +452,8 @@ pub(crate) fn step_systems(
         for (state, g) in system.generators.iter_mut().zip(&system.emitter.generators) {
             state.step(g, system.place, system.on, dt, &mut rng.0);
         }
-        if !system.on && system.generators.iter().all(|g| !g.live()) {
+        let spent = !system.on && system.generators.iter().all(|g| !g.live());
+        if spent && !waits {
             commands.entity(entity).despawn();
             if let Source::Placed(i) = system.source
                 && let Some(s) = placed.systems.get_mut(i)
@@ -459,7 +465,10 @@ pub(crate) fn step_systems(
         // The system stands where its emitter does, so from the next
         // frame's propagation its blended draws sort by it.
         transform.translation = system.place.at;
+        let mut unnamed = Vec::new();
         let (count, names) = match system.source {
+            // One waiting, spent, draws nothing: its quads are hidden below.
+            Source::Clone(_) if spent => (&mut now.particles, &mut unnamed),
             Source::Clone(_) => {
                 now.systems += 1;
                 now.level_clones += usize::from(system.level_own);
@@ -697,8 +706,10 @@ mod tests {
 
     /// openspec AS.186: an emitter's clone hung on an actor taken off is
     /// out of play, as a clone hung so draws nothing: it makes nothing past
-    /// its most, as one taken off, and goes once its particles have lived
-    /// out; while he's on it emits on.
+    /// its most, as one taken off, and draws nothing once its particles
+    /// have lived out; while he's on it emits on, and put back (the review:
+    /// an elemental wall's pooled clones come back on a reset) it emits
+    /// again.
     #[test]
     fn an_emitter_hung_on_an_actor_taken_off_emits_no_more() {
         let (mut app, clone, base, _tmp) = loaded();
@@ -715,6 +726,12 @@ mod tests {
             q.iter(app.world())
                 .next()
                 .map(|s| (s.on, s.generators[0].made))
+        };
+        let alive = |app: &mut App| {
+            let mut q = app.world_mut().query::<&ParticleSystem>();
+            q.iter(app.world())
+                .map(|s| s.generators[0].particles.len())
+                .sum::<usize>()
         };
         // Past its 24 (50 a second for half a second), hung on him.
         for _ in 0..30 {
@@ -735,7 +752,20 @@ mod tests {
         for _ in 0..30 {
             app.update();
         }
-        assert_eq!(on(&mut app), None, "its particles' lives over");
+        assert_eq!(on(&mut app), Some((false, at_off)), "waiting for him");
+        assert_eq!(alive(&mut app), 0, "its particles' lives over");
+        assert_eq!(report(&app).systems, 0, "drawing nothing");
+        assert!(
+            app.world_mut()
+                .resource_mut::<guacamole::scripts::ScriptWorld>()
+                .put_back(owner)
+        );
+        for _ in 0..10 {
+            app.update();
+        }
+        let (again, made) = on(&mut app).unwrap();
+        assert!(again && made > at_off, "put back, emitting again: {made}");
+        assert!(alive(&mut app) > 0);
     }
 
     /// The virtual clock stopped (a pause, a hold behind an alert) holds
