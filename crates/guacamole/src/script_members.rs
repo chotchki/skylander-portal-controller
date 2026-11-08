@@ -5946,6 +5946,11 @@ mod fight_tests {
         );
         let bodies: Vec<Handle> = w.creature_bodies().iter().map(|b| b.0).collect();
         assert_eq!(bodies, [plank]);
+        let stands: Vec<Handle> = [plank, no_surface, shapeless, not_solid, placed]
+            .into_iter()
+            .filter(|h| w.actor(*h).is_some_and(Actor::stands_for_actors))
+            .collect();
+        assert_eq!(stands, [plank], "a mesh shape stands for none either");
         // Let go: no longer solid to actors, falling at 60 ft/s²; the one
         // that never stood given the same gravity stays put.
         let fall = |a: &mut Actor| {
