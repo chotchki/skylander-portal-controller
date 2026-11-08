@@ -1588,6 +1588,11 @@ impl ScriptWorld {
         self.level = Some(level.to_owned());
     }
 
+    /// The level whose run this is, once the install has said.
+    pub fn level(&self) -> Option<&str> {
+        self.level.as_deref()
+    }
+
     pub fn set_levels(&mut self, levels: Arc<std::collections::HashSet<String>>) {
         self.levels = Some(levels);
     }

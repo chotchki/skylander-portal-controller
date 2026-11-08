@@ -870,7 +870,7 @@ fn the_life_areas_first_vine_bridge_carries_him_over() {
             .map(|b| (b.2.position, b.1))
             .collect::<Vec<_>>()
     );
-    let [(h, _, pose)] = bridge[..] else {
+    let [(h, _, _)] = bridge[..] else {
         panic!("the completed platform stands: {bridge:?}");
     };
     let a = w.run.world.actor(h).unwrap();
@@ -878,7 +878,27 @@ fn the_life_areas_first_vine_bridge_carries_him_over() {
         "the activator at {at}, the platform at {} facing {} scale {:?} solid {:?}",
         a.position, a.angles.facing, a.scale, a.solid
     );
-    let _ = pose;
+    // Off the activator's end, north along the platform, to the far side.
+    const FAR: [f32; 2] = [70.9, -81.5];
+    w.run.put(at + Vec3::new(0.0, 0.5, 0.0), 0.0);
+    w.rest(30);
+    let mut low = f32::MAX;
+    for _ in 0..900 {
+        let me = w.run.hero().pivot;
+        if (me.x - FAR[0]).hypot(me.z - FAR[1]) < 1.0 {
+            break;
+        }
+        let stick = w.toward(FAR, 1.0);
+        w.step(stick, [false; 4]);
+        low = low.min(w.run.hero().pivot.y);
+    }
+    let end = w.run.hero().pivot;
+    println!("over to {end}, lowest {low:.2}");
+    assert!(
+        (end.x - FAR[0]).hypot(end.z - FAR[1]) < 1.5,
+        "never got over: {end}"
+    );
+    assert!(low > at.y - 2.0, "fell off it: {low}");
     assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
 }
 
@@ -893,8 +913,13 @@ fn its_arenas_wave_stays_on_the_floor_with_him_below_it() {
     use guac_motion::seam::Vec3;
     const CENTRE: [f32; 3] = [-198.16, 24.05, 76.91];
     let mut w = fresh();
-    let (_, enter) = w.run.placed("player_01_enter_Arena");
-    w.run.put(enter + Vec3::new(0.0, 1.0, 0.0), 0.0);
+    // Past the fifth gate, the walk's own way through the eyeballs and into
+    // the arena's intro.
+    w.run.put(Vec3::new(-175.8, 26.0, 22.2), 0.0);
+    w.rest(30);
+    assert!(w.stretch(
+        "h -180.3 20.7 20; a 150; s 30; w -173.2 22.2; w -171.2 24.2; w -168.2 25.2; w -165.2 26.2; w -162.8 27.8; w -162.8 31.8; w -160.2 32.2; h -158.6 34.3 20; a 150; w -162.8 30.2; w -163.2 26.8; w -166.8 26.2; w -168.2 28.8; w -172.2 28.8; w -175.8 29.2; w -175.8 33.2; w -175.8 37.2; w -175.8 41.2; s 120; cs; s 200"
+    ));
     let wave = |w: &Walker| -> Vec<(Handle, Vec3)> {
         let run = &w.run;
         run.world
@@ -952,5 +977,51 @@ fn its_arenas_wave_stays_on_the_floor_with_him_below_it() {
         lowest > CENTRE[1] - 2.0,
         "an enemy followed him off: {lowest}"
     );
+    assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
+}
+
+/// openspec AS.168: the rope bridge over the channel holds the hero by its
+/// planks' own solids, no way naming them: set down on it halfway over the
+/// channel, 10 m above its floor, he stands on its planks and walks on
+/// along them toward its far end, each plank a clone of the bridge's
+/// controller's that stands for actors (`Actor::stands_for_actors`). The
+/// walk's own way reaches it at its head and Brock's scene takes it out
+/// from under him (`level_201_is_walked_from_its_landing_to_the_hub`).
+#[test]
+#[ignore = "reads the Giants dump"]
+fn its_bridge_holds_him_by_its_planks_own_solids() {
+    use guac_motion::seam::Vec3;
+    const ON: [f32; 3] = [-112.23, 25.0, -77.91];
+    const ALONG: [f32; 2] = [-118.86, -65.93];
+    let mut w = fresh();
+    w.run.put(Vec3::from_array(ON), 0.0);
+    w.rest(60);
+    let planks = w
+        .run
+        .world
+        .creature_bodies()
+        .into_iter()
+        .filter(|(h, _, _)| w.run.world.actor(*h).is_some_and(|a| a.stands_for_actors()))
+        .count();
+    let stood = w.run.hero().pivot;
+    let mut low = stood.y;
+    for _ in 0..600 {
+        let at = w.run.hero().pivot;
+        if (at.x - ALONG[0]).hypot(at.z - ALONG[1]) < 1.0 {
+            break;
+        }
+        let stick = w.toward(ALONG, 1.0);
+        w.step(stick, [false; 4]);
+        low = low.min(w.run.hero().pivot.y);
+    }
+    let end = w.run.hero().pivot;
+    let walked = (end.x - stood.x).hypot(end.z - stood.z);
+    println!(
+        "{planks} clones standing for actors; stood at {stood}, walked {walked:.2} m to {end}, lowest {low:.2}"
+    );
+    assert!(planks >= 25, "the planks: {planks}");
+    assert!(stood.y > 23.5, "fell through it: {stood}");
+    assert!(walked > 8.0, "never got along it: {end}");
+    assert!(low > 23.0, "fell through it: {low}");
     assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
 }

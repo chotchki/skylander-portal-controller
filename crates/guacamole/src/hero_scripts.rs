@@ -3079,6 +3079,7 @@ mod tests {
             },
         );
         let w = world.resource::<ScriptWorld>();
+        assert_eq!(w.level(), Some(LEVEL), "whose own people its are (AS.176)");
         assert_eq!(w.palette(far), Some(&[0.0, 0.5][..]));
         assert_eq!(w.palette(near), None);
         let rt = world.resource::<ScriptRuntime>();
