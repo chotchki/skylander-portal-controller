@@ -751,7 +751,7 @@ fn fresh() -> Walker {
 /// stick held back toward the yard and lands up there again; off the
 /// listing the pit kept him. The one off the grass the bridge drops him on:
 /// its pad, which the level's controller takes off at its start, is back
-/// by the time the bridge has dropped him there (the walk's record).
+/// from the bridge's fall to Setup_005's end (the walk's record).
 #[test]
 #[ignore = "reads the Giants dump"]
 fn its_pits_jump_pads_take_him_back_up() {
@@ -786,13 +786,25 @@ fn its_pits_jump_pads_take_him_back_up() {
     assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
     assert!(low < height - 5.0, "into the pit: {low}");
     assert!(end.y > height - 1.5, "back up in the yard: {end}");
-    // The grass pit's pad, on once the bridge has dropped him by it.
+    // On the walk: the yard's pad on while he's about the landing, the
+    // grass pit's on from the bridge's fall to Setup_005's end (the level's
+    // controller takes it off at its start, the bridge's scene puts it back).
     let walked = walked();
-    let after_bridge = walked
-        .pads
-        .iter()
-        .find(|(n, _)| n.starts_with("Setup_004"))
-        .map(|p| p.1);
     println!("the pads off after each stretch: {:?}", walked.pads);
-    assert_eq!(after_bridge, Some([false, false]), "{:?}", walked.pads);
+    let off = |stretch: &str| {
+        walked
+            .pads
+            .iter()
+            .find(|(n, _)| n.starts_with(stretch))
+            .map(|p| p.1)
+    };
+    assert_eq!(
+        off("the landing").map(|o| o[0]),
+        Some(false),
+        "{:?}",
+        walked.pads
+    );
+    for stretch in ["Setup_004", "the channel", "the second door"] {
+        assert_eq!(off(stretch).map(|o| o[1]), Some(false), "{stretch}");
+    }
 }
