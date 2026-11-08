@@ -153,11 +153,11 @@ A level's legendary treasure SHALL be collected as a hero comes within 15 ft of 
 - **THEN** he's paid 100 gold and it's gone, on a restart and a session on
 
 ### Requirement: Level 201 played to its end on foot
-A hero landing on level 201 SHALL play it to its end with nothing but the pads: each setup's fight woken by its own trigger, its doors opened by their keys, its push blocks, the practice pit, the eyeball doors and the collapsing bridge, its enemy intros with their cards, and the arena's waves to Brock's battle, its outro and the hub.
+A hero landing on level 201 SHALL play it to its end with nothing but the pads: each setup's fight woken by its own trigger, its doors opened by their keys, its push blocks, the practice pit, the eyeball doors and the collapsing bridge, its jump pads out of the pits below its way, its four enemy intros with their cards for their scripts' 3.0, 2.2, 2.5 and 2.5 s, and the arena's waves to Brock's battle, its outro and the hub.
 
 #### Scenario: The life wall's triggers
 - **WHEN** a hero walks through the cave's trigger box by Setup_002's door and later past the climb's trigger
-- **THEN** the wall's controller sleeps while he's in the cave's box, and past the climb it wakes for the life area with the landing's people taken off
+- **THEN** the wall's controller sleeps (range 0) while he's in the cave's box, and past the climb it wakes at 200 ft for the life area with the landing's people taken off
 
 #### Scenario: The arena's commander
 - **WHEN** the castle's script starts its battle and the wave master sets up its commander
@@ -166,3 +166,7 @@ A hero landing on level 201 SHALL play it to its end with nothing but the pads: 
 #### Scenario: Into the hub
 - **WHEN** the arena's outro ends
 - **THEN** the level asks for the hub's first stage
+
+#### Scenario: Out of a pit below the way
+- **WHEN** a hero walks off the landing's yard into the pit under it, 9 m down, or off the grass the bridge drops him on into the pit under that, once the bridge is down
+- **THEN** stepping onto the jump pad in the pit with the stick held toward the way puts him back up on it
