@@ -855,6 +855,13 @@ pub fn sky_bias(rank: usize) -> f32 {
 pub const SKY_BIAS: f32 = -1.0e7;
 pub const SKY_BIAS_STEP: f32 = 1.0e4;
 
+/// The rank [`sky_bias`] gave a material's sort bias; `None` for a material
+/// the sky doesn't draw with (0, or any other part's).
+pub fn sky_rank(bias: f32) -> Option<usize> {
+    let rank = (bias - SKY_BIAS) / SKY_BIAS_STEP;
+    (bias < SKY_BIAS / 2.0 && rank > -0.5).then(|| rank.round() as usize)
+}
+
 /// Each material's sort bias in `drawn`: [`sky_bias`] of its rank for one
 /// the sky draws with, 0 for the rest (sorted by depth alone).
 pub fn depth_biases(drawn: &Drawn) -> Vec<f32> {
