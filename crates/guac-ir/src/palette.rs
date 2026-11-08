@@ -10,7 +10,11 @@
 //! `levels/<archive>/palettes.<ron|postcard>`: new files beside unchanged
 //! ones, so [`crate::IR_VERSION`] holds. [`SlotEntry::Blocks`] (openspec
 //! AS.78) and [`SlotEntry::Random`] (AS.180) are variants after the others:
-//! every file written before them reads unchanged, so it holds that too.
+//! every file written before them reads unchanged, so it holds that too. A
+//! build before AS.180 meets no `Random`: only a level's palettes hold one,
+//! under a file name carrying its rule that such a build never opens; the
+//! per-character files keep a random network as a network (openspec
+//! AS.196).
 
 use serde::{Deserialize, Serialize};
 

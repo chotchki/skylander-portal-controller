@@ -275,13 +275,13 @@ pub fn read(
         .map_err(|e| e.to_string());
     let hero_took = started.elapsed();
     let started = Instant::now();
-    let palette = self::palette(
+    let palette = without_random_networks(self::palette(
         &igz,
         &portal.hero,
         &havok_skeleton,
         load_file,
         identity.clone(),
-    );
+    ));
     let palette_took = started.elapsed();
     let nodes = self::nodes(&igz, &portal, load_file, &skeleton, identity.clone())
         .map_err(|e| refused(load_file, format!("its attach list: {e}")))?;
@@ -352,9 +352,28 @@ pub fn attach_node(p: &BoneAttachInfo<'_>, joints: &[&str]) -> AttachNode {
     }
 }
 
+/// `palette` as the extract-wide parts keep it (`palettes/`, `spawn_rigs/`):
+/// a random network's slot a network again, its clips dropped, as before
+/// openspec AS.180. Those files carry no rule in their names and a start
+/// keeps them once recorded, so a build before AS.180, which knows no
+/// [`SlotEntry::Random`], reads them on an extract a later build wrote, and
+/// an extract written before reads as one written now. A level's palettes
+/// keep their networks' clips: their file names carry their rule, which an
+/// older build never opens. So the heroes' hurt (slot 41, a network on 46
+/// of the 67 characters) stays unplayed (openspec AS.196).
+pub fn without_random_networks(mut palette: Palette) -> Palette {
+    for e in &mut palette.entries {
+        if matches!(e.entry, SlotEntry::Random { .. }) {
+            e.entry = SlotEntry::Network;
+        }
+    }
+    palette
+}
+
 /// Every filled slot of `hero`'s animation set as a palette (AH.22): each
-/// clip on `skeleton`'s joints with how it blends, a network as one, and a
-/// slot that won't play listed with why.
+/// clip on `skeleton`'s joints with how it blends, a network as one (a
+/// random network's clips among it, AS.180), and a slot that won't play
+/// listed with why.
 pub fn palette(
     igz: &Igz<'_>,
     hero: &guac_formats::igz::layouts::Hero<'_>,
