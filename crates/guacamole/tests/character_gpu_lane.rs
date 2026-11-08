@@ -60,6 +60,7 @@ use bevy::prelude::{
     WindowPlugin, default,
 };
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::render::storage::ShaderBuffer;
 use bevy::render::view::Msaa;
 use bevy::render::view::window::screenshot::{Screenshot, ScreenshotCaptured};
 use bevy::window::ExitCondition;
@@ -72,7 +73,7 @@ use guac_ir::shading::{
 };
 use guacamole::character::{
     CharacterMaterial, CharacterShadingPlugin, CharacterTextures, MaterialKey, Pass, SceneBits,
-    ShaderKey, StateKey, remaster, spawn_character,
+    SceneLights, ShaderKey, StateKey, remaster, spawn_character,
 };
 
 /// The decode probes ahead of the keys' cases.
@@ -1319,6 +1320,59 @@ struct Plan {
     /// world's frame (`CharacterUniform::lit_in_world`, AG.21); `None`, both
     /// at the identity with the lights in view space.
     frame: Option<Transform>,
+    /// Where the lights and fog come from with a frame: the uniform, or
+    /// each material's own scene buffer, read as the level's or as the
+    /// sky's (openspec AS.148, AS.164).
+    lit: Lit,
+}
+
+/// Where a world-frame case's lights and fog come from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Lit {
+    Uniform,
+    /// `misc.w` 2: the buffer's lights and level fog.
+    Scene,
+    /// `misc.w` 3: the buffer's lights and sky fog.
+    Sky,
+}
+
+/// The uniform's own lights and fog, scrambled where the buffer stands in
+/// for them, so a shader that read them would miss.
+fn scrambled(
+    mut u: guacamole::character::CharacterUniform,
+) -> guacamole::character::CharacterUniform {
+    let junk = bevy::math::Vec4::new(0.9, -0.7, 0.3, 0.0);
+    for rows in [
+        &mut u.light_travel,
+        &mut u.light_ambient,
+        &mut u.light_diffuse,
+        &mut u.light_specular,
+        &mut u.light_ambient_stored,
+        &mut u.light_diffuse_stored,
+        &mut u.point_position,
+        &mut u.point_colour,
+        &mut u.point_falloff,
+    ] {
+        *rows = [junk; 3];
+    }
+    u.fog_colour = junk;
+    u.fog_range = bevy::math::Vec4::new(-3.0, -1.0, 0.0, 0.0);
+    u
+}
+
+/// `scene` (the world's frame) as a material's scene buffer holds it: its
+/// lights and its fog in the level's slot, or in the sky's with the level's
+/// a fog that would show.
+fn scene_buffer(scene: &Scene, lit: Lit) -> ShaderBuffer {
+    let mut b = SceneLights::dark();
+    b.set_points(&scene.point_lights);
+    b.set_scene(scene);
+    if lit == Lit::Sky {
+        b.set_sky_fog(scene.fog_colour, scene.fog_near, scene.fog_far);
+        b.fog_colour = bevy::math::Vec4::new(0.0, 1.0, 0.0, 0.0);
+        b.fog_range = bevy::math::Vec4::new(-3.0, -1.0, 0.0, 0.0);
+    }
+    b.buffer()
 }
 
 /// `scene` with its lights in the world's frame of a camera standing at
@@ -1354,6 +1408,7 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut bindposes: ResMut<Assets<SkinnedMeshInverseBindposes>>,
     mut materials: ResMut<Assets<CharacterMaterial>>,
+    mut buffers: ResMut<Assets<ShaderBuffer>>,
     mut targets: ResMut<Targets>,
 ) {
     let frame = plan.frame.unwrap_or(Transform::IDENTITY);
@@ -1388,6 +1443,13 @@ fn setup(
                 .expect("a material");
                 if plan.frame.is_some() {
                     m.uniform = m.uniform.lit_in_world();
+                }
+                if plan.lit != Lit::Uniform {
+                    m.uniform = scrambled(m.uniform).lit_by_scene();
+                    if plan.lit == Lit::Sky {
+                        m.uniform = m.uniform.lit_by_scene_as_sky();
+                    }
+                    m.scene_lights = buffers.add(scene_buffer(&scene, plan.lit));
                 }
                 materials.add(m)
             })
@@ -1564,7 +1626,7 @@ fn index(pixel: [u32; 2]) -> usize {
 }
 
 /// Renders every case and returns each target's pixels.
-fn render(cases: Arc<Vec<Case>>, frame: Option<Transform>) -> Vec<Vec<[f32; 4]>> {
+fn render(cases: Arc<Vec<Case>>, frame: Option<Transform>, lit: Lit) -> Vec<Vec<[f32; 4]>> {
     let outcome = Outcome::default();
     let mut app = App::new();
     app.add_plugins((
@@ -1582,7 +1644,7 @@ fn render(cases: Arc<Vec<Case>>, frame: Option<Transform>) -> Vec<Vec<[f32; 4]>>
         ScheduleRunnerPlugin::run_loop(Duration::from_millis(1)),
         CharacterShadingPlugin,
     ))
-    .insert_resource(Plan { cases, frame })
+    .insert_resource(Plan { cases, frame, lit })
     .insert_resource(Targets::default())
     .insert_resource(Captured::default())
     .insert_resource(outcome.clone())
@@ -1775,6 +1837,18 @@ fn lane(label: &str, keys: Vec<MaterialKey>, seed: u64, bound: f32) {
 /// [`lane`], the camera and the quads standing at `frame` with the lights
 /// handed over in the world's frame when there's one.
 fn lane_in(label: &str, keys: Vec<MaterialKey>, seed: u64, bound: f32, frame: Option<Transform>) {
+    lane_lit(label, keys, seed, bound, frame, Lit::Uniform);
+}
+
+/// [`lane_in`] with the lights and fog off where `lit` says.
+fn lane_lit(
+    label: &str,
+    keys: Vec<MaterialKey>,
+    seed: u64,
+    bound: f32,
+    frame: Option<Transform>,
+    lit: Lit,
+) {
     let start = Instant::now();
     let mut rng = Rng(seed);
     let mut shading: Option<Summary> = None;
@@ -1803,7 +1877,7 @@ fn lane_in(label: &str, keys: Vec<MaterialKey>, seed: u64, bound: f32, frame: Op
         cases.extend(halved);
         cases.extend(eight);
         let cases = Arc::new(cases);
-        let shots = render(cases.clone(), frame);
+        let shots = render(cases.clone(), frame, lit);
         let n = chunk.len();
         let pass = |from: usize| -> Vec<(&Case, &Vec<[f32; 4]>)> {
             cases[from..from + n]
@@ -2208,6 +2282,37 @@ fn lights_in_the_worlds_frame_match_the_reference_model() {
             37f32.to_radians(),
         ));
     lane_in("world frame", keys, 0xA621_0001, 1.0, Some(frame));
+}
+
+/// openspec AS.148 and AS.164: a level's lights and fog off the scene's
+/// buffer, the uniform's own scrambled, every term that reads a light or
+/// the fog against the same view-space model as the world-frame lane: the
+/// buffer's level fog for a level material (`misc.w` 2), its sky fog for a
+/// sky's copy (`misc.w` 3, the level's fog slot holding one that would
+/// show).
+#[test]
+#[ignore = "GPU lane: run on the Mac (AS.148)"]
+fn lights_and_fog_off_the_scene_buffer_match_the_reference_model() {
+    let mut keys = drawn(&[SceneBits {
+        shadows: true,
+        fog: true,
+        point_lights: 3,
+    }]);
+    keys.extend(layer_keys());
+    let frame =
+        Transform::from_xyz(3.0, -2.0, 5.0).with_rotation(bevy::math::Quat::from_axis_angle(
+            bevy::math::Vec3::new(1.0, 2.0, 3.0).normalize(),
+            37f32.to_radians(),
+        ));
+    lane_lit(
+        "scene buffer",
+        keys.clone(),
+        0xA148_0001,
+        1.0,
+        Some(frame),
+        Lit::Scene,
+    );
+    lane_lit("sky buffer", keys, 0xA164_0001, 1.0, Some(frame), Lit::Sky);
 }
 
 #[test]

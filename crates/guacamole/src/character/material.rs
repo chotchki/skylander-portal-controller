@@ -11,7 +11,7 @@
 use bevy::asset::{Asset, Handle, uuid_handle};
 use bevy::image::Image;
 use bevy::material::AlphaMode;
-use bevy::math::Vec4;
+use bevy::math::{Vec3, Vec4};
 use bevy::mesh::{
     Mesh, MeshVertexBufferLayoutRef, MissingVertexAttributeError, VertexAttributeDescriptor,
 };
@@ -40,62 +40,153 @@ pub const LIGHTS_IN_VIEW: f32 = 0.0;
 /// view it draws for: a level's (AG.21), so a camera that moves rewrites no
 /// material.
 pub const LIGHTS_IN_WORLD: f32 = 1.0;
-/// `misc.w` for lights in the world's frame with the point lights read off
-/// the scene's buffer ([`CharacterMaterial::scene_lights`]) rather than the
-/// uniform (openspec AH.65): a level's, whose point lights the scripts move
-/// every frame, so a light that moves rewrites one buffer, no material.
+/// `misc.w` for lights in the world's frame with every light and the fog
+/// read off the scene's buffer ([`CharacterMaterial::scene_lights`]) rather
+/// than the uniform: a level's, whose point lights the scripts move every
+/// frame (openspec AH.65) and whose zone a transition slides (AS.148), so
+/// either rewrites one buffer, no material.
 pub const LIGHTS_FROM_SCENE: f32 = 2.0;
+/// `misc.w` for [`LIGHTS_FROM_SCENE`] with the sky's fog in place of the
+/// level's (openspec AS.164): a sky segment's copy of its material.
+pub const SKY_FROM_SCENE: f32 = 3.0;
 
 /// The scene buffer of a material that reads none ([`LIGHTS_FROM_SCENE`]
-/// off): every point light dark. Inserted by
+/// off): every light dark, no fog. Inserted by
 /// [`super::CharacterShadingPlugin`].
 pub const NO_SCENE_LIGHTS: Handle<ShaderBuffer> =
     uuid_handle!("6c0d6f3e-3a4b-4f0e-9a7c-6a1f2d5b7e01");
-/// The level's scene buffer (openspec AH.65): its placed point lights and
-/// those the scripts light, the three a frame draws, in the world's frame.
+/// The level's scene buffer: its directional lights and fog from the zone
+/// it's in, the sky's fog, and the three point lights a frame draws of its
+/// placed ones and those the scripts light, in the world's frame.
 pub const LEVEL_LIGHTS: Handle<ShaderBuffer> = uuid_handle!("6c0d6f3e-3a4b-4f0e-9a7c-6a1f2d5b7e02");
 
-/// A scene's three point lights as the shader's `SceneLights` reads them
-/// off the buffer: the uniform's three arrays, packed as it packs them.
+/// A scene's lights and fogs as the shader's `SceneLights` reads them off
+/// the buffer: the uniform's arrays, packed as it packs them, then the
+/// sky's fog.
 #[derive(Debug, Clone, Copy, PartialEq, ShaderType)]
-pub struct ScenePointLights {
+pub struct SceneLights {
     pub position: [Vec4; 3],
     pub colour: [Vec4; 3],
     /// x over (d + 0.001), y over (d + 0.001)².
     pub falloff: [Vec4; 3],
+    pub travel: [Vec4; 3],
+    pub ambient: [Vec4; 3],
+    pub diffuse: [Vec4; 3],
+    pub specular: [Vec4; 3],
+    pub ambient_stored: [Vec4; 3],
+    pub diffuse_stored: [Vec4; 3],
+    pub fog_colour: Vec4,
+    /// x near, y far.
+    pub fog_range: Vec4,
+    pub sky_fog_colour: Vec4,
+    pub sky_fog_range: Vec4,
 }
 
-impl ScenePointLights {
-    /// Up to three of `points`, the rest dark.
-    pub fn new(points: &[guac_ir::shading::PointLight]) -> Self {
-        let point = |i: usize, f: fn(&guac_ir::shading::PointLight) -> Vec4| {
-            points.get(i).map_or(Vec4::ZERO, f)
-        };
+impl SceneLights {
+    /// Every light dark and no fog: past anything a level draws.
+    pub fn dark() -> Self {
+        let none = [Vec4::ZERO; 3];
+        let unfogged = Vec4::new(1.0e4, 2.0e4, 0.0, 0.0);
         Self {
-            position: [0, 1, 2]
-                .map(|i| point(i, |p| bevy::math::Vec3::from_array(p.position).extend(0.0))),
-            colour: [0, 1, 2]
-                .map(|i| point(i, |p| bevy::math::Vec3::from_array(p.colour).extend(0.0))),
-            falloff: [0, 1, 2].map(|i| point(i, |p| Vec4::new(p.linear, p.quadratic, 0.0, 0.0))),
+            position: none,
+            colour: none,
+            falloff: none,
+            travel: none,
+            ambient: none,
+            diffuse: none,
+            specular: none,
+            ambient_stored: none,
+            diffuse_stored: none,
+            fog_colour: Vec4::ZERO,
+            fog_range: unfogged,
+            sky_fog_colour: Vec4::ZERO,
+            sky_fog_range: unfogged,
         }
     }
 
-    /// The buffer's words: positions, colours, then falloffs.
-    pub fn words(&self) -> Vec<[f32; 4]> {
-        self.position
-            .iter()
-            .chain(&self.colour)
-            .chain(&self.falloff)
-            .map(|v| v.to_array())
-            .collect()
+    /// Up to three of `points`, the rest dark.
+    pub fn set_points(&mut self, points: &[guac_ir::shading::PointLight]) {
+        let point = |i: usize, f: fn(&guac_ir::shading::PointLight) -> Vec4| {
+            points.get(i).map_or(Vec4::ZERO, f)
+        };
+        self.position =
+            [0, 1, 2].map(|i| point(i, |p| bevy::math::Vec3::from_array(p.position).extend(0.0)));
+        self.colour =
+            [0, 1, 2].map(|i| point(i, |p| bevy::math::Vec3::from_array(p.colour).extend(0.0)));
+        self.falloff = [0, 1, 2].map(|i| point(i, |p| Vec4::new(p.linear, p.quadratic, 0.0, 0.0)));
     }
 
-    /// The buffer itself, kept in both worlds so it can be rewritten.
+    /// `scene`'s directional lights and fog, as [`CharacterUniform::new`]
+    /// takes them; its point lights aren't these ([`Self::set_points`]).
+    pub fn set_scene(&mut self, scene: &Scene) {
+        [
+            self.travel,
+            self.ambient,
+            self.diffuse,
+            self.specular,
+            self.ambient_stored,
+            self.diffuse_stored,
+        ] = directional_rows(scene);
+        self.fog_colour = Vec3::from_array(scene.fog_colour).extend(0.0);
+        self.fog_range = Vec4::new(scene.fog_near, scene.fog_far, 0.0, 0.0);
+    }
+
+    /// The sky's fog: its colour in linear light and where it starts and
+    /// ends along the view, metres.
+    pub fn set_sky_fog(&mut self, colour: [f32; 3], near: f32, far: f32) {
+        self.sky_fog_colour = Vec3::from_array(colour).extend(0.0);
+        self.sky_fog_range = Vec4::new(near, far, 0.0, 0.0);
+    }
+
+    /// The buffer's words, in the order the fields stand.
+    pub fn words(&self) -> Vec<[f32; 4]> {
+        [
+            self.position,
+            self.colour,
+            self.falloff,
+            self.travel,
+            self.ambient,
+            self.diffuse,
+            self.specular,
+            self.ambient_stored,
+            self.diffuse_stored,
+        ]
+        .iter()
+        .flatten()
+        .chain(&[
+            self.fog_colour,
+            self.fog_range,
+            self.sky_fog_colour,
+            self.sky_fog_range,
+        ])
+        .map(|v| v.to_array())
+        .collect()
+    }
+
+    /// The buffer itself, kept in both worlds so it can be rewritten: the
+    /// same size and label every time, so the render world writes the one
+    /// it has rather than making another.
     pub fn buffer(&self) -> ShaderBuffer {
         let mut b = ShaderBuffer::new(self.words(), bevy::asset::RenderAssetUsages::default());
-        b.label = "scene point lights".into();
+        b.label = "scene lights".into();
         b
     }
+}
+
+/// A scene's three directional lights as the uniform and the scene buffer
+/// hold them: travels, ambients, diffuses, speculars, then the stored
+/// ambients and diffuses.
+fn directional_rows(scene: &Scene) -> [[Vec4; 3]; 6] {
+    let v3 = |c: [f32; 3]| Vec4::new(c[0], c[1], c[2], 0.0);
+    let l = &scene.lights;
+    [
+        l.map(|l| v3(l.travel)),
+        l.map(|l| v3(l.ambient)),
+        l.map(|l| v3(l.diffuse)),
+        l.map(|l| v3(l.specular)),
+        l.map(|l| v3(l.ambient_stored)),
+        l.map(|l| v3(l.diffuse_stored)),
+    ]
 }
 
 /// The material's uniform, in the shader's `Character` layout.
@@ -132,8 +223,9 @@ pub struct CharacterUniform {
     pub shadow: Vec4,
     /// x the shadow mode, y the alpha test's reference, z the glow: its
     /// amount, -1 for layer 1's alpha, 0 for none (as the original's glow
-    /// shader takes it), w the lights' frame ([`LIGHTS_IN_VIEW`] or
-    /// [`LIGHTS_IN_WORLD`]).
+    /// shader takes it), w the lights' frame and where they come from
+    /// ([`LIGHTS_IN_VIEW`], [`LIGHTS_IN_WORLD`], [`LIGHTS_FROM_SCENE`] or
+    /// [`SKY_FROM_SCENE`]).
     pub misc: Vec4,
     /// x layer 1's fixed alpha, y layer 2's, z layer 3's strength (or the
     /// gloss map's, which takes its place), w the rim's.
@@ -170,7 +262,6 @@ impl CharacterUniform {
         let v4 = Vec4::from_array;
         let weights = |w: Weights| Vec4::new(w.over, w.add, w.multiply, 0.0);
         let layer = |l: &Layer| Vec4::new(l.exponent, l.detail_weight, 0.0, 0.0);
-        let lights = &scene.lights;
         let point = |i: usize, f: fn(&guac_ir::shading::PointLight) -> Vec4| {
             scene.point_lights.get(i).map_or(Vec4::ZERO, f)
         };
@@ -179,13 +270,21 @@ impl CharacterUniform {
         let third = material.third.as_ref();
         let rim = material.rim.as_ref();
         let (uv_u, uv_v) = Self::uv_rows(&material.uv_transforms);
+        let [
+            light_travel,
+            light_ambient,
+            light_diffuse,
+            light_specular,
+            light_ambient_stored,
+            light_diffuse_stored,
+        ] = directional_rows(scene);
         Self {
-            light_travel: lights.map(|l| v3(l.travel)),
-            light_ambient: lights.map(|l| v3(l.ambient)),
-            light_diffuse: lights.map(|l| v3(l.diffuse)),
-            light_specular: lights.map(|l| v3(l.specular)),
-            light_ambient_stored: lights.map(|l| v3(l.ambient_stored)),
-            light_diffuse_stored: lights.map(|l| v3(l.diffuse_stored)),
+            light_travel,
+            light_ambient,
+            light_diffuse,
+            light_specular,
+            light_ambient_stored,
+            light_diffuse_stored,
             point_position: [0, 1, 2].map(|i| point(i, |p| v3(p.position))),
             point_colour: [0, 1, 2].map(|i| point(i, |p| v3(p.colour))),
             point_falloff: [0, 1, 2]
@@ -235,10 +334,18 @@ impl CharacterUniform {
         self
     }
 
-    /// The uniform with its lights read in the world's frame and its point
-    /// lights off the scene's buffer ([`LIGHTS_FROM_SCENE`]).
+    /// The uniform with its lights read in the world's frame and every
+    /// light and the fog off the scene's buffer ([`LIGHTS_FROM_SCENE`]): its
+    /// own light and fog numbers stand unread from then on.
     pub fn lit_by_scene(mut self) -> Self {
         self.misc.w = LIGHTS_FROM_SCENE;
+        self
+    }
+
+    /// [`Self::lit_by_scene`] with the sky's fog off the buffer in place of
+    /// the level's ([`SKY_FROM_SCENE`], openspec AS.164).
+    pub fn lit_by_scene_as_sky(mut self) -> Self {
+        self.misc.w = SKY_FROM_SCENE;
         self
     }
 
@@ -1340,30 +1447,56 @@ mod tests {
         assert!(lit.key.shader.switches().shadows);
     }
 
-    /// AH.65: the scene's buffer packs three point lights as the uniform
-    /// packs them, positions, colours, then falloffs, the slots past the
-    /// lights given dark; a material reads it once its uniform says so,
-    /// and binds the dark one until then.
+    /// AH.65 and AS.148: the scene's buffer packs three point lights, the
+    /// directional lights and the fog as the uniform packs them, then the
+    /// sky's fog (AS.164), the point slots past the lights given dark; a
+    /// material reads it once its uniform says so, and binds the dark one
+    /// until then.
     #[test]
-    fn the_scene_buffer_packs_its_point_lights_as_the_uniform_does() {
+    fn the_scene_buffer_packs_its_lights_and_fogs_as_the_uniform_does() {
         let p = PointLight {
             position: [1.0, 2.0, 3.0],
             colour: [0.5, 0.25, 0.125],
             linear: 1.5,
             quadratic: 0.25,
         };
-        let packed = ScenePointLights::new(&[p]);
         let scene = guac_ir::shading::Scene {
             point_lights: vec![p],
             ..fogged()
         };
+        let mut packed = SceneLights::dark();
+        packed.set_points(&[p]);
+        packed.set_scene(&scene);
+        packed.set_sky_fog([0.25, 0.0, 0.125], -5.0, 6.0);
         let u = CharacterUniform::new(&reference_material(&eruptor_body()).unwrap(), &scene, 0.5);
         assert_eq!(packed.position, u.point_position);
         assert_eq!(packed.colour, u.point_colour);
         assert_eq!(packed.falloff, u.point_falloff);
         assert_eq!(packed.position[1], Vec4::ZERO);
+        assert_eq!(
+            [
+                packed.travel,
+                packed.ambient,
+                packed.diffuse,
+                packed.specular,
+                packed.ambient_stored,
+                packed.diffuse_stored
+            ],
+            [
+                u.light_travel,
+                u.light_ambient,
+                u.light_diffuse,
+                u.light_specular,
+                u.light_ambient_stored,
+                u.light_diffuse_stored
+            ]
+        );
+        assert_eq!(
+            (packed.fog_colour, packed.fog_range),
+            (u.fog_colour, u.fog_range)
+        );
         let words = packed.words();
-        assert_eq!(words.len(), 9);
+        assert_eq!(words.len(), 31);
         assert_eq!(
             (words[0], words[3], words[6]),
             (
@@ -1372,8 +1505,29 @@ mod tests {
                 [1.5, 0.25, 0.0, 0.0]
             )
         );
+        assert_eq!(words[9], u.light_travel[0].to_array());
+        assert_eq!(words[26], u.light_diffuse_stored[2].to_array());
+        assert_eq!(
+            (words[27], words[28]),
+            (u.fog_colour.to_array(), u.fog_range.to_array())
+        );
+        assert_eq!(
+            (words[29], words[30]),
+            ([0.25, 0.0, 0.125, 0.0], [-5.0, 6.0, 0.0, 0.0])
+        );
+        // The buffer's size is its layout's, whatever it holds.
+        assert_eq!(
+            packed.buffer().buffer_size(),
+            SceneLights::min_size().get(),
+            "the shader's struct"
+        );
+        assert_eq!(
+            SceneLights::dark().buffer().buffer_size(),
+            packed.buffer().buffer_size()
+        );
         assert_eq!(u.misc.w, LIGHTS_IN_VIEW);
         assert_eq!(u.lit_by_scene().misc.w, LIGHTS_FROM_SCENE);
+        assert_eq!(u.lit_by_scene_as_sky().misc.w, SKY_FROM_SCENE);
     }
 
     #[test]

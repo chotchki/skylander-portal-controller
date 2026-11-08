@@ -90,6 +90,23 @@ impl LevelFog {
         far: 2.0e4,
     };
 
+    /// The sky's fog at `share` (0 to 1) of `colour` (as a disc stores one),
+    /// whatever its depth along the view (openspec AS.164; a hypothesis: no
+    /// recording holds a sky at a share): a fade from [`SKY_FOG_REACH`]
+    /// before the eye to where it reaches the share at the eye and gains
+    /// under 0.1 % of it over the sky's depths, so the shader's own fade
+    /// draws it. None at 0.
+    pub fn sky(colour: [u8; 4], share: f32) -> Self {
+        if share <= 0.0 {
+            return Self::NONE;
+        }
+        Self {
+            colour: rgb(colour),
+            near: -SKY_FOG_REACH,
+            far: SKY_FOG_REACH * (1.0 - share) / share,
+        }
+    }
+
     /// A zone's fog as the original sets it up (AG.13, at AF's fresh
     /// state): on, the fog fades in linearly with depth along the view from
     /// its start to its start plus its range, wholly fogged past that (the
@@ -117,18 +134,31 @@ pub fn start_zone(atmosphere: &Atmosphere) -> Result<&AtmosphericZone, LevelErro
     atmosphere.start_zone().ok_or(LevelError::NoStartZone)
 }
 
-/// Whether the sky dome takes the start's fog: its share is the zone's
-/// "fog skydome percent". At 0, level 213's, the original draws its sky
-/// with the shader's fog switched off (AG.13's capture: its 14 sky draws,
-/// out to 657 m, are the only unfogged tfbmulti2 draws), so the sky's
-/// materials own their fog off ([`drawn`]). Another share isn't drawn yet
-/// and is refused.
-pub fn sky_fogged(zone: &AtmosphericZone) -> Result<bool, LevelError> {
+/// The sky dome's share of the fog, 0 to 1: its zone's "fog skydome
+/// percent", which the original's viewport takes as `fog of sky dome` where
+/// the zone is set up (openspec AS.164). At 0, level 213's start zone's, the
+/// original draws its sky with the shader's fog switched off (AG.13's
+/// capture: its 14 sky draws, out to 657 m, are the only unfogged tfbmulti2
+/// draws), so the sky's materials own their fog off ([`drawn`]). A share
+/// past 0-100 is refused.
+pub fn sky_share(zone: &AtmosphericZone) -> Result<f32, LevelError> {
     match zone.fog.sky_dome_percent {
-        0 => Ok(false),
+        percent @ 0..=100 => Ok(percent as f32 / 100.0),
         percent => Err(LevelError::Zone("fog skydome percent", percent)),
     }
 }
+
+/// Whether the sky dome takes a share of the fog at all ([`sky_share`]):
+/// what its materials are keyed for.
+pub fn sky_fogged(zone: &AtmosphericZone) -> Result<bool, LevelError> {
+    sky_share(zone).map(|share| share > 0.0)
+}
+
+/// How far from the eye a sky's fog stands either side ([`LevelFog::sky`]):
+/// past a thousand times anything a level's sky draws (it reaches about
+/// 750 m), so the fade it holds over the sky's depths is under 0.1 % of its
+/// share.
+const SKY_FOG_REACH: f32 = 1.0e6;
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum LevelError {
@@ -746,6 +776,21 @@ impl Drawn {
         self.effects.get(m).copied().flatten()
     }
 
+    /// Whether each material is one the sky draws with: a sky segment's
+    /// copy ([`drawn`]), which nothing else draws (openspec AS.164: what
+    /// reads the sky's fog).
+    pub fn sky_materials(&self) -> Vec<bool> {
+        let mut out = vec![false; self.materials.len()];
+        for &i in &self.sky {
+            if let Some(k) = self.segments.get(i).map(|s| usize::from(s.material))
+                && let Some(sky) = out.get_mut(k)
+            {
+                *sky = true;
+            }
+        }
+        out
+    }
+
     /// The effects, one a material.
     fn effects_padded(&self) -> Vec<Option<Effect>> {
         (0..self.materials.len()).map(|m| self.effect(m)).collect()
@@ -771,16 +816,27 @@ pub fn unfogged(mut m: model::Material) -> model::Material {
     m
 }
 
+/// `m` owning its fog on: its masks hold the fog bit, set, so it draws
+/// fogged in any scene (the sky at a share, its own fog's, AS.164).
+pub fn fogged(mut m: model::Material) -> model::Material {
+    for mask in [&mut m.pixel, &mut m.vertex] {
+        mask.ignore |= 1 << bit::FOG;
+        mask.base |= 1 << bit::FOG;
+    }
+    m
+}
+
 /// `m` as the sky draws it: writing no depth, whatever its states say, and
-/// owning its fog off unless the sky takes the fog (`fogged`). AG.13's
+/// owning its fog off, or on where the sky takes a share of it (`fogged`,
+/// the sky's own fog: [`LevelFog::sky`]). AG.13's
 /// capture of the fresh state has the original draw its 14 sky segments
 /// after the scenery that hides them and before the rest of what blends,
 /// each depth-tested and none written, its opaque dome first and then the
 /// others in the scene's order (AG.79: written, a cloud plane drawn before
 /// the sky's cap cut the cap away in its own outline, the hard-edged slab
 /// across the sky chotchki saw).
-pub fn sky_material(m: model::Material, fogged: bool) -> model::Material {
-    let mut m = if fogged { m } else { unfogged(m) };
+pub fn sky_material(m: model::Material, share: bool) -> model::Material {
+    let mut m = if share { fogged(m) } else { unfogged(m) };
     m.states.depth_write = false;
     m
 }
@@ -817,10 +873,11 @@ pub fn depth_biases(drawn: &Drawn) -> Vec<f32> {
 }
 
 /// `graph`'s drawn part, taking its segments. The sky's segments draw on
-/// copies of their materials that write no depth and, unless the sky dome
-/// takes the fog (`sky_fogged`, [`sky_fogged`]), own their fog off
-/// ([`sky_material`]): one a material the sky draws with, beside the
-/// material itself where the rest of the scene draws with it too.
+/// copies of their materials that write no depth and own their fog off,
+/// or on where the sky dome takes a share of it (`sky_fogged`,
+/// [`sky_fogged`]; [`sky_material`]): one a material the sky draws with,
+/// beside the material itself where the rest of the scene draws with it
+/// too.
 pub fn drawn(graph: SceneGraph, sky_fogged: bool) -> Result<Drawn, LevelError> {
     // The sky's segments in the order the scene lists them, each once.
     let mut listed: Vec<usize> = Vec::new();
@@ -1314,12 +1371,19 @@ mod tests {
             Err(LevelError::Zone("fog on", 2))
         );
         assert_eq!(sky_fogged(&z), Ok(false));
+        // A share the sky takes (AS.164): level 206's start zone's 100 % draws.
         let mut full = z;
         full.fog.sky_dome_percent = 100;
-        assert_eq!(
-            sky_fogged(&full),
-            Err(LevelError::Zone("fog skydome percent", 100))
-        );
+        assert_eq!((sky_share(&full), sky_fogged(&full)), (Ok(1.0), Ok(true)));
+        full.fog.sky_dome_percent = 25;
+        assert_eq!(sky_share(&full), Ok(0.25));
+        for odd in [-1, 101] {
+            full.fog.sky_dome_percent = odd;
+            assert_eq!(
+                sky_fogged(&full),
+                Err(LevelError::Zone("fog skydome percent", odd))
+            );
+        }
         let mut atmosphere = Atmosphere {
             identity: identity(),
             level: "level_213_tutotial".into(),
@@ -2186,6 +2250,70 @@ mod tests {
         assert_eq!(refuse(&mut again, &scene, &|_| Some(138)), []);
         assert_eq!(refuse(&mut again, &scene, &|_| None), []);
         assert_eq!(again.segments.len(), 1);
+    }
+
+    /// openspec AS.164: a sky at a share of its colour draws as that share
+    /// whatever its depth, through the shader's own fade: at the eye, at
+    /// 750 m (past the sky's reach) and between, within 0.1 % of the share;
+    /// whole at 100 %, nothing at 0.
+    #[test]
+    fn a_skys_fog_is_its_share_at_every_depth() {
+        let fade = |f: &LevelFog, depth: f32| ((depth - f.near) / (f.far - f.near)).clamp(0.0, 1.0);
+        for share in [0.01, 0.25, 0.5, 0.75, 1.0] {
+            let f = LevelFog::sky([41, 0, 29, 0], share);
+            assert_eq!(f.colour, [41, 0, 29]);
+            for depth in [0.1, 30.0, 300.0, 750.0] {
+                let got = fade(&f, depth);
+                assert!(
+                    (got - share).abs() <= share * 1e-3,
+                    "{share} at {depth} m: {got}"
+                );
+            }
+        }
+        assert_eq!(fade(&LevelFog::sky([41, 0, 29, 0], 1.0), 0.0), 1.0);
+        assert_eq!(LevelFog::sky([41, 0, 29, 0], 0.0), LevelFog::NONE);
+    }
+
+    /// openspec AS.164: where the sky dome takes a share of the fog its
+    /// segments draw on copies that own their fog on, keyed fogged in a
+    /// scene with none, and those copies are the sky's materials alone.
+    #[test]
+    fn a_sky_at_a_share_draws_on_copies_that_own_their_fog_on() {
+        let ground = multi2(mask(0x1A, 0x3FF), mask(0x101A, 0x1BFF));
+        let sky = multi2(mask(0x0, 0x3BFF), mask(0x1000, 0x3BFF));
+        let graph = SceneGraph {
+            world: "Levels/Test/Test_ART_MASTER.ma".into(),
+            materials: vec![
+                LevelMaterial::Multi2(ground.clone()),
+                LevelMaterial::Multi2(sky.clone()),
+            ],
+            segments: vec![segment(0, false), segment(1, true), segment(0, false)],
+            sky: vec![SkyGroup {
+                name: "sky".into(),
+                segments: vec![1, 2],
+            }],
+        };
+        let d = drawn(graph, true).unwrap();
+        // The ground, its copy for the sky and the sky's own copy.
+        assert_eq!(d.materials.len(), 3);
+        assert_eq!(d.sky_materials(), [false, true, true]);
+        for m in &d.materials[1..] {
+            assert_eq!(m.pixel.ignore >> bit::FOG & 1, 1, "owned");
+            assert_eq!(m.pixel.base >> bit::FOG & 1, 1, "on");
+            assert_eq!(m.vertex.base >> bit::FOG & 1, 1);
+            assert!(!m.states.depth_write);
+        }
+        // In a scene with no fog the ground keys without, the sky with.
+        let l = level_lights(&lights(), &zone()).unwrap();
+        let mut scene = view_scene(&l, &LevelFog::NONE, Mat4::IDENTITY);
+        scene.fog = false;
+        let mut fogged: Vec<(usize, bool)> = keys(&d, &scene)
+            .unwrap()
+            .iter()
+            .map(|(k, m)| (*m, k.material.shader.switches().fog))
+            .collect();
+        fogged.sort();
+        assert_eq!(fogged, [(0, false), (1, true), (2, true)]);
     }
 
     /// AG.41: with the sky dome taking none of the fog, the sky's segments

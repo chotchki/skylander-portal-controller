@@ -2876,26 +2876,42 @@ mod tests {
         );
         assert_eq!(app.world().resource::<Level>().report().relit, relit);
         // Everything the level's camera draws, the hero and the level, is
-        // lit in the world's frame (his card's turntable keeps its rig's
-        // view space).
+        // lit in the world's frame off the level's buffer, the sky's copy
+        // with the sky's fog (openspec AS.164; his card's turntable keeps its
+        // rig's view space).
         let mut materials = app
             .world_mut()
             .query::<(&MeshMaterial3d<CharacterMaterial>, &RenderLayers)>();
         let assets = app.world().resource::<Assets<CharacterMaterial>>();
-        let frames: Vec<f32> = materials
+        let level_layer: Vec<&CharacterMaterial> = materials
             .iter(app.world())
             .filter(|(_, l)| **l == RenderLayers::layer(LEVEL_LAYER))
-            .map(|(m, _)| assets.get(&m.0).unwrap().uniform.misc.w)
+            .map(|(m, _)| assets.get(&m.0).unwrap())
             .collect();
+        let frames: Vec<f32> = level_layer.iter().map(|m| m.uniform.misc.w).collect();
+        // Each off the level's buffer, which since AS.148 holds every light
+        // and the fog: one on the dark buffer would draw unlit (the review).
+        assert!(
+            level_layer
+                .iter()
+                .all(|m| m.scene_lights.id() == guacamole::character::LEVEL_LIGHTS.id()),
+            "a level-layer material off the level's buffer"
+        );
         assert!(
             frames.len() >= 5,
             "the level's four segments and his: {frames:?}"
         );
+        use guacamole::character::{LIGHTS_FROM_SCENE, SKY_FROM_SCENE};
         assert!(
             frames
                 .iter()
-                .all(|w| *w == guacamole::character::LIGHTS_FROM_SCENE),
+                .all(|w| *w == LIGHTS_FROM_SCENE || *w == SKY_FROM_SCENE),
             "{frames:?}"
+        );
+        assert_eq!(
+            frames.iter().filter(|w| **w == SKY_FROM_SCENE).count(),
+            1,
+            "the sky's one segment: {frames:?}"
         );
         // AH.65: the walk's camera runs the glow chain off its frame's alpha,
         // so it carries the clear the level's glow masks write over; without

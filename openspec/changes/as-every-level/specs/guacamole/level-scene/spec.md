@@ -226,6 +226,17 @@ A hero walking into an interior's box on any level SHALL be taken to its room: t
 - **WHEN** the hero walks into the house the Mabu ran into, takes its room's bomb and walks into its exit's box
 - **THEN** he stands outside its door with the bomb still over him, which opens the wall before the second key
 
+### Requirement: Chapter 1's first cave's people
+As the hero comes into chapter 1's first cave, its scene SHALL stand Norticus in his turban, a Mabu with his hammer and one with his brick, each on his own animation, and the Giant where the original's scene stands them, the interface hidden. Once it lets the hero go, Norticus SHALL lead him on in his turban and the two Mabu SHALL be back at work where they stood, each holding his own.
+
+#### Scenario: Into the cave from its mouth
+- **WHEN** the hero, the first fight won, lands in the cave
+- **THEN** 6.5 s on Norticus, the two Mabu and the Giant each stand within 0.1 m and 1 degree of where the original's do, each with what he holds
+
+#### Scenario: The scene over
+- **WHEN** the cave's scene lets the hero go
+- **THEN** Norticus walks ahead of him in his turban and no other turban is left in the cave
+
 ### Requirement: An enemy's intro names him
 When a level's scripts play an enemy's intro with a name card, the TV SHALL show the enemy's name for as long as the scripts hold it, in the TV's own look, and any hint the scripts queue for after the scene for its stay. Neither SHALL show under a portal alert, nor a hint while a scene hides the interface, and neither SHALL cover the pause overlay, the completion screen or a modal.
 
@@ -285,7 +296,7 @@ A hub stage SHALL show what the adventures done open, by what the host's save ho
 - **THEN** the Hermit's scene plays through its movie, the hero handed over on the main deck
 
 ### Requirement: A level's zone lights it
-From a level's first step the TV SHALL light and fog it by the atmospheric zone its scripts have it in, blending over a transition at no more than 8 points of its way, none of them a frame past the slow-frame log's 50 ms. A zone whose fog the TV can't draw, or that the level's part doesn't hold, SHALL leave the level as it was, named in the report; a zone's share of the sky's fog is left undrawn, named.
+From a level's first step the TV SHALL light and fog it by the atmospheric zone its scripts have it in, blending over a transition at no more than 8 points of its way with no frame past 20 ms of its own, and SHALL fog its sky by the share its start's zone sets up, in the sky colour the transition slides. A zone whose fog the TV can't draw, or that the level's part doesn't hold, SHALL leave the level as it was, named in the report.
 
 #### Scenario: Level 214 from its start
 - **WHEN** level 214's scripts switch from the start's zone to their own in their first steps
@@ -293,7 +304,15 @@ From a level's first step the TV SHALL light and fog it by the atmospheric zone 
 
 #### Scenario: Into the cave
 - **WHEN** the hero walks into chapter 1's cave
-- **THEN** the room's zone lights it from under the darkness, and the exterior's lights it again once he's out
+- **THEN** the room's zone lights it from under the darkness, and the exterior's lights it again once he's out, no frame of either transition past 20 ms
+
+#### Scenario: A start zone asking a share of the sky
+- **WHEN** level 206, whose start zone asks the sky dome take all of its fog, is asked for
+- **THEN** it loads, its sky drawn in its zone's sky colour, and nothing is refused for the share
+
+#### Scenario: Chapter 1's sky through a timed switch
+- **WHEN** chapter 1's scripts switch over time to a zone asking a share of the sky's fog
+- **THEN** the sky keeps the start zone's share, none, only its colour following the zone
 
 ### Requirement: A carried bomb shows its count
 Each count of a carried bomb SHALL show as its number over the bomb, from the disc's own font, sliding up and fading out over the 2 s its timer stands, a new number at each count until it bursts.

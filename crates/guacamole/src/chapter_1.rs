@@ -4,7 +4,9 @@
 //!
 //! The way, as its scripts have it:
 //! - **The first cave.** The hero comes in by the pit's interior. `213
-//!   gigantus igc` frees the Giant, who stands by the cracked floor. Near him
+//!   gigantus igc` plays as he arrives, Norticus and two Mabu at work in it
+//!   on their own scripts, and frees the Giant, who stands by the cracked
+//!   floor. Near him
 //!   he says his line, smashes through it and is gone; the hero walks round
 //!   by the lower ledge and falls in, and the pit's interior carries him to
 //!   the second cave.
@@ -73,8 +75,19 @@ pub const WAY: Encounter = Encounter {
 };
 
 /// What takes the way on past them, listed and never walked.
-pub const PASSAGE: [&str; 71] = [
+pub const PASSAGE: [&str; 76] = [
     "213_Gigantus_IGC",
+    // The first cave's scene's people (openspec AS.105): Norticus in his
+    // turban, a Mabu hammering and one carrying a brick, each its own
+    // script's (the hat, the hammer, the brick, their clips), and the two
+    // at work there the scene takes off at its start and puts back at its
+    // end, turning to the hero as he comes by; drawn with `2.NPC_Norticus_
+    // First_Cave` as the level's people ([`crate::scripts::LEVEL_PEOPLE`]).
+    "213_Gigantus_Norticus",
+    "213_Gigantus_Slave_hammer",
+    "213_Gigantus_Slave_Carry",
+    "Slave_1_hammer(3)",
+    "Slave_Carry(3)",
     "2.NPC_Norticus_First_Cave",
     "1.NPC_Giant",
     "Titan_Floor(Template)(1)",

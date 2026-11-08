@@ -1169,6 +1169,97 @@ fn a_write_through_a_named_object_drops() {
     assert_eq!(vm.local(id, "ran"), Some(Value::Int(1)));
 }
 
+/// AS.128: a file variable by its name is the lowest object of that name,
+/// as the scan over every global found it, the index made at the link
+/// answering every global by its name and nothing for a name none has.
+#[test]
+fn a_file_variable_by_name_is_the_first_of_its_name() {
+    let p = program(|w| {
+        let got = var(w, "got");
+        let file = |w: &mut Writer<'_>, name: &str, value: u32| {
+            let f = w.b.object(0, "ValueInfo", 0x24);
+            w.text(f, 0x08, name);
+            w.meta_word(f, 0x1C, INT);
+            w.word(f, 0x20, value);
+            f
+        };
+        let twin = file(w, "twin", 7);
+        let later = file(w, "twin", 8);
+        let other = file(w, "other", 9);
+        idle(
+            w,
+            |_| {},
+            |w| {
+                for f in [later, other, twin] {
+                    let v = w.rhs(INT, &[El::Local(f)]);
+                    w.set(&[El::Local(got)], v);
+                }
+            },
+        );
+    });
+    let value = |g: Option<GlobalId>| match g.map(|g| &p.globals[g as usize].1) {
+        Some(Global::Number(v)) => Some(*v),
+        _ => None,
+    };
+    let twins = p
+        .globals
+        .iter()
+        .filter(|(o, _)| p.name_of(*o) == Some("twin"))
+        .count();
+    assert_eq!(twins, 2, "both linked");
+    assert_eq!(
+        value(p.global_named("twin")),
+        Some(Value::Int(7)),
+        "the first"
+    );
+    assert_eq!(value(p.global_named("other")), Some(Value::Int(9)));
+    assert_eq!(p.global_named("absent"), None);
+    // The scan it stands for, over every global.
+    for (o, _) in &p.globals {
+        let Some(name) = p.name_of(*o) else {
+            continue;
+        };
+        let first = p
+            .globals
+            .iter()
+            .enumerate()
+            .filter(|(_, (q, _))| p.name_of(*q) == Some(name))
+            .map(|(i, (q, _))| (*q, i as GlobalId))
+            .min()
+            .map(|(_, g)| g);
+        assert_eq!(p.global_named(name), first, "{name}");
+    }
+}
+
+/// AS.128: every built-in member is known by its id, hashed once, and an
+/// id none has is none of them.
+#[test]
+fn a_builtin_is_known_by_its_id() {
+    use crate::Builtin;
+    for b in [
+        Builtin::My,
+        Builtin::Null,
+        Builtin::Undefined,
+        Builtin::Its,
+        Builtin::ValueDereferencer,
+        Builtin::Count,
+        Builtin::First,
+        Builtin::Last,
+        Builtin::Random,
+        Builtin::CastToInteger,
+        Builtin::ScriptTimer,
+        Builtin::FrameRateScale,
+        Builtin::Behaviour,
+        Builtin::Next,
+    ] {
+        assert_eq!(Builtin::of(b.id()), Some(b), "{}", b.name());
+        let (ns, name) = b.name().split_once('.').unwrap();
+        assert_eq!(Builtin::of(MemberId::named(ns, name)), Some(b));
+    }
+    assert_eq!(Builtin::of(MemberId::named("test", "count")), None);
+    assert_eq!(Builtin::of(MemberId::named("setvariant", "middle")), None);
+}
+
 fn hurts() -> Arc<Program> {
     program(|w| {
         let count = var(w, "count");
