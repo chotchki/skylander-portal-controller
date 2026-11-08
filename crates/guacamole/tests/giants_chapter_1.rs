@@ -209,7 +209,9 @@ fn into_the_cave() -> Walk {
 
 /// The first cave: its cutscene frees the Giant; near him he smashes the
 /// cracked floor and goes; the way round by the lower ledge drops the hero
-/// through it to the second cave.
+/// through it to the second cave. Norticus leads him by the way his
+/// waypoints go and stands at the last of them, (-913.4, -299.0), so the
+/// walk goes by him to the floor (openspec AS.105: he's the level's people).
 fn through_the_first_cave(w: &mut Walk) {
     assert_eq!(cutscene_name(&w.run).as_deref(), Some("213 gigantus igc"));
     w.scene_out();
@@ -217,7 +219,6 @@ fn through_the_first_cave(w: &mut Walk) {
         [-919.6, -321.0],
         [-921.9, -311.6],
         [-918.2, -301.6],
-        [-913.4, -299.0],
         [-908.0, -285.0],
         [-908.0, -274.0],
     ]);
