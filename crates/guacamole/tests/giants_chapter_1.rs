@@ -76,7 +76,7 @@ impl Walk {
         };
         let stopped = self.run.step_play().unwrap();
         self.stops.extend(stopped.iter().map(ToString::to_string));
-        if self.run.steps % 10 == 0 {
+        if self.run.steps.is_multiple_of(10) {
             self.watch_people();
         }
     }
