@@ -237,6 +237,13 @@ As the hero comes into chapter 1's first cave, its scene SHALL stand Norticus in
 - **WHEN** the cave's scene lets the hero go
 - **THEN** Norticus walks ahead of him in his turban and no other turban is left in the cave
 
+### Requirement: Chapter 1's people past its first cave
+Past chapter 1's first cave the TV SHALL draw its people where their scripts have them, each in what it wears and holds: the Mabu by the pit, Norticus at the second cave's top, who leads the hero on and goes, the Mabu by the life area, Norticus at the quarry, who leads him up its slope and stands at its top on the ground, and the Mabu at work along the way. A hero SHALL get past each on foot.
+
+#### Scenario: Up the quarry's slope
+- **WHEN** the hero walks up the quarry's slope from the air area
+- **THEN** Norticus walks ahead of him on the slope in his turban, stands at its top within 0.3 m of the ground, and the hero walks on past him
+
 ### Requirement: An enemy's intro names him
 When a level's scripts play an enemy's intro with a name card, the TV SHALL show the enemy's name for as long as the scripts hold it, in the TV's own look, and any hint the scripts queue for after the scene for its stay. Neither SHALL show under a portal alert, nor a hint while a scene hides the interface, and neither SHALL cover the pause overlay, the completion screen or a modal.
 
