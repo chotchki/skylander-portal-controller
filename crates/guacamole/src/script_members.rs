@@ -141,6 +141,8 @@ pub(crate) enum Member {
     SeqRate,
     SeqLooping,
     SeqRawDuration,
+    /// `sequence.playback mode` (openspec AU.53): 0 one way, 1 ping pong.
+    SeqPlaybackMode,
     /// `sequence.allow restart` (openspec AH.184): a clip's, which a copy
     /// started from it takes, or a sequence's own.
     AllowRestart,
@@ -445,6 +447,7 @@ impl Member {
         add("sequence", "playback rate", Member::SeqRate);
         add("sequence", "looping", Member::SeqLooping);
         add("sequence", "raw duration", Member::SeqRawDuration);
+        add("sequence", "playback mode", Member::SeqPlaybackMode);
         add("sequence", "allow restart", Member::AllowRestart);
         add("clonedsequence", "clones", Member::SeqClones);
         add("clonedsequence", "activator", Member::SeqActivator);
@@ -560,6 +563,81 @@ impl ScriptWorld {
             Value::Entity(h) => Some(h),
             Value::Object(o) => self.objects.get(&o).copied(),
             _ => None,
+        }
+    }
+
+    /// A reset of an actor's movement or collision member (openspec AU.53):
+    /// the field back to its file's value, a clone's its template's (a
+    /// scene's jump takes its actor's shape off for the arc and resets it to
+    /// come down on the ground). Whether `m` is one; a field its file holds
+    /// no values for is left as it is.
+    pub(crate) fn reset_facet(&mut self, m: Member, receiver: Option<Value>) -> bool {
+        match (m, self.object(receiver)) {
+            (Member::Physics(f), Some(Object::Facet(h, Facet::Movement))) => {
+                let file = self
+                    .actors
+                    .get(&h)
+                    .and_then(|a| a.obj.or(a.template))
+                    .and_then(|o| self.template(o))
+                    .and_then(|p| p.physics);
+                if let (Some(file), Some(a)) = (file, self.actors.get_mut(&h)) {
+                    let p = &mut a.physics;
+                    use PhysicsField as P;
+                    match f {
+                        P::GroundMaxSpeed => p.ground_max_speed = file.ground_max_speed,
+                        P::GroundAcceleration => p.ground_acceleration = file.ground_acceleration,
+                        P::GroundDeceleration => p.ground_deceleration = file.ground_deceleration,
+                        P::GroundTurnRate => p.ground_turn_rate = file.ground_turn_rate,
+                        P::AirMaxSpeed => p.air_max_speed = file.air_max_speed,
+                        P::AirAcceleration => p.air_acceleration = file.air_acceleration,
+                        P::AirDeceleration => p.air_deceleration = file.air_deceleration,
+                        P::AirTurnRate => p.air_turn_rate = file.air_turn_rate,
+                        P::GravityMaxSpeed => p.gravity_max_speed = file.gravity_max_speed,
+                        P::GravityAcceleration => {
+                            p.gravity_acceleration = file.gravity_acceleration
+                        }
+                        P::JumpMaxSpeed => p.jump_max_speed = file.jump_max_speed,
+                        P::JumpAcceleration => p.jump_acceleration = file.jump_acceleration,
+                        P::JumpInitialSpeed => p.jump_initial_speed = file.jump_initial_speed,
+                        P::MoveType => p.move_type = file.move_type,
+                        P::TiltsWithGround => p.tilts_with_ground = file.tilts_with_ground,
+                        P::TimeScale => p.time_scale = file.time_scale,
+                    }
+                }
+                true
+            }
+            (Member::Solid(f), Some(Object::Facet(h, Facet::Collision))) => {
+                let file = self
+                    .actors
+                    .get(&h)
+                    .and_then(|a| a.obj.or(a.template))
+                    .and_then(|o| self.template(o))
+                    .and_then(|p| p.solid);
+                if let (Some(file), Some(a)) = (file, self.actors.get_mut(&h)) {
+                    let s = &mut a.solid;
+                    use SolidField as S;
+                    match f {
+                        S::Width => s.width = file.width,
+                        S::Length => s.length = file.length,
+                        S::Height => s.height = file.height,
+                        S::Offset(k) => s.offset[k] = file.offset[k],
+                        S::Weight => s.weight = file.weight,
+                        S::Rebound => s.rebound = file.rebound,
+                        S::InteractsWithActors => {
+                            s.interacts_with_actors = file.interacts_with_actors
+                        }
+                        S::InteractsWithLevelMesh => {
+                            s.interacts_with_level_mesh = file.interacts_with_level_mesh
+                        }
+                        S::ActsAsActorSurface => {
+                            s.acts_as_actor_surface = file.acts_as_actor_surface
+                        }
+                        S::Shape => s.shape = file.shape,
+                    }
+                }
+                true
+            }
+            _ => false,
         }
     }
 
@@ -1435,6 +1513,7 @@ impl ScriptWorld {
             | Member::SeqPercentRemaining
             | Member::SeqRate
             | Member::SeqLooping
+            | Member::SeqPlaybackMode
             | Member::SeqRawDuration => {
                 let Some(Object::Sequence(i)) = object else {
                     return Err(HostFault::Nothing);
@@ -1445,6 +1524,7 @@ impl ScriptWorld {
                     Member::SeqPercentRemaining => Value::Float(s.percent_remaining()),
                     Member::SeqRate => Value::Float(s.rate),
                     Member::SeqLooping => Value::Int(i32::from(s.looping)),
+                    Member::SeqPlaybackMode => Value::Int(i32::from(s.ping_pong)),
                     _ => Value::Float(s.length),
                 }
             }
@@ -2055,7 +2135,10 @@ impl ScriptWorld {
                     return Err(HostFault::Nothing);
                 }
             }
-            Member::SeqRate | Member::SeqLooping | Member::SeqPercentRemaining => {
+            Member::SeqRate
+            | Member::SeqLooping
+            | Member::SeqPlaybackMode
+            | Member::SeqPercentRemaining => {
                 let Some(Object::Sequence(i)) = object else {
                     return Err(HostFault::Nothing);
                 };
@@ -2066,6 +2149,9 @@ impl ScriptWorld {
                 match m {
                     Member::SeqRate => s.rate = float(v)?,
                     Member::SeqLooping => s.looping = v.as_i32().ok_or(HostFault::Nothing)? != 0,
+                    Member::SeqPlaybackMode => {
+                        s.ping_pong = v.as_i32().ok_or(HostFault::Nothing)? == 1;
+                    }
                     _ => s.time = s.length * (1.0 - float(v)? * 0.01),
                 }
             }
@@ -2499,6 +2585,8 @@ impl ScriptWorld {
             kind: info.kind,
             layered: state.layered.unwrap_or(info.layered),
             allow_restart: state.allow_restart.unwrap_or(false),
+            ping_pong: false,
+            back: false,
         });
         let s = self
             .objs
@@ -3255,6 +3343,20 @@ impl ScriptWorld {
     pub(crate) fn move_actors(&mut self, dt: f32, engine: &mut dyn Engine) {
         self.move_walkers(dt, engine);
         self.move_scene_walks(dt, engine);
+        // A platform its script lets go of (no longer solid to actors, given
+        // a gravity: level 201's bridge planks as Brock smashes it) falls
+        // from where it stands (openspec AU.53).
+        let platforms = &self.platform_clones;
+        for a in self.actors.values_mut() {
+            if !a.launched
+                && !a.removed
+                && a.solid.interacts_with_actors == 0
+                && a.physics.gravity_acceleration > 0.0
+                && a.template.is_some_and(|t| platforms.contains(&t))
+            {
+                a.launched = true;
+            }
+        }
         // A scene walk is its actor's one motion (AS.68).
         let mut flying: Vec<Handle> = self
             .actors
@@ -3476,7 +3578,10 @@ impl ScriptWorld {
                     && (a.walker.is_some()
                         || (a.solid.interacts_with_actors != 0
                             && !self.inert.contains(h)
-                            && people.binary_search(h).is_ok()))
+                            && people.binary_search(h).is_ok())
+                        || (a.solid.interacts_with_actors != 0
+                            && a.template
+                                .is_some_and(|t| self.platform_clones.contains(&t))))
             })
             .filter_map(|(&h, a)| {
                 let solid = a.havok()?;
@@ -3520,7 +3625,16 @@ impl ScriptWorld {
             };
             let aim = std::mem::take(&mut w.aim);
             let Some(solid) = solid else {
-                // Nothing to sweep: it moves by its velocity as it is.
+                // Nothing to sweep: it moves by its velocity, falling by its
+                // gravity as a launched actor does (openspec AU.53: a scene's
+                // jump takes its actor's shape off for the arc and waits for
+                // it to come down to its waypoint).
+                if a.physics.gravity_acceleration > 0.0 {
+                    a.velocity.y -= a.physics.gravity_acceleration * dt;
+                    if a.physics.gravity_max_speed > 0.0 {
+                        a.velocity.y = a.velocity.y.max(-a.physics.gravity_max_speed);
+                    }
+                }
                 a.position += a.velocity * (dt * METRES_PER_FOOT);
                 continue;
             };
@@ -5761,6 +5875,137 @@ mod fight_tests {
         };
         let handles = HashMap::new();
         ScriptWorld::new(&files, &handles, headless_objects(&handles))
+    }
+
+    /// openspec AU.53: a clone of a template its level's way names a
+    /// platform (level 201's bridge planks) stands in the world as a solid
+    /// body where its script leaves it, so a hero walks on it; let go (no
+    /// longer solid to actors, given a gravity) it falls and stands nowhere.
+    /// A clone of any other template gets no body.
+    #[test]
+    fn a_platform_clone_stands_until_its_script_lets_it_go() {
+        let mut e = pit();
+        let (plank, other) = (Obj { unit: 5, index: 3 }, Obj { unit: 5, index: 4 });
+        let mut solid = chompy(Vec3::ZERO, 0.0).solid;
+        solid.shape = 1;
+        solid.acts_as_actor_surface = 1;
+        let placed = |obj, name| crate::scripts::Placed {
+            solid: Some(solid),
+            ..crate::scripts::Placed::named(obj, name, Some("C:/x/Plank.ai"), 5)
+        };
+        let files = Files {
+            placed: vec![placed(plank, "Bridge_Board_1"), placed(other, "Crate")],
+            ..Files::default()
+        };
+        let handles = HashMap::from([(plank, C1), (other, C2)]);
+        let mut w = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let way = crate::scripts::Encounter {
+            level: "level_201",
+            placements: &[],
+            clones: &[],
+            steered: &[],
+            platforms: &["Bridge_Board_1"],
+        };
+        w.walk_encounter(5, &way);
+        let clone = |template| Actor {
+            template: Some(template),
+            position: Vec3::new(0.0, 7.0, 0.0),
+            solid,
+            ..Actor::blank()
+        };
+        w.actors.insert(C3, clone(plank));
+        w.actors.insert(0x6100_0020, clone(other));
+        let bodies: Vec<Handle> = w.creature_bodies().iter().map(|b| b.0).collect();
+        assert_eq!(bodies, [C3]);
+        // Let go: no longer solid to actors, falling at 60 ft/s².
+        let a = w.actors.get_mut(&C3).unwrap();
+        a.solid.interacts_with_actors = 0;
+        a.physics.gravity_acceleration = 60.0;
+        a.physics.gravity_max_speed = 60.0;
+        a.physics.time_scale = 100.0;
+        for _ in 0..30 {
+            w.advance(STEP, &mut e);
+        }
+        assert!(w.creature_bodies().is_empty());
+        let y = w.actor(C3).unwrap().position.y;
+        assert!(y < 6.0, "falling: {y}");
+        assert_eq!(w.actor(0x6100_0020).unwrap().position.y, 7.0);
+    }
+
+    /// openspec AU.53: a scene's jump (level 201's practice pit elves) takes
+    /// its actor's shape off for the arc, so it falls by its gravity with no
+    /// body to sweep; back within a foot of its waypoint's height the scene
+    /// resets the shape to the file's, and with its body back it lands on
+    /// the ground and stops. A reset of a movement member puts back the
+    /// file's value too.
+    #[test]
+    fn a_scene_jump_falls_by_its_gravity_and_lands_once_its_shape_is_reset() {
+        let mut e = pit();
+        let obj = Obj { unit: 4, index: 7 };
+        let mut elf = chompy(Vec3::new(0.0, 3.0, 0.0), 0.0);
+        elf.obj = Some(obj);
+        let mut placed = crate::scripts::Placed::named(
+            obj,
+            "Practice_Pit_Cutscene_Elf_Near",
+            Some("C:/x/Elf.ai"),
+            5,
+        );
+        placed.solid = Some(elf.solid);
+        placed.physics = Some(elf.physics);
+        let files = Files {
+            lights: HashMap::new(),
+            emitters: HashMap::new(),
+            placed: vec![placed],
+            ids: HashMap::new(),
+            points: HashMap::new(),
+            turns: HashMap::new(),
+        };
+        let handles = HashMap::from([(obj, C1)]);
+        let mut w = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        // As the jump's start leaves it: no shape, 128 ft/s² down, launched
+        // up at 30 ft/s.
+        elf.solid.shape = 0;
+        elf.physics.gravity_acceleration = 128.0;
+        elf.physics.gravity_max_speed = 9999.0;
+        elf.physics.ground_deceleration = 1.0;
+        elf.velocity = Vec3::new(0.0, 30.0, 0.0);
+        w.actors.insert(C1, elf);
+        let mut top: f32 = 0.0;
+        for _ in 0..30 {
+            w.advance(STEP, &mut e);
+            top = top.max(w.actor(C1).unwrap().position.y);
+        }
+        let a = w.actor(C1).unwrap();
+        assert!(top > 3.9, "up: {top}");
+        assert!(
+            a.velocity.y < 0.0 && a.position.y < top,
+            "coming down: {:?}",
+            a.position
+        );
+        // Its shape and deceleration back as its file has them.
+        let collision = w.objs.value(Object::Facet(C1, Facet::Collision));
+        let movement = w.objs.value(Object::Facet(C1, Facet::Movement));
+        assert!(w.reset_facet(Member::Solid(SolidField::Shape), Some(collision)));
+        assert!(w.reset_facet(
+            Member::Physics(PhysicsField::GroundDeceleration),
+            Some(movement)
+        ));
+        assert!(!w.reset_facet(
+            Member::Physics(PhysicsField::GroundDeceleration),
+            Some(collision)
+        ));
+        assert_eq!(w.actor(C1).unwrap().solid.shape, 3);
+        assert_eq!(w.actor(C1).unwrap().physics.ground_deceleration, 80.0);
+        for _ in 0..120 {
+            w.advance(STEP, &mut e);
+        }
+        let a = w.actor(C1).unwrap();
+        assert!(
+            a.position.y.abs() < 0.2 && a.position.y > -0.2,
+            "landed: {:?}",
+            a.position
+        );
+        assert!(a.velocity.y.abs() < 1.0, "at rest: {:?}", a.velocity);
     }
 
     fn op(
@@ -8266,6 +8511,50 @@ mod animation_tests {
                 &mut e
             ),
             Err(HostFault::Nothing)
+        );
+    }
+
+    /// openspec AU.53: a life mage's death controller sets the death pose
+    /// it plays to ping pong. The host keeps it on the sequence (read back,
+    /// played out and back), the TV's config routing the member to it; a
+    /// clip itself takes none.
+    #[test]
+    fn a_sequence_takes_its_playback_mode() {
+        let (mut w, mut e) = (world(), pit());
+        let clips = palette(&mut w);
+        let pose = play(&mut w, &mut e, clips[2]);
+        assert_eq!(
+            w.get(&on(pose, "sequence", "playback mode"), &mut e)
+                .unwrap(),
+            Value::Int(0)
+        );
+        w.set(
+            &on(pose, "sequence", "playback mode"),
+            Value::Int(1),
+            &mut e,
+        )
+        .unwrap();
+        assert!(w.sequences().last().unwrap().ping_pong);
+        assert_eq!(
+            w.get(&on(pose, "sequence", "playback mode"), &mut e)
+                .unwrap(),
+            Value::Int(1)
+        );
+        assert_eq!(
+            w.set(
+                &on(clips[2], "sequence", "playback mode"),
+                Value::Int(1),
+                &mut e
+            ),
+            Err(HostFault::Nothing)
+        );
+        let id = guac_script::MemberId::named("sequence", "playback mode");
+        let c = crate::scripts::hero_config(guac_script::Mode::Play);
+        assert!(
+            c.members
+                .get(id)
+                .is_some_and(|(_, p)| p == guac_script::Place::Host),
+            "the host's"
         );
     }
 

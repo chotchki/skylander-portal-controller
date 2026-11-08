@@ -542,6 +542,12 @@ pub struct Sequence {
     /// plays starts it again (openspec AH.184), its clip's when it started
     /// (no clip on the disc has it, no script sets it on one).
     pub allow_restart: bool,
+    /// `sequence.playback mode` 1, ping pong (openspec AU.53): at its end it
+    /// plays back to its start, as a slider does (guac-script's crate docs,
+    /// Slides). A life mage's death pose is the one the disc sets.
+    pub ping_pong: bool,
+    /// On a ping pong's way back.
+    pub back: bool,
 }
 
 /// What a script reads of a sequence with this little left (seconds of
@@ -599,6 +605,7 @@ impl Sequence {
         self.time = 0.0;
         self.done = false;
         self.stopped = false;
+        self.back = false;
     }
 
     /// What's left of it in its own time, seconds at 100 %, as a script
@@ -608,7 +615,11 @@ impl Sequence {
         if self.length <= 0.0 || self.done || self.stopped {
             return 0.0;
         }
-        let left = self.length - self.time;
+        // What's left of this pass: a ping pong's way back runs to its start.
+        let left = match self.back {
+            true => self.time,
+            false => self.length - self.time,
+        };
         if left <= self.rate * 0.01 * DONE_MARGIN {
             0.0
         } else {
@@ -643,7 +654,30 @@ impl Sequence {
             self.done = true;
             return;
         }
-        self.time += dt * self.rate * 0.01;
+        let step = dt * self.rate * 0.01;
+        if self.ping_pong {
+            // Out to its end, back to its start, there done unless it loops.
+            if !self.back {
+                self.time += step;
+                if self.time >= self.length {
+                    self.back = true;
+                    self.time = (2.0 * self.length - self.time).max(0.0);
+                }
+            } else {
+                self.time -= step;
+                if self.time <= 0.0 {
+                    if self.looping {
+                        self.back = false;
+                        self.time = (-self.time).min(self.length);
+                    } else {
+                        self.time = 0.0;
+                        self.done = true;
+                    }
+                }
+            }
+            return;
+        }
+        self.time += step;
         if self.time >= self.length {
             if self.looping {
                 self.time = self.time.rem_euclid(self.length);
@@ -824,6 +858,8 @@ mod tests {
             kind: 0,
             layered: false,
             allow_restart: false,
+            ping_pong: false,
+            back: false,
         };
         assert_eq!(s.percent_remaining(), 100.0);
         assert!((s.time_remaining() - 0.5 / 1.5).abs() < 1e-6);
@@ -854,6 +890,63 @@ mod tests {
         assert!(l.time < l.length);
     }
 
+    /// openspec AU.53: a clip set to ping pong plays out to its end, back
+    /// to its start and is done there, each pass read as what's left of
+    /// it; looping, it goes out again; one way it ends at its end as ever.
+    #[test]
+    fn a_ping_pong_clip_comes_back_and_ends_at_its_start() {
+        let mut s = Sequence {
+            actor: 1,
+            template: Value::Null,
+            length: 0.5,
+            time: 0.0,
+            rate: 100.0,
+            looping: false,
+            stopped: false,
+            done: false,
+            blend: 100.0,
+            kind: 0,
+            layered: false,
+            allow_restart: false,
+            ping_pong: true,
+            back: false,
+        };
+        // 0.4 s out: 0.1 s of the way out left.
+        for _ in 0..24 {
+            s.advance(1.0 / 60.0);
+        }
+        assert!(!s.back && (s.time - 0.4).abs() < 1e-4, "{}", s.time);
+        assert!((s.percent_remaining() - 20.0).abs() < 1e-2);
+        // 0.2 s on: past its end and 0.1 s back.
+        for _ in 0..12 {
+            s.advance(1.0 / 60.0);
+        }
+        assert!(s.back && !s.done, "on its way back");
+        assert!((s.time - 0.4).abs() < 1e-4, "{}", s.time);
+        assert!((s.percent_remaining() - 80.0).abs() < 1e-2);
+        for _ in 0..30 {
+            s.advance(1.0 / 60.0);
+        }
+        assert!(s.done && s.time == 0.0, "done at its start: {}", s.time);
+        // Looping, it goes out again from its start.
+        let mut l = Sequence {
+            looping: true,
+            done: false,
+            back: false,
+            time: 0.0,
+            ..s.clone()
+        };
+        for _ in 0..66 {
+            l.advance(1.0 / 60.0);
+        }
+        assert!(!l.done && !l.back, "out again");
+        assert!((l.time - 0.1).abs() < 1e-3, "{}", l.time);
+        // Restarted, it's on its way out.
+        l.back = true;
+        l.restart();
+        assert!(!l.back);
+    }
+
     /// AH.55: a script reads a sequence's time left until its last two
     /// frames, then nothing: the Chompy's windup (11 frames at 30 a second,
     /// 1/3 s) reads 0.05 s three frames from its end and nothing two from
@@ -877,6 +970,8 @@ mod tests {
             kind: 0,
             layered: false,
             allow_restart: false,
+            ping_pong: false,
+            back: false,
         };
         // The frame a wait on its end sees it over, and what each frame
         // before reads.

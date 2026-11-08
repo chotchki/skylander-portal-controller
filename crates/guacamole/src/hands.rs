@@ -260,6 +260,8 @@ mod tests {
             kind: 0,
             layered: false,
             allow_restart: false,
+            ping_pong: false,
+            back: false,
         };
         let mut played = vec![
             sequence(7, 3.0, 3.0, true),
@@ -391,6 +393,8 @@ mod tests {
                 kind,
                 layered,
                 allow_restart: false,
+                ping_pong: false,
+                back: false,
             });
         };
         sequence(&mut world, 0, 0, true, false); // his idle

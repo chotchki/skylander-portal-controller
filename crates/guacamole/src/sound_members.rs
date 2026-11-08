@@ -279,6 +279,8 @@ impl ScriptWorld {
             kind: 0,
             layered: false,
             allow_restart: params.allow_restart,
+            ping_pong: false,
+            back: false,
         });
         let i = (self.sequences.len() - 1) as u32;
         self.begin_play(i, id);

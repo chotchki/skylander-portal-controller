@@ -634,6 +634,9 @@ pub struct ScriptWorld {
     /// AS.54, [`ScriptWorld::walk_encounter`]): what a level's spawners
     /// clone.
     pub(crate) walk_clones: std::collections::HashSet<Obj>,
+    /// The templates whose clones stand as solid platforms (openspec AU.53,
+    /// [`Encounter::platforms`]).
+    pub(crate) platform_clones: std::collections::HashSet<Obj>,
     /// The level's intro held until a hero's minion is in (openspec AS.47,
     /// [`hold_intro`]), by handle.
     pub(crate) intro_held: Option<Handle>,
@@ -952,6 +955,7 @@ impl ScriptWorld {
             music_held: Vec::new(),
             music_silent: 0,
             walk_clones: Default::default(),
+            platform_clones: Default::default(),
             intro_held: None,
             scene_walks: HashMap::new(),
             walk_written: std::collections::HashSet::new(),
@@ -1356,6 +1360,13 @@ impl ScriptWorld {
             .collect();
         let found = templates.len();
         self.walk_clones.extend(templates);
+        let platforms: Vec<Obj> = self
+            .templates
+            .iter()
+            .filter(|(o, p)| o.unit == unit && encounter.platforms.contains(&p.name.as_str()))
+            .map(|(o, _)| *o)
+            .collect();
+        self.platform_clones.extend(platforms);
         (walkers.len(), found)
     }
 
@@ -2130,6 +2141,24 @@ impl ScriptWorld {
                 None => return Err(HostFault::Nothing),
             },
             Member::LoadLevel => self.load_level = Value::Null,
+            // Back to its file's (openspec AU.53: level 201's intro wakes
+            // the door, gate and boulders on its way at its STARTUP and
+            // resets their ranges at its SHUTDOWN), a clone's its template's.
+            Member::Range => {
+                let file = on
+                    .and_then(|h| self.actors.get(&h))
+                    .and_then(|a| a.obj.or(a.template))
+                    .and_then(|o| self.template(o))
+                    .map(|p| p.range);
+                match (file, on.and_then(|h| self.actors.get_mut(&h))) {
+                    (Some(range), Some(k)) => k.range = range,
+                    (None, Some(_)) => {}
+                    _ => return Err(HostFault::Nothing),
+                }
+            }
+            Member::Physics(_) | Member::Solid(_) if !self.reset_facet(m, at.receiver) => {
+                return Err(HostFault::Nothing);
+            }
             _ => {}
         }
         Ok(())
@@ -2573,6 +2602,17 @@ pub fn hero_config(mode: Mode) -> Config {
     members::register(&mut c.members, members::HERO);
     // A slider's own members (AH.19): his attacks' and the HUD's slides.
     members::register(&mut c.members, members::COMBAT);
+    // A clip's playback mode on the host (openspec AU.53: a life mage's
+    // death pose ping pongs), the VM answering a slider's first.
+    if let Some(r) = members::find(members::COMBAT, "sequence", "playback mode") {
+        members::register(
+            &mut c.members,
+            &[members::Registered {
+                keeper: members::Keeper::Host,
+                ..r
+            }],
+        );
+    }
     // His figure's tag on the portal (AH.23): the portal's regions.
     members::register(&mut c.members, members::FIGURE);
     // The gameplay camera's (openspec AG.28), over the cells it takes over.
@@ -2628,13 +2668,17 @@ pub const FIRST_FIGHT: [&str; 11] = [
 /// are listed (a clone runs under its template's name) and walked, and the
 /// templates whose clones are listed and never walked (AS.68): what the
 /// engine steers under `move to` with no body ([`ScriptWorld::scene_move`]),
-/// whose solid meets neither actors nor the level.
+/// whose solid meets neither actors nor the level; and the templates whose
+/// clones stand in the world as solid platforms where their scripts leave
+/// them, never walked (openspec AU.53: level 201's bridge, its planks cloned
+/// along it, walked onto and dropped from under the hero).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Encounter {
     pub level: &'static str,
     pub placements: &'static [&'static str],
     pub clones: &'static [&'static str],
     pub steered: &'static [&'static str],
+    pub platforms: &'static [&'static str],
 }
 
 /// The first encounters the TV runs past chapter 1's. Level 214's: the
@@ -2741,6 +2785,7 @@ pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
         "Enemy_Elf_Lobber(0)",
     ],
     steered: &["TreeRex_special_homing_actor"],
+    platforms: &[],
 }];
 
 /// Level 214's third island (openspec AS.76), a table of its own beside
@@ -2771,6 +2816,7 @@ pub const THIRD_ISLAND: Encounter = Encounter {
     ],
     clones: &["Enemy_Elf_Lobber(10)"],
     steered: &[],
+    platforms: &[],
 };
 
 /// The intros the TV runs past chapter 1's, by level and placement
@@ -6777,6 +6823,43 @@ mod tests {
         let a = w.actor(grunt).unwrap();
         assert_eq!((a.range, a.buffer), (0.0, 0.0));
         assert!(!w.wake(0xDEAD));
+    }
+
+    /// openspec AU.53: a reset of a placement's activation range and buffer
+    /// puts back its file's (level 201's intro wakes the door and gate on
+    /// its way and resets them at its end), one of a handle that's no actor
+    /// none.
+    #[test]
+    fn a_reset_range_and_buffer_are_the_files_again() {
+        let files = Files {
+            placed: vec![Placed {
+                range: 60.0,
+                buffer: 12.5,
+                ..Placed::named(GRUNT, "Grunt", Some("C:/x/Grunt.ai"), RUNNING)
+            }],
+            ..Files::default()
+        };
+        let handles = headless_handles(&files);
+        let grunt = handles[&GRUNT];
+        let mut w = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        assert!(w.wake(grunt));
+        assert_eq!(w.actor(grunt).unwrap().range, 0.0);
+        let at = |name: &str, on: Handle| Access {
+            placement: on,
+            receiver: Some(Value::Entity(on)),
+            member: MemberId::named("placement", name),
+            other_point: None,
+            via: None,
+            op: None,
+        };
+        w.reset(&at("activation range", grunt)).unwrap();
+        w.reset(&at("deactivation buffer", grunt)).unwrap();
+        let a = w.actor(grunt).unwrap();
+        assert_eq!((a.range, a.buffer), (60.0, 12.5));
+        assert_eq!(
+            w.reset(&at("activation range", 0xDEAD)),
+            Err(HostFault::Nothing)
+        );
     }
 
     /// AH.220: a script that unlocks an achievement (`set system.game
