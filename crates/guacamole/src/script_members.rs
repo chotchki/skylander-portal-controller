@@ -3343,16 +3343,20 @@ impl ScriptWorld {
     pub(crate) fn move_actors(&mut self, dt: f32, engine: &mut dyn Engine) {
         self.move_walkers(dt, engine);
         self.move_scene_walks(dt, engine);
-        // A platform its script lets go of (no longer solid to actors, given
-        // a gravity: level 201's bridge planks as Brock smashes it) falls
-        // from where it stands (openspec AU.53).
-        let platforms = &self.platform_clones;
-        for a in self.actors.values_mut() {
-            if !a.launched
-                && !a.removed
+        // A clone that has stood as a surface and that its script lets go of
+        // (no longer solid to actors, given a gravity: level 201's bridge
+        // planks as Brock smashes it) falls from where it stands (openspec
+        // AU.53, AS.168).
+        for (&h, a) in self.actors.iter_mut() {
+            if a.removed {
+                continue;
+            }
+            if a.stands_for_actors() {
+                self.surfaces_stood.insert(h);
+            } else if !a.launched
                 && a.solid.interacts_with_actors == 0
                 && a.physics.gravity_acceleration > 0.0
-                && a.template.is_some_and(|t| platforms.contains(&t))
+                && self.surfaces_stood.contains(&h)
             {
                 a.launched = true;
             }
@@ -3579,9 +3583,7 @@ impl ScriptWorld {
                         || (a.solid.interacts_with_actors != 0
                             && !self.inert.contains(h)
                             && people.binary_search(h).is_ok())
-                        || (a.solid.interacts_with_actors != 0
-                            && a.template
-                                .is_some_and(|t| self.platform_clones.contains(&t))))
+                        || a.stands_for_actors())
             })
             .filter_map(|(&h, a)| {
                 let solid = a.havok()?;
@@ -5877,59 +5879,92 @@ mod fight_tests {
         ScriptWorld::new(&files, &handles, headless_objects(&handles))
     }
 
-    /// openspec AU.53: a clone of a template its level's way names a
-    /// platform (level 201's bridge planks) stands in the world as a solid
-    /// body where its script leaves it, so a hero walks on it; let go (no
-    /// longer solid to actors, given a gravity) it falls and stands nowhere.
-    /// A clone of any other template gets no body.
+    /// openspec AU.53, AS.168: a clone whose solid is a shape, solid to
+    /// actors and an actor surface (level 201's bridge planks) stands in the
+    /// world as a solid body where its script leaves it, so a hero walks on
+    /// it; let go (no longer solid to actors, given a gravity) it falls and
+    /// stands nowhere. A clone short of any of the three gets no body, nor
+    /// does a placed actor (its prop's), and one let go that never stood
+    /// doesn't fall.
     #[test]
-    fn a_platform_clone_stands_until_its_script_lets_it_go() {
+    fn a_clone_solid_to_actors_and_a_surface_stands_until_let_go() {
         let mut e = pit();
-        let (plank, other) = (Obj { unit: 5, index: 3 }, Obj { unit: 5, index: 4 });
+        let template = |index| Obj { unit: 5, index };
         let mut solid = chompy(Vec3::ZERO, 0.0).solid;
         solid.shape = 1;
+        solid.interacts_with_actors = 1;
         solid.acts_as_actor_surface = 1;
-        let placed = |obj, name| crate::scripts::Placed {
-            solid: Some(solid),
-            ..crate::scripts::Placed::named(obj, name, Some("C:/x/Plank.ai"), 5)
-        };
         let files = Files {
-            placed: vec![placed(plank, "Bridge_Board_1"), placed(other, "Crate")],
+            placed: (3..8)
+                .map(|i| crate::scripts::Placed {
+                    solid: Some(solid),
+                    ..crate::scripts::Placed::named(template(i), "it", Some("C:/x/It.ai"), 5)
+                })
+                .collect(),
             ..Files::default()
         };
-        let handles = HashMap::from([(plank, C1), (other, C2)]);
+        let handles = HashMap::new();
         let mut w = ScriptWorld::new(&files, &handles, headless_objects(&handles));
-        let way = crate::scripts::Encounter {
-            level: "level_201",
-            placements: &[],
-            clones: &[],
-            steered: &[],
-            platforms: &["Bridge_Board_1"],
-        };
-        w.walk_encounter(5, &way);
-        let clone = |template| Actor {
-            template: Some(template),
+        let clone = |index, solid| Actor {
+            template: Some(template(index)),
             position: Vec3::new(0.0, 7.0, 0.0),
             solid,
             ..Actor::blank()
         };
-        w.actors.insert(C3, clone(plank));
-        w.actors.insert(0x6100_0020, clone(other));
+        let (plank, no_surface, shapeless, not_solid, placed) =
+            (C3, 0x6100_0020, 0x6100_0021, 0x6100_0022, 0x6100_0023);
+        w.actors.insert(plank, clone(3, solid));
+        w.actors.insert(
+            no_surface,
+            clone(
+                4,
+                Solid {
+                    acts_as_actor_surface: 0,
+                    ..solid
+                },
+            ),
+        );
+        w.actors
+            .insert(shapeless, clone(5, Solid { shape: 5, ..solid }));
+        w.actors.insert(
+            not_solid,
+            clone(
+                6,
+                Solid {
+                    interacts_with_actors: 0,
+                    ..solid
+                },
+            ),
+        );
+        w.actors.insert(
+            placed,
+            Actor {
+                obj: Some(template(7)),
+                template: None,
+                ..clone(7, solid)
+            },
+        );
         let bodies: Vec<Handle> = w.creature_bodies().iter().map(|b| b.0).collect();
-        assert_eq!(bodies, [C3]);
-        // Let go: no longer solid to actors, falling at 60 ft/s².
-        let a = w.actors.get_mut(&C3).unwrap();
+        assert_eq!(bodies, [plank]);
+        // Let go: no longer solid to actors, falling at 60 ft/s²; the one
+        // that never stood given the same gravity stays put.
+        let fall = |a: &mut Actor| {
+            a.physics.gravity_acceleration = 60.0;
+            a.physics.gravity_max_speed = 60.0;
+            a.physics.time_scale = 100.0;
+        };
+        w.advance(STEP, &mut e);
+        let a = w.actors.get_mut(&plank).unwrap();
         a.solid.interacts_with_actors = 0;
-        a.physics.gravity_acceleration = 60.0;
-        a.physics.gravity_max_speed = 60.0;
-        a.physics.time_scale = 100.0;
+        fall(a);
+        fall(w.actors.get_mut(&not_solid).unwrap());
         for _ in 0..30 {
             w.advance(STEP, &mut e);
         }
         assert!(w.creature_bodies().is_empty());
-        let y = w.actor(C3).unwrap().position.y;
+        let y = w.actor(plank).unwrap().position.y;
         assert!(y < 6.0, "falling: {y}");
-        assert_eq!(w.actor(0x6100_0020).unwrap().position.y, 7.0);
+        assert_eq!(w.actor(not_solid).unwrap().position.y, 7.0);
     }
 
     /// openspec AU.53: a scene's jump (level 201's practice pit elves) takes

@@ -509,8 +509,10 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     }
     // Where a static prop's attach nodes stand (the au-chests review).
     script_world.set_origin_nodes(origin_nodes(source));
-    // What a script's request is held against (openspec AS.15).
+    // What a script's request is held against (openspec AS.15), and whose
+    // own people its placements are (AS.176).
     script_world.set_levels(source.levels.clone());
+    script_world.set_level(source.level());
     // The level end's movie, which the TV plays before the level it names
     // (openspec AS.19, `crate::movies`).
     script_world.plays_movies = true;

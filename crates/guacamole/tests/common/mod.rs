@@ -327,6 +327,10 @@ pub struct Run {
     /// it until AH.68 tilts him (guacamole poses him upright, the oracle
     /// tilts his model to the ground; stand-in ledger: `upright`).
     pub lean: Option<(Vec3, Quat)>,
+    /// With `GUAC_SURFACE_CENSUS` set, the clones seen standing for actors
+    /// (openspec AS.168, `Actor::stands_for_actors`) and those the hero came
+    /// within 3 m of, each logged once as it's first seen.
+    pub surfaces: (HashSet<Handle>, HashSet<Handle>),
 }
 
 /// His model's turn off his facing alone for a recorded `[tilt, heading,
@@ -498,7 +502,46 @@ impl Run {
         self.steps += 1;
         self.pose_hands();
         self.bench.place_bodies(&self.world);
+        self.census_surfaces();
         Ok(stopped)
+    }
+
+    /// `GUAC_SURFACE_CENSUS`'s lines (openspec AS.168): each clone standing
+    /// for actors the first step it does, by its template's name and where,
+    /// and the first step the hero comes within 3 m of one.
+    fn census_surfaces(&mut self) {
+        if std::env::var_os("GUAC_SURFACE_CENSUS").is_none() {
+            return;
+        }
+        let hero = self.bench.heroes.get(&self.hero).map(|h| h.pivot);
+        for (h, _, pose) in self.world.creature_bodies() {
+            let Some(a) = self.world.actor(h) else {
+                continue;
+            };
+            if !a.stands_for_actors() {
+                continue;
+            }
+            let name = a
+                .template
+                .and_then(|t| self.world.template(t))
+                .map_or_else(|| "?".to_owned(), |p| p.name.clone());
+            let at = pose.position;
+            if self.surfaces.0.insert(h) {
+                println!(
+                    "SURFACE {name} at ({:.2}, {:.2}, {:.2}) step {}",
+                    at.x, at.y, at.z, self.steps
+                );
+            }
+            if let Some(p) = hero
+                && p.distance(at) < 3.0
+                && self.surfaces.1.insert(h)
+            {
+                println!(
+                    "SURFACE-NEAR {name} at ({:.2}, {:.2}, {:.2}) step {}, the hero at ({:.2}, {:.2}, {:.2})",
+                    at.x, at.y, at.z, self.steps, p.x, p.y, p.z
+                );
+            }
+        }
     }
 
     /// The join at this step with a fresh figure on the portal, as the TV
@@ -1129,6 +1172,7 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
         world.set_interface(interface_part_with(&igzs, records).keeper);
     }
     world.set_levels(Arc::new(on_disc.into_iter().collect()));
+    world.set_level(level);
     let template = files
         .placed
         .iter()
@@ -1225,6 +1269,7 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
             rig,
             idle0: 0.0,
             lean: None,
+            surfaces: Default::default(),
         },
         found,
     )

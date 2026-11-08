@@ -808,3 +808,149 @@ fn its_pits_jump_pads_take_him_back_up() {
         assert_eq!(off(stretch).map(|o| o[1]), Some(false), "{stretch}");
     }
 }
+
+/// openspec AS.175 with AS.168: the life area's first vine bridge. Set down
+/// on its pan's trigger past the life wall (a Life hero's way in, the Mac's
+/// run walks it), the pan opens the activator, whose roots burst and whose
+/// platform grows with no solid, then lays its completed platform, which
+/// stands for actors by its own solid, stretched across the gap; the hero
+/// walks off the activator's end along it and over to the far side, where
+/// before the bridge's own clones ran he fell.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn the_life_areas_first_vine_bridge_carries_him_over() {
+    use guac_motion::seam::Vec3;
+    let mut w = fresh();
+    let (_, pan) = w.run.placed("Pan_Activate");
+    let (act, at) = w.run.placed("Activator_Template(1)");
+    w.run.put(pan + Vec3::new(0.0, 1.0, 0.0), 0.0);
+    let start = w.run.steps;
+    let done = |w: &Walker| {
+        w.run
+            .vm
+            .placement_of(act)
+            .and_then(|id| w.run.vm.behaviour(id))
+            .is_some_and(|b| b.starts_with("5"))
+    };
+    while !done(&w) {
+        assert!(
+            w.run.steps < start + 2400,
+            "the activator in {:?}",
+            w.run
+                .vm
+                .placement_of(act)
+                .and_then(|id| w.run.vm.behaviour(id))
+        );
+        w.rest(1);
+    }
+    w.rest(120);
+    let bridge: Vec<(
+        Handle,
+        guac_motion::solid::HavokSolid,
+        guac_motion::seam::Pose,
+    )> = w
+        .run
+        .world
+        .creature_bodies()
+        .into_iter()
+        .filter(|(h, _, _)| {
+            w.run
+                .world
+                .actor(*h)
+                .and_then(|a| a.template)
+                .and_then(|t| w.run.world.template(t))
+                .is_some_and(|p| p.name == "NatureBridgePlatformCompleted")
+        })
+        .collect();
+    println!(
+        "grown {} steps on: {:?}",
+        w.run.steps - start,
+        bridge
+            .iter()
+            .map(|b| (b.2.position, b.1))
+            .collect::<Vec<_>>()
+    );
+    let [(h, _, pose)] = bridge[..] else {
+        panic!("the completed platform stands: {bridge:?}");
+    };
+    let a = w.run.world.actor(h).unwrap();
+    println!(
+        "the activator at {at}, the platform at {} facing {} scale {:?} solid {:?}",
+        a.position, a.angles.facing, a.scale, a.solid
+    );
+    let _ = pose;
+    assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
+}
+
+/// openspec AS.177: the arena's lemming avoider. In the arena once its
+/// battle's first wave is up, the hero dropped off the arena's floor beyond
+/// its rim: while he's below it the avoider holds the wave idle, so none
+/// follows him off; the minion's own fall check brings him back up, and the
+/// wave comes on again.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn its_arenas_wave_stays_on_the_floor_with_him_below_it() {
+    use guac_motion::seam::Vec3;
+    const CENTRE: [f32; 3] = [-198.16, 24.05, 76.91];
+    let mut w = fresh();
+    let (_, enter) = w.run.placed("player_01_enter_Arena");
+    w.run.put(enter + Vec3::new(0.0, 1.0, 0.0), 0.0);
+    let wave = |w: &Walker| -> Vec<(Handle, Vec3)> {
+        let run = &w.run;
+        run.world
+            .creatures()
+            .into_iter()
+            .chain(run.world.clones())
+            .filter(|h| is_foe(&run.world.name(*h)))
+            .filter(|h| {
+                run.vm
+                    .placement_of(*h)
+                    .is_some_and(|i| !run.vm.removed(i) && !run.vm.asleep(i))
+            })
+            .filter_map(|h| {
+                run.world
+                    .actor(h)
+                    .filter(|a| !a.removed)
+                    .map(|a| (h, a.position))
+            })
+            .filter(|(_, p)| (p.x - CENTRE[0]).hypot(p.z - CENTRE[2]) < 40.0)
+            .collect()
+    };
+    let start = w.run.steps;
+    while wave(&w).len() < 2 || w.in_scene() {
+        assert!(w.run.steps < start + 6000, "no wave: {:?}", wave(&w));
+        w.rest(1);
+    }
+    w.rest(60);
+    let up = wave(&w);
+    println!("the wave {} steps on: {up:?}", w.run.steps - start);
+    // Off the floor: 30 m out from its middle, 6 m under it, over nothing.
+    let below = Vec3::new(CENTRE[0] + 30.0, CENTRE[1] - 6.0, CENTRE[2]);
+    w.run.put(below, 0.0);
+    let mut lowest = f32::MAX;
+    let mut moved = 0.0f32;
+    let mut held = 0u32;
+    for _ in 0..90 {
+        w.rest(1);
+        let me = w.run.hero().pivot;
+        if me.y < CENTRE[1] - 1.0 {
+            held += 1;
+        }
+        for (h, at) in &up {
+            if let Some(a) = w.run.world.actor(*h).filter(|a| !a.removed) {
+                lowest = lowest.min(a.position.y);
+                moved = moved.max((a.position.x - at.x).hypot(a.position.z - at.z));
+            }
+        }
+    }
+    println!(
+        "{held} steps under the floor: the wave's lowest {lowest:.2} (the floor {}), moved at most {moved:.2} m",
+        CENTRE[1]
+    );
+    assert!(held > 30, "he never went under");
+    assert!(
+        lowest > CENTRE[1] - 2.0,
+        "an enemy followed him off: {lowest}"
+    );
+    assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
+}

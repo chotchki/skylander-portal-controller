@@ -276,6 +276,21 @@ pub struct Contact {
 }
 
 impl Actor {
+    /// Whether this clone stands in the world as something a hero meets
+    /// and stands on (openspec AS.168): its collision a shape (box,
+    /// capsule, sphere or cylinder), solid to actors and an actor surface,
+    /// as the original's engine reads a `CollisionInfo` (level 201's bridge
+    /// planks, its landing pod; no character's clone is one on the disc).
+    /// A placed actor's solid is its prop's ([`crate::props::actor_body`]),
+    /// a creature's its controller's.
+    pub fn stands_for_actors(&self) -> bool {
+        self.template.is_some()
+            && self.walker.is_none()
+            && (1..=4).contains(&self.solid.shape)
+            && self.solid.interacts_with_actors != 0
+            && self.solid.acts_as_actor_surface != 0
+    }
+
     /// An actor with nothing set: at the origin, unturned, unit scale.
     pub fn blank() -> Actor {
         Actor {
