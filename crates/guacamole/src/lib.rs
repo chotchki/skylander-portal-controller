@@ -35,6 +35,7 @@ pub mod props;
 pub mod script_engine;
 mod script_members;
 pub mod scripts;
+pub mod ship_parts;
 mod sound_members;
 pub mod sounds;
 pub mod story_save;

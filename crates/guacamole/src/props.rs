@@ -320,6 +320,21 @@ impl LevelProps {
         models_drawn(&self.models)
     }
 
+    /// `other`'s clones' models drawn beside these, each path once (openspec
+    /// AS.157: a ship part stream's template, which the hub's controller
+    /// clones onto the ship); nothing of `other` stands, as nothing a stream
+    /// places does.
+    pub fn add_spawns(&mut self, other: LevelProps) {
+        for i in other.spawn_models {
+            let m = &other.models[i];
+            if self.models.iter().any(|x| x.path == m.path) {
+                continue;
+            }
+            self.spawn_models.push(self.models.len());
+            self.models.push(m.clone());
+        }
+    }
+
     /// Every key the props' models draw in `scene`, each once, and those
     /// the spawned clones' models draw while a tint fades them
     /// ([`faded_keys`]): what the warm compiles beside the level's.
@@ -1328,6 +1343,49 @@ mod tests {
         {
             assert!(keys.contains(&k), "{k:?}");
         }
+    }
+
+    /// openspec AS.157: a stream's templates' static models join a level's
+    /// clones' models, each path once, its own the level already draws not
+    /// again; none of the stream's placements stand.
+    #[test]
+    fn a_streams_templates_join_the_clones_models() {
+        let (props, placements) = level();
+        let mut level = LevelProps::new(&props, &placements).unwrap();
+        let (props_before, models_before) = (level.props.len(), level.models.len());
+        let (mut part, mut placed) = (props.clone(), placements.clone());
+        part.props.push(model("roof_01.mdl", false));
+        part.props.push(model("engine.mdl", true));
+        placed.actors.clear();
+        for (object, name, path) in [
+            (1, "ShipPart_012", "roof_01.mdl"),
+            (2, "ShipPart_001", "engine.mdl"),
+            (3, "Gourd_Template", "gourd.mdl"),
+        ] {
+            placed.actors.push(actor(
+                object,
+                name,
+                5,
+                0.0,
+                HERO,
+                0.0,
+                Some(path),
+                None,
+                None,
+            ));
+        }
+        let stream = LevelProps::new(&part, &placed).unwrap();
+        level.add_spawns(stream);
+        let spawned: Vec<&str> = level
+            .spawn_models
+            .iter()
+            .map(|&i| level.models[i].path.as_str())
+            .collect();
+        assert_eq!(spawned, ["gourd.mdl", "coin.mdl", "roof_01.mdl"]);
+        assert_eq!(
+            (level.props.len(), level.models.len()),
+            (props_before, models_before + 1)
+        );
     }
 
     /// Each `CollisionInfo` shape AG.7 settled, as a body where the level

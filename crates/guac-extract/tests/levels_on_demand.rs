@@ -259,3 +259,73 @@ fn a_level_change_names_a_level_a_player_is_taken_into() {
         assert_eq!(Kind::of(name).is_level(), level, "{name}");
     }
 }
+
+/// openspec AS.157: the files a hub stage streams in (its ship parts)
+/// extract in one pass, each its streamed parts alone and no sounds,
+/// recorded under its own name beside the first run's chapter 1, which
+/// stays complete; a second pass keeps them all; a list naming one file the
+/// dump doesn't hold is refused with nothing read or written.
+#[test]
+fn a_hub_stages_streams_extract_their_streamed_parts_alone() {
+    const PART: &str = "ship_part_900";
+    let tmp = tempfile::tempdir().unwrap();
+    let dump = make_dump(tmp.path());
+    let usr = dump.join("PS3_GAME/USRDIR");
+    fs::write(
+        levels::archive_path(&usr, PART),
+        model::archive(&stage_level(&stage_sample())),
+    )
+    .unwrap();
+    let root = ExtractRoot::checked(tmp.path().join("extract")).unwrap();
+    let known = known_for(&dump);
+    let mut opened = open(&dump, &root, &known, &|_| {}).unwrap();
+    let dir = &mut opened.dir;
+    stages::level_stage(dir, IrFormat::Ron, &|_| {}).unwrap();
+    assert!(
+        levels::on_disc(dir.manifest())
+            .iter()
+            .any(|l| l.name == PART && l.kind == Kind::ShipPart)
+    );
+
+    let before = (dir.manifest().clone(), files(dir.path()));
+    let e =
+        stages::extract_streams(dir, &[PART, "ship_part_999"], IrFormat::Ron, &|_| {}).unwrap_err();
+    assert!(matches!(e, ExtractError::NoSuchLevel { .. }), "{e}");
+    assert_eq!((dir.manifest().clone(), files(dir.path())), before);
+
+    let events = std::sync::Mutex::new(Vec::new());
+    let stage = stages::extract_streams(dir, &[PART], IrFormat::Ron, &|e| {
+        if let stages::Event::Level { done, total } = e {
+            events.lock().unwrap().push((done, total));
+        }
+    })
+    .unwrap();
+    assert_eq!(
+        (stage.parts_read, stage.levels),
+        (levels::STREAMED.len(), 1)
+    );
+    assert!(stage.failed.is_empty(), "{:?}", stage.failed);
+    assert!(stage.sounds.is_none(), "a stream reads no sounds");
+    let n = levels::STREAMED.len();
+    assert_eq!(events.into_inner().unwrap().last(), Some(&(n, n)));
+    let m = dir.manifest();
+    let mut recorded: Vec<&str> = m.levels[PART].parts.keys().map(String::as_str).collect();
+    recorded.sort_unstable();
+    let mut want = levels::STREAMED.to_vec();
+    want.sort_unstable();
+    assert_eq!(recorded, want);
+    for part in levels::STREAMED {
+        let rel = levels::part_path(IrFormat::Ron, PART, part);
+        assert!(dir.path().join(&rel).is_file(), "{rel}");
+    }
+    let sounds =
+        guac_extract::sounds::path(IrFormat::Ron, &guac_extract::sounds::level_archive(PART));
+    assert!(!dir.path().join(&sounds).exists(), "{sounds}");
+    assert!(
+        levels::complete(m),
+        "a stream leaves the first run complete"
+    );
+
+    let again = stages::extract_streams(dir, &[PART], IrFormat::Ron, &|_| {}).unwrap();
+    assert_eq!((again.parts_read, again.parts_kept), (0, n));
+}

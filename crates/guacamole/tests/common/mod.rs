@@ -327,6 +327,12 @@ pub struct Run {
     /// it until AH.68 tilts him (guacamole poses him upright, the oracle
     /// tilts his model to the ground; stand-in ledger: `upright`).
     pub lean: Option<(Vec3, Quat)>,
+    /// With `GUAC_SURFACE_CENSUS` set, the clones seen standing for actors
+    /// (openspec AS.168, `Actor::stands_for_actors`), those the hero came
+    /// within 3 m of and the people that came within a metre of one (a
+    /// person's ground is what the ray caster meets, AS.166), each logged
+    /// once as it's first seen.
+    pub surfaces: (HashSet<Handle>, HashSet<Handle>, HashSet<(Handle, Handle)>),
     /// His figure's toy id: Eruptor's 9, or [`Setup::character`]'s.
     pub toy: u16,
 }
@@ -500,7 +506,82 @@ impl Run {
         self.steps += 1;
         self.pose_hands();
         self.bench.place_bodies(&self.world);
+        self.census_surfaces();
         Ok(stopped)
+    }
+
+    /// `GUAC_SURFACE_CENSUS`'s lines (openspec AS.168): each clone standing
+    /// for actors the first step it does, by its template's name and where,
+    /// and the first step the hero comes within 3 m of its shape's reach.
+    fn census_surfaces(&mut self) {
+        if std::env::var_os("GUAC_SURFACE_CENSUS").is_none() {
+            return;
+        }
+        let hero = self.bench.heroes.get(&self.hero).map(|h| h.pivot);
+        let people: Vec<(Handle, Vec3)> = self
+            .world
+            .people()
+            .into_iter()
+            .filter_map(|p| self.world.actor(p).map(|a| (p, a.position)))
+            .collect();
+        for (h, solid, pose) in self.world.creature_bodies() {
+            let Some(a) = self.world.actor(h) else {
+                continue;
+            };
+            if !a.stands_for_actors() {
+                continue;
+            }
+            let name = a
+                .template
+                .and_then(|t| self.world.template(t))
+                .map_or_else(|| "?".to_owned(), |p| p.name.clone());
+            let at = pose.position;
+            if self.surfaces.0.insert(h) {
+                println!(
+                    "SURFACE {name} at ({:.2}, {:.2}, {:.2}) step {}",
+                    at.x, at.y, at.z, self.steps
+                );
+            }
+            // Within 3 m of its shape's reach from its centre.
+            let reach = match solid.shape {
+                guac_motion::seam::Shape::Box { half_extents, .. } => half_extents.length(),
+                guac_motion::seam::Shape::Sphere { radius, .. } => radius,
+                guac_motion::seam::Shape::Capsule {
+                    radius,
+                    half_segment,
+                    ..
+                } => radius + half_segment,
+                guac_motion::seam::Shape::Cylinder {
+                    radius,
+                    half_height,
+                    ..
+                } => radius.hypot(half_height),
+            };
+            if let Some(p) = hero
+                && p.distance(at) < 3.0 + reach
+                && self.surfaces.1.insert(h)
+            {
+                println!(
+                    "SURFACE-NEAR {name} at ({:.2}, {:.2}, {:.2}) step {}, the hero at ({:.2}, {:.2}, {:.2})",
+                    at.x, at.y, at.z, self.steps, p.x, p.y, p.z
+                );
+            }
+            for &(person, p) in &people {
+                if p.distance(at) < 1.0 + reach && self.surfaces.2.insert((h, person)) {
+                    println!(
+                        "SURFACE-PERSON {name} at ({:.2}, {:.2}, {:.2}) step {}, {} at ({:.2}, {:.2}, {:.2})",
+                        at.x,
+                        at.y,
+                        at.z,
+                        self.steps,
+                        self.world.name(person),
+                        p.x,
+                        p.y,
+                        p.z
+                    );
+                }
+            }
+        }
     }
 
     /// The join at this step with a fresh figure on the portal, as the TV
@@ -884,6 +965,13 @@ pub struct Setup {
     /// Placements listed past the TV's listing, by name (the same, for a
     /// script others share that only these should run).
     pub placements: &'static [&'static str],
+    /// A hub stage's ship part streams linked after the level, their
+    /// scripts listed, as the TV's load links them (openspec AS.157,
+    /// `ship_parts::streams`); they join the run once its save is in.
+    pub streams: bool,
+    /// Streams left out of those, by archive: as one whose parts didn't
+    /// extract is.
+    pub streams_left_out: &'static [&'static str],
     /// Another character in Eruptor's place (openspec AS.156: Crusher, the
     /// earth Giant whose attacks break a super hard rock): his file linked
     /// as Eruptor's unit, his scripts listed as the TV lists a walker's
@@ -1041,6 +1129,21 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     let usr = dump.join("PS3_GAME/USRDIR");
     let chapter_1 = level == levels::LEVELS[0];
     let level_archive = format!("level/{level}.bld");
+    let on_disc: Vec<String> = std::fs::read_dir(usr.join("level"))
+        .expect("the dump's levels")
+        .filter_map(|e| {
+            let name = e.ok()?.file_name().into_string().ok()?;
+            name.strip_suffix(".bld").map(str::to_owned)
+        })
+        .collect();
+    // A hub stage's ship part streams after the level (openspec AS.157).
+    let streams: Vec<String> = match setup.streams {
+        true => guacamole::ship_parts::streams(level, on_disc.iter().map(String::as_str)),
+        false => Vec::new(),
+    }
+    .into_iter()
+    .filter(|s| !setup.streams_left_out.contains(&s.as_str()))
+    .collect();
     let archives: Vec<String> = ARCHIVES
         .iter()
         .enumerate()
@@ -1049,6 +1152,13 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
             ERUPTOR => setup.character.map_or(*a, |c| c.archive).to_owned(),
             _ => (*a).to_owned(),
         })
+        .chain(streams.iter().map(|s| format!("level/{s}.bld")))
+        .collect();
+    let stream_units: Vec<u16> = (ARCHIVES.len()..archives.len()).map(|u| u as u16).collect();
+    let roles: Vec<Role> = ARCHIVES
+        .iter()
+        .map(|(_, r)| *r)
+        .chain(stream_units.iter().map(|_| Role::Other))
         .collect();
     let part: Vec<Vec<u8>> = archives
         .iter()
@@ -1059,10 +1169,10 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     let units: Vec<Unit<'_, '_>> = igzs
         .iter()
         .zip(&graphs)
-        .zip(ARCHIVES)
-        .map(|((igz, graph), (_, role))| Unit {
+        .zip(&roles)
+        .map(|((igz, graph), role)| Unit {
             name: "part",
-            role,
+            role: *role,
             igz,
             graph,
         })
@@ -1072,6 +1182,7 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     let layout = layout();
     let read: Vec<(u16, &Igz<'_>)> = [1u16, 2, LEVEL, ERUPTOR]
         .iter()
+        .chain(&stream_units)
         .map(|&u| (u, &igzs[u as usize]))
         .collect();
     let files = Files::read(&read).unwrap();
@@ -1085,6 +1196,7 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
         &files,
         LEVEL,
     );
+    config = guacamole::ship_parts::with_streams(config, &files, &stream_units);
     if setup.no_music {
         config = scripts::without_music(config);
     }
@@ -1112,6 +1224,11 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     let mut vm = scripts::init_chain(program, &files, &handles, &ORDER, config);
     let mut world = ScriptWorld::new(&files, &handles, objects);
     world.set_inert(vm.inert());
+    world.ship_parts.units = stream_units;
+    world.ship_parts.ids = streams
+        .iter()
+        .filter_map(|s| guacamole::ship_parts::part_id(s))
+        .collect();
     // Its intro waits for the hero, as the TV's install holds it (openspec
     // AS.47); one a test lists past the TV's listing (`Setup::scripts`) too.
     let intro: Option<String> = scripts::intro(level).map(str::to_owned).or_else(|| {
@@ -1139,19 +1256,12 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     if setup.interface {
         let records = match chapter_1 {
             true => interface_records(),
-            false => interface_records_of(&archives),
+            false => interface_records_of(&archives[..ARCHIVES.len()]),
         };
         world.set_interface(interface_part_with(&igzs, records).keeper);
     }
-    world.set_levels(Arc::new(
-        std::fs::read_dir(usr.join("level"))
-            .expect("the dump's levels")
-            .filter_map(|e| {
-                let name = e.ok()?.file_name().into_string().ok()?;
-                name.strip_suffix(".bld").map(str::to_owned)
-            })
-            .collect(),
-    ));
+    world.set_levels(Arc::new(on_disc.into_iter().collect()));
+    world.set_level(level);
     let template = match &walker {
         Some(w) => w.template.expect("his template"),
         None => {
@@ -1177,6 +1287,19 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
             && let Some(pal) = palettes.palettes.iter().find(|x| &x.owner == model)
         {
             world.set_palette_of(p.obj, pal);
+        }
+    }
+    // The streams' templates' too (openspec AS.157: the engines turn).
+    for (&u, name) in world.ship_parts.units.clone().iter().zip(&streams) {
+        let palettes = levels::palettes(&igzs[u as usize], name, identity())
+            .expect("a stream's palettes")
+            .ir;
+        for p in files.placed.iter().filter(|p| p.obj.unit == u) {
+            if let Some(model) = &p.model
+                && let Some(pal) = palettes.palettes.iter().find(|x| &x.owner == model)
+            {
+                world.set_palette_of(p.obj, pal);
+            }
         }
     }
     if chapter_1 {
@@ -1243,6 +1366,7 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
             rig,
             idle0: 0.0,
             lean: None,
+            surfaces: Default::default(),
             toy: setup.character.map_or(9, |c| c.toy),
         },
         found,

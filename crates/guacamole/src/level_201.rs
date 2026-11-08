@@ -31,8 +31,9 @@
 //!   round yard below a timed door; hit, the eyeball on the mound opens it
 //!   for a while. Past the yard's fight, Brock runs over the rope bridge
 //!   and smashes it under the hero (Brock's scene: the bridge's planks are
-//!   clones of its controller's, which stand as platforms,
-//!   [`Encounter::platforms`]), and he falls to the grass below.
+//!   clones of its controller's, which stand by their own solids, solid to
+//!   actors and actor surfaces, `Actor::stands_for_actors`), and he falls
+//!   to the grass below.
 //! - **The channel's blocks.** Below, a dry channel splits the ground: the
 //!   west stack pushed into its side arm makes a way over; the block on the
 //!   far side is pushed into the channel first, then the top block along
@@ -51,9 +52,7 @@ use crate::scripts::Encounter;
 
 /// What fights on level 201, walked as creatures: every enemy it places,
 /// the clones its scripts make that fight (its pods' Chompies, the arena's
-/// waves, the practice pit scene's two elves, whose jump the engine lands),
-/// and its bridge's planks, solid platforms where their controller lays
-/// them.
+/// waves, the practice pit scene's two elves, whose jump the engine lands).
 pub const WAY: Encounter = Encounter {
     level: "level_201",
     placements: &[
@@ -174,12 +173,6 @@ pub const WAY: Encounter = Encounter {
         "Practice_Pit_Cutscene_Elf_Near",
     ],
     steered: &[],
-    platforms: &[
-        "Bridge_Board_1",
-        "Bridge_Board_2",
-        "Bridge_Board_3",
-        "Bridge_Board_4",
-    ],
 };
 
 /// The level's own scripts, by their path under its folder: its setups and
@@ -267,8 +260,11 @@ pub const OWN_SCRIPTS: [&str; 70] = [
 /// its fountain, Auric's store, and its jump pads (the AU.53 review: a walk
 /// drops into the pit below the landing's yard and the one off the grass
 /// the bridge drops him on, and each one's pad is the only way out; the
-/// third wakes once its crate is broken, by its own activator).
-pub const PASSAGE: [&str; 34] = [
+/// third wakes once its crate is broken, by its own activator); and the
+/// arena's lemming avoider (openspec AS.177: with every hero below the
+/// arena's floor it holds its enemies idle, so none follows him off it, and
+/// sends them after him again once one is back up).
+pub const PASSAGE: [&str; 35] = [
     "EyE_Timer_Door_Template(1)",
     "EyE_Timer_Door_Template(2)",
     "EyE_Timer_Door_Template(3)",
@@ -303,7 +299,32 @@ pub const PASSAGE: [&str; 34] = [
     "PvP_JumpPad_NORMAL(3)",
     "PvP_JumpPad_NORMAL(4)",
     "PvP_JumpPad_NORMAL(5)",
+    "Enemy_LemmingAvoider",
 ];
+
+/// The life area's vine bridges' own clones (openspec AS.175), by their
+/// scripts: an activator ([`PASSAGE`]) opened by its pan's trigger or its
+/// fight bursts its roots (`StartRoots_cycle.ai`), grows a platform with no
+/// solid while it plays (`Root_Path_Grow3.ai`), then lays the completed one
+/// (`Root_Final_Mesh.ai`), its solid stretched across the gap to its
+/// activator's length, which stands for actors by its own (openspec
+/// AS.168), and strews its flowers (`Flower.ai`). No other level the TV
+/// plays places a vine bridge.
+pub const VINE_BRIDGE: [&str; 4] = [
+    "/StartRoots_cycle.ai",
+    "/Root_Path_Grow3.ai",
+    "/Root_Final_Mesh.ai",
+    "/Flower.ai",
+];
+
+/// The shared scripts [`VINE_BRIDGE`] lists for the level whose archive is
+/// `level`.
+pub fn shared_scripts(level: &str) -> &'static [&'static str] {
+    match level {
+        "level_201" => &VINE_BRIDGE,
+        _ => &[],
+    }
+}
 
 /// The scripts [`OWN_SCRIPTS`] lists for the level whose archive is `level`.
 pub fn own_scripts(level: &str) -> &'static [&'static str] {
@@ -359,6 +380,28 @@ mod tests {
         assert!(passage("level_202").is_empty());
     }
 
+    /// openspec AS.175: the vine bridges' clones' scripts run on 201's
+    /// listing, as the shared scripts they are, and on no other level's,
+    /// whatever folder places them.
+    #[test]
+    fn its_vine_bridges_clones_are_listed() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, WAY.level);
+        for script in VINE_BRIDGE {
+            let path =
+                format!("C:/tfb/Content/Levels/Includes/GameElement_VineBridge/Scripts{script}");
+            assert!(on.whitelist.lists("a clone", &path), "{script}");
+            for level in ["level_202", "level_213_tutotial", "level_214_tutotial_2"] {
+                let off = level_config(Mode::Play, &files, 5, level);
+                assert!(
+                    !off.whitelist.lists("a clone", &path),
+                    "{script} on {level}"
+                );
+            }
+        }
+        assert!(shared_scripts("level_202").is_empty());
+    }
+
     /// AS.160's half on level 201: the life wall's two triggers, which write
     /// its controller's range as the hero passes them, run on its listing
     /// and on no other level's.
@@ -393,6 +436,5 @@ mod tests {
         for name in PASSAGE {
             assert!(!WAY.placements.contains(&name), "{name}");
         }
-        assert!(WAY.platforms.contains(&"Bridge_Board_1"));
     }
 }

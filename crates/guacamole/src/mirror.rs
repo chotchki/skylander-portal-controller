@@ -175,6 +175,12 @@ pub struct TvSnapshot {
     pub turret: Option<guacamole::turret::TurretView>,
     /// The scripts' sprites drawn over the level (openspec AS.99).
     pub sprites: Option<crate::script_sprites::SpriteReport>,
+    /// The ship's parts (openspec AS.157): the streams the run links and
+    /// whether they've joined, the parts they defined, those read collected
+    /// and equipped at the run's start, what the stand-in equipped since,
+    /// what hangs on the ship and the Dragon Engine's flag; none while no
+    /// run is in.
+    pub ship_parts: Option<guacamole::ship_parts::ShipReport>,
 }
 
 /// Shared with the routes: the last snapshot, skips asked for over HTTP,
@@ -1335,6 +1341,7 @@ fn mirror_tv(
             Option<Res<crate::announce::AnnounceReport>>,
             Option<Res<crate::turret_hud::TurretReport>>,
             Option<Res<crate::script_sprites::SpriteReport>>,
+            Option<Res<guacamole::scripts::ScriptRuntime>>,
         ),
     ),
 ) {
@@ -1398,6 +1405,11 @@ fn mirror_tv(
         announce: story.4.as_deref().cloned(),
         turret: story.5.as_deref().and_then(|t| t.0.clone()),
         sprites: story.6.as_deref().cloned(),
+        ship_parts: story
+            .7
+            .as_deref()
+            .zip(story.1.as_deref())
+            .map(|(rt, world)| guacamole::ship_parts::report(&rt.vm, world)),
     };
     let mut shared = mirror.0.lock().unwrap_or_else(|e| e.into_inner());
     if *shared != snapshot {

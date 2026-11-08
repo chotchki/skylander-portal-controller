@@ -138,6 +138,10 @@ pub(crate) struct ScriptSource {
     order: Vec<u16>,
     /// Each fighter's load file and the unit his file links as.
     fighters: Vec<(String, u16)>,
+    /// The units the level's streams link as (openspec AS.157): their
+    /// placements join each run once its save is in, and their part ids.
+    streams: Vec<u16>,
+    stream_ids: Vec<i32>,
     /// Each walker's scripts (AG.27): the other modelled characters whose
     /// own scripts the part holds.
     walkers: Vec<WalkerScripts>,
@@ -318,6 +322,8 @@ impl ScriptSource {
             files,
             order,
             fighters: Vec::new(),
+            streams: Vec::new(),
+            stream_ids: Vec::new(),
             walkers: Vec::new(),
             left_out: Vec::new(),
             layout: None,
@@ -357,6 +363,8 @@ pub(crate) struct Part {
     pub(crate) files: Files,
     pub(crate) order: Vec<u16>,
     pub(crate) fighters: Vec<(String, u16)>,
+    pub(crate) streams: Vec<u16>,
+    pub(crate) stream_ids: Vec<i32>,
     pub(crate) walkers: Vec<WalkerScripts>,
     pub(crate) left_out: Vec<(String, String)>,
     pub(crate) layout: Option<Layout>,
@@ -399,6 +407,8 @@ pub(crate) fn install(world: &mut World, part: Part) {
         files: part.files,
         order: part.order,
         fighters: part.fighters,
+        streams: part.streams,
+        stream_ids: part.stream_ids,
         walkers: part.walkers,
         left_out: part.left_out,
         layout: part.layout,
@@ -458,6 +468,8 @@ fn install_from(world: &mut World, source: &ScriptSource) {
         ),
         None => scripts::fight_config(Mode::Play),
     };
+    // The streams' scripts (openspec AS.157).
+    let config = guacamole::ship_parts::with_streams(config, &source.files, &source.streams);
     #[allow(unused_mut)]
     let mut config = scripts::with_walkers(config, &source.walkers);
     // The interface's members on the model, when the run holds one (AT.9).
@@ -483,6 +495,10 @@ fn install_from(world: &mut World, source: &ScriptSource) {
         return;
     };
     let mut script_world = world.resource_mut::<ScriptWorld>();
+    // The streams whose placements join once the save is in (openspec
+    // AS.157, `ship_parts::start`).
+    script_world.ship_parts.units = source.streams.clone();
+    script_world.ship_parts.ids = source.stream_ids.clone();
     // The sounds its starts play (openspec AR.9).
     if let Some(s) = &source.sounds {
         script_world.set_sounds(s.book.clone(), s.stems.clone());
@@ -493,8 +509,10 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     }
     // Where a static prop's attach nodes stand (the au-chests review).
     script_world.set_origin_nodes(origin_nodes(source));
-    // What a script's request is held against (openspec AS.15).
+    // What a script's request is held against (openspec AS.15), and whose
+    // own people its placements are (AS.176).
     script_world.set_levels(source.levels.clone());
+    script_world.set_level(source.level());
     // The level end's movie, which the TV plays before the level it names
     // (openspec AS.19, `crate::movies`).
     script_world.plays_movies = true;
@@ -512,7 +530,12 @@ fn install_from(world: &mut World, source: &ScriptSource) {
         let (walked, templates) = script_world.walk_encounter(level, e);
         info!(level = %source.level(), walked, templates, "the level's encounter walks");
     }
-    for p in source.files.placed.iter().filter(|p| p.obj.unit == level) {
+    for p in source
+        .files
+        .placed
+        .iter()
+        .filter(|p| p.obj.unit == level || source.streams.contains(&p.obj.unit))
+    {
         if let Some(model) = &p.model
             && let Some((_, lengths)) = source.palettes.iter().find(|(owner, _)| owner == model)
         {
@@ -3044,6 +3067,8 @@ mod tests {
                 files: linked.placements,
                 order: linked.order,
                 fighters: linked.fighters,
+                streams: Vec::new(),
+                stream_ids: Vec::new(),
                 walkers: Vec::new(),
                 left_out: Vec::new(),
                 layout: None,
@@ -3057,11 +3082,83 @@ mod tests {
             },
         );
         let w = world.resource::<ScriptWorld>();
+        assert_eq!(w.level(), Some(LEVEL), "whose own people its are (AS.176)");
         assert_eq!(w.palette(far), Some(&[0.0, 0.5][..]));
         assert_eq!(w.palette(near), None);
         let rt = world.resource::<ScriptRuntime>();
         let h = w.handles()[&setup];
         assert!(!rt.vm.inert().contains(&h), "the setup runs");
+    }
+
+    /// openspec AS.157, the au-ship-parts review: the TV's install with a
+    /// stream linked after the level gives the stream's placements their
+    /// palettes as it gives the level's (the ship's engines turn on their
+    /// own clips), lists the scripts they name, and hands the run the
+    /// stream's unit and part id for its start.
+    #[test]
+    fn the_tvs_install_gives_a_streams_placements_their_palettes() {
+        use guac_formats::script::builder::{SMASH_FAR, SMASH_FAR_MODEL, SMASH_SETUP};
+        let tmp = tempfile::tempdir().unwrap();
+        write_smash(tmp.path(), BARREL_AT);
+        let stream = "ship_part_900".to_owned();
+        let to = tmp.path().join(guac_extract::levels::script_path(&stream));
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::copy(
+            tmp.path().join(guac_extract::levels::script_path(LEVEL)),
+            to,
+        )
+        .unwrap();
+        let linked =
+            level_scripts::load_with_streams(tmp.path(), LEVEL, std::slice::from_ref(&stream))
+                .unwrap();
+        let [unit] = linked.streams[..] else {
+            panic!("{:?}", linked.streams)
+        };
+        let placed = |name: &str| {
+            linked
+                .placements
+                .placed
+                .iter()
+                .find(|p| p.name == name && p.obj.unit == unit)
+                .unwrap()
+                .clone()
+        };
+        let far = placed(SMASH_FAR).obj;
+        let script = placed(SMASH_SETUP).script.expect("the setup's script");
+        let mut world = World::new();
+        install(
+            &mut world,
+            Part {
+                program: Arc::new(linked.program),
+                files: linked.placements,
+                order: linked.order,
+                fighters: linked.fighters,
+                streams: linked.streams,
+                stream_ids: linked.stream_ids,
+                walkers: Vec::new(),
+                left_out: Vec::new(),
+                layout: None,
+                palettes: vec![(SMASH_FAR_MODEL.to_owned(), vec![0.0, 0.5])],
+                sounds: None,
+                interface: None,
+                level: LEVEL.to_owned(),
+                levels: Vec::new(),
+                extract: None,
+                interface_keys: Vec::new(),
+            },
+        );
+        let w = world.resource::<ScriptWorld>();
+        assert_eq!(w.palette(far), Some(&[0.0, 0.5][..]), "the stream's");
+        assert_eq!(w.ship_parts.units, [unit]);
+        assert_eq!(w.ship_parts.ids, [900]);
+        let rt = world.resource::<ScriptRuntime>();
+        assert!(
+            rt.vm
+                .config()
+                .whitelist
+                .lists("the stream's setup", &script),
+            "{script}"
+        );
     }
 
     /// The TV's install with the interface's part (openspec AT.9, the
@@ -3120,6 +3217,8 @@ mod tests {
                     files: linked.placements,
                     order: linked.order,
                     fighters: linked.fighters,
+                    streams: Vec::new(),
+                    stream_ids: Vec::new(),
                     walkers: Vec::new(),
                     left_out: Vec::new(),
                     layout: None,

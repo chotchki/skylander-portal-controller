@@ -533,6 +533,9 @@ pub struct ScriptWorld {
     /// The disc's levels by archive name (openspec AS.15): a request whose
     /// text names one is a level change; none set, no request is one.
     levels: Option<Arc<std::collections::HashSet<String>>>,
+    /// The level whose run this is, by archive (openspec AS.176): whose own
+    /// people ([`LEVEL_PEOPLE`]) its placements of their names are.
+    level: Option<String>,
     /// The level change a script asked for, held while it loads.
     level_change: Option<LevelChange>,
     /// The last requests that changed no level, as their text read
@@ -542,6 +545,9 @@ pub struct ScriptWorld {
     pub(crate) skipped_cutscene: Option<Value>,
     /// A hat's outfit registered for this run (`treasure::answer_hat_load`).
     pub(crate) hat_load_answered: bool,
+    /// The ship part streams the run links and what's been done with them
+    /// (openspec AS.157, [`crate::ship_parts`]).
+    pub ship_parts: crate::ship_parts::ShipParts,
     /// Whether [`crate::level_end`] skips any cutscene in play as it skips a
     /// listed one: a dev entry's settle on a level with an intro, so its
     /// anchor sets him down past the intro as before AS.81 played it.
@@ -634,9 +640,10 @@ pub struct ScriptWorld {
     /// AS.54, [`ScriptWorld::walk_encounter`]): what a level's spawners
     /// clone.
     pub(crate) walk_clones: std::collections::HashSet<Obj>,
-    /// The templates whose clones stand as solid platforms (openspec AU.53,
-    /// [`Encounter::platforms`]).
-    pub(crate) platform_clones: std::collections::HashSet<Obj>,
+    /// The clones that have stood as something a hero stands on (openspec
+    /// AS.168, [`Actor::stands_for_actors`]): one its script lets go of
+    /// falls by its gravity.
+    pub(crate) surfaces_stood: std::collections::HashSet<Handle>,
     /// The level's intro held until a hero's minion is in (openspec AS.47,
     /// [`hold_intro`]), by handle.
     pub(crate) intro_held: Option<Handle>,
@@ -922,10 +929,12 @@ impl ScriptWorld {
             load_level: Value::Null,
             requests: Vec::new(),
             levels: None,
+            level: None,
             level_change: None,
             streams: Default::default(),
             skipped_cutscene: None,
             hat_load_answered: false,
+            ship_parts: Default::default(),
             skip_cutscenes: false,
             level_end_asked: false,
             level_end_movie: None,
@@ -955,7 +964,7 @@ impl ScriptWorld {
             music_held: Vec::new(),
             music_silent: 0,
             walk_clones: Default::default(),
-            platform_clones: Default::default(),
+            surfaces_stood: Default::default(),
             intro_held: None,
             scene_walks: HashMap::new(),
             walk_written: std::collections::HashSet::new(),
@@ -1282,15 +1291,17 @@ impl ScriptWorld {
 
     /// The people the TV draws unwalked: each placement whose script is one
     /// of [`HUB_PEOPLE`]'s (openspec AU.28) or a chest's (AU.39,
-    /// [`crate::treasure::is_treasure`]) or whose name is one of
-    /// [`LEVEL_PEOPLE`]'s (AS.98), by its actor, in handle order; whether its
-    /// script runs is the caller's to check.
+    /// [`crate::treasure::is_treasure`]) or whose name is one of the run's
+    /// level's in [`LEVEL_PEOPLE`] (AS.98, AS.176: another level's of the
+    /// same name isn't), by its actor, in handle order; whether its script
+    /// runs is the caller's to check.
     pub fn people(&self) -> Vec<Handle> {
+        let level = self.level.as_deref().unwrap_or_default();
         let person = |p: &Placed| {
             p.script
                 .as_deref()
                 .is_some_and(|s| is_hub_person(s) || crate::treasure::is_treasure(s))
-                || LEVEL_PEOPLE.iter().any(|(_, name)| *name == p.name)
+                || is_level_person(level, &p.name)
         };
         let mut out: Vec<Handle> = self
             .actors
@@ -1360,13 +1371,6 @@ impl ScriptWorld {
             .collect();
         let found = templates.len();
         self.walk_clones.extend(templates);
-        let platforms: Vec<Obj> = self
-            .templates
-            .iter()
-            .filter(|(o, p)| o.unit == unit && encounter.platforms.contains(&p.name.as_str()))
-            .map(|(o, _)| *o)
-            .collect();
-        self.platform_clones.extend(platforms);
         (walkers.len(), found)
     }
 
@@ -1575,6 +1579,16 @@ impl ScriptWorld {
         a.range = 0.0;
         a.buffer = 0.0;
         true
+    }
+
+    /// The level whose run this is, by archive (openspec AS.176).
+    pub fn set_level(&mut self, level: &str) {
+        self.level = Some(level.to_owned());
+    }
+
+    /// The level whose run this is, once the install has said.
+    pub fn level(&self) -> Option<&str> {
+        self.level.as_deref()
     }
 
     /// The disc's levels by archive name, which a request's text is held
@@ -2680,19 +2694,15 @@ pub const FIRST_FIGHT: [&str; 11] = [
 /// are listed (a clone runs under its template's name) and walked, and the
 /// templates whose clones are listed and never walked (AS.68): what the
 /// engine steers under `move to` with no body ([`ScriptWorld::scene_move`]),
-/// whose solid meets neither actors nor the level; and the templates whose
-/// clones stand in the world as solid platforms where their scripts leave
-/// them, never walked (openspec AU.53: level 201's bridge, its planks cloned
-/// along it, walked onto and dropped from under the hero; named here in
-/// place of the engine's own rule for what an actor stands on, stand-in
-/// ledger: `platforms`).
+/// whose solid meets neither actors nor the level. What a clone stands as
+/// is its own solid's ([`Actor::stands_for_actors`], openspec AS.168), so
+/// no encounter names its platforms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Encounter {
     pub level: &'static str,
     pub placements: &'static [&'static str],
     pub clones: &'static [&'static str],
     pub steered: &'static [&'static str],
-    pub platforms: &'static [&'static str],
 }
 
 /// The first encounters the TV runs past chapter 1's. Level 214's: the
@@ -2799,7 +2809,6 @@ pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
         "Enemy_Elf_Lobber(0)",
     ],
     steered: &["TreeRex_special_homing_actor"],
-    platforms: &[],
 }];
 
 /// Level 214's third island (openspec AS.76), a table of its own beside
@@ -2830,7 +2839,6 @@ pub const THIRD_ISLAND: Encounter = Encounter {
     ],
     clones: &["Enemy_Elf_Lobber(10)"],
     steered: &[],
-    platforms: &[],
 };
 
 /// The intros the TV runs past chapter 1's, by level and placement
@@ -4100,6 +4108,7 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
         scripts.extend(
             crate::level_201::own_scripts(name)
                 .iter()
+                .chain(crate::level_201::shared_scripts(name))
                 .map(|s| (*s).to_owned()),
         );
     }
@@ -6699,6 +6708,7 @@ mod tests {
         let handles: HashMap<Obj, Handle> =
             (10..13).map(|i| (obj(i), 0x100 + u64::from(i))).collect();
         let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        world.set_level("level_214_tutotial_2");
         assert_eq!(world.people(), [0x10A, 0x10B]);
         assert!(is_level_person("level_214_tutotial_2", "Auric_store"));
         assert!(is_level_person("level_214_tutotial_2", "Flynn_Island_3"));
@@ -6739,6 +6749,30 @@ mod tests {
         }
         world.walk(0x10A);
         assert_eq!(world.people(), [0x10B], "a walked one isn't");
+    }
+
+    /// openspec AS.176: a level's own people are its own by name: level
+    /// 201's Flynn and Brock are people on 201, and placements of their
+    /// names on another level (202, 206, 208 and 212 place them) aren't,
+    /// nor on a run whose level isn't set.
+    #[test]
+    fn another_levels_placement_named_as_201s_people_isnt_one() {
+        let obj = |index| Obj { unit: 3, index };
+        let files = Files {
+            placed: vec![
+                Placed::named(obj(10), "Flynn", Some("C:/x/Level_202/Flynn_202.ai"), 4),
+                Placed::named(obj(11), "Brock", Some("C:/x/Level_202/Brock_202.ai"), 4),
+            ],
+            ..Files::default()
+        };
+        let handles: HashMap<Obj, Handle> =
+            (10..12).map(|i| (obj(i), 0x100 + u64::from(i))).collect();
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        assert!(world.people().is_empty(), "no level set");
+        world.set_level("level_202");
+        assert!(world.people().is_empty(), "202's Flynn and Brock");
+        world.set_level("level_201");
+        assert_eq!(world.people(), [0x10A, 0x10B]);
     }
 
     /// openspec AS.46, AS.47: a hub stage's sky, its stage's controller and

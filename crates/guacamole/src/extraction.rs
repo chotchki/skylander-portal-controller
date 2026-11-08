@@ -2615,6 +2615,7 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
             (guac_extract::levels::PARTS.len(), 0)
         );
         assert!(f.failed.is_empty(), "{:?}", f.failed);
+        assert!(f.source.streams.is_empty(), "an arena streams nothing");
         assert!(dir.join(format!("levels/{arena}/scene.ron")).is_file());
         // Its own sounds with it (openspec AR.30): the arena holds none, so
         // an IR of no sounds, recorded as its `sounds` part.
@@ -2669,6 +2670,65 @@ printf 'frame=10\nout_time_us=1000000\nprogress=end\n'
         assert!(
             why.starts_with(&format!("{broken}'s scene didn't extract")),
             "{why}"
+        );
+    }
+
+    /// openspec AS.157: a hub stage asked for by name brings every ship
+    /// part on the disc with it, each its streamed parts in, as one more
+    /// share of the header's progress; its source names them in order. A
+    /// stage asked again keeps them.
+    #[test]
+    fn a_hub_stage_asked_for_by_name_fetches_its_ship_parts() {
+        use crate::level_choice::{FetchEvent, fetch};
+        use guac_extract::levels::{PARTS, STREAMED};
+        let tmp = tempfile::tempdir().unwrap();
+        let dump = make_dump(tmp.path());
+        let usr = dump.join("PS3_GAME/USRDIR");
+        let stage = "level_hub_2_stage_9";
+        let archive = || {
+            IgaBuilder::new()
+                .stored("level.bld", &stage_level(&stage_sample()))
+                .build()
+        };
+        for name in [stage, "ship_part_001", "ship_part_000"] {
+            fs::write(guac_extract::levels::archive_path(&usr, name), archive()).unwrap();
+        }
+        let known = known_for(&dump);
+        let ffmpeg = fake_ffmpeg(&tmp.path().join("bin"));
+        let extract = tmp.path().join("extract");
+        let job = ExtractJob {
+            test_known: Some(known[0]),
+            ..job(&extract, Some(ffmpeg))
+        };
+        let (first, _) = run_all(&dump, &job, &known);
+        let dir = first.unwrap().library.dir;
+        let events = Mutex::new(Vec::new());
+        let send = |e: FetchEvent| events.lock().unwrap().push(format!("{e:?}"));
+        let f = fetch(&dump, &job, stage, &send).unwrap();
+        assert_eq!(f.kind, guac_extract::levels::Kind::Hub);
+        assert_eq!(f.source.streams, ["ship_part_000", "ship_part_001"]);
+        let manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("manifest.json")).unwrap()).unwrap();
+        for part in ["ship_part_000", "ship_part_001"] {
+            let recorded = manifest["levels"][part]["parts"].as_object().unwrap();
+            assert_eq!(recorded.len(), STREAMED.len(), "{part}: {recorded:?}");
+            assert!(dir.join(format!("levels/{part}/script.igz")).is_file());
+        }
+        let n = PARTS.len() + 1 + 2 * STREAMED.len();
+        let seen = events.lock().unwrap().clone();
+        assert_eq!(
+            seen.last(),
+            Some(&format!("Parts {{ done: {n}, total: {n} }}")),
+            "{seen:?}"
+        );
+        let again = fetch(&dump, &job, stage, &|_| {}).unwrap();
+        assert_eq!(again.source.streams, f.source.streams);
+        // The report counts the streams' parts with the stage's (the
+        // au-ship-parts review): read the first time, kept the second.
+        assert!(f.parts_read >= 2 * STREAMED.len(), "{}", f.parts_read);
+        assert_eq!(
+            (again.parts_read, again.parts_kept),
+            (0, f.parts_read + f.parts_kept)
         );
     }
 }

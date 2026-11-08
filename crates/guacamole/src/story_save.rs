@@ -1023,6 +1023,13 @@ pub fn start_run(
             }
         }
     }
+    // The ship's parts (openspec AS.157): a kid's collected parts equipped
+    // as the menu would, then a hub stage's streams joined, before the
+    // start's save keeps their bits. A stop there costs the parts alone.
+    if let Err(h) = crate::ship_parts::start(vm, host) {
+        warn!(%h, "the ship parts' start stopped: the ship hangs what it had");
+        host.world.ship_parts.stopped = Some(h.to_string());
+    }
     objectives_done_before(vm, host)?;
     // The level initializer's save: slot and header, the percent complete
     // worked out first.

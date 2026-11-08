@@ -124,6 +124,11 @@ pub struct LevelSource {
     pub identity: DumpIdentity,
     /// The level's archive (`level_213_tutotial`).
     pub level: String,
+    /// The files it streams in, by archive, their parts in (openspec AS.157:
+    /// a hub stage's ship parts, [`guacamole::ship_parts::streams`]): their
+    /// scripts linked after the level's, their templates' models drawn by
+    /// its clones.
+    pub streams: Vec<String>,
 }
 
 impl LevelSource {
@@ -140,7 +145,14 @@ impl LevelSource {
             ir,
             identity,
             level: level.to_owned(),
+            streams: Vec::new(),
         }
+    }
+
+    /// This level with `streams` streamed in, their parts in.
+    pub fn with_streams(mut self, streams: Vec<String>) -> Self {
+        self.streams = streams;
+        self
     }
 
     /// Whether this level is chapter 1, whose listing names its first
@@ -393,6 +405,22 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
     }
     let read = started.elapsed();
     let mut walk = read_walk(source, part)?;
+    // What the level streams in draws by its clones (openspec AS.157): each
+    // stream's templates' static models among the props', its skinned ones
+    // among the creatures with its own clips. One that doesn't read draws
+    // nothing; the level goes on.
+    let mut stream_creatures = Vec::new();
+    for stream in &source.streams {
+        match read_stream(source, stream) {
+            Ok((props, creatures)) => {
+                walk.props.add_spawns(props);
+                stream_creatures.extend(creatures);
+            }
+            Err(why) => {
+                warn!(%stream, reason = %why, "a stream's draw didn't read: its clones draw nothing");
+            }
+        }
+    }
     // Each texture's layout, read once off its header (AS.13: a normal map
     // the shader can't read refuses its material).
     let formats_read = Mutex::new(HashMap::new());
@@ -607,7 +635,7 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
             None
         }
     };
-    let creatures: Vec<CreatureModel> = std::mem::take(&mut walk.creatures)
+    let mut creatures: Vec<CreatureModel> = std::mem::take(&mut walk.creatures)
         .into_iter()
         .map(|(path, model)| CreatureModel {
             palette: palettes
@@ -622,6 +650,11 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
             model: Arc::new(model),
         })
         .collect();
+    for c in stream_creatures {
+        if !creatures.iter().any(|k| k.path == c.path) {
+            creatures.push(c);
+        }
+    }
     let creature_materials: Vec<&model::Material> = creatures
         .iter()
         .flat_map(|c| c.model.materials.iter())
@@ -706,6 +739,49 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         read,
         took: started.elapsed(),
     })
+}
+
+/// A stream's draw off its parts (openspec AS.157): what its templates'
+/// clones draw, its static models as a level's clones draw theirs and its
+/// skinned ones with their clips off its palettes part (none read, each
+/// holds its idle). Why not when its placements or props don't read or are
+/// another dump's or file's.
+fn read_stream(
+    source: &LevelSource,
+    stream: &str,
+) -> Result<(LevelProps, Vec<CreatureModel>), String> {
+    let part = |p: &str| {
+        source
+            .dir
+            .join(guac_extract::levels::part_path(source.ir, stream, p))
+    };
+    let placements: guac_ir::level::Placements = read_ir(source.ir, &part(PLACEMENTS))?;
+    let props: guac_ir::level::Props = read_ir(source.ir, &part(PROPS))?;
+    for (what, identity, level) in [
+        ("placements", &placements.identity, &placements.level),
+        ("props", &props.identity, &props.level),
+    ] {
+        if *identity != source.identity || level != stream {
+            return Err(format!("the {what} part is another dump's or file's"));
+        }
+    }
+    let palettes: Option<guac_ir::palette::LevelPalettes> =
+        read_ir(source.ir, &part(guac_extract::levels::PALETTES)).ok();
+    let creatures =
+        guacamole::creature_models::skinned_models(&placements, &props, &source.identity)
+            .into_iter()
+            .map(|(path, model)| CreatureModel {
+                palette: palettes
+                    .as_ref()
+                    .and_then(|p| p.palettes.iter().find(|x| x.owner == path))
+                    .map(|p| Arc::new(p.clone())),
+                nodes: None,
+                path,
+                model: Arc::new(model),
+            })
+            .collect();
+    let props = LevelProps::new(&props, &placements).map_err(|e| format!("its props: {e}"))?;
+    Ok((props, creatures))
 }
 
 /// A KTX2's `vkFormat`, off its header; `None` for a file that doesn't
@@ -2052,10 +2128,13 @@ fn receive_level(
     // in only once this one's run is in ([`Level::walkable`]).
     level.scripts = Some({
         let (dir, name, ir) = (source.dir.clone(), source.level.clone(), source.ir);
+        let streams = source.streams.clone();
         AsyncComputeTaskPool::get().spawn(async move {
-            level_scripts::load(&dir, &name).map(|mut linked| {
+            level_scripts::load_with_streams(&dir, &name, &streams).map(|mut linked| {
                 linked.layout = level_scripts::figure_layout(&dir, ir);
-                linked.palettes = level_scripts::level_palettes(&dir, &name, ir);
+                // With the streams' templates' clips (openspec AS.157): the
+                // engines' own scripts play them.
+                linked.palettes = level_scripts::palettes_with_streams(&dir, &name, &streams, ir);
                 // The sounds its units' archives play (openspec AR.9).
                 linked.sounds = Some(guacamole::sounds::load(&dir, ir, &linked.program.units));
                 // The original's interface its scripts write (openspec AT.9).
@@ -2598,6 +2677,8 @@ fn poll_scripts(level: &mut Level, commands: &mut Commands) {
                 placements,
                 order,
                 fighters,
+                streams,
+                stream_ids,
                 walkers,
                 left_out,
                 layout,
@@ -2636,6 +2717,8 @@ fn poll_scripts(level: &mut Level, commands: &mut Commands) {
                         files: placements,
                         order,
                         fighters,
+                        streams,
+                        stream_ids,
                         walkers,
                         left_out,
                         layout,
@@ -4854,6 +4937,78 @@ mod tests {
         assert_eq!(models.get("lock.mdl").map(Vec::len), Some(1));
         assert!(!models.contains_key("pebble.mdl"));
         assert!(!models.contains_key("inviso.mdl"));
+    }
+
+    /// openspec AS.157: a stream's template's model is among what the
+    /// level's clones draw, found by path as a level template's is; a stream
+    /// whose parts are another dump's draws nothing and the level loads all
+    /// the same.
+    #[test]
+    fn a_streams_template_is_there_for_the_controllers_clones() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = write_level(tmp.path(), &lights());
+        let scene: guac_ir::level::Scene = guac_ir::from_ron(
+            &std::fs::read_to_string(tmp.path().join(source.ir.level_path(LEVEL, SCENE))).unwrap(),
+        )
+        .unwrap();
+        let shape = MeshShape {
+            uv_sets: 2,
+            tangents: true,
+            colours: false,
+            skinned: false,
+        };
+        let stream = |name: &str, model: &str, identity: guac_ir::DumpIdentity| {
+            let props = guac_ir::level::Props {
+                identity: identity.clone(),
+                level: name.into(),
+                props: vec![guac_ir::level::Prop {
+                    path: model.into(),
+                    skeleton: None,
+                    materials: vec![scene.scenes[0].materials[0].clone()],
+                    segments: vec![segment(0, shape, 0.0)],
+                    idle: None,
+                }],
+                refused: Vec::new(),
+            };
+            let placements = guac_ir::level::Placements {
+                identity,
+                level: name.into(),
+                actors: vec![guac_ir::level::Placement {
+                    object: 1,
+                    id: 0,
+                    name: "ShipPart_900".into(),
+                    script: None,
+                    position: [0.0; 3],
+                    rotation: [0.0; 3],
+                    scale: [100.0; 3],
+                    model: Some(model.into()),
+                    solid: None,
+                    movement: None,
+                    waypoints: None,
+                    activity_state: 5,
+                    activation_range: 0.0,
+                }],
+                waypoints: Vec::new(),
+            };
+            std::fs::create_dir_all(tmp.path().join("levels").join(name)).unwrap();
+            for (part, text) in [
+                (PROPS, guac_ir::to_ron(&props).unwrap()),
+                (PLACEMENTS, guac_ir::to_ron(&placements).unwrap()),
+            ] {
+                std::fs::write(tmp.path().join(source.ir.level_path(name, part)), text).unwrap();
+            }
+        };
+        let mut other = source.identity.clone();
+        other.manifest_hash = Sha256([9; 32]);
+        stream("ship_part_900", "roof.mdl", source.identity.clone());
+        stream("ship_part_901", "engine.mdl", other);
+        let source = source.with_streams(vec!["ship_part_900".into(), "ship_part_901".into()]);
+        let mut app = level_app(tmp.path(), source, false);
+        until(&mut app, &["ready"], |_| {});
+        let level = app.world().resource::<Level>();
+        let models = level.spawn_models().expect("loaded");
+        assert_eq!(models.get("roof.mdl").map(Vec::len), Some(1));
+        assert!(!models.contains_key("engine.mdl"), "another dump's");
     }
 
     /// AH.87: the particle part's emitters load with the level, each
