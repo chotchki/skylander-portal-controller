@@ -177,6 +177,9 @@ struct Walked {
     /// Each cutscene's name and the steps it played.
     scenes: Vec<(String, u32, u32)>,
     cards: Vec<Card>,
+    /// Each fight's way across the ground, every quarter second from where
+    /// it began: what the Mac's driver follows after its own fight there.
+    fights: Vec<Vec<[f32; 2]>>,
     level_change: Option<String>,
     steps: u32,
     seconds: f64,
@@ -356,9 +359,23 @@ impl Walker {
     /// The awake foes within `reach` m on his storey fought, nearest first,
     /// for at most `n` steps, until none has stood there for 4 s.
     fn fight(&mut self, reach: f32, n: u32) {
+        let at = |w: &Self| {
+            let p = w.run.hero().pivot;
+            [p.x, p.z]
+        };
+        let mut trail = vec![at(self)];
+        self.fight_for(reach, n, &mut trail);
+        trail.push(at(self));
+        self.walked.fights.push(trail);
+    }
+
+    fn fight_for(&mut self, reach: f32, n: u32, trail: &mut Vec<[f32; 2]>) {
         let (mut pressed, mut idle) = (0u32, 0u32);
         for k in 0..n {
             let me = self.run.hero().pivot;
+            if k % 15 == 0 {
+                trail.push([me.x, me.z]);
+            }
             let run = &self.run;
             let near = run
                 .world
@@ -529,6 +546,13 @@ fn walked() -> &'static Walked {
         );
         for (n, a, b) in &walked.scenes {
             println!("  scene {n} {a}-{b}");
+        }
+        for (k, f) in walked.fights.iter().enumerate() {
+            let way: Vec<String> = f
+                .iter()
+                .map(|p| format!("{:.1} {:.1}", p[0], p[1]))
+                .collect();
+            println!("  fight {k}: {}", way.join("; "));
         }
         for c in &walked.cards {
             println!(

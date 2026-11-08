@@ -351,6 +351,24 @@ mod tests {
         assert!(passage("level_202").is_empty());
     }
 
+    /// AS.160's half on level 201: the life wall's two triggers, which write
+    /// its controller's range as the hero passes them, run on its listing
+    /// and on no other level's.
+    #[test]
+    fn its_life_wall_triggers_are_listed() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, WAY.level);
+        let off = level_config(Mode::Play, &files, 5, "level_202");
+        for (name, script) in [
+            ("Special_Activate_Life_wall", "Activate_Life_Wall.ai"),
+            ("Special_Remove_Life_Wall", "Remove_Life_Wall.ai"),
+        ] {
+            let path = format!("C:/tfb/Content/Levels/Level_201/Scripts/{script}");
+            assert!(on.whitelist.lists(name, &path), "{name}");
+            assert!(!off.whitelist.lists(name, &path), "{name} on 202");
+        }
+    }
+
     /// Its own scripts are its folder's (each a path under it, none a bare
     /// file name another level's copy would match), its music the music
     /// list's and its walked enemies never what takes the way on.
