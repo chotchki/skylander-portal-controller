@@ -4947,6 +4947,78 @@ mod tests {
         assert!(!models.contains_key("inviso.mdl"));
     }
 
+    /// openspec AS.157: a stream's template's model is among what the
+    /// level's clones draw, found by path as a level template's is; a stream
+    /// whose parts are another dump's draws nothing and the level loads all
+    /// the same.
+    #[test]
+    fn a_streams_template_is_there_for_the_controllers_clones() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = write_level(tmp.path(), &lights());
+        let scene: guac_ir::level::Scene = guac_ir::from_ron(
+            &std::fs::read_to_string(tmp.path().join(source.ir.level_path(LEVEL, SCENE))).unwrap(),
+        )
+        .unwrap();
+        let shape = MeshShape {
+            uv_sets: 2,
+            tangents: true,
+            colours: false,
+            skinned: false,
+        };
+        let stream = |name: &str, model: &str, identity: guac_ir::DumpIdentity| {
+            let props = guac_ir::level::Props {
+                identity: identity.clone(),
+                level: name.into(),
+                props: vec![guac_ir::level::Prop {
+                    path: model.into(),
+                    skeleton: None,
+                    materials: vec![scene.scenes[0].materials[0].clone()],
+                    segments: vec![segment(0, shape, 0.0)],
+                    idle: None,
+                }],
+                refused: Vec::new(),
+            };
+            let placements = guac_ir::level::Placements {
+                identity,
+                level: name.into(),
+                actors: vec![guac_ir::level::Placement {
+                    object: 1,
+                    id: 0,
+                    name: "ShipPart_900".into(),
+                    script: None,
+                    position: [0.0; 3],
+                    rotation: [0.0; 3],
+                    scale: [100.0; 3],
+                    model: Some(model.into()),
+                    solid: None,
+                    movement: None,
+                    waypoints: None,
+                    activity_state: 5,
+                    activation_range: 0.0,
+                }],
+                waypoints: Vec::new(),
+            };
+            std::fs::create_dir_all(tmp.path().join("levels").join(name)).unwrap();
+            for (part, text) in [
+                (PROPS, guac_ir::to_ron(&props).unwrap()),
+                (PLACEMENTS, guac_ir::to_ron(&placements).unwrap()),
+            ] {
+                std::fs::write(tmp.path().join(source.ir.level_path(name, part)), text).unwrap();
+            }
+        };
+        let mut other = source.identity.clone();
+        other.manifest_hash = Sha256([9; 32]);
+        stream("ship_part_900", "roof.mdl", source.identity.clone());
+        stream("ship_part_901", "engine.mdl", other);
+        let source = source.with_streams(vec!["ship_part_900".into(), "ship_part_901".into()]);
+        let mut app = level_app(tmp.path(), source, false);
+        until(&mut app, &["ready"], |_| {});
+        let level = app.world().resource::<Level>();
+        let models = level.spawn_models().expect("loaded");
+        assert_eq!(models.get("roof.mdl").map(Vec::len), Some(1));
+        assert!(!models.contains_key("engine.mdl"), "another dump's");
+    }
+
     /// AH.87: the particle part's emitters load with the level, each
     /// textured generator on a material of its own keyed among the level's,
     /// an untextured one on none; without the part, or with another dump's,
