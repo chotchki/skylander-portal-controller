@@ -2883,11 +2883,20 @@ mod tests {
             .world_mut()
             .query::<(&MeshMaterial3d<CharacterMaterial>, &RenderLayers)>();
         let assets = app.world().resource::<Assets<CharacterMaterial>>();
-        let frames: Vec<f32> = materials
+        let level_layer: Vec<&CharacterMaterial> = materials
             .iter(app.world())
             .filter(|(_, l)| **l == RenderLayers::layer(LEVEL_LAYER))
-            .map(|(m, _)| assets.get(&m.0).unwrap().uniform.misc.w)
+            .map(|(m, _)| assets.get(&m.0).unwrap())
             .collect();
+        let frames: Vec<f32> = level_layer.iter().map(|m| m.uniform.misc.w).collect();
+        // Each off the level's buffer, which since AS.148 holds every light
+        // and the fog: one on the dark buffer would draw unlit (the review).
+        assert!(
+            level_layer
+                .iter()
+                .all(|m| m.scene_lights.id() == guacamole::character::LEVEL_LIGHTS.id()),
+            "a level-layer material off the level's buffer"
+        );
         assert!(
             frames.len() >= 5,
             "the level's four segments and his: {frames:?}"

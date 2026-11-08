@@ -5562,6 +5562,14 @@ mod tests {
             ],
             "the ground fogged, the sky not, both off the buffer"
         );
+        // Each binds the level's buffer: one bound to the dark one would
+        // read no light and no fog at all (the review of AS.148).
+        {
+            let assets = app.world().resource::<Assets<CharacterMaterial>>();
+            for h in &materials {
+                assert_eq!(assets.get(h).unwrap().scene_lights.id(), LEVEL_LIGHTS.id());
+            }
+        }
         let lit = written(&app);
         assert!(
             lit.fog_range

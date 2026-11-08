@@ -90,11 +90,6 @@ impl LevelFog {
         far: 2.0e4,
     };
 
-    /// A zone's fog as the original sets it up (AG.13, at AF's fresh
-    /// state): on, the fog fades in linearly with depth along the view from
-    /// its start to its start plus its range, wholly fogged past that (the
-    /// viewport's fog max is the zone's "fog on", 1, which the shader's
-    /// fade reaches); off (0), nothing. Any other "fog on" is refused.
     /// The sky's fog at `share` (0 to 1) of `colour` (as a disc stores one),
     /// whatever its depth along the view (openspec AS.164; a hypothesis: no
     /// recording holds a sky at a share): a fade from [`SKY_FOG_REACH`]
@@ -112,6 +107,11 @@ impl LevelFog {
         }
     }
 
+    /// A zone's fog as the original sets it up (AG.13, at AF's fresh
+    /// state): on, the fog fades in linearly with depth along the view from
+    /// its start to its start plus its range, wholly fogged past that (the
+    /// viewport's fog max is the zone's "fog on", 1, which the shader's
+    /// fade reaches); off (0), nothing. Any other "fog on" is refused.
     pub fn from_zone(fog: &ZoneFog) -> Result<Self, LevelError> {
         match fog.on {
             0 => Ok(Self::NONE),

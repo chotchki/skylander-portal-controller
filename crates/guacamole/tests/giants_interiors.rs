@@ -332,7 +332,9 @@ fn chapter_1s_cave_scene_stands_its_people_where_the_oracle_does() {
         assert!(off < 0.1 && turn < 1.0, "{name}");
         holders.push((name, a.position));
     }
-    // What each holds, by him (the oracle's 0.0-1.4 m: the hammer swings).
+    // What each holds, by him: on one of his nodes in the oracle's read
+    // (1.8-2.6 m from his pivot, the turban on his head), within 0.2-0.6 m
+    // of it here, where nothing headless poses his nodes.
     for (held, by) in [
         ("Turban_hat", "213_Gigantus_Norticus"),
         ("Brick", "213_Gigantus_Slave_Carry"),
