@@ -333,6 +333,10 @@ pub struct Run {
     /// person's ground is what the ray caster meets, AS.166), each logged
     /// once as it's first seen.
     pub surfaces: (HashSet<Handle>, HashSet<Handle>, HashSet<(Handle, Handle)>),
+    /// With `GUAC_HANG_CENSUS` set (openspec AS.189), what the hero hung
+    /// from while he hangs, and each let-go: the step, what let him go and
+    /// where, logged again 60 steps on.
+    pub hangs: (Option<String>, Vec<(u32, String, Vec3)>),
     /// His figure's toy id: Eruptor's 9, or [`Setup::character`]'s.
     pub toy: u16,
 }
@@ -507,7 +511,55 @@ impl Run {
         self.pose_hands();
         self.bench.place_bodies(&self.world);
         self.census_surfaces();
+        self.census_hangs();
         Ok(stopped)
+    }
+
+    /// `GUAC_HANG_CENSUS`'s lines (openspec AS.189): each let-go of the
+    /// hero, what he hung from, where he's let go and where he is 60 steps
+    /// on, so a hang that sets him down on or in something shows as a lift.
+    fn census_hangs(&mut self) {
+        if std::env::var_os("GUAC_HANG_CENSUS").is_none() {
+            return;
+        }
+        let Some(hero) = self.bench.heroes.get(&self.hero) else {
+            return;
+        };
+        let (pivot, hung) = (hero.pivot, hero.hung);
+        if hung {
+            let from = self.world.actor(self.hero).map_or_else(
+                || "?".to_owned(),
+                |a| {
+                    let owner = self.world.node_owner(a.attach).or(match a.attach {
+                        Value::Entity(h) => Some(h),
+                        _ => None,
+                    });
+                    owner.map_or_else(|| format!("{:?}", a.attach), |o| self.world.name(o))
+                },
+            );
+            self.hangs.0 = Some(from);
+        } else if let Some(from) = self.hangs.0.take() {
+            println!(
+                "LET-GO step {} from {from} at ({:.2}, {:.2}, {:.2})",
+                self.steps, pivot.x, pivot.y, pivot.z
+            );
+            self.hangs.1.push((self.steps + 60, from, pivot));
+        }
+        let now = self.steps;
+        self.hangs.1.retain(|(at, from, was)| {
+            if *at != now {
+                return true;
+            }
+            println!(
+                "LET-GO+60 step {now} from {from} at ({:.2}, {:.2}, {:.2}): {:.2} m on, {:+.2} m up",
+                pivot.x,
+                pivot.y,
+                pivot.z,
+                pivot.distance(*was),
+                pivot.y - was.y
+            );
+            false
+        });
     }
 
     /// `GUAC_SURFACE_CENSUS`'s lines (openspec AS.168): each clone standing
@@ -1367,6 +1419,7 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
             idle0: 0.0,
             lean: None,
             surfaces: Default::default(),
+            hangs: Default::default(),
             toy: setup.character.map_or(9, |c| c.toy),
         },
         found,

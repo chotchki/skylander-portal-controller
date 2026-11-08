@@ -432,6 +432,14 @@ fn visit_persephone(run: &mut Run, stops: &mut Vec<String>) {
 /// A turret entered by its prompt (△) from where he stands, its pointer
 /// calibrated on the circle, each target shot in turn, then out.
 fn play_turret(run: &mut Run, stops: &mut Vec<String>, count: usize) -> u32 {
+    into_turret(run, stops);
+    shoot_padlocks(run, stops, count);
+    out_of_turret(run, stops)
+}
+
+/// A turret entered by its prompt (△) from where he stands and its
+/// pointer calibrated on the circle, to its game.
+fn into_turret(run: &mut Run, stops: &mut Vec<String>) {
     for k in 0..240u32 {
         still(run, stops, [false, false, false, k % 30 < 2]);
         if turret::view(&run.vm, &run.world).is_some() && !run.hero().hung && k > 200 {
@@ -464,7 +472,13 @@ fn play_turret(run: &mut Run, stops: &mut Vec<String>, count: usize) -> u32 {
         "{:?}",
         view(run)
     );
-    let from = view(run).hits;
+}
+
+/// The turret's padlocks shot until `count` are hit.
+fn shoot_padlocks(run: &mut Run, stops: &mut Vec<String>, count: usize) {
+    let from = turret::view(&run.vm, &run.world)
+        .expect("a turret running")
+        .hits;
     for k in 0..7200u32 {
         let Some(v) = turret::view(&run.vm, &run.world) else {
             break;
@@ -490,22 +504,79 @@ fn play_turret(run: &mut Run, stops: &mut Vec<String>, count: usize) -> u32 {
     }
     let hit = turret::view(&run.vm, &run.world).map_or(count as i32, |v| v.hits);
     assert_eq!(hit as usize, count, "every padlock: from {from}");
+}
+
+/// Out of the turret its game let go of him: carried over the arc its
+/// get-out works out and set down on the ground by its spot (openspec
+/// AS.189). The step he was let go.
+fn out_of_turret(run: &mut Run, stops: &mut Vec<String>) -> u32 {
+    let middle = turret_middle(run).expect("its turret");
+    let (mut spot, mut peak) = (None, f32::MIN);
     for _ in 0..900 {
         still(run, stops, [false; 4]);
-        if turret::active(&run.vm).is_none() {
+        let Some(v) = turret::view(&run.vm, &run.world) else {
             break;
+        };
+        if let Some(at) = v.get_out {
+            spot = Some(Vec3::from_array(at));
+            peak = peak.max(run.hero().pivot.y);
         }
     }
     assert!(turret::active(&run.vm).is_none(), "its game over");
     assert!(!run.hero().hung, "out of it");
-    run.steps
+    let over = run.steps;
+    for _ in 0..120 {
+        still(run, stops, [false; 4]);
+    }
+    let spot = spot.expect("the spot its get-out works out");
+    let at = run.hero().pivot;
+    let off = (at.x - spot.x).hypot(at.z - spot.z);
+    let out = (at.x - middle.x).hypot(at.z - middle.z);
+    println!(
+        "out at {over}: the turret's middle {middle}, its spot {spot}, his highest {:.2} m over it, him 2 s on at {at}: {off:.2} m from the spot, {out:.2} m from the middle",
+        peak - middle.y
+    );
+    // openspec AS.189: over the arc and onto the ground by the spot, off
+    // the ball (it lifted him onto its top, 4.5 m up, from its middle).
+    assert!(
+        peak - middle.y > 7.0,
+        "the arc's height: {}",
+        peak - middle.y
+    );
+    assert!(off < 1.0, "by the spot: {off}");
+    assert!((at.y - spot.y).abs() < 0.3, "on the ground: {at} by {spot}");
+    assert!(out > 8.0, "beside the turret: {out}");
+    over
+}
+
+/// The turret lost as its last hurt loses it (`New Turret - Flash Turret
+/// On Hurt` once its health is gone): no win, its players getting out.
+fn lose_turret(run: &mut Run) {
+    let t = turret::active(&run.vm).expect("a turret running");
+    let out = run
+        .vm
+        .program()
+        .object_named(turret::GETTING_OUT)
+        .expect("its getting out");
+    assert!(run.vm.set_field(t, "win?", Value::Int(0)));
+    assert!(run.vm.set_reference(t, "turret state", Value::Object(out)));
+}
+
+/// The middle of the turret running.
+fn turret_middle(run: &Run) -> Option<Vec3> {
+    let t = turret::active(&run.vm)?;
+    match run.vm.value(run.vm.field(t, "turret actor")?) {
+        Value::Entity(h) => run.world.actor(h).map(|a| a.position),
+        _ => None,
+    }
 }
 
 /// openspec AS.76, AU.23: the third island walked to its end. From the
 /// ship: Persephone's room (the drawbridge wants her first visit), across
 /// the bridge to Setup_006's trigger, its Tree Rexes and spawner then its
-/// seven side enemies fought; the first turret's three padlocks shot open
-/// the first gate; `PvP_JumpPad_SUPER(6)` onto the blocks' plateau; a stone
+/// seven side enemies fought; the first turret lost, used again and its
+/// three padlocks shot open the first gate, out of it on the ground by the
+/// spot its get-out works out each time (AS.189); `PvP_JumpPad_SUPER(6)` onto the blocks' plateau; a stone
 /// block pushed three spans north and, past a barrel, two back to bridge
 /// the gap; round by the ramp and across it to the second turret and its
 /// four padlocks; through the second gate to the third ship part; its
@@ -567,6 +638,12 @@ fn level_214s_third_island_is_walked_to_its_end() {
     // Up to the turret's sphere, solid to him (its 26 ft its scripts give
     // it, openspec AS.168), short of its middle.
     walk(&mut run, &mut stops, &[[665.2, 457.6]]);
+    // Lost first, as its health running out loses it: out by its spot, its
+    // prompt back and into it again from there (openspec AS.189).
+    into_turret(&mut run, &mut stops);
+    lose_turret(&mut run);
+    let lost = out_of_turret(&mut run, &mut stops);
+    println!("the first turret lost at {lost}");
     let t1 = play_turret(&mut run, &mut stops, 3);
     println!("the first turret over at {t1}");
     assert_eq!(global(&run, "First Gate Openned"), Some(Value::Int(1)));

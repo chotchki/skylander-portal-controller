@@ -262,6 +262,10 @@ The third island SHALL play from the second ship part to the level's end on the 
 - **WHEN** a hero enters a turret by its prompt, moves its pointer onto the calibration circle and then onto a padlock with the stick and fires
 - **THEN** the shot flies to the padlock and breaks it, and the last padlock's gate opens and lets him out
 
+#### Scenario: Out of a turret
+- **WHEN** a turret's game ends, its padlocks shot or its health gone
+- **THEN** the hero hops out over its rim and lands on the ground by the spot its get-out works out, 9 m from the first turret's middle and 11 m from the second's, and a turret lost takes him in again by its prompt
+
 #### Scenario: The level's end
 - **WHEN** the hero takes the third ship part
 - **THEN** its outro plays its seven scenes and the level's end names the village, which goes to hub stage 1

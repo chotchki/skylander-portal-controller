@@ -527,6 +527,9 @@ pub struct ScriptWorld {
     pub(crate) ray_picks: bool,
     /// The active turret's base, which its own shots pass.
     pub(crate) turret_base: Option<Handle>,
+    /// Where the last step's get-out carried each player getting out of a
+    /// turret (openspec AS.189, [`crate::turret::carry_out`]).
+    pub(crate) turret_carried: Vec<(Handle, Vec3)>,
     load_level: Value,
     /// The levels the scripts asked for, as each step took them.
     pub requests: Vec<Value>,
@@ -926,6 +929,7 @@ impl ScriptWorld {
             time_scale: FULL_SPEED,
             ray_picks: false,
             turret_base: None,
+            turret_carried: Vec::new(),
             load_level: Value::Null,
             requests: Vec::new(),
             levels: None,
