@@ -508,13 +508,13 @@ impl Run {
 
     /// `GUAC_SURFACE_CENSUS`'s lines (openspec AS.168): each clone standing
     /// for actors the first step it does, by its template's name and where,
-    /// and the first step the hero comes within 3 m of one.
+    /// and the first step the hero comes within 3 m of its shape's reach.
     fn census_surfaces(&mut self) {
         if std::env::var_os("GUAC_SURFACE_CENSUS").is_none() {
             return;
         }
         let hero = self.bench.heroes.get(&self.hero).map(|h| h.pivot);
-        for (h, _, pose) in self.world.creature_bodies() {
+        for (h, solid, pose) in self.world.creature_bodies() {
             let Some(a) = self.world.actor(h) else {
                 continue;
             };
@@ -532,8 +532,24 @@ impl Run {
                     at.x, at.y, at.z, self.steps
                 );
             }
+            // Within 3 m of its shape's reach from its centre.
+            let reach = match solid.shape {
+                guac_motion::seam::Shape::Box { half_extents, .. } => half_extents.length(),
+                guac_motion::seam::Shape::Sphere { radius, .. } => radius,
+                guac_motion::seam::Shape::Capsule {
+                    radius,
+                    half_segment,
+                    ..
+                } => radius + half_segment,
+                guac_motion::seam::Shape::Cylinder {
+                    radius,
+                    half_height,
+                    ..
+                } => radius.hypot(half_height),
+                _ => 0.0,
+            };
             if let Some(p) = hero
-                && p.distance(at) < 3.0
+                && p.distance(at) < 3.0 + reach
                 && self.surfaces.1.insert(h)
             {
                 println!(

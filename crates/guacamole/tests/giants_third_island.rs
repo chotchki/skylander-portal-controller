@@ -564,7 +564,9 @@ fn level_214s_third_island_is_walked_to_its_end() {
     for _ in 0..300 {
         still(&mut run, &mut stops, [false; 4]);
     }
-    walk(&mut run, &mut stops, &[[665.2, 456.5]]);
+    // Up to the turret's sphere, solid to him (its 26 ft its scripts give
+    // it, openspec AS.168), short of its middle.
+    walk(&mut run, &mut stops, &[[665.2, 457.6]]);
     let t1 = play_turret(&mut run, &mut stops, 3);
     println!("the first turret over at {t1}");
     assert_eq!(global(&run, "First Gate Openned"), Some(Value::Int(1)));
@@ -656,7 +658,7 @@ fn level_214s_third_island_is_walked_to_its_end() {
             [703.0, 482.0],
             [697.0, 482.0],
             [691.0, 480.0],
-            [685.0, 472.5],
+            [686.8, 473.9],
         ],
     );
     let t2 = play_turret(&mut run, &mut stops, 4);
