@@ -185,7 +185,21 @@ struct Walked {
     seconds: f64,
     /// The pits' jump pads after each stretch: whether each is off.
     pads: Vec<(&'static str, [bool; 2])>,
+    /// Brock in the practice pit's last scene (AS.187), each step from its
+    /// start to [`PP_AFTER`] steps past its end: where he stands, whether
+    /// the scene still plays.
+    brock: Vec<(u32, [f32; 3], bool)>,
 }
+
+/// The practice pit's last scene, whose camera's scene jumps Brock off the
+/// yard to the landing below (AS.187), and how long past it the walk
+/// follows him.
+const PP_SCENE: &str = "IGC PP Macro";
+const PP_AFTER: u32 = 120;
+/// Brock's placement in the practice pit's scenes, and the waypoints of
+/// his way through them (`PP Brock WP`).
+const BROCK_NPC: &str = "Brock NPC";
+const BROCK_WAY: &str = "PP Brock WP";
 
 /// The jump pads the walk records, the one in the pit below the landing's
 /// yard and the one in the pit off the grass the bridge drops him on.
@@ -311,7 +325,20 @@ impl Walker {
             if let Some((n, from)) = self.scene.take() {
                 self.walked.scenes.push((n, from, steps));
             }
-            self.scene = scene.map(|n| (n, steps));
+            self.scene = scene.clone().map(|n| (n, steps));
+        }
+        let in_pp = scene.as_deref() == Some(PP_SCENE);
+        let after_pp = self
+            .walked
+            .scene(PP_SCENE)
+            .is_some_and(|(_, end)| steps <= end + PP_AFTER);
+        if in_pp || after_pp {
+            let h = self.run.placed(BROCK_NPC).0;
+            if let Some(a) = self.run.world.actor(h).filter(|a| !a.removed) {
+                self.walked
+                    .brock
+                    .push((steps, a.position.to_array(), in_pp));
+            }
         }
         if let (Some(hp), Some(m)) = (self.run.health(), self.run.minion)
             && hp < 60.0
@@ -708,6 +735,98 @@ fn its_arena_runs_its_battle_to_the_outro() {
             .is_some_and(|s| s >= outro.0),
         "{castle:?}"
     );
+}
+
+/// AS.187: the practice pit's last scene jumps Brock off the yard to the
+/// landing below on its own arc: he rises well over the yard (the jump's
+/// 25 ft reach) and comes down on the ground by his landing, his way's
+/// second waypoint, which stands 1.2 m over the ground 3.4 m under the
+/// yard (where his walk carried him flat and 6.6 m short before), never
+/// under the ground; walked on to its third, he jumps again for its
+/// fourth, up off the ground there as the scene ends and takes him off.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn its_practice_pit_scene_jumps_brock_to_his_landing() {
+    let w = walked();
+    assert!(w.scene(PP_SCENE).is_some(), "{:?}", w.scenes);
+    let way = waypoints(BROCK_WAY);
+    let grounds: Vec<f32> = way.iter().map(|p| ground_under(*p)).collect();
+    let (yard, landing) = (way[0], way[1]);
+    println!("Brock's way {way:?}, the ground under it {grounds:?}");
+    for b in w.brock.iter().step_by(15) {
+        println!("  {} {:?} {}", b.0, b.1, b.2);
+    }
+    let ys: Vec<f32> = w.brock.iter().map(|b| b.1[1]).collect();
+    // The first jump: off the yard, its arc within 2 s (120 steps).
+    let off = ys
+        .iter()
+        .position(|y| *y > yard[1] + 0.5)
+        .expect("off the yard");
+    let arc = off..(off + 120).min(ys.len());
+    let peak = arc.fold(off, |best, k| if ys[k] > ys[best] { k } else { best });
+    println!(
+        "top {:.2} at step {} over the yard's {:.2}",
+        ys[peak], w.brock[peak].0, yard[1]
+    );
+    assert!(
+        ys[peak] > yard[1] + 3.0,
+        "rose: {} over {}",
+        ys[peak],
+        yard[1]
+    );
+    let down = w.brock[peak..]
+        .iter()
+        .position(|b| (b.1[1] - grounds[1]).abs() < 0.15)
+        .map(|k| peak + k)
+        .unwrap_or_else(|| panic!("never down by {landing:?}: {:?}", w.brock.last()));
+    let at = w.brock[down].1;
+    let off = (at[0] - landing[0]).hypot(at[2] - landing[2]);
+    println!(
+        "down at step {}: {at:?}, {off:.2} m from his landing",
+        w.brock[down].0
+    );
+    assert!(off < 2.0, "by his landing: {at:?} against {landing:?}");
+    let lowest = grounds.iter().copied().fold(f32::MAX, f32::min);
+    assert!(
+        ys.iter().all(|y| *y > lowest - 0.3),
+        "never under the ground: {:?}",
+        ys.iter().copied().fold(f32::MAX, f32::min)
+    );
+    let again = ys[down..].iter().copied().fold(f32::MIN, f32::max);
+    assert!(again > grounds[2] + 3.0, "the second jump rose: {again}");
+}
+
+/// The ground under `at` on level 201, metres: what its collision meets
+/// on a ray down from 3 m over it.
+fn ground_under(at: [f32; 3]) -> f32 {
+    use guac_motion::seam::Vec3;
+    let usr = dump().join("PS3_GAME/USRDIR");
+    let bytes = guac_extract::scripts::entry(&usr, &format!("level/{LEVEL_201}.bld")).unwrap();
+    let igz = guac_formats::igz::Igz::parse(&bytes).unwrap();
+    let (bodies, _) = level_bodies(&igz, LEVEL_201);
+    let world = guac_motion::parry::ParryWorld::new(&bodies).unwrap();
+    let at = Vec3::from_array(at);
+    guac_motion::ground::ray(&world, at + Vec3::Y * 3.0, Vec3::NEG_Y, 10.0, &[])
+        .expect("ground")
+        .point
+        .y
+}
+
+/// The waypoints of level 201's placement `name`, metres, off its file.
+fn waypoints(name: &str) -> Vec<[f32; 3]> {
+    let usr = dump().join("PS3_GAME/USRDIR");
+    let bytes = guac_extract::scripts::entry(&usr, &format!("level/{LEVEL_201}.bld")).unwrap();
+    let igz = guac_formats::igz::Igz::parse(&bytes).unwrap();
+    let p = guac_formats::level::Placements::read(&igz).unwrap();
+    let actor = p
+        .actors
+        .iter()
+        .find(|a| a.name() == Some(name))
+        .unwrap_or_else(|| panic!("no {name}"));
+    p.waypoints(actor)
+        .iter()
+        .map(|w| w.init_matrix.position)
+        .collect()
 }
 
 /// A fresh run on level 201 with Eruptor joined and its intro skipped, as

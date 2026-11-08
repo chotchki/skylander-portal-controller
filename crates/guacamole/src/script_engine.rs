@@ -262,6 +262,12 @@ pub struct SceneWalk {
     /// him, so what stops a walk stops him.
     pub own: bool,
     pub speed: f32,
+    /// A scene's jump in flight (openspec AS.187: `Cutscene Sequence - Jump
+    /// to Waypoint` launches its actor up the arc it computes, its shape
+    /// off): from a velocity written with a rise until one of nothing, the
+    /// actor flies on its velocity under its own gravity, nothing steering
+    /// or standing it.
+    pub jump: bool,
 }
 
 /// A contact the engine reports: a point, the normal out of the surface

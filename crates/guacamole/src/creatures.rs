@@ -50,6 +50,7 @@ use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
 use bevy_transform_interpolation::prelude::TransformInterpolation;
 use guac_ir::Model;
+use guac_ir::clip::Clip;
 use guac_ir::nodes::AttachNodes;
 use guac_ir::palette::Palette;
 use guac_motion::seam::{Body, BodyId, BodyKind, Collider as SeamCollider, Pose};
@@ -699,8 +700,24 @@ pub(crate) struct PersonShot {
     #[serde(flatten)]
     pub at: CreatureShot,
     pub drawn: bool,
+    /// The clips the TV poses it by now, what they're laid over first, by
+    /// name: none for its reference pose (openspec AS.180: a model with no
+    /// idle of its own stood so, arms out, until it rested on its slot 0).
+    pub posed: Vec<String>,
     #[serde(skip)]
     pub handle: Handle,
+}
+
+/// The clips a drawn creature is posed by, by name, what they're laid over
+/// first ([`base_clips`], then [`playing_clips`]): none where it stands in
+/// its reference pose, its idle holding no track and nothing over it.
+fn posed_names(base: &[(&Clip, f64, f64)], over: &[(&Clip, f64)]) -> Vec<String> {
+    base.iter()
+        .map(|c| c.0)
+        .chain(over.iter().map(|c| c.0))
+        .filter(|c| !c.tracks.is_empty())
+        .map(|c| c.name.clone())
+        .collect()
 }
 
 /// The creatures' part of `/api/_test/tv` (openspec AQ.8).
@@ -711,6 +728,8 @@ pub(crate) struct CreatureShots<'w, 's> {
     orbs: Option<Res<'w, crate::orbs::DrawnOrbs>>,
     drawn: Option<Res<'w, DrawnCreatures>>,
     clones: Query<'w, 's, (Entity, &'static crate::hero_scripts::CloneDrawn)>,
+    creatures: Query<'w, 's, &'static DrawnCreature>,
+    time: Res<'w, Time>,
 }
 
 impl CreatureShots<'_, '_> {
@@ -732,10 +751,18 @@ impl CreatureShots<'_, '_> {
                     .is_some_and(|(_, c)| c.draws);
         }
         for p in &mut out.people {
-            p.drawn = self
+            let drawn = self
                 .drawn
                 .as_ref()
-                .is_some_and(|d| d.0.contains_key(&p.handle));
+                .and_then(|d| d.0.get(&p.handle))
+                .and_then(|&e| self.creatures.get(e).ok());
+            p.drawn = drawn.is_some();
+            if let Some(c) = drawn {
+                let seconds = self.time.elapsed().saturating_sub(c.since).as_secs_f64();
+                let base = base_clips(c, world, seconds);
+                let over = playing_clips(c, world);
+                p.posed = posed_names(&base, &over);
+            }
         }
         Some(out)
     }
@@ -769,6 +796,7 @@ pub(crate) fn report(vm: &guac_script::Vm, world: &ScriptWorld) -> CreaturesRepo
             Some(PersonShot {
                 at: shot(handle)?,
                 drawn: false,
+                posed: Vec::new(),
                 handle,
             })
         })
@@ -1351,6 +1379,43 @@ mod tests {
             t.translation.distance(Vec3::from_array(ART_AT)) < 1e-4,
             "{t:?}"
         );
+    }
+
+    /// openspec AS.180: a person is reported posed by the clips the TV
+    /// poses it by, what they're laid over first; one in its reference
+    /// pose (an idle holding no track, nothing over it) by none.
+    #[test]
+    fn a_persons_pose_is_reported_by_its_clips() {
+        use guac_ir::clip::{RotationTrack, Track, VecTrack};
+        let track = || Track {
+            joint: 0,
+            translation: VecTrack {
+                constant: [0.0; 3],
+                spline: None,
+            },
+            rotation: RotationTrack::Constant([0.0, 0.0, 0.0, 1.0]),
+            scale: VecTrack {
+                constant: [1.0; 3],
+                spline: None,
+            },
+        };
+        let clip = |name: &str, tracks: bool| Clip {
+            name: name.into(),
+            duration: 1.0,
+            frame_duration: 1.0 / 30.0,
+            frames: 31,
+            tracks: if tracks { vec![track()] } else { Vec::new() },
+        };
+        let (idle, talk, bind) = (clip("Idle00", true), clip("Talk", true), clip("", false));
+        assert_eq!(
+            posed_names(&[(&idle, 0.5, 1.0)], &[(&talk, 0.1)]),
+            ["Idle00", "Talk"]
+        );
+        assert!(
+            posed_names(&[(&bind, 0.5, 1.0)], &[]).is_empty(),
+            "its reference pose"
+        );
+        assert_eq!(posed_names(&[(&bind, 0.5, 1.0)], &[(&talk, 0.1)]), ["Talk"]);
     }
 
     /// openspec AS.186: a clone hung on an actor taken off is drawn nowhere
