@@ -238,7 +238,7 @@ As the hero comes into chapter 1's first cave, its scene SHALL stand Norticus in
 - **THEN** Norticus walks ahead of him in his turban and no other turban is left in the cave
 
 ### Requirement: Chapter 1's people past its first cave
-Past chapter 1's first cave the TV SHALL draw its people where their scripts have them, each in what it wears and holds: the Mabu by the pit, Norticus at the second cave's top, who leads the hero on and goes, the Mabu by the life area, Norticus at the quarry, who leads him up its slope and stands at its top on the ground, and the Mabu at work along the way. A hero SHALL get past each on foot.
+Past chapter 1's first cave the TV SHALL draw its people where their scripts have them, each in what it wears and holds: the Mabu by the pit, Norticus at the second cave's top, who leads the hero on and goes, the Mabu by the life area, Norticus at the quarry, who leads him 5.4 m up its slope and stands at its top on the ground, and the Mabu at work along the way, each within 0.2 m of the ground under it on the disc's walk. A hero SHALL get past each on foot.
 
 #### Scenario: Up the quarry's slope
 - **WHEN** the hero walks up the quarry's slope from the air area
@@ -281,7 +281,7 @@ A level's sky SHALL draw through the view with its translation taken out, its co
 - **THEN** the sky fills the view behind the level, with no black past it
 
 ### Requirement: A level's sky glows in its own order
-Where a level's sky layers glow, the TV SHALL lay their glow in the order the sky's layers draw, after the level's colour and before any other part's glow, so a held view draws the same glow whatever order its parts reach the renderer in or wherever the camera stands.
+Where a level's sky layers glow, the TV SHALL lay their glow in the order the sky's layers draw, after the level's colour and before any other part's glow, so a held view draws the same glow whatever order its parts reach the renderer in or wherever the camera stands: by their depth alone, 30 % of level 214's held cloud sea came out up to 17 levels apart on two builds that drew nothing else differently.
 
 #### Scenario: Level 214's cloud sea held
 - **WHEN** level 214 is held at one view on two builds that differ in nothing drawn
@@ -373,7 +373,7 @@ A level's elemental wall SHALL stand solid until a hero of its element comes wit
 - **THEN** every wall stays shut and the level plays to its end
 
 ### Requirement: Level 214's earth area plays through
-Past level 214's earth wall a Giant's attacks SHALL break the super hard rocks, the area's bomb SHALL be taken, carried and thrown to break the rocks where it bursts, its mining pick SHALL be taken by any hero and struck at a rock with the tap to break it a size a strike, and its key SHALL open its door on the hat box, which mashed open SHALL give its hat.
+Past level 214's earth wall a Giant's attacks SHALL break the super hard rocks, the area's bomb SHALL be taken, carried and thrown to break the rocks where it bursts, its mining pick SHALL be taken by any hero and struck at a rock with the tap to break it a size a strike, and its key SHALL open its door on the hat box, which mashed open SHALL give its hat: Crusher's way breaks 23 of the area's 36 rocks on the disc.
 
 #### Scenario: Crusher through the earth area
 - **WHEN** Crusher walks in past the wall

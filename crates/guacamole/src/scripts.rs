@@ -3220,7 +3220,10 @@ pub const ROUTE_SCRIPTS: [&str; 6] = [
 /// the mining pick (id 0) by level 214's earth area, taken by a hero
 /// walking up to it and carried over him, its strikes at the rock he faces
 /// on △ each breaking it down a size (`Breakable_Rock.ai`), so any earth
-/// hero mines the rocks a Giant smashes; the pick stood there inert before.
+/// hero mines the area's breakable rocks; its super hard ones (the bomb's
+/// way and the key's) stand to the pick, for a Giant or a bomb. The pick
+/// stood there inert before; no running spawner on the story's other
+/// levels clones a tool of this script.
 pub const BOMB_SCRIPTS: [&str; 7] = [
     "Tools_Spawner.ai",
     "Bomb_Rocket_Template.ai",
@@ -6785,7 +6788,27 @@ mod tests {
             assert_eq!(intro(stage), Some(placement));
             assert!(c.whitelist.lists(placement, "C:/x/Any.ai"), "{stage}");
         }
-        for other in ["level_213_tutotial", "level_214_tutotial_2", "level_201"] {
+        // Every story level, each of whose card pirates (`CardPirate_Template.ai`,
+        // a hub person's script: 27 placements on every story level but 212
+        // and 213) stays off its listing (AS.106).
+        for other in [
+            "level_200",
+            "level_201",
+            "level_202_arkeyancopter",
+            "level_203_the_machine",
+            "level_204_choices",
+            "level_205_piratecards",
+            "level_206",
+            "level_207_arkus_adventure",
+            "level_208_ice",
+            "level_209_giantrobot",
+            "level_210_thevillage",
+            "level_211_final_level",
+            "level_212_defend_the_ship",
+            "level_213_tutotial",
+            "level_214_tutotial_2",
+            "level_215_enter_arkus",
+        ] {
             assert!(!is_hub(other));
             let c = level_config(Mode::Play, &files, 4, other);
             for script in HUB_SCRIPTS {

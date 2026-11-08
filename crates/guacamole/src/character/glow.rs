@@ -84,7 +84,9 @@ pub const LEVEL_GLOW_BIAS: f32 = 2.0e6;
 /// colour's.
 pub const SKY_GLOW_BIAS: f32 = 1.5e6;
 /// The sky ranks [`sky_glow_bias`] keeps apart; a rank past them sorts with
-/// the last.
+/// the last. On the 1.00 disc a sky ranks 67 materials at most (level 203)
+/// but glows at rank 31 at most (level 200), so no two glowing ranks share
+/// a bias.
 pub const SKY_GLOW_RANKS: usize = 45;
 
 /// A sky material's glow mask's sort bias, its rank its colour copy's

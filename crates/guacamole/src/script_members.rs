@@ -996,15 +996,30 @@ impl ScriptWorld {
         if len <= 0.0 {
             return None;
         }
-        let mut past = self.actor_bodies(engine);
+        let past = self.actor_bodies(engine);
+        self.surface_ray(engine, self.ray.start, d, len, past)
+            .map(|hit| (hit.point, hit.normal, hit.material))
+    }
+
+    /// The first surface along a ray past `past`: the level, or an actor
+    /// whose collision acts as an actor surface, passing through any that
+    /// doesn't ([`ScriptWorld::ray_contact_full`]'s rule).
+    fn surface_ray(
+        &self,
+        engine: &mut dyn Engine,
+        origin: Vec3,
+        direction: Vec3,
+        len: f32,
+        mut past: Vec<BodyId>,
+    ) -> Option<guac_motion::seam::RayHit> {
         loop {
-            let hit = guac_motion::ground::ray(engine.seam(), self.ray.start, d, len, &past)?;
+            let hit = guac_motion::ground::ray(engine.seam(), origin, direction, len, &past)?;
             let surface = engine
                 .actor_of(hit.body)
                 .and_then(|h| self.actors.get(&h))
                 .is_none_or(|a| a.solid.acts_as_actor_surface != 0);
             if surface {
-                return Some((hit.point, hit.normal, hit.material));
+                return Some(hit);
             }
             // Each pass leaves one more body out, so it ends.
             past.push(hit.body);
@@ -2899,9 +2914,12 @@ impl ScriptWorld {
     /// walked as a creature since is let go. One of the people the TV draws
     /// whose solid meets the level stands on the ground under each step
     /// (openspec AS.166: chapter 1's Norticus at the quarry leads the hero
-    /// up its slope, 5.5 m in all, where at the height he stood he'd end
+    /// up its slope, 5.4 m in all, where at the height he stood he'd end
     /// under it), within 2 m over it to 4 m under it, keeping its height
-    /// over none; a scene's actors stay at the height they stand.
+    /// over none; the ground the ray caster's (the level, or an actor that
+    /// acts as an actor surface: the hub's walking Mabu crossing a barrel
+    /// stepped 1.78 m up onto it); a scene's actors stay at the height
+    /// they stand.
     pub(crate) fn move_scene_walks(&mut self, dt: f32, engine: &mut dyn Engine) {
         let mut walking: Vec<Handle> = self.scene_walks.keys().copied().collect();
         walking.sort_unstable();
@@ -2944,20 +2962,22 @@ impl ScriptWorld {
             let next = a.position + frame.velocity * dt;
             let grounded =
                 a.solid.interacts_with_level_mesh != 0 && people.binary_search(&h).is_ok();
+            a.angles.facing = frame.facing;
+            a.velocity = frame.velocity * FEET_PER_METRE;
             let ground = grounded
                 .then(|| {
-                    guac_motion::ground::ray(
-                        engine.seam(),
+                    self.surface_ray(
+                        engine,
                         next + Vec3::Y * 2.0,
                         Vec3::NEG_Y,
                         6.0,
-                        &bodies,
+                        bodies.clone(),
                     )
                 })
                 .flatten();
-            a.position = Vec3::new(next.x, ground.map_or(next.y, |hit| hit.point.y), next.z);
-            a.angles.facing = frame.facing;
-            a.velocity = frame.velocity * FEET_PER_METRE;
+            if let Some(a) = self.actors.get_mut(&h) {
+                a.position = Vec3::new(next.x, ground.map_or(next.y, |hit| hit.point.y), next.z);
+            }
         }
     }
 
@@ -6327,6 +6347,11 @@ mod fight_tests {
     /// chapter 1's Norticus at the quarry climbs its slope; a scene's actor
     /// and a person whose solid meets no level stay at the height they
     /// stand; past the ramp's end, over nothing, a person keeps its height.
+    /// The person's own solid in the seam (as the embedder keeps the
+    /// people's, `ScriptWorld::creature_bodies`) is never his ground: met,
+    /// he'd step up onto his own head; nor a barrel on his way, whose solid
+    /// doesn't act as an actor surface (the hub's walking Mabu stepped 1.78 m
+    /// up onto one).
     #[test]
     fn a_person_led_up_a_slope_stands_on_the_ground() {
         // y = x / 4 from x = -20 to 20.
@@ -6349,12 +6374,14 @@ mod fight_tests {
         };
         let person = Obj { unit: 3, index: 50 };
         let actor = Obj { unit: 3, index: 51 };
+        let barrel = Obj { unit: 3, index: 52 };
         let up = Obj { unit: 9, index: 7 };
         let past = Obj { unit: 9, index: 8 };
         let files = Files {
             placed: vec![
                 Placed::named(person, "4.NPC_Norticus at end", None, 4),
                 Placed::named(actor, "213_Gigantus_Norticus", None, 4),
+                Placed::named(barrel, "barrel_snow_intact(24)", None, 4),
             ],
             points: HashMap::from([
                 (up, Vec3::new(14.0, 3.5, 0.0)),
@@ -6362,13 +6389,36 @@ mod fight_tests {
             ]),
             ..Files::default()
         };
-        let handles = HashMap::from([(person, C1), (actor, C2)]);
+        let handles = HashMap::from([(person, C1), (actor, C2), (barrel, C3)]);
+        // The person's solid where he starts, 1.6 m tall on the ramp.
+        let own = Body {
+            id: BodyId(2),
+            kind: BodyKind::Static,
+            pose: Pose::at(Vec3::new(0.0, 0.8, 0.0)),
+            collider: Collider::Convex(Shape::Box {
+                half_extents: Vec3::new(0.5, 0.8, 0.5),
+                margin: 0.0,
+            }),
+        };
+        // A barrel 1.5 m tall on his way at x = 8, no actor surface.
+        let cask = Body {
+            id: BodyId(3),
+            kind: BodyKind::Static,
+            pose: Pose::at(Vec3::new(8.0, 2.75, 0.0)),
+            collider: Collider::Convex(Shape::Box {
+                half_extents: Vec3::new(0.5, 0.75, 0.5),
+                margin: 0.0,
+            }),
+        };
         // Each walked toward `to` until reached or 300 frames: its heights
         // off the ramp under it at each frame, its last place.
         let walk = |h: Handle, meets_level: i32, to: Obj| {
             let mut e = pit();
-            e.world = ParryWorld::new(std::slice::from_ref(&ground)).unwrap();
+            e.world = ParryWorld::new(&[ground.clone(), own.clone(), cask.clone()]).unwrap();
+            e.bodies.insert(C1, own.id);
+            e.bodies.insert(C3, cask.id);
             let mut w = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+            w.actors.get_mut(&C3).unwrap().solid.acts_as_actor_surface = 0;
             let a = w.actors.get_mut(&h).unwrap();
             let mut c = chompy(Vec3::ZERO, 90.0);
             c.obj = a.obj;
