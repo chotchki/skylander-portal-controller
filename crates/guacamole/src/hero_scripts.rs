@@ -139,8 +139,9 @@ pub(crate) struct ScriptSource {
     /// Each fighter's load file and the unit his file links as.
     fighters: Vec<(String, u16)>,
     /// The units the level's streams link as (openspec AS.157): their
-    /// placements join each run once its save is in.
+    /// placements join each run once its save is in, and their part ids.
     streams: Vec<u16>,
+    stream_ids: Vec<i32>,
     /// Each walker's scripts (AG.27): the other modelled characters whose
     /// own scripts the part holds.
     walkers: Vec<WalkerScripts>,
@@ -322,6 +323,7 @@ impl ScriptSource {
             order,
             fighters: Vec::new(),
             streams: Vec::new(),
+            stream_ids: Vec::new(),
             walkers: Vec::new(),
             left_out: Vec::new(),
             layout: None,
@@ -362,6 +364,7 @@ pub(crate) struct Part {
     pub(crate) order: Vec<u16>,
     pub(crate) fighters: Vec<(String, u16)>,
     pub(crate) streams: Vec<u16>,
+    pub(crate) stream_ids: Vec<i32>,
     pub(crate) walkers: Vec<WalkerScripts>,
     pub(crate) left_out: Vec<(String, String)>,
     pub(crate) layout: Option<Layout>,
@@ -405,6 +408,7 @@ pub(crate) fn install(world: &mut World, part: Part) {
         order: part.order,
         fighters: part.fighters,
         streams: part.streams,
+        stream_ids: part.stream_ids,
         walkers: part.walkers,
         left_out: part.left_out,
         layout: part.layout,
@@ -494,6 +498,7 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     // The streams whose placements join once the save is in (openspec
     // AS.157, `ship_parts::start`).
     script_world.ship_parts.units = source.streams.clone();
+    script_world.ship_parts.ids = source.stream_ids.clone();
     // The sounds its starts play (openspec AR.9).
     if let Some(s) = &source.sounds {
         script_world.set_sounds(s.book.clone(), s.stems.clone());
@@ -3058,6 +3063,7 @@ mod tests {
                 order: linked.order,
                 fighters: linked.fighters,
                 streams: Vec::new(),
+                stream_ids: Vec::new(),
                 walkers: Vec::new(),
                 left_out: Vec::new(),
                 layout: None,
@@ -3135,6 +3141,7 @@ mod tests {
                     order: linked.order,
                     fighters: linked.fighters,
                     streams: Vec::new(),
+                    stream_ids: Vec::new(),
                     walkers: Vec::new(),
                     left_out: Vec::new(),
                     layout: None,

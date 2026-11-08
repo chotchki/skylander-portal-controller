@@ -123,6 +123,9 @@ pub struct Linked {
     /// AS.157: a hub stage's ship parts, [`load_with_streams`]): their
     /// placements join the run once its save is in.
     pub streams: Vec<u16>,
+    /// Each stream's part id, in the same order
+    /// ([`crate::ship_parts::part_id`]); none for a stream that has none.
+    pub stream_ids: Vec<i32>,
     /// Each walker's (AG.27: every other modelled character the part holds
     /// an entry of) load file, unit and scripts: his file's placements join
     /// the run the same way, to walk on his own scripts, never to attack.
@@ -354,6 +357,10 @@ pub fn load_with_streams(dir: &Path, level: &str, streams: &[String]) -> Result<
         order,
         fighters,
         streams: stream_units,
+        stream_ids: streams
+            .iter()
+            .filter_map(|s| crate::ship_parts::part_id(s))
+            .collect(),
         walkers,
         left_out: list.left_out,
         layout: Err("not read".into()),

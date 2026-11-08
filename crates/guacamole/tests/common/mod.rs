@@ -870,6 +870,9 @@ pub struct Setup {
     /// scripts listed, as the TV's load links them (openspec AS.157,
     /// `ship_parts::streams`); they join the run once its save is in.
     pub streams: bool,
+    /// Streams left out of those, by archive: as one whose parts didn't
+    /// extract is.
+    pub streams_left_out: &'static [&'static str],
 }
 
 /// The interface records of the script part's archives (`ARCHIVES`, by
@@ -1011,10 +1014,13 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
         })
         .collect();
     // A hub stage's ship part streams after the level (openspec AS.157).
-    let streams = match setup.streams {
+    let streams: Vec<String> = match setup.streams {
         true => guacamole::ship_parts::streams(level, on_disc.iter().map(String::as_str)),
         false => Vec::new(),
-    };
+    }
+    .into_iter()
+    .filter(|s| !setup.streams_left_out.contains(&s.as_str()))
+    .collect();
     let archives: Vec<String> = ARCHIVES
         .iter()
         .enumerate()
@@ -1087,6 +1093,10 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     let mut world = ScriptWorld::new(&files, &handles, objects);
     world.set_inert(vm.inert());
     world.ship_parts.units = stream_units;
+    world.ship_parts.ids = streams
+        .iter()
+        .filter_map(|s| guacamole::ship_parts::part_id(s))
+        .collect();
     // Its intro waits for the hero, as the TV's install holds it (openspec
     // AS.47); one a test lists past the TV's listing (`Setup::scripts`) too.
     let intro: Option<String> = scripts::intro(level).map(str::to_owned).or_else(|| {

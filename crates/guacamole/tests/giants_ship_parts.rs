@@ -46,7 +46,12 @@ struct Story {
 impl Story {
     /// The level from its start, its hero joined and settled.
     fn joined(level: &'static str, session: Session) -> Self {
-        let (run, _found) = run_on_level(Mode::Play, level, setup());
+        Self::joined_with(level, session, setup())
+    }
+
+    /// [`Story::joined`] on `setup`.
+    fn joined_with(level: &'static str, session: Session, setup: Setup) -> Self {
+        let (run, _found) = run_on_level(Mode::Play, level, setup);
         let mut s = Self {
             run,
             session,
@@ -322,6 +327,44 @@ fn a_save_from_before_shows_its_parts_and_the_engine_opens_the_galley() {
     println!(
         "blocker off {}; {:.1} s, load at end: {}",
         s.run.world.removed(blocker),
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
+
+/// openspec AS.157: a stream left out of the run (its parts didn't
+/// extract) takes its own part alone off the ship: every other stream keeps
+/// its own id, so 214's roof (12) still hangs as itself, and the part left
+/// out is defined by none.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_stream_left_out_takes_its_own_part_alone() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let fresh = Story::joined(HUB, Session::new(Some(HOST.into())));
+    let (layout, mut values) = fresh.rows.first().cloned().expect("the start's save");
+    collected_before(&mut values, 12);
+    let mut later = Session::new(Some(HOST.into()));
+    later.stored = Some((layout, values));
+    let mut s = Story::joined_with(
+        HUB,
+        later,
+        Setup {
+            streams_left_out: &["ship_part_005"],
+            ..setup()
+        },
+    );
+    s.until_hung();
+    let r = s.report();
+    println!("{r:?}");
+    assert_eq!(r.streams, 18);
+    let mut defined = r.defined.clone();
+    defined.sort_unstable();
+    assert_eq!(defined, (0..19).filter(|&i| i != 5).collect::<Vec<_>>());
+    assert_eq!(hung(&r), ["ShipPart_012", "ShipPart_016", "ShipPart_017"]);
+    assert!(s.stops.is_empty(), "{:#?}", s.stops);
+    println!(
+        "{:.1} s, load at end: {}",
         started.elapsed().as_secs_f64(),
         load()
     );

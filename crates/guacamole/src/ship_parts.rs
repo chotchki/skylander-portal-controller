@@ -98,6 +98,9 @@ pub struct ShipParts {
     /// The units the streams link as, in their load's order (a hub stage's:
     /// every ship part on the disc, [`streams`]); none on any other level.
     pub units: Vec<u16>,
+    /// Each one's part id, its number in its archive's name ([`part_id`]),
+    /// in the same order.
+    pub ids: Vec<i32>,
     /// Whether the run's start has been taken ([`start`]).
     pub started: bool,
     /// Whether the streams' placements have joined the run.
@@ -129,6 +132,13 @@ pub fn streams<'a>(level: &str, on_disc: impl IntoIterator<Item = &'a str>) -> V
         .collect();
     parts.sort();
     parts
+}
+
+/// The part a ship part stream defines, by its archive's name: its number,
+/// as the switch's loads name each part's stream by its id (`ship_part_`
+/// and the id in three digits); none for any other file.
+pub fn part_id(stream: &str) -> Option<i32> {
+    stream.strip_prefix("ship_part_")?.parse().ok()
 }
 
 /// `config`'s listing with every script the streams' placements name (their
@@ -379,6 +389,16 @@ pub fn join(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<usize, Halt> {
         warn!(%h, "the ship parts' loads stopped: the streams number their parts on from the last");
         host.world.ship_parts.stopped = Some(h.to_string());
     }
+    // The loads list every part, the definers taking them in turn: one left
+    // out of the run (its parts didn't extract) would shift each after it to
+    // the next's id, so the run's streams' own ids go first, in their order.
+    let ids = host.world.ship_parts.ids.clone();
+    if !put_loading(vm, &ids) {
+        warn!(
+            streams = ids.len(),
+            "the ship parts' loads list too few ids: the streams number theirs on from the last"
+        );
+    }
     let program = vm.program_arc();
     let units = host.world.ship_parts.units.clone();
     let mut added = 0;
@@ -402,6 +422,25 @@ pub fn join(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<usize, Halt> {
     }
     info!(added, "the ship part streams joined the run");
     Ok(added)
+}
+
+/// `ids` over the head of the loads' list of ids to take (`Level Stream
+/// Tracking`'s `ship part ids loading`), in order. False when there's no
+/// such list or it holds fewer.
+fn put_loading(vm: &mut Vm, ids: &[i32]) -> bool {
+    let Some(members) = global(vm, TRACKING)
+        .and_then(|t| vm.field(t, "ship part ids loading"))
+        .and_then(|set| vm.set(set).map(<[Value]>::to_vec))
+    else {
+        return false;
+    };
+    if members.len() < ids.len() {
+        return false;
+    }
+    members
+        .iter()
+        .zip(ids)
+        .all(|(m, &id)| vm.put(*m, Value::Int(id)))
 }
 
 /// The run's start for its ship parts, once its save is in: the stand-in's
@@ -531,6 +570,15 @@ mod tests {
             part(14, true, false),
         ];
         assert_eq!(to_settle(&odd), [14]);
+    }
+
+    /// A stream's part id is its archive's number; nothing else has one.
+    #[test]
+    fn a_streams_part_is_its_number() {
+        assert_eq!(part_id("ship_part_000"), Some(0));
+        assert_eq!(part_id("ship_part_018"), Some(18));
+        assert_eq!(part_id("level_hub_2_stage_1"), None);
+        assert_eq!(part_id("ship_part_x"), None);
     }
 
     /// A hub stage loads every ship part on the disc in id order; no other
