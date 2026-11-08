@@ -371,3 +371,10 @@ A level's elemental wall SHALL stand solid until a hero of its element comes wit
 #### Scenario: The story past a wall
 - **WHEN** chapter 1 or level 214 is played by a hero no wall opens for
 - **THEN** every wall stays shut and the level plays to its end
+
+### Requirement: Level 214's earth area plays through
+Past level 214's earth wall a Giant's attacks SHALL break the super hard rocks, the area's bomb SHALL be taken, carried and thrown to break the rocks where it bursts, its mining pick SHALL be taken by any hero and struck at a rock with the tap to break it a size a strike, and its key SHALL open its door on the hat box, which mashed open SHALL give its hat.
+
+#### Scenario: Crusher through the earth area
+- **WHEN** Crusher walks in past the wall
+- **THEN** his attacks, the area's bomb and its key take him to the hat box, which gives its hat
