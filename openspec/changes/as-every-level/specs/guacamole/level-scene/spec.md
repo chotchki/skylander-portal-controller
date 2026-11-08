@@ -280,6 +280,13 @@ A level's sky SHALL draw through the view with its translation taken out, its co
 - **WHEN** the camera stands further from the level's origin than its dome reaches, as on level 214's second and third islands, 750-830 m out of a dome reaching 585 m
 - **THEN** the sky fills the view behind the level, with no black past it
 
+### Requirement: A level's sky glows in its own order
+Where a level's sky layers glow, the TV SHALL lay their glow in the order the sky's layers draw, after the level's colour and before any other part's glow, so a held view draws the same glow whatever order its parts reach the renderer in or wherever the camera stands.
+
+#### Scenario: Level 214's cloud sea held
+- **WHEN** level 214 is held at one view on two builds that differ in nothing drawn
+- **THEN** both draw the same frame
+
 ### Requirement: A camera's rig holds its last clip
 A camera's rig SHALL hold the pose its last clip reached once none plays, what hangs on it staying there, rather than looping its first shot under them: looped, level 201's pod flew 200 m back for 58 steps and 214's ship swept through the sail's last shot every 3.13 s.
 
