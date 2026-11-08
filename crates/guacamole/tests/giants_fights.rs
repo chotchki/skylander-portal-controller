@@ -260,6 +260,8 @@ fn level_214s_carried_bomb_counts_down_over_him() {
     let mut burst = None;
     let mut drawn: BTreeMap<i32, (u32, u32, u8)> = BTreeMap::new();
     let mut off: f32 = 0.0;
+    let mut dy_range = (f32::MAX, f32::MIN);
+    let mut lay_out_time: Vec<f64> = Vec::new();
     for k in 0..1000u32 {
         push_toward(&mut run, &mut stops, ends[((k / 150) % 2) as usize]);
         let b = run.world.actor(bomb).map(|a| a.position);
@@ -306,7 +308,11 @@ fn level_214s_carried_bomb_counts_down_over_him() {
         }
         // What the TV draws of them (openspec AS.99): each count in glyphs,
         // the sprite fading as its timer says.
+        let laid = std::time::Instant::now();
         let quads = run.world.drawn_sprites();
+        if !quads.is_empty() {
+            lay_out_time.push(laid.elapsed().as_secs_f64() * 1e6);
+        }
         for q in &quads {
             let d = drawn.entry(q.value as i32).or_insert((0, 0, 255));
             d.0 = d.0.max(1);
@@ -324,9 +330,11 @@ fn level_214s_carried_bomb_counts_down_over_him() {
                         .is_some_and(|a| a.id == q.value as i32 && !a.removed)
             });
             if let Some(a) = timer.and_then(|h| run.world.actor(h))
-                && let Some((x, _)) = run.world.viewport().project(a.position)
+                && let Some((x, y)) = run.world.viewport().project(a.position)
             {
                 off = off.max((q.rect[0] - (x + 20.0)).abs());
+                let dy = q.rect[1] - y;
+                dy_range = (dy_range.0.min(dy), dy_range.1.max(dy));
             }
         }
         let by_count = quads.iter().fold(HashMap::new(), |mut m, q| {
@@ -345,8 +353,21 @@ fn level_214s_carried_bomb_counts_down_over_him() {
     let burst = burst.expect("the bomb burst in his hands");
     let mut counts_drawn: Vec<i32> = drawn.keys().copied().collect();
     counts_drawn.sort_unstable();
-    println!("drawn {drawn:?}, at most {off:.1} px off its timer");
-    assert!(off < 30.0, "{off}");
+    lay_out_time.sort_by(f64::total_cmp);
+    println!(
+        "drawn {drawn:?}, at most {off:.1} px off its timer across, {dy_range:?} px over it; \
+         laid out in {:.0} us (median of {}, p99 {:.0})",
+        lay_out_time[lay_out_time.len() / 2],
+        lay_out_time.len(),
+        lay_out_time[lay_out_time.len() * 99 / 100],
+    );
+    // Across, 20 px right of its timer within a step's lag (13.8 measured);
+    // up, from just over it to the top of its 2 s rise (15.8 to 189.5).
+    assert!(off < 20.0, "{off}");
+    assert!(
+        dy_range.0 > -200.0 && dy_range.1 < -10.0,
+        "{dy_range:?}: over its timer, risen no further than its slide"
+    );
     assert_eq!(
         counts_drawn,
         (1..=11).collect::<Vec<_>>(),

@@ -3312,8 +3312,15 @@ fn follow_zone(mut level: ResMut<Level>, asked: Res<ZoneAsked>, mut fog: ResMut<
         }
     };
     level.report.zone = Some(zone.id);
-    loaded.lights.directional = lights.directional;
     loaded.lit_zone = Some(zone);
+    // A point of the way the materials already show (a transition's start,
+    // the zone it leaves): every relight rewrites every material, which the
+    // render world prepares again (the au-polish review: a frame of 26-38 ms
+    // each on level 201's house against 17), so none for nothing.
+    if loaded.lights.directional == lights.directional && *fog == zone_fog {
+        return;
+    }
+    loaded.lights.directional = lights.directional;
     loaded.relight = true;
     if *fog != zone_fog {
         *fog = zone_fog;
@@ -5305,6 +5312,9 @@ mod tests {
         ask(&mut app, 0, None, 0.0);
         assert_eq!(relit(&app), before, "the same zone");
         assert_eq!(report(&app).zone, None);
+        // The way's start shows the zone it leaves: nothing rewritten yet.
+        ask(&mut app, 5, Some(0), 100.0);
+        assert_eq!(relit(&app), before, "the way's start");
         // Half way there, then there.
         ask(&mut app, 5, Some(0), 50.0);
         assert_eq!(relit(&app), before + 1, "a step of the way");
