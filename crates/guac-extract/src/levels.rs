@@ -222,6 +222,12 @@ pub const PARTS: [&str; 11] = [
     SCENE, PROPS, COLLISION, PLACEMENTS, LIGHTS, ATMOSPHERE, SCRIPT, PALETTES, NODES, PARTICLES,
     SPRITES,
 ];
+/// The parts a file a level streams in needs on the TV (openspec AS.157: a
+/// hub stage's ship parts): its templates' models and where they're placed,
+/// its scripts and its skinned models' clips, in [`PARTS`]' order. It has
+/// no scene, collision or zone of its own, and the 19 on the disc play no
+/// sound.
+pub const STREAMED: [&str; 4] = [PROPS, PLACEMENTS, SCRIPT, PALETTES];
 /// The parts the TV reads when it loads a level: every part but the
 /// sprites, which nothing draws until the interface does (openspec AT.9), so
 /// a first run hands chapter 1 over once these are in and reads the sprites

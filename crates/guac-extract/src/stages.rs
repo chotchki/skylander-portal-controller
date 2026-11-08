@@ -530,6 +530,30 @@ pub fn extract_level(
     Ok(stage)
 }
 
+/// Files a level streams in (openspec AS.157: a hub stage's ship parts), by
+/// archive name off the disc's list, extracted as [`extract_level`]
+/// extracts a level but for [`levels::STREAMED`]'s parts alone and no
+/// sounds, all of them in one pass: each one's record under its own name,
+/// each part kept when already in. A name the dump holds no file of is
+/// refused before anything is read.
+pub fn extract_streams(
+    dir: &mut IdentityDir,
+    names: &[&str],
+    ir: IrFormat,
+    send: &(dyn Fn(Event) + Sync),
+) -> Result<LevelStage> {
+    let on_disc = levels::on_disc(dir.manifest());
+    if let Some(name) = names
+        .iter()
+        .find(|n| !on_disc.iter().any(|l| l.name == **n))
+    {
+        return Err(ExtractError::NoSuchLevel {
+            level: (*name).to_owned(),
+        });
+    }
+    levels_stage(dir, ir, names, &levels::STREAMED, &level_event, send)
+}
+
 /// [`level_stage`] over `names`, each level's `parts` alone (in
 /// [`levels::PARTS`]' order), its progress sent through `event`;
 /// [`LevelStage::levels`] counts the levels with every one of `parts` in.

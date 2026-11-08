@@ -293,6 +293,7 @@ pub(crate) fn write_level(dir: &Path, lights: &Lights) -> LevelSource {
         ir,
         identity: identity(),
         level: LEVEL.into(),
+        streams: Vec::new(),
     }
 }
 
@@ -321,6 +322,7 @@ pub(crate) fn write_level_as(dir: &Path, name: &str) -> LevelSource {
         ir: IrFormat::Ron,
         identity: identity(),
         level: name.into(),
+        streams: Vec::new(),
     }
 }
 

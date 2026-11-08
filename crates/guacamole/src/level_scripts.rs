@@ -119,6 +119,10 @@ pub struct Linked {
     /// Each fighter's load file and its unit: his file's placements join the
     /// run when he's the hero (openspec AH.24).
     pub fighters: Vec<(String, u16)>,
+    /// The units the level's streams link as, after the level's (openspec
+    /// AS.157: a hub stage's ship parts, [`load_with_streams`]): their
+    /// placements join the run once its save is in.
+    pub streams: Vec<u16>,
     /// Each walker's (AG.27: every other modelled character the part holds
     /// an entry of) load file, unit and scripts: his file's placements join
     /// the run the same way, to walk on his own scripts, never to attack.
@@ -232,10 +236,24 @@ pub fn disc_levels(dir: &Path) -> Vec<String> {
 /// `level`'s script part from the extract at `dir`, parsed and linked. Why
 /// it can't be is the error, naming the file.
 pub fn load(dir: &Path, level: &str) -> Result<Linked, String> {
+    load_with_streams(dir, level, &[])
+}
+
+/// [`load`] with the files `level` streams in (`streams`, by archive: a hub
+/// stage's ship parts, openspec AS.157) linked after its own, each its
+/// script part's entry; their placements run from no start
+/// ([`Linked::streams`]).
+pub fn load_with_streams(dir: &Path, level: &str, streams: &[String]) -> Result<Linked, String> {
     // The walkers the part was made with (AG.27); none for an extract made
     // before them.
     let list = scripts::read_walkers(dir)?;
-    let files = files_with_screens(&list.listed, &screens_in(dir), level);
+    let mut files = files_with_screens(&list.listed, &screens_in(dir), level);
+    let level_unit = (files.len() - 1) as u16;
+    files.extend(
+        streams
+            .iter()
+            .map(|s| (levels::script_path(s), Role::Other)),
+    );
     let started = Instant::now();
     let mut entries = Vec::with_capacity(files.len());
     for (rel, role) in &files {
@@ -279,8 +297,9 @@ pub fn load(dir: &Path, level: &str) -> Result<Linked, String> {
     let order = vec![
         unit(&scripts::script_path(roster::GLOBAL))?,
         unit(&scripts::script_path(roster::INIT_SETUP))?,
-        (files.len() - 1) as u16,
+        level_unit,
     ];
+    let stream_units: Vec<u16> = (level_unit + 1..files.len() as u16).collect();
     let fighters: Vec<(String, u16)> = scripts::FIGHTERS
         .iter()
         .map(|f| {
@@ -305,6 +324,7 @@ pub fn load(dir: &Path, level: &str) -> Result<Linked, String> {
         .copied()
         .chain(fighters.iter().map(|(_, u)| *u))
         .chain(walker_units.iter().map(|(_, u)| *u))
+        .chain(stream_units.iter().copied())
         .map(|u| (u, &parsed[u as usize]))
         .collect();
     let placements = Files::read(&units).map_err(|e| format!("placements: {e}"))?;
@@ -333,6 +353,7 @@ pub fn load(dir: &Path, level: &str) -> Result<Linked, String> {
         placements,
         order,
         fighters,
+        streams: stream_units,
         walkers,
         left_out: list.left_out,
         layout: Err("not read".into()),
@@ -475,6 +496,38 @@ mod tests {
         );
         assert!(linked.program.script_named("Creature.ai").is_some());
         assert!(linked.took() >= linked.linked);
+    }
+
+    /// openspec AS.157: the files a level streams in link after its own,
+    /// their units the part's streams; the run's start order stays the
+    /// base's and the level's, and their placements are among the files'.
+    #[test]
+    fn a_levels_streams_link_after_it() {
+        let tmp = extract();
+        let stream = guac_formats::level::builder::stage_level(
+            &guac_formats::level::builder::stage_sample(),
+        );
+        let names = ["ship_part_900".to_owned(), "ship_part_901".to_owned()];
+        for n in &names {
+            let path = tmp.path().join(levels::script_path(n));
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, &stream).unwrap();
+        }
+        let plain = load(tmp.path(), LEVEL).unwrap();
+        assert!(plain.streams.is_empty());
+        let linked = load_with_streams(tmp.path(), LEVEL, &names).unwrap();
+        assert_eq!(linked.files, 7);
+        assert_eq!(linked.order, plain.order, "the level's unit stays its own");
+        assert_eq!(linked.streams, [5, 6]);
+        assert_eq!(*linked.order.last().unwrap(), 4);
+        for u in [4u16, 5, 6] {
+            assert!(
+                linked.placements.placed.iter().any(|p| p.obj.unit == u),
+                "unit {u}'s placements"
+            );
+        }
+        let e = load_with_streams(tmp.path(), LEVEL, &["ship_part_999".to_owned()]).unwrap_err();
+        assert!(e.contains("ship_part_999"), "{e}");
     }
 
     /// The level's palettes part (openspec AH.27): each palette by its

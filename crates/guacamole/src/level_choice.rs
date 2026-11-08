@@ -257,13 +257,24 @@ pub(crate) fn fetch(
             "{name}'s {part} didn't extract: {why}"
         )));
     }
+    // A hub stage's ship parts (openspec AS.157): every stream its switch
+    // loads, their streamed parts in; one that doesn't extract is left out,
+    // its part off the ship.
+    let base = parts.load(std::sync::atomic::Ordering::Relaxed) + sounds;
+    let streams = streams_of(&mut dir, name, job.ir, &|done, total| {
+        send(FetchEvent::Parts {
+            done: base + done,
+            total: base + total,
+        });
+    });
     Ok(Fetched {
         source: LevelSource::named(
             dir.path().to_path_buf(),
             job.ir,
             dir.manifest().identity.clone(),
             name,
-        ),
+        )
+        .with_streams(streams),
         kind,
         parts_read: stage.parts_read,
         parts_kept: stage.parts_kept,
@@ -274,6 +285,43 @@ pub(crate) fn fetch(
         opened: opened_after,
         extracted: started.elapsed(),
     })
+}
+
+/// The files `name` streams in (openspec AS.157,
+/// [`guacamole::ship_parts::streams`]) extracted in `dir`: those whose
+/// streamed parts are all in, by archive. One whose part doesn't extract,
+/// or all of them on an error, is left out, logged.
+fn streams_of(
+    dir: &mut guac_extract::extract::IdentityDir,
+    name: &str,
+    ir: guac_extract::intros::IrFormat,
+    progress: &(dyn Fn(usize, usize) + Sync),
+) -> Vec<String> {
+    let on_disc = levels::on_disc(dir.manifest());
+    let streams = guacamole::ship_parts::streams(name, on_disc.iter().map(|l| l.name.as_str()));
+    if streams.is_empty() {
+        return streams;
+    }
+    let names: Vec<&str> = streams.iter().map(String::as_str).collect();
+    match stages::extract_streams(dir, &names, ir, &|e| {
+        if let Event::Level { done, total } = e {
+            progress(done, total);
+        }
+    }) {
+        Ok(stage) => {
+            for f in &stage.failed {
+                warn!(stream = %f.level, part = %f.part, reason = %f.reason, "a stream's part didn't extract: it's left out");
+            }
+            streams
+                .into_iter()
+                .filter(|s| !stage.failed.iter().any(|f| &f.level == s))
+                .collect()
+        }
+        Err(e) => {
+            warn!(level = %name, reason = %e, "the level's streams didn't extract: none load");
+            Vec::new()
+        }
+    }
 }
 
 /// The ask waiting and the fetch running.

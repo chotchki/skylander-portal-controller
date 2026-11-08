@@ -124,6 +124,11 @@ pub struct LevelSource {
     pub identity: DumpIdentity,
     /// The level's archive (`level_213_tutotial`).
     pub level: String,
+    /// The files it streams in, by archive, their parts in (openspec AS.157:
+    /// a hub stage's ship parts, [`guacamole::ship_parts::streams`]): their
+    /// scripts linked after the level's, their templates' models drawn by
+    /// its clones.
+    pub streams: Vec<String>,
 }
 
 impl LevelSource {
@@ -140,7 +145,14 @@ impl LevelSource {
             ir,
             identity,
             level: level.to_owned(),
+            streams: Vec::new(),
         }
+    }
+
+    /// This level with `streams` streamed in, their parts in.
+    pub fn with_streams(mut self, streams: Vec<String>) -> Self {
+        self.streams = streams;
+        self
     }
 
     /// Whether this level is chapter 1, whose listing names its first
@@ -393,6 +405,22 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
     }
     let read = started.elapsed();
     let mut walk = read_walk(source, part)?;
+    // What the level streams in draws by its clones (openspec AS.157): each
+    // stream's templates' static models among the props', its skinned ones
+    // among the creatures with its own clips. One that doesn't read draws
+    // nothing; the level goes on.
+    let mut stream_creatures = Vec::new();
+    for stream in &source.streams {
+        match read_stream(source, stream) {
+            Ok((props, creatures)) => {
+                walk.props.add_spawns(props);
+                stream_creatures.extend(creatures);
+            }
+            Err(why) => {
+                warn!(%stream, reason = %why, "a stream's draw didn't read: its clones draw nothing");
+            }
+        }
+    }
     // Each texture's layout, read once off its header (AS.13: a normal map
     // the shader can't read refuses its material).
     let formats_read = Mutex::new(HashMap::new());
@@ -607,7 +635,7 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
             None
         }
     };
-    let creatures: Vec<CreatureModel> = std::mem::take(&mut walk.creatures)
+    let mut creatures: Vec<CreatureModel> = std::mem::take(&mut walk.creatures)
         .into_iter()
         .map(|(path, model)| CreatureModel {
             palette: palettes
@@ -622,6 +650,11 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
             model: Arc::new(model),
         })
         .collect();
+    for c in stream_creatures {
+        if !creatures.iter().any(|k| k.path == c.path) {
+            creatures.push(c);
+        }
+    }
     let creature_materials: Vec<&model::Material> = creatures
         .iter()
         .flat_map(|c| c.model.materials.iter())
@@ -706,6 +739,49 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         read,
         took: started.elapsed(),
     })
+}
+
+/// A stream's draw off its parts (openspec AS.157): what its templates'
+/// clones draw, its static models as a level's clones draw theirs and its
+/// skinned ones with their clips off its palettes part (none read, each
+/// holds its idle). Why not when its placements or props don't read or are
+/// another dump's or file's.
+fn read_stream(
+    source: &LevelSource,
+    stream: &str,
+) -> Result<(LevelProps, Vec<CreatureModel>), String> {
+    let part = |p: &str| {
+        source
+            .dir
+            .join(guac_extract::levels::part_path(source.ir, stream, p))
+    };
+    let placements: guac_ir::level::Placements = read_ir(source.ir, &part(PLACEMENTS))?;
+    let props: guac_ir::level::Props = read_ir(source.ir, &part(PROPS))?;
+    for (what, identity, level) in [
+        ("placements", &placements.identity, &placements.level),
+        ("props", &props.identity, &props.level),
+    ] {
+        if *identity != source.identity || level != stream {
+            return Err(format!("the {what} part is another dump's or file's"));
+        }
+    }
+    let palettes: Option<guac_ir::palette::LevelPalettes> =
+        read_ir(source.ir, &part(guac_extract::levels::PALETTES)).ok();
+    let creatures =
+        guacamole::creature_models::skinned_models(&placements, &props, &source.identity)
+            .into_iter()
+            .map(|(path, model)| CreatureModel {
+                palette: palettes
+                    .as_ref()
+                    .and_then(|p| p.palettes.iter().find(|x| x.owner == path))
+                    .map(|p| Arc::new(p.clone())),
+                nodes: None,
+                path,
+                model: Arc::new(model),
+            })
+            .collect();
+    let props = LevelProps::new(&props, &placements).map_err(|e| format!("its props: {e}"))?;
+    Ok((props, creatures))
 }
 
 /// A KTX2's `vkFormat`, off its header; `None` for a file that doesn't
@@ -2052,10 +2128,23 @@ fn receive_level(
     // in only once this one's run is in ([`Level::walkable`]).
     level.scripts = Some({
         let (dir, name, ir) = (source.dir.clone(), source.level.clone(), source.ir);
+        let streams = source.streams.clone();
         AsyncComputeTaskPool::get().spawn(async move {
-            level_scripts::load(&dir, &name).map(|mut linked| {
+            level_scripts::load_with_streams(&dir, &name, &streams).map(|mut linked| {
                 linked.layout = level_scripts::figure_layout(&dir, ir);
                 linked.palettes = level_scripts::level_palettes(&dir, &name, ir);
+                // The streams' templates' clips (openspec AS.157): the
+                // engines' own scripts play them.
+                if let Ok(palettes) = &mut linked.palettes {
+                    for s in &streams {
+                        match level_scripts::level_palettes(&dir, s, ir) {
+                            Ok(more) => palettes.extend(more),
+                            Err(why) => {
+                                warn!(stream = %s, reason = %why, "a stream's palettes didn't read: its clones hold their idles");
+                            }
+                        }
+                    }
+                }
                 // The sounds its units' archives play (openspec AR.9).
                 linked.sounds = Some(guacamole::sounds::load(&dir, ir, &linked.program.units));
                 // The original's interface its scripts write (openspec AT.9).
@@ -2598,6 +2687,7 @@ fn poll_scripts(level: &mut Level, commands: &mut Commands) {
                 placements,
                 order,
                 fighters,
+                streams,
                 walkers,
                 left_out,
                 layout,
@@ -2636,6 +2726,7 @@ fn poll_scripts(level: &mut Level, commands: &mut Commands) {
                         files: placements,
                         order,
                         fighters,
+                        streams,
                         walkers,
                         left_out,
                         layout,

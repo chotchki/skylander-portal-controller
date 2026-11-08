@@ -138,6 +138,9 @@ pub(crate) struct ScriptSource {
     order: Vec<u16>,
     /// Each fighter's load file and the unit his file links as.
     fighters: Vec<(String, u16)>,
+    /// The units the level's streams link as (openspec AS.157): their
+    /// placements join each run once its save is in.
+    streams: Vec<u16>,
     /// Each walker's scripts (AG.27): the other modelled characters whose
     /// own scripts the part holds.
     walkers: Vec<WalkerScripts>,
@@ -318,6 +321,7 @@ impl ScriptSource {
             files,
             order,
             fighters: Vec::new(),
+            streams: Vec::new(),
             walkers: Vec::new(),
             left_out: Vec::new(),
             layout: None,
@@ -357,6 +361,7 @@ pub(crate) struct Part {
     pub(crate) files: Files,
     pub(crate) order: Vec<u16>,
     pub(crate) fighters: Vec<(String, u16)>,
+    pub(crate) streams: Vec<u16>,
     pub(crate) walkers: Vec<WalkerScripts>,
     pub(crate) left_out: Vec<(String, String)>,
     pub(crate) layout: Option<Layout>,
@@ -399,6 +404,7 @@ pub(crate) fn install(world: &mut World, part: Part) {
         files: part.files,
         order: part.order,
         fighters: part.fighters,
+        streams: part.streams,
         walkers: part.walkers,
         left_out: part.left_out,
         layout: part.layout,
@@ -458,6 +464,8 @@ fn install_from(world: &mut World, source: &ScriptSource) {
         ),
         None => scripts::fight_config(Mode::Play),
     };
+    // The streams' scripts (openspec AS.157).
+    let config = guacamole::ship_parts::with_streams(config, &source.files, &source.streams);
     #[allow(unused_mut)]
     let mut config = scripts::with_walkers(config, &source.walkers);
     // The interface's members on the model, when the run holds one (AT.9).
@@ -483,6 +491,9 @@ fn install_from(world: &mut World, source: &ScriptSource) {
         return;
     };
     let mut script_world = world.resource_mut::<ScriptWorld>();
+    // The streams whose placements join once the save is in (openspec
+    // AS.157, `ship_parts::start`).
+    script_world.ship_parts.units = source.streams.clone();
     // The sounds its starts play (openspec AR.9).
     if let Some(s) = &source.sounds {
         script_world.set_sounds(s.book.clone(), s.stems.clone());
@@ -512,7 +523,12 @@ fn install_from(world: &mut World, source: &ScriptSource) {
         let (walked, templates) = script_world.walk_encounter(level, e);
         info!(level = %source.level(), walked, templates, "the level's encounter walks");
     }
-    for p in source.files.placed.iter().filter(|p| p.obj.unit == level) {
+    for p in source
+        .files
+        .placed
+        .iter()
+        .filter(|p| p.obj.unit == level || source.streams.contains(&p.obj.unit))
+    {
         if let Some(model) = &p.model
             && let Some((_, lengths)) = source.palettes.iter().find(|(owner, _)| owner == model)
         {
@@ -3041,6 +3057,7 @@ mod tests {
                 files: linked.placements,
                 order: linked.order,
                 fighters: linked.fighters,
+                streams: Vec::new(),
                 walkers: Vec::new(),
                 left_out: Vec::new(),
                 layout: None,
@@ -3117,6 +3134,7 @@ mod tests {
                     files: linked.placements,
                     order: linked.order,
                     fighters: linked.fighters,
+                    streams: Vec::new(),
                     walkers: Vec::new(),
                     left_out: Vec::new(),
                     layout: None,
