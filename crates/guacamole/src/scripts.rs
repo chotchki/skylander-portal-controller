@@ -2891,10 +2891,15 @@ pub const HUB_DOORS: [&str; 2] = ["/Utilities_Controller.ai", "/Hub2_Door.ai"];
 
 /// A level's own people the TV draws as it does the hub's (openspec AS.98),
 /// by level and placement, never walked: Auric in his scene on level 214
-/// and at his stall after it, Flynn and Cali on its third ship (AS.142).
-/// Walked, his scene never ended (a reading: its `Turn to Target` left to
-/// the walk's steering, as Cali's was at AU.6).
-pub const LEVEL_PEOPLE: [(&str, &str); 4] = [
+/// and at his stall after it, Flynn and Cali on its third ship (AS.142),
+/// and chapter 1's first cave's (AS.105): Norticus, who leads the hero in
+/// once the cave's scene lets him go, and the two Mabu at work, who turn to
+/// him as he comes by. Walked, Auric's scene never ended (a reading: its
+/// `Turn to Target` left to the walk's steering, as Cali's was at AU.6).
+pub const LEVEL_PEOPLE: [(&str, &str); 7] = [
+    ("level_213_tutotial", "2.NPC_Norticus_First_Cave"),
+    ("level_213_tutotial", "Slave_1_hammer(3)"),
+    ("level_213_tutotial", "Slave_Carry(3)"),
     ("level_214_tutotial_2", "Moneybags_end"),
     ("level_214_tutotial_2", "Auric_store"),
     ("level_214_tutotial_2", "Flynn_Island_3"),
@@ -6560,6 +6565,16 @@ mod tests {
         assert!(is_level_person("level_214_tutotial_2", "Flynn_Island_3"));
         assert!(is_level_person("level_214_tutotial_2", "Cali_Island_3"));
         assert!(!is_level_person("level_201", "Auric_store"));
+        // Chapter 1's first cave's people (openspec AS.105).
+        for name in [
+            "2.NPC_Norticus_First_Cave",
+            "Slave_1_hammer(3)",
+            "Slave_Carry(3)",
+        ] {
+            assert!(is_level_person("level_213_tutotial", name), "{name}");
+            assert!(!is_level_person("level_214_tutotial_2", name), "{name}");
+        }
+        assert!(!is_level_person("level_213_tutotial", "Slave_Carry(2)"));
         world.walk(0x10A);
         assert_eq!(world.people(), [0x10B], "a walked one isn't");
     }

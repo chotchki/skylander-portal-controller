@@ -271,6 +271,138 @@ fn chapter_1s_cave_is_entered_and_left_on_foot() {
     assert!(stops.is_empty(), "{stops:#?}");
 }
 
+/// The live clones named `name`.
+fn live(run: &Run, name: &str) -> Vec<Handle> {
+    run.world
+        .clones()
+        .into_iter()
+        .filter(|h| !run.world.removed(*h) && run.world.name(*h) == name)
+        .collect()
+}
+
+/// openspec AS.105: chapter 1's first cave's scene as AH.10's oracle read
+/// has it 6.5 s (390 steps) past the warp (`ah10-staged-1792556887/leave`,
+/// `actors-cave.json`, flip 1300): Norticus, the Mabu hammering and the one
+/// carrying, and the Giant's dummy each where the oracle stands it, within
+/// 0.1 m and 1°, Norticus in his turban, the one with his hammer, the other
+/// with his brick; the HUD hidden, the two Mabu at work there taken off.
+/// Its end takes the scene's people off with what they held, and puts the
+/// two at work back, each holding his own. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn chapter_1s_cave_scene_stands_its_people_where_the_oracle_does() {
+    println!("load at start: {}", load());
+    let (mut run, mut stops) = joined(guac_extract::levels::FIRST_RUN[0]);
+    let cave = handle(&run, "Interior_controller_Cave");
+    run.put(Vec3::new(11.0, 22.4, -28.5), 105.0);
+    for _ in 0..10 {
+        step(&mut run, &mut stops, None, [false; 4]);
+    }
+    let into = pass(&mut run, &mut stops, cave, [16.5, -30.2], INSIDE, 600);
+    let since = into.done_at.unwrap() - into.landed_at.unwrap();
+    for _ in since..390 {
+        step(&mut run, &mut stops, None, [false; 4]);
+    }
+    assert!(
+        guacamole::scripts::player_hud_hidden(&run.vm),
+        "the scene hides the HUD"
+    );
+    let oracle = [
+        ("213_Gigantus_Norticus", [-919.33, 29.85, -326.52], 179.3),
+        ("213_Gigantus_Slave_Carry", [-907.53, 29.84, -332.58], 232.0),
+        (
+            "213_Gigantus_Slave_hammer",
+            [-927.63, 29.91, -331.86],
+            139.0,
+        ),
+        ("213_GigantusDummy", [-912.95, 27.39, -287.78], 189.4),
+    ];
+    let mut holders = Vec::new();
+    for (name, at, facing) in oracle {
+        let h = live(&run, name);
+        assert_eq!(h.len(), 1, "{name}: {h:?}");
+        let a = run.world.actor(h[0]).unwrap();
+        let off = a.position.distance(Vec3::from_array(at));
+        let turn = (a.angles.facing - facing).rem_euclid(360.0);
+        let turn = turn.min(360.0 - turn);
+        println!(
+            "{name} at {} facing {:.2}: {off:.3} m, {turn:.2} deg off",
+            a.position, a.angles.facing
+        );
+        assert!(off < 0.1 && turn < 1.0, "{name}");
+        holders.push((name, a.position));
+    }
+    // What each holds, by him (the oracle's 0.0-1.4 m: the hammer swings).
+    for (held, by) in [
+        ("Turban_hat", "213_Gigantus_Norticus"),
+        ("Brick", "213_Gigantus_Slave_Carry"),
+        ("Hammer", "213_Gigantus_Slave_hammer"),
+    ] {
+        let h = live(&run, held);
+        assert_eq!(h.len(), 1, "{held}: {h:?}");
+        let at = run.world.actor(h[0]).unwrap().position;
+        let holder = holders.iter().find(|(n, _)| *n == by).unwrap().1;
+        println!("{held} {:.2} m from {by}", at.distance(holder));
+        assert!(
+            at.distance(holder) < 2.0,
+            "{held} at {at}, {by} at {holder}"
+        );
+    }
+    let workers = ["Slave_1_hammer(3)", "Slave_Carry(3)"].map(|n| handle(&run, n));
+    assert!(
+        workers.iter().all(|w| run.world.removed(*w)),
+        "taken off for the scene"
+    );
+    // To the scene's end.
+    let mut waited = 0;
+    while guacamole::scripts::player_hud_hidden(&run.vm) && waited < 3000 {
+        step(&mut run, &mut stops, None, [false; 4]);
+        waited += 1;
+    }
+    println!("the scene over {} steps past the warp", 390 + waited);
+    assert!(waited < 3000);
+    for _ in 0..30 {
+        step(&mut run, &mut stops, None, [false; 4]);
+    }
+    for (name, _, _) in oracle.iter().take(3) {
+        assert!(live(&run, name).is_empty(), "{name} left");
+    }
+    // Norticus in the cave from then on, his own turban on him, among the
+    // level's people the TV draws; the scene's went with its Norticus.
+    let norticus = handle(&run, "2.NPC_Norticus_First_Cave");
+    assert!(
+        run.world.people().contains(&norticus),
+        "drawn as the level's people"
+    );
+    let at = run.world.actor(norticus).unwrap().position;
+    let hats = live(&run, "Turban_hat");
+    assert_eq!(hats.len(), 1, "one turban: {hats:?}");
+    let hat = run.world.actor(hats[0]).unwrap().position;
+    println!(
+        "Norticus at {at}, his turban {:.2} m from him",
+        hat.distance(at)
+    );
+    assert!(hat.distance(at) < 2.0);
+    assert!(
+        workers.iter().all(|w| !run.world.removed(*w)),
+        "back at work"
+    );
+    assert!(
+        workers.iter().all(|w| run.world.people().contains(w)),
+        "drawn"
+    );
+    for (held, by) in [("Brick", workers[1]), ("Hammer", workers[0])] {
+        let at = run.world.actor(by).unwrap().position;
+        let near: Vec<Handle> = live(&run, held)
+            .into_iter()
+            .filter(|h| run.world.actor(*h).unwrap().position.distance(at) < 2.0)
+            .collect();
+        assert_eq!(near.len(), 1, "{held} by its worker");
+    }
+    println!("load at end: {}", load());
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
 /// openspec AS.112: chapter 1's cave keeps the portal while it takes him in.
 /// The controller's own `Game - Cutscene` leaves the switching rule at its
 /// default, so the lock stands from its darkness to the room (`need keep`
