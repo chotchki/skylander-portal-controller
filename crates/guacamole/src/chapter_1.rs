@@ -71,6 +71,7 @@ pub const WAY: Encounter = Encounter {
     ],
     clones: &[],
     steered: &[],
+    platforms: &[],
 };
 
 /// What takes the way on past them, listed and never walked.

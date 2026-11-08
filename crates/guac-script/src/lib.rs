@@ -479,7 +479,16 @@
 //!   name holding a pattern, which no filter-1 name on the disc does). 2
 //!   finds or makes, 3
 //!   finds and takes it off; the variable is the op's result as a path
-//!   element. On anything else it's a table per owner. Filter 4 and the
+//!   element. A placement's variables are kept by name and container
+//!   both: one a find makes beside a local of the same name declared as
+//!   another container is a variable of its own, and the script's own
+//!   name still reads its declaration's (openspec AU.53: level 201's wave
+//!   master makes a number `commander` on its commander clone, whose
+//!   script's `commander` is a reference it checks against nothing; one
+//!   cell for both read the number there and the clone took itself off).
+//!   Filter 3 taking one of them off leaves the other as it was. The
+//!   embedder's read by name gets the one made first.
+//!   On anything else it's a table per owner. Filter 4 and the
 //!   skip operand stop as unsupported: what they select is a reading not
 //!   yet settled.
 //! - A placement's *tags* (its `_tagList`'s variables, each with a value

@@ -634,6 +634,9 @@ pub struct ScriptWorld {
     /// AS.54, [`ScriptWorld::walk_encounter`]): what a level's spawners
     /// clone.
     pub(crate) walk_clones: std::collections::HashSet<Obj>,
+    /// The templates whose clones stand as solid platforms (openspec AU.53,
+    /// [`Encounter::platforms`]).
+    pub(crate) platform_clones: std::collections::HashSet<Obj>,
     /// The level's intro held until a hero's minion is in (openspec AS.47,
     /// [`hold_intro`]), by handle.
     pub(crate) intro_held: Option<Handle>,
@@ -952,6 +955,7 @@ impl ScriptWorld {
             music_held: Vec::new(),
             music_silent: 0,
             walk_clones: Default::default(),
+            platform_clones: Default::default(),
             intro_held: None,
             scene_walks: HashMap::new(),
             walk_written: std::collections::HashSet::new(),
@@ -1356,6 +1360,13 @@ impl ScriptWorld {
             .collect();
         let found = templates.len();
         self.walk_clones.extend(templates);
+        let platforms: Vec<Obj> = self
+            .templates
+            .iter()
+            .filter(|(o, p)| o.unit == unit && encounter.platforms.contains(&p.name.as_str()))
+            .map(|(o, _)| *o)
+            .collect();
+        self.platform_clones.extend(platforms);
         (walkers.len(), found)
     }
 
@@ -2130,6 +2141,24 @@ impl ScriptWorld {
                 None => return Err(HostFault::Nothing),
             },
             Member::LoadLevel => self.load_level = Value::Null,
+            // Back to its file's (openspec AU.53: level 201's intro wakes
+            // the door, gate and boulders on its way at its STARTUP and
+            // resets their ranges at its SHUTDOWN), a clone's its template's.
+            Member::Range => {
+                let file = on
+                    .and_then(|h| self.actors.get(&h))
+                    .and_then(|a| a.obj.or(a.template))
+                    .and_then(|o| self.template(o))
+                    .map(|p| p.range);
+                match (file, on.and_then(|h| self.actors.get_mut(&h))) {
+                    (Some(range), Some(k)) => k.range = range,
+                    (None, Some(_)) => {}
+                    _ => return Err(HostFault::Nothing),
+                }
+            }
+            Member::Physics(_) | Member::Solid(_) if !self.reset_facet(m, at.receiver) => {
+                return Err(HostFault::Nothing);
+            }
             _ => {}
         }
         Ok(())
@@ -2573,6 +2602,17 @@ pub fn hero_config(mode: Mode) -> Config {
     members::register(&mut c.members, members::HERO);
     // A slider's own members (AH.19): his attacks' and the HUD's slides.
     members::register(&mut c.members, members::COMBAT);
+    // A clip's playback mode on the host (openspec AU.53: a life mage's
+    // death pose ping pongs), the VM answering a slider's first.
+    if let Some(r) = members::find(members::COMBAT, "sequence", "playback mode") {
+        members::register(
+            &mut c.members,
+            &[members::Registered {
+                keeper: members::Keeper::Host,
+                ..r
+            }],
+        );
+    }
     // His figure's tag on the portal (AH.23): the portal's regions.
     members::register(&mut c.members, members::FIGURE);
     // The gameplay camera's (openspec AG.28), over the cells it takes over.
@@ -2628,13 +2668,19 @@ pub const FIRST_FIGHT: [&str; 11] = [
 /// are listed (a clone runs under its template's name) and walked, and the
 /// templates whose clones are listed and never walked (AS.68): what the
 /// engine steers under `move to` with no body ([`ScriptWorld::scene_move`]),
-/// whose solid meets neither actors nor the level.
+/// whose solid meets neither actors nor the level; and the templates whose
+/// clones stand in the world as solid platforms where their scripts leave
+/// them, never walked (openspec AU.53: level 201's bridge, its planks cloned
+/// along it, walked onto and dropped from under the hero; named here in
+/// place of the engine's own rule for what an actor stands on, stand-in
+/// ledger: `platforms`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Encounter {
     pub level: &'static str,
     pub placements: &'static [&'static str],
     pub clones: &'static [&'static str],
     pub steered: &'static [&'static str],
+    pub platforms: &'static [&'static str],
 }
 
 /// The first encounters the TV runs past chapter 1's. Level 214's: the
@@ -2741,6 +2787,7 @@ pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
         "Enemy_Elf_Lobber(0)",
     ],
     steered: &["TreeRex_special_homing_actor"],
+    platforms: &[],
 }];
 
 /// Level 214's third island (openspec AS.76), a table of its own beside
@@ -2771,6 +2818,7 @@ pub const THIRD_ISLAND: Encounter = Encounter {
     ],
     clones: &["Enemy_Elf_Lobber(10)"],
     steered: &[],
+    platforms: &[],
 };
 
 /// The intros the TV runs past chapter 1's, by level and placement
@@ -2900,7 +2948,7 @@ pub const HUB_DOORS: [&str; 2] = ["/Utilities_Controller.ai", "/Hub2_Door.ai"];
 /// the quarry, who leads him to the way on and stands there, and the Mabu
 /// at work along the way. Walked, Auric's scene never ended (a reading:
 /// its `Turn to Target` left to the walk's steering, as Cali's was at AU.6).
-pub const LEVEL_PEOPLE: [(&str, &str); 20] = [
+pub const LEVEL_PEOPLE: [(&str, &str); 27] = [
     ("level_213_tutotial", "2.NPC_Norticus_First_Cave"),
     ("level_213_tutotial", "Slave_1_hammer(3)"),
     ("level_213_tutotial", "Slave_Carry(3)"),
@@ -2921,6 +2969,16 @@ pub const LEVEL_PEOPLE: [(&str, &str); 20] = [
     ("level_214_tutotial_2", "Auric_store"),
     ("level_214_tutotial_2", "Flynn_Island_3"),
     ("level_214_tutotial_2", "Cali_Island_3"),
+    // Level 201's (openspec AU.53): Flynn by the landing, Quigley by the
+    // door to the life mage and on the cliff path, Brock in the practice
+    // pit's scenes, running over the bridge and in his arena, Auric's store.
+    ("level_201", "Flynn"),
+    ("level_201", "Quigley_1"),
+    ("level_201", "Quigley_2"),
+    ("level_201", "Brock NPC"),
+    ("level_201", "NPC_RunningDude"),
+    ("level_201", "Brock"),
+    ("level_201", "Auric-STORE"),
 ];
 
 /// Whether a placement whose script is `script` is one of the hub's
@@ -3007,6 +3065,7 @@ pub fn encounters(level: &str) -> impl Iterator<Item = &'static Encounter> {
         .iter()
         .chain(std::iter::once(&THIRD_ISLAND))
         .chain(std::iter::once(&crate::chapter_1::WAY))
+        .chain(std::iter::once(&crate::level_201::WAY))
         .filter(move |e| e.level == level)
 }
 
@@ -3268,7 +3327,7 @@ pub const ELEMENTAL_SCRIPTS: [&str; 22] = [
 /// timer, the mute mix and the jukebox controller run on 36 other levels
 /// too (the story levels' beat timer, the hub stages' jukeboxes and radios,
 /// the arena challenges'; the as-214-alive review's whole-disc listing).
-pub const MUSIC_SCRIPTS: [&str; 20] = [
+pub const MUSIC_SCRIPTS: [&str; 33] = [
     "Music_Level_Controller.ai",
     "snd_combat_watcher_213.ai",
     "snd_interior_watcher_213.ai",
@@ -3289,6 +3348,20 @@ pub const MUSIC_SCRIPTS: [&str; 20] = [
     "snd_jukebox_controller.ai",
     "snd_mixtype_music_mute.ai",
     "time_till_next_beat.ai",
+    // Level 201's (openspec AU.53), by their path under its folder.
+    "Level_201/Scripts/snd_201_interior_furnace_house_2.ai",
+    "Level_201/Scripts/snd_201_interior_furnace_house_4.ai",
+    "Level_201/Scripts/snd_arena_approach_switcher_201.ai",
+    "Level_201/Scripts/snd_backtrack_watcher.ai",
+    "Level_201/Scripts/snd_combat_switcher_201.ai",
+    "Level_201/Scripts/snd_combat_watcher_201.ai",
+    "Level_201/Scripts/snd_dynamic_sound_controller_201.ai",
+    "Level_201/Scripts/snd_explore_reset_201.ai",
+    "Level_201/Scripts/snd_interior_life_house_music_fade_201.ai",
+    "Level_201/Scripts/snd_interior_watcher_201.ai",
+    "Level_201/Scripts/snd_life_switcher_201.ai",
+    "Level_201/Scripts/snd_puzzle_switcher_201.ai",
+    "Level_201/Scripts/snd_undead_switcher_201.ai",
 ];
 
 /// Chapter 1's end (openspec AS.15), every tick: `Temp_Level_Ender`, asleep
@@ -3589,6 +3662,10 @@ pub fn hold_music_while(
 /// file name, any case.
 pub fn is_music_script(path: &str) -> bool {
     guac_extract::scripts::listed(&MUSIC_SCRIPTS, path)
+        // One named by its path under its level's folder (level 201's).
+        || MUSIC_SCRIPTS
+            .iter()
+            .any(|s| s.contains('/') && path.ends_with(s))
 }
 
 /// The VM's config for the TV's run (openspec AH.27): AH.17's with AH.20's
@@ -3988,6 +4065,20 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
         placements.extend(third_island_way(name).iter().map(|s| (*s).to_owned()));
         placements.extend(
             crate::chapter_1::passage(name)
+                .iter()
+                .map(|s| (*s).to_owned()),
+        );
+        placements.extend(
+            crate::level_201::passage(name)
+                .iter()
+                .map(|s| (*s).to_owned()),
+        );
+    }
+    // Level 201's own scripts, by their path under its folder (openspec
+    // AU.53).
+    if let Whitelist::Only { scripts, .. } = &mut config.whitelist {
+        scripts.extend(
+            crate::level_201::own_scripts(name)
                 .iter()
                 .map(|s| (*s).to_owned()),
         );
@@ -6831,6 +6922,43 @@ mod tests {
         let a = w.actor(grunt).unwrap();
         assert_eq!((a.range, a.buffer), (0.0, 0.0));
         assert!(!w.wake(0xDEAD));
+    }
+
+    /// openspec AU.53: a reset of a placement's activation range and buffer
+    /// puts back its file's (level 201's intro wakes the door and gate on
+    /// its way and resets them at its end), one of a handle that's no actor
+    /// none.
+    #[test]
+    fn a_reset_range_and_buffer_are_the_files_again() {
+        let files = Files {
+            placed: vec![Placed {
+                range: 60.0,
+                buffer: 12.5,
+                ..Placed::named(GRUNT, "Grunt", Some("C:/x/Grunt.ai"), RUNNING)
+            }],
+            ..Files::default()
+        };
+        let handles = headless_handles(&files);
+        let grunt = handles[&GRUNT];
+        let mut w = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        assert!(w.wake(grunt));
+        assert_eq!(w.actor(grunt).unwrap().range, 0.0);
+        let at = |name: &str, on: Handle| Access {
+            placement: on,
+            receiver: Some(Value::Entity(on)),
+            member: MemberId::named("placement", name),
+            other_point: None,
+            via: None,
+            op: None,
+        };
+        w.reset(&at("activation range", grunt)).unwrap();
+        w.reset(&at("deactivation buffer", grunt)).unwrap();
+        let a = w.actor(grunt).unwrap();
+        assert_eq!((a.range, a.buffer), (60.0, 12.5));
+        assert_eq!(
+            w.reset(&at("activation range", 0xDEAD)),
+            Err(HostFault::Nothing)
+        );
     }
 
     /// AH.220: a script that unlocks an achievement (`set system.game

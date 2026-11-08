@@ -759,10 +759,10 @@ fn a_suspended_placement_taken_off_still_runs_its_shutdown() {
 /// AS.35's maps hash in an order of their own, so a rule that walks one
 /// can't lean on it: two variables `find variable` made by one name (an int
 /// and a set) on a handle no placement runs under yet both join that
-/// placement's locals when it's added, and whichever was made later holds
-/// the name, as a find on a running placement leaves it, either way round.
+/// placement's variables when it's added, each under its own container
+/// (AU.53), the one made first keyed by the name, either way round.
 #[test]
-fn of_two_variables_found_by_one_name_before_it_runs_the_later_holds_it() {
+fn of_two_variables_found_by_one_name_before_it_runs_both_are_kept_in_order() {
     for int_first in [true, false] {
         let p = program(|w| {
             let other = w.variable("other", "ScriptReference", None);
@@ -798,14 +798,9 @@ fn of_two_variables_found_by_one_name_before_it_runs_the_later_holds_it() {
         assert!(vm.set_local(finder, "other", Value::Entity(0x99)));
         vm.step(&mut Bare).unwrap_or_else(|h| panic!("{h}"));
         let owner = vm.add(0x99, "Owner", 0);
-        let x = vm.local(owner, "x");
-        if int_first {
-            assert!(
-                matches!(x, Some(Value::Set(_))),
-                "the set, made later: {x:?}"
-            );
-        } else {
-            assert_eq!(x, Some(Value::Int(5)), "the int, made later");
-        }
+        let x = vm.locals_named(owner, "x");
+        let kinds: Vec<bool> = x.iter().map(|v| matches!(v, Value::Set(_))).collect();
+        assert_eq!(kinds, [!int_first, int_first], "made first, keyed: {x:?}");
+        assert!(x.contains(&Value::Int(5)), "the int kept: {x:?}");
     }
 }

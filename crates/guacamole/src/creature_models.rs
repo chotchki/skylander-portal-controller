@@ -354,7 +354,8 @@ mod tests {
     /// openspec AU.28: on a hub stage its people's models (Flynn's and
     /// Cali's by their placements' scripts) before the skinned templates',
     /// each once; on any other level a placement running one of their
-    /// scripts' names draws nothing of its own.
+    /// scripts' names draws nothing of its own, unless that level lists it
+    /// among its own people.
     #[test]
     fn a_hubs_people_draw_their_own_models() {
         let hub = "C:/tfb/Content/Levels/Level_Hub_2/Scripts";
@@ -396,7 +397,10 @@ mod tests {
             models("level_hub_2_stage_1"),
             ["balloonist.mdl", "adventure_girl.mdl", "tortoise.mdl"]
         );
-        assert_eq!(models("level_201"), ["tortoise.mdl"]);
+        assert_eq!(models("level_202"), ["tortoise.mdl"]);
+        // Level 201's own Flynn by the landing, one of its people by name
+        // (openspec AU.53, `scripts::LEVEL_PEOPLE`), draws there.
+        assert_eq!(models("level_201"), ["balloonist.mdl", "tortoise.mdl"]);
     }
 
     /// openspec AS.98: on level 214 its own people's models (Auric's in his
