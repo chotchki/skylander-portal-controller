@@ -264,8 +264,11 @@ pub const OWN_SCRIPTS: [&str; 70] = [
 /// never walked: the timed doors and their eyeballs, the life area's
 /// teleporters and vine bridges, the cave's lowering gate, the Giants' floor
 /// and log, the arena's wave master, its commander, crowd and drummers and
-/// its fountain, and Auric's store.
-pub const PASSAGE: [&str; 29] = [
+/// its fountain, Auric's store, and its jump pads (the AU.53 review: a walk
+/// drops into the pit below the landing's yard and the one off the grass
+/// the bridge drops him on, and each one's pad is the only way out; the
+/// third wakes once its crate is broken, by its own activator).
+pub const PASSAGE: [&str; 34] = [
     "EyE_Timer_Door_Template(1)",
     "EyE_Timer_Door_Template(2)",
     "EyE_Timer_Door_Template(3)",
@@ -295,6 +298,11 @@ pub const PASSAGE: [&str; 29] = [
     "6drummer",
     "ArenaMaster_lootFountain",
     "Auric-STORE",
+    "PvP_JumpPad_NORMAL(1)",
+    "PvP_JumpPad_NORMAL(2)",
+    "PvP_JumpPad_NORMAL(3)",
+    "PvP_JumpPad_NORMAL(4)",
+    "PvP_JumpPad_NORMAL(5)",
 ];
 
 /// The scripts [`OWN_SCRIPTS`] lists for the level whose archive is `level`.

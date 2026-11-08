@@ -183,7 +183,13 @@ struct Walked {
     level_change: Option<String>,
     steps: u32,
     seconds: f64,
+    /// The pits' jump pads after each stretch: whether each is off.
+    pads: Vec<(&'static str, [bool; 2])>,
 }
+
+/// The jump pads the walk records, the one in the pit below the landing's
+/// yard and the one in the pit off the grass the bridge drops him on.
+const PIT_PADS: [&str; 2] = ["PvP_JumpPad_NORMAL(2)", "PvP_JumpPad_NORMAL(4)"];
 
 impl Walked {
     /// The states `name` went through, in order.
@@ -526,6 +532,11 @@ fn walked() -> &'static Walked {
                 w.walked.topups.len()
             );
             w.walked.stretches.push((name, w.run.steps, ok));
+            let off = PIT_PADS.map(|p| {
+                let h = w.run.placed(p).0;
+                w.run.world.actor(h).is_none_or(|a| a.removed)
+            });
+            w.walked.pads.push((name, off));
             if !ok {
                 break;
             }
@@ -697,4 +708,91 @@ fn its_arena_runs_its_battle_to_the_outro() {
             .is_some_and(|s| s >= outro.0),
         "{castle:?}"
     );
+}
+
+/// A fresh run on level 201 with Eruptor joined and its intro skipped, as
+/// [`walked`] starts, for a test of its own.
+fn fresh() -> Walker {
+    let setup = Setup {
+        interface: true,
+        props: true,
+        sounds: true,
+        ..Setup::default()
+    };
+    let (run, _) = run_on_level(Mode::Play, LEVEL_201, setup);
+    let mut w = Walker {
+        run,
+        walked: Walked::default(),
+        watched: Vec::new(),
+        last: HashMap::new(),
+        card: None,
+        scene: None,
+    };
+    w.rest(2);
+    w.run.join().unwrap_or_else(|h| panic!("{h}"));
+    for k in 0..3000u32 {
+        w.step(
+            Stick::new(0.0, 0.0),
+            [false, false, false, k > 120 && k % 20 == 10],
+        );
+        if k > 300 && !w.in_scene() {
+            break;
+        }
+    }
+    w.rest(60);
+    w
+}
+
+/// AU.53's review: two pits a walk drops into off level 201's way, whose
+/// one way out is the jump pad in each (a walk out of either is a step past
+/// any the hero climbs), the pads on the TV's listing
+/// (`level_201::PASSAGE`). The one below the landing's yard: set down on
+/// the yard's edge, he walks off it into the pit, then onto its pad with the
+/// stick held back toward the yard and lands up there again; off the
+/// listing the pit kept him. The one off the grass the bridge drops him on:
+/// its pad, which the level's controller takes off at its start, is back
+/// by the time the bridge has dropped him there (the walk's record).
+#[test]
+#[ignore = "reads the Giants dump"]
+fn its_pits_jump_pads_take_him_back_up() {
+    let (pad, edge, height) = ("PvP_JumpPad_NORMAL(2)", [109.8, -123.8], 16.5);
+    let mut w = fresh();
+    let (h, at) = w.run.placed(pad);
+    w.run
+        .put(guac_motion::seam::Vec3::new(edge[0], height, edge[1]), 0.0);
+    w.rest(30);
+    // Off the edge toward the pad.
+    let mut low = f32::MAX;
+    for _ in 0..300 {
+        let stick = w.toward([at.x, at.z], 1.0);
+        w.step(stick, [false; 4]);
+        low = low.min(w.run.hero().pivot.y);
+    }
+    let fell = w.run.hero().pivot;
+    let on = w.run.world.actor(h).map(|a| (a.active, a.removed));
+    // Onto the pad (he stands by it now) and on toward the yard.
+    let mut top = fell.y;
+    for _ in 0..600 {
+        let stick = w.toward(edge, 1.0);
+        w.step(stick, [false; 4]);
+        top = top.max(w.run.hero().pivot.y);
+    }
+    w.rest(60);
+    let end = w.run.hero().pivot;
+    println!(
+        "{pad}: from the yard at {height} down to {low:.2} ({fell}), the pad (awake, off) {on:?}, up to {top:.2}, at the end {end} ({} stops)",
+        w.walked.stops.len()
+    );
+    assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
+    assert!(low < height - 5.0, "into the pit: {low}");
+    assert!(end.y > height - 1.5, "back up in the yard: {end}");
+    // The grass pit's pad, on once the bridge has dropped him by it.
+    let walked = walked();
+    let after_bridge = walked
+        .pads
+        .iter()
+        .find(|(n, _)| n.starts_with("Setup_004"))
+        .map(|p| p.1);
+    println!("the pads off after each stretch: {:?}", walked.pads);
+    assert_eq!(after_bridge, Some([false, false]), "{:?}", walked.pads);
 }
