@@ -228,7 +228,8 @@ impl PaletteCount {
         for e in &p.entries {
             match e.entry {
                 SlotEntry::Clip { .. } | SlotEntry::Blocks { .. } => self.clips += 1,
-                SlotEntry::Network => self.networks += 1,
+                // A random network's clips are its own (openspec AS.180).
+                SlotEntry::Network | SlotEntry::Random { .. } => self.networks += 1,
             }
         }
         self.refused += p.refused.len();

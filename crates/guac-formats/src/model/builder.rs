@@ -207,6 +207,19 @@ pub struct SlotSpec {
     pub file: &'static str,
     /// The entry's `_mediaName`.
     pub label: Option<&'static str>,
+    /// With no clip, a `physicsRandomAnimationNetwork` the entry wraps
+    /// (openspec AS.180): each of these a clip it chooses among, with the
+    /// disc's row of params (`1, 0, 0, 1, 1`); none wraps nothing.
+    pub network: Vec<NetworkSpec>,
+}
+
+/// One clip of [`SlotSpec::network`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct NetworkSpec {
+    pub clip: ClipSpec,
+    /// The `tfbPhysicsAnimation`'s `_properties`.
+    pub properties: u32,
+    pub file: &'static str,
 }
 
 impl SlotSpec {
@@ -222,6 +235,28 @@ impl SlotSpec {
             properties: 0x200,
             file,
             label: None,
+            network: Vec::new(),
+        }
+    }
+
+    /// A random network in `slot` choosing among a clip per file, the
+    /// `k`th at `(k + 1) / 30` seconds a frame.
+    pub fn network(slot: usize, files: &[&'static str]) -> Self {
+        Self {
+            clip: None,
+            network: files
+                .iter()
+                .enumerate()
+                .map(|(k, &file)| NetworkSpec {
+                    clip: ClipSpec {
+                        frame_duration: (k + 1) as f32 / 30.0,
+                        ..clip()
+                    },
+                    properties: 0x200,
+                    file,
+                })
+                .collect(),
+            ..Self::new(slot, 1.0 / 30.0, "network")
         }
     }
 }
@@ -718,6 +753,17 @@ pub(crate) fn character_in(b: &mut IgzBuilder, blocks: u8, spec: &CharacterSpec)
     b.pointer(at(model, 0x1C), table);
     let last = spec.slots.iter().map(|s| s.slot).max().unwrap_or(0);
     let mut slots = vec![None; last.max(1) + 1];
+    let animation = |b: &mut IgzBuilder, clip: &ClipSpec, properties: u32, file: &str| {
+        let anim = b.object(0, "tfbPhysicsAnimation", 0x2C);
+        info(b, anim, file);
+        let clips = PayloadSpec {
+            clip: Some(clip.clone()),
+            ..PayloadSpec::default()
+        };
+        b.memory_ref(at(anim, 0x14), blocks, &payload(&clips).bytes, 2);
+        b.put_u32(at(anim, 0x20), properties);
+        anim
+    };
     let entry = |b: &mut IgzBuilder,
                  name: &str,
                  clip: Option<&ClipSpec>,
@@ -730,15 +776,8 @@ pub(crate) fn character_in(b: &mut IgzBuilder, blocks: u8, spec: &CharacterSpec)
             b.string(at(entry, 0x34), label);
         }
         if let Some(clip) = clip {
-            let anim = b.object(0, "tfbPhysicsAnimation", 0x2C);
+            let anim = animation(b, clip, properties, file);
             b.pointer(at(entry, 0x3C), anim);
-            info(b, anim, file);
-            let clips = PayloadSpec {
-                clip: Some(clip.clone()),
-                ..PayloadSpec::default()
-            };
-            b.memory_ref(at(anim, 0x14), blocks, &payload(&clips).bytes, 2);
-            b.put_u32(at(anim, 0x20), properties);
         }
         entry
     };
@@ -753,14 +792,48 @@ pub(crate) fn character_in(b: &mut IgzBuilder, blocks: u8, spec: &CharacterSpec)
         ));
     }
     for s in &spec.slots {
-        slots[s.slot] = Some(entry(
+        let e = entry(
             b,
             "?",
             s.clip.as_ref(),
             s.properties,
             &format!("Models/Characters/Eruptor/{}", s.file),
             s.label,
-        ));
+        );
+        if s.clip.is_none() && !s.network.is_empty() {
+            // A physicsRandomAnimationNetwork: its sub-animations' list at
+            // 0x28, its params' vector at 0x2C (count, then the rows).
+            let net = b.object(0, "physicsRandomAnimationNetwork", 0x3C);
+            info(b, net, s.file);
+            // No build data of its own: a marked null, as the disc's.
+            b.null_memory_ref(at(net, 0x14), 0);
+            b.put_u32(at(net, 0x20), 0x600);
+            let subs: Vec<Option<Location>> = s
+                .network
+                .iter()
+                .map(|n| {
+                    Some(animation(
+                        b,
+                        &n.clip,
+                        n.properties,
+                        &format!("Models/Characters/Eruptor/{}", n.file),
+                    ))
+                })
+                .collect();
+            let sub_list = b.object(0, "tfbAnimationInfoList", 0x18);
+            list(b, sub_list, blocks, &subs);
+            b.pointer(at(net, 0x28), sub_list);
+            b.put_u32(at(net, 0x2C), s.network.len() as u32);
+            let rows: Vec<u8> = s
+                .network
+                .iter()
+                .flat_map(|_| [1.0f32, 0.0, 0.0, 1.0, 1.0])
+                .flat_map(f32::to_be_bytes)
+                .collect();
+            b.memory_ref(at(net, 0x30), blocks, &rows, 2);
+            b.pointer(at(e, 0x3C), net);
+        }
+        slots[s.slot] = Some(e);
     }
     list(b, table, blocks, &slots);
 
@@ -887,6 +960,11 @@ pub fn seeds() -> Vec<Vec<u8>> {
         properties: 0x210,
         ..SlotSpec::new(12, 1.0 / 30.0, "Eruptor_LeanLeft.ma")
     });
+    // A hurt that's a random network of two clips (openspec AS.180).
+    named.slots.push(SlotSpec::network(
+        41,
+        &["Eruptor_DamageFrontv00.ma", "Eruptor_DamageFrontv01.ma"],
+    ));
     vec![
         character(&sample()),
         character(&states),

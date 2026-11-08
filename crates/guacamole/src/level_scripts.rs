@@ -532,7 +532,7 @@ mod tests {
         // Another level's, where level 212's should be: past the first
         // run's levels, under the name its rule carries (openspec AS.54).
         let past = levels::part_path(ir, "level_212", levels::PALETTES);
-        assert_eq!(past, "levels/level_212/palettes.v3.ron");
+        assert_eq!(past, "levels/level_212/palettes.v4.ron");
         let other = tmp.path().join(&past);
         std::fs::create_dir_all(other.parent().unwrap()).unwrap();
         std::fs::copy(&path, &other).unwrap();

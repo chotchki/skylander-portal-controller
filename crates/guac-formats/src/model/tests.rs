@@ -320,6 +320,67 @@ fn the_palette_reads_every_slot_whatever_it_holds() {
     assert_eq!(read_walk.clip.as_ref().unwrap().clip, walk.clip);
 }
 
+/// openspec AS.180: a random animation network's slot reads its clips, in
+/// its order, each with its row of params and its own flags; a clip of it
+/// that can't play refuses the slot by name, as a slot's own would. An
+/// entry wrapping nothing reads as before: no clip, no choice.
+#[test]
+fn a_random_networks_slot_reads_its_clips_and_their_params() {
+    use super::builder::NetworkSpec;
+    let mut s = palette_sample();
+    s.slots.push(SlotSpec::network(
+        41,
+        &["Eruptor_DamageFrontv00.ma", "Eruptor_DamageFrontv01.ma"],
+    ));
+    s.slots.last_mut().unwrap().network.push(NetworkSpec {
+        properties: 0x620,
+        ..SlotSpec::network(0, &["Eruptor_DamageFrontv02.ma"]).network[0].clone()
+    });
+    let read = palette(&s);
+    let hurt = read[41].as_ref().unwrap().as_ref().unwrap();
+    assert!(hurt.clip.is_none());
+    let seen: Vec<(Option<&str>, bool, Vec<f32>)> = hurt
+        .choices
+        .iter()
+        .map(|c| {
+            (
+                c.clip.file,
+                c.clip.flags.partial_animation(),
+                c.params.clone(),
+            )
+        })
+        .collect();
+    let row = vec![1.0, 0.0, 0.0, 1.0, 1.0];
+    assert_eq!(
+        seen,
+        [
+            (Some("Eruptor_DamageFrontv00.ma"), false, row.clone()),
+            (Some("Eruptor_DamageFrontv01.ma"), false, row.clone()),
+            (Some("Eruptor_DamageFrontv02.ma"), true, row),
+        ]
+    );
+    assert!(
+        hurt.choices[1].clip.clip.animation.duration > hurt.choices[0].clip.clip.animation.duration,
+        "each its own clip"
+    );
+    // The other network, wrapping nothing: no choice.
+    let seven = read[7].as_ref().unwrap().as_ref().unwrap();
+    assert!(seven.clip.is_none() && seven.choices.is_empty());
+    // A clip of it bound past the skeleton refuses the slot.
+    let mut bent = s.clone();
+    let n = &mut bent
+        .slots
+        .iter_mut()
+        .find(|x| x.slot == 41)
+        .unwrap()
+        .network;
+    *n[1].clip.track_to_bone.last_mut().unwrap() = 7;
+    assert_eq!(
+        palette(&bent).swap_remove(41).unwrap_err().field,
+        "transformTrackToBoneIndices"
+    );
+}
+
 #[test]
 fn a_palette_slot_that_cant_play_is_refused_by_name() {
     let refused = |slot: usize, bend: &dyn Fn(&mut SlotSpec)| {

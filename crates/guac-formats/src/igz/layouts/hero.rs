@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, HashSet};
 use super::{
     Actor2, AlphaTextureUnitIdAttr, AnimationInfo, AnimationInfoList, AttrList, BlendMatrixSelect,
     EdgeGeometry, EdgeGeometryAttr, EdgeGeometrySegment, Group, IntList, Layout, NodeList,
-    ObjectRef, PhysicsAnimation, PhysicsBody, PhysicsCombinerLink, PhysicsModel,
+    ObjectRef, PhysicsAnimation, PhysicsBody, PhysicsCombinerLink, PhysicsModel, RandomNetwork,
     RuntimeTechniqueInstance, Skeleton2, SkeletonBone, SkeletonBoneList, TextureAttr2, is_a,
 };
 use crate::igz::Igz;
@@ -45,6 +45,10 @@ pub struct Clip<'a> {
     pub info: AnimationInfo<'a>,
     /// `None` when `_tfbAnimation` is null or an animation network.
     pub animation: Option<(usize, PhysicsAnimation<'a>)>,
+    /// The random animation network `_tfbAnimation` names, if it names one
+    /// (openspec AS.180: what it chooses among is read where its slot is,
+    /// [`crate::model::palette_slot`]).
+    pub network: Option<usize>,
 }
 
 /// A walk's material lists, the texture binds they hold and those binds'
@@ -335,7 +339,17 @@ impl<'a> Hero<'a> {
                 .filter(|&a| is_a(igz.type_name(&igz.objects()[a]), PhysicsAnimation::TYPE))
                 .map(|a| PhysicsAnimation::read(igz, a).map(|p| (a, p)))
                 .transpose()?;
-            self.clips.insert(info_index, Clip { info, animation });
+            let network = info
+                .tfb_animation
+                .filter(|&a| is_a(igz.type_name(&igz.objects()[a]), RandomNetwork::TYPE));
+            self.clips.insert(
+                info_index,
+                Clip {
+                    info,
+                    animation,
+                    network,
+                },
+            );
         }
         Ok(())
     }

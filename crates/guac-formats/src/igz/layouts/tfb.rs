@@ -153,6 +153,62 @@ impl<'a> Layout<'a> for PhysicsAnimation<'a> {
     }
 }
 
+/// `randomAnimationNetwork`: size 0x38, an `animationNetwork` (a
+/// `tfbAnimationInfo` with `_subNetworks`, the animations it chooses among)
+/// and `_params`, a row of floats per sub-animation (openspec AS.180). Its
+/// subclass `physicsRandomAnimationNetwork` (0x3C, every network on the
+/// levels that play) adds a 4-byte runtime id this doesn't read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RandomNetwork<'a> {
+    pub info: TfbAnimationInfo<'a>,
+    /// A `tfbAnimationInfoList`.
+    pub sub_networks: Option<usize>,
+    pub params: super::Vector<'a>,
+}
+
+impl RandomNetwork<'_> {
+    pub const SUB_NETWORKS: u32 = 0x28;
+    pub const PARAMS: u32 = 0x2C;
+
+    /// The params' rows as stored, one per sub-animation, each the vector's
+    /// bytes split evenly as big-endian floats (5 a row, each `1, 0, 0, 1,
+    /// 1`, on every network the levels that play hold; what they mean is
+    /// unread). None when the bytes don't split into `count` rows of floats.
+    pub fn rows(&self) -> Option<Vec<Vec<f32>>> {
+        let count = usize::try_from(self.params.count).ok()?;
+        let bytes = self.params.data.map_or(&[][..], |m| m.data);
+        if count == 0 {
+            return bytes.is_empty().then(Vec::new);
+        }
+        if !bytes.len().is_multiple_of(count * 4) {
+            return None;
+        }
+        let row = bytes.len() / count;
+        Some(
+            bytes
+                .chunks(row)
+                .map(|r| {
+                    r.chunks(4)
+                        .map(|w| f32::from_be_bytes([w[0], w[1], w[2], w[3]]))
+                        .collect()
+                })
+                .collect(),
+        )
+    }
+}
+
+impl<'a> Layout<'a> for RandomNetwork<'a> {
+    const TYPE: &'static str = "randomAnimationNetwork";
+
+    fn fields(v: &mut View<'_, 'a>) -> Result<Self, FormatError> {
+        Ok(Self {
+            info: TfbAnimationInfo::fields(v)?,
+            sub_networks: v.object(Self::SUB_NETWORKS, "_subNetworks", "tfbAnimationInfoList")?,
+            params: v.vector(Self::PARAMS, "_params")?,
+        })
+    }
+}
+
 /// `tfbBodyInfo`: size 0x3C, a build-data block (the Havok skeleton) plus
 /// the scene graph and the combiner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

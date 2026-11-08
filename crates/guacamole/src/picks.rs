@@ -339,7 +339,12 @@ impl Picked {
 /// What a drawn clone's other clips are laid over (openspec AU.37: Pop Fizz's
 /// beast, whose scripts define its locomotion states on the clone): what the
 /// locomotion on the VM weights on `actor` out of `palette`, each clip at its
-/// time and share, else `idle` at `seconds`.
+/// time and share, else `idle` at `seconds`; with no idle of the model's own
+/// (`idle` holding no track), what `palette`'s slot 0 plays at rest (openspec
+/// AS.180: level 214's Rob and its card pirate, whose slot 0 is a random
+/// network the props part keeps no idle of, its clips in turn, stand-in
+/// ledger `random-network`), and with none there either the model's reference
+/// pose.
 pub fn under_clips<'p>(
     world: &ScriptWorld,
     actor: Handle,
@@ -352,7 +357,13 @@ pub fn under_clips<'p>(
     });
     match weighted {
         Some(clips) if !clips.is_empty() => clips,
-        _ => vec![(idle, seconds, 1.0)],
+        _ => match palette
+            .filter(|_| idle.tracks.is_empty())
+            .and_then(|p| p.looped_at(0, seconds))
+        {
+            Some((c, t)) => vec![(c, t, 1.0)],
+            None => vec![(idle, seconds, 1.0)],
+        },
     }
 }
 
@@ -905,6 +916,60 @@ pub(crate) mod tests {
         assert_eq!(names(none), [("Idle".to_owned(), 1.0)]);
         let no_palette = under_clips(&world, me, None, &idle, 0.5);
         assert_eq!(names(no_palette), [("Idle".to_owned(), 1.0)]);
+    }
+
+    /// openspec AS.180: a model with no idle of its own (level 214's Rob,
+    /// his slot 0 a random network the props part keeps no idle of) rests
+    /// on what its palette's slot 0 plays at rest, the network's clips in
+    /// turn; with its own idle, that; with no slot 0 to rest on, its
+    /// reference pose.
+    #[test]
+    fn a_model_with_no_idle_rests_on_its_palettes_slot_0() {
+        use crate::scripts::{Files, headless_objects};
+        use guac_ir::palette::Choice;
+        let none = std::collections::HashMap::new();
+        let world = ScriptWorld::new(&Files::default(), &none, headless_objects(&none));
+        let choice = |name: &str, length: f32| Choice {
+            additive: false,
+            partial: false,
+            layered: false,
+            motion_extraction: 0,
+            clip: clip(name, length),
+            params: vec![1.0, 0.0, 0.0, 1.0, 1.0],
+        };
+        let mut pal = palette();
+        pal.entries[0].entry = SlotEntry::Random {
+            choices: vec![choice("Mabu_Idle00.ma", 2.0), choice("Mabu_Idle01.ma", 1.0)],
+        };
+        let none = Clip {
+            tracks: Vec::new(),
+            ..clip("", 1.0)
+        };
+        let at = |palette: Option<&Palette>, idle: &Clip, t: f64| -> (String, f64) {
+            let clips = under_clips(&world, 1, palette, idle, t);
+            assert_eq!(clips.len(), 1);
+            (clips[0].0.name.clone(), clips[0].1)
+        };
+        assert_eq!(at(Some(&pal), &none, 0.5), ("Mabu_Idle00.ma".into(), 0.5));
+        assert_eq!(at(Some(&pal), &none, 2.5), ("Mabu_Idle01.ma".into(), 0.5));
+        assert_eq!(
+            at(Some(&pal), &none, 3.5),
+            ("Mabu_Idle00.ma".into(), 0.5),
+            "round again"
+        );
+        let own = clip("Idle", 1.0);
+        assert_eq!(
+            at(Some(&pal), &own, 0.5),
+            ("Idle".into(), 0.5),
+            "its own idle"
+        );
+        pal.entries.remove(0);
+        assert_eq!(
+            at(Some(&pal), &none, 0.5),
+            (String::new(), 0.5),
+            "its reference pose"
+        );
+        assert_eq!(at(None, &none, 0.5), (String::new(), 0.5));
     }
 
     /// Nothing weighted with weight (the frame his scripts' influence

@@ -848,6 +848,11 @@ fn fighter() -> CharacterSpec {
             properties: 0x620,
             ..SlotSpec::new(40, 1.0 / 30.0, "Eruptor_Odd.ma")
         },
+        // A hurt that's a random network of two clips (openspec AS.180).
+        SlotSpec::network(
+            41,
+            &["Eruptor_DamageFrontv00.ma", "Eruptor_DamageFrontv01.ma"],
+        ),
     ]);
     s
 }
@@ -863,6 +868,7 @@ fn the_palette_keeps_every_slot_the_locomotion_leaves_out() {
     type Seen = (u16, String, (bool, bool, u8), Vec<u16>, f32);
     let mut clips: Vec<Seen> = Vec::new();
     let mut networks = Vec::new();
+    let mut randoms = Vec::new();
     for s in &p.entries {
         match &s.entry {
             SlotEntry::Clip {
@@ -883,6 +889,13 @@ fn the_palette_keeps_every_slot_the_locomotion_leaves_out() {
             }
             SlotEntry::Network => networks.push(s.slot),
             SlotEntry::Blocks { clip, .. } => panic!("{}: no clip past a block here", clip.name),
+            SlotEntry::Random { choices } => randoms.push((
+                s.slot,
+                choices
+                    .iter()
+                    .map(|c| (c.clip.name.clone(), c.clip.duration, c.params.clone()))
+                    .collect::<Vec<_>>(),
+            )),
         }
     }
     let three = || vec![0, 1, 2];
@@ -933,6 +946,25 @@ fn the_palette_keeps_every_slot_the_locomotion_leaves_out() {
         ]
     );
     assert_eq!(networks, [7]);
+    // AS.180: the random network's clips, each its own length, with their
+    // params as stored; a play of it its first clip's length.
+    let row = vec![1.0, 0.0, 0.0, 1.0, 1.0];
+    assert_eq!(
+        randoms,
+        [(
+            41,
+            vec![
+                (
+                    "Eruptor_DamageFrontv00.ma".to_owned(),
+                    8.0 / 30.0,
+                    row.clone()
+                ),
+                ("Eruptor_DamageFrontv01.ma".to_owned(), 16.0 / 30.0, row),
+            ]
+        )]
+    );
+    assert_eq!(p.duration(41), Some(8.0 / 30.0));
+    assert!(p.clip(41).is_none(), "no locomotion's clip");
     assert_eq!(p.refused.len(), 1);
     assert_eq!(p.refused[0].slot, 40);
     assert!(p.refused[0].reason.contains("blendHint"), "{:?}", p.refused);

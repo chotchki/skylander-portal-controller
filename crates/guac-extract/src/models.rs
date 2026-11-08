@@ -51,7 +51,7 @@ use guac_ir::model::{
     Sampler, Scroll, Segment, Skeleton, TextureRole, TextureSlot, Transform, Wrap,
 };
 use guac_ir::nodes::{AttachNode, AttachNodes};
-use guac_ir::palette::{Palette, PaletteSlot, RefusedSlot, SlotEntry};
+use guac_ir::palette::{Choice, Palette, PaletteSlot, RefusedSlot, SlotEntry};
 use guac_ir::{Category, DumpIdentity, Hero, Model, Rig, RigLight, Roster, Sha256};
 use sha2::Digest;
 
@@ -374,6 +374,29 @@ pub fn palette(
                 name: s.name.map(str::to_owned),
                 label: s.label.map(str::to_owned),
                 entry: match s.clip {
+                    // A random network's clips, each of one block (openspec
+                    // AS.180: a Mabu's idle and talk, a hurt); one past a
+                    // block, or a network of networks, plays nothing here.
+                    None if !s.choices.is_empty()
+                        && s.choices
+                            .iter()
+                            .all(|c| c.clip.clip.animation.more.is_empty()) =>
+                    {
+                        SlotEntry::Random {
+                            choices: s
+                                .choices
+                                .iter()
+                                .map(|c| Choice {
+                                    additive: c.clip.flags.additive_blend(),
+                                    partial: c.clip.flags.partial_animation(),
+                                    layered: c.clip.flags.layered(),
+                                    motion_extraction: c.clip.flags.motion_extraction_flags() as u8,
+                                    clip: self::clip(&c.clip.clip, c.clip.file.unwrap_or_default()),
+                                    params: c.params.clone(),
+                                })
+                                .collect(),
+                        }
+                    }
                     None => SlotEntry::Network,
                     // Past one block (openspec AS.78: the cinematics'
                     // animator cameras), each block a clip of its own.

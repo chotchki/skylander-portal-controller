@@ -425,9 +425,13 @@ pub(crate) fn step_systems(
         match system.source {
             Source::Clone(clone) => {
                 let world = world.as_deref();
-                let in_play = world
-                    .and_then(|w| w.actor(clone.to_bits()))
-                    .is_some_and(|a| !a.removed);
+                // Out of play once taken off or once what it hangs on is
+                // (openspec AS.186: an emitter hung on an actor taken off
+                // emits no more, as a clone hung so draws nothing).
+                let in_play = world.is_some_and(|w| {
+                    w.actor(clone.to_bits()).is_some_and(|a| !a.removed)
+                        && !w.hangs_on_nothing(clone.to_bits())
+                });
                 if in_play
                     && let Some(place) =
                         world.and_then(|w| place_of(clone, w, transforms.get(clone).ok()))
@@ -689,6 +693,49 @@ mod tests {
         let mut q = app.world_mut().query::<&ParticleSystem>();
         assert_eq!(q.iter(app.world()).count(), 0);
         assert!(app.world().get_entity(system).is_err());
+    }
+
+    /// openspec AS.186: an emitter's clone hung on an actor taken off is
+    /// out of play, as a clone hung so draws nothing: it makes nothing past
+    /// its most, as one taken off, and goes once its particles have lived
+    /// out; while he's on it emits on.
+    #[test]
+    fn an_emitter_hung_on_an_actor_taken_off_emits_no_more() {
+        let (mut app, clone, base, _tmp) = loaded();
+        let owner = base[0].obj;
+        {
+            let mut w = app
+                .world_mut()
+                .resource_mut::<guacamole::scripts::ScriptWorld>();
+            let h = w.handles()[&owner];
+            assert!(w.hang(clone.to_bits(), h, 0));
+        }
+        let on = |app: &mut App| {
+            let mut q = app.world_mut().query::<&ParticleSystem>();
+            q.iter(app.world())
+                .next()
+                .map(|s| (s.on, s.generators[0].made))
+        };
+        // Past its 24 (50 a second for half a second), hung on him.
+        for _ in 0..30 {
+            app.update();
+        }
+        let (worn, made) = on(&mut app).unwrap();
+        assert!(worn && made >= 24, "hung on him, emitting: {made}");
+        assert!(
+            app.world_mut()
+                .resource_mut::<guacamole::scripts::ScriptWorld>()
+                .take_off(owner)
+        );
+        app.update();
+        let (off, at_off) = on(&mut app).unwrap();
+        assert!(!off, "him taken off");
+        app.update();
+        assert_eq!(on(&mut app), Some((false, at_off)), "no more");
+        for _ in 0..30 {
+            app.update();
+        }
+        assert_eq!(on(&mut app), None, "its particles' lives over");
     }
 
     /// The virtual clock stopped (a pause, a hold behind an alert) holds

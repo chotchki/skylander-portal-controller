@@ -3492,6 +3492,36 @@ impl ScriptWorld {
         owners
     }
 
+    /// Whether what actor `h` hangs on, a node of another actor or that
+    /// actor itself, was taken off, or what that hangs on was, up the
+    /// chain (openspec AS.186): what hangs on nothing, which the TV doesn't
+    /// draw. It stays in the world, as the engine keeps a minion hung on an
+    /// actor destroyed under him (the cutscene system's own clean-up
+    /// detaches him), its scripts and its own reads unchanged; whether the
+    /// original draws it is unread (stand-in ledger: `hung-draw`). False for
+    /// one hanging from nothing, from itself or from a ground.
+    pub fn hangs_on_nothing(&self, h: Handle) -> bool {
+        let mut at = h;
+        for _ in 0..HUNG_DEPTH {
+            let Some(a) = self.actors.get(&at) else {
+                return false;
+            };
+            let owner = match self.object(Some(a.attach)) {
+                Some(Object::Node(owner, _)) => Some(owner),
+                None => self.actor_of(Some(a.attach)),
+                _ => None,
+            };
+            let Some(owner) = owner.filter(|&o| o != at) else {
+                return false;
+            };
+            if self.actors.get(&owner).is_some_and(|o| o.removed) {
+                return true;
+            }
+            at = owner;
+        }
+        false
+    }
+
     /// Each actor hung from a node set at it, as the engine's frame leaves
     /// it: [`ScriptWorld::move_actors`]' last part, and what an embedder
     /// posing the nodes after that frame (openspec AH.50) runs again.
@@ -5220,6 +5250,64 @@ mod tests {
         )
         .unwrap();
         assert_eq!(e.hero.as_ref().unwrap().walk.velocity, Vec3::X);
+    }
+
+    /// AS.186: what hangs on an actor taken off, by a node of his or on him
+    /// itself, or on what hangs so, hangs on nothing (chapter 1's outro
+    /// takes its Mabu off with their beanies on their node 2, a hat box's
+    /// bow hangs on its lid on the box); put back, it hangs on him again.
+    /// What hangs from nothing, from itself, from a ground or round a loop
+    /// of live actors hangs on something.
+    #[test]
+    fn what_hangs_on_an_actor_taken_off_hangs_on_nothing() {
+        const MABU: Handle = 0x60;
+        const HAT: Handle = 0x61;
+        const BOX: Handle = 0x62;
+        const LID: Handle = 0x63;
+        const BOW: Handle = 0x64;
+        const LOOSE: Handle = 0x65;
+        const A: Handle = 0x66;
+        const B: Handle = 0x67;
+        let mut w = world();
+        let hung = |w: &mut ScriptWorld, h: Handle, attach: Value| {
+            let mut a = Actor::blank();
+            a.attach = attach;
+            w.actors.insert(h, a);
+        };
+        for h in [MABU, BOX] {
+            hung(&mut w, h, Value::Null);
+        }
+        let node =
+            |w: &mut ScriptWorld, owner: Handle, i: u32| w.objs.value(Object::Node(owner, i));
+        let on_mabu = node(&mut w, MABU, 2);
+        hung(&mut w, HAT, on_mabu);
+        let on_box = node(&mut w, BOX, 0);
+        hung(&mut w, LID, on_box);
+        let on_lid = node(&mut w, LID, 0);
+        hung(&mut w, BOW, on_lid);
+        hung(&mut w, LOOSE, Value::Entity(MABU));
+        assert!(!w.hangs_on_nothing(HAT), "on him");
+        assert!(!w.hangs_on_nothing(BOW), "on the lid on the box");
+        w.actors.get_mut(&MABU).unwrap().removed = true;
+        assert!(w.hangs_on_nothing(HAT), "on his node, him taken off");
+        assert!(w.hangs_on_nothing(LOOSE), "on him, him taken off");
+        assert!(!w.hangs_on_nothing(MABU), "he hangs on nothing himself");
+        w.actors.get_mut(&MABU).unwrap().removed = false;
+        assert!(!w.hangs_on_nothing(HAT), "put back");
+        w.actors.get_mut(&BOX).unwrap().removed = true;
+        assert!(w.hangs_on_nothing(LID));
+        assert!(w.hangs_on_nothing(BOW), "up the chain");
+        // Hung from itself, from a ground of something taken off, round a
+        // loop: on something.
+        hung(&mut w, A, Value::Entity(A));
+        assert!(!w.hangs_on_nothing(A));
+        let ground = w.objs.value(Object::Facet(BOX, Facet::Ground));
+        hung(&mut w, A, ground);
+        assert!(!w.hangs_on_nothing(A), "a ground isn't a hang");
+        hung(&mut w, A, Value::Entity(B));
+        hung(&mut w, B, Value::Entity(A));
+        assert!(!w.hangs_on_nothing(A), "a loop of live actors");
+        assert!(!w.hangs_on_nothing(0x99), "no such actor");
     }
 
     /// AU.37: what hangs on an actor itself turns as he turns (Pop Fizz's

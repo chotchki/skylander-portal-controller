@@ -26,6 +26,9 @@ struct Walk {
     stops: Vec<String>,
     people: Vec<Met>,
     hats: Vec<String>,
+    /// Each hat met hanging on an actor taken off, drawn nowhere (AS.186),
+    /// with whom it hangs on.
+    hidden: Vec<(Handle, String)>,
 }
 
 const TURBAN: &str = "Turban_hat";
@@ -222,9 +225,12 @@ impl Walk {
     }
 
     /// Each of [`PEOPLE`] drawn near him, what it wears and where it stands
-    /// (openspec AS.166), and every hat on someone: a hat whose wearer is
-    /// gone or taken off would hang over nothing (the first cave's turban
-    /// lay on the floor with no Norticus until AS.105).
+    /// (openspec AS.166), and every hat on someone: a hat the TV draws whose
+    /// wearer is gone or taken off would hang over nothing (the first cave's
+    /// turban lay on the floor with no Norticus until AS.105); one hanging
+    /// on an actor taken off is drawn nowhere (AS.186: the outro's three
+    /// Mabu leave theirs as the scene takes them off, their script taking
+    /// no hat off as the others' do), and is counted.
     fn watch_people(&mut self) {
         let me = self.run.hero().pivot;
         let world = &self.run.world;
@@ -245,10 +251,14 @@ impl Walk {
             })
             .collect();
         for (h, n, owner) in &hats {
-            // The outro's three Mabu leave theirs as the scene takes them
-            // off: their script takes no hat off, as the others' do.
-            let outro = owner.is_some_and(|o| world.name(o).starts_with("213_Outro_Mabu_"));
-            if !owner.is_some_and(live) && !outro {
+            if world.hangs_on_nothing(*h) {
+                let on = owner.map(|o| world.name(o)).unwrap_or_default();
+                if !self.hidden.iter().any(|(k, _)| k == h) {
+                    self.hidden.push((*h, on));
+                }
+                continue;
+            }
+            if !owner.is_some_and(live) {
                 self.hats.push(format!(
                     "step {}: {n} {h} on {:?}, at {}",
                     self.run.steps,
@@ -333,6 +343,7 @@ fn into_the_cave() -> Walk {
         stops: Vec::new(),
         people: PEOPLE.iter().map(|_| Met::default()).collect(),
         hats: Vec::new(),
+        hidden: Vec::new(),
     };
     w.still(60);
     w.run.put(Vec3::new(15.6, 22.4, -31.0), 90.0);
@@ -580,7 +591,8 @@ fn chapter_1_is_walked_from_its_cave_to_its_end() {
 
 /// openspec AS.166: each of chapter 1's people past its first cave met on
 /// the way, drawn on its model, standing on the ground (within 0.3 m), or
-/// over none where it's placed, and in its hat, no hat anywhere hanging on no one; Norticus at the top of the
+/// over none where it's placed, and in its hat, no hat the TV draws hanging on no one (the outro's three on
+/// their Mabu taken off drawn nowhere, AS.186); Norticus at the top of the
 /// second cave's pads leads the hero on and goes, his turban with him;
 /// Norticus at the quarry leads him up its slope and stands at the top of
 /// it, at his last waypoint; the Mabu carrying by the pit turns to him.
@@ -606,6 +618,17 @@ fn people_met(w: &Walk) {
         assert!(met.hats.is_empty(), "{name}: {:?}", met.hats);
     }
     assert!(w.hats.is_empty(), "{:#?}", w.hats);
+    // The outro's three Mabu's beanies, each on its Mabu taken off at the
+    // scene's end, and no other hat, drawn nowhere (AS.186).
+    println!("hats on nothing: {:?}", w.hidden);
+    assert_eq!(w.hidden.len(), 3, "{:?}", w.hidden);
+    assert!(
+        w.hidden
+            .iter()
+            .all(|(_, on)| on.starts_with("213_Outro_Mabu_")),
+        "{:?}",
+        w.hidden
+    );
     let behaviours = |name: &str| {
         let k = PEOPLE.iter().position(|(n, _)| *n == name).unwrap();
         w.people[k].behaviours.clone()

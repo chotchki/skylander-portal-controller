@@ -385,11 +385,14 @@ pub(crate) struct CreatureSpawner<'w, 's> {
 /// The clones whose template's model the level draws skinned (openspec
 /// AG.150, AS.63: `holds` says whether the level holds a creature model at
 /// a path), but a template `props::UNDRAWN_SPAWNS` names, the creatures the
-/// engine walks left to [`ScriptWorld::creatures`]: drawn as a creature is.
+/// engine walks left to [`ScriptWorld::creatures`], and one hanging on an
+/// actor taken off (AS.186, [`ScriptWorld::hangs_on_nothing`]): drawn as a
+/// creature is.
 pub(crate) fn skinned_clones(world: &ScriptWorld, holds: impl Fn(&str) -> bool) -> Vec<Handle> {
     world
         .clones()
         .into_iter()
+        .filter(|&h| !world.hangs_on_nothing(h))
         .filter(|&h| {
             world.actor(h).is_some_and(|a| {
                 a.walker.is_none()
@@ -1348,6 +1351,68 @@ mod tests {
             t.translation.distance(Vec3::from_array(ART_AT)) < 1e-4,
             "{t:?}"
         );
+    }
+
+    /// openspec AS.186: a clone hung on an actor taken off is drawn nowhere
+    /// (chapter 1's outro takes its Mabu off with their beanies on them):
+    /// a static one hidden with its parts gone, a skinned one let go; put
+    /// back, he wears them again, both drawn.
+    #[test]
+    fn a_clone_hung_on_an_actor_taken_off_is_drawn_nowhere() {
+        use guac_formats::script::builder::ATTACK_HELPER;
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _) = crate::test_support::play::fight_app_with_art(tmp.path(), Some(start()));
+        let c = creature(&app);
+        let obj = app
+            .world()
+            .resource::<ScriptWorld>()
+            .actor(c)
+            .unwrap()
+            .obj
+            .unwrap();
+        let art = until_art(&mut app);
+        let helper = {
+            let w = app.world().resource::<ScriptWorld>();
+            w.clones()
+                .into_iter()
+                .find(|&h| w.name(h) == ATTACK_HELPER)
+                .expect("his helper, a static clone")
+        };
+        let e = Entity::try_from_bits(helper).unwrap();
+        let drawn = |app: &App| {
+            let d = app
+                .world()
+                .entity(e)
+                .get::<crate::hero_scripts::CloneDrawn>()
+                .is_some_and(|d| d.draws);
+            let shown = app.world().entity(e).get::<Visibility>() != Some(&Visibility::Hidden);
+            let skinned = app
+                .world()
+                .resource::<DrawnCreatures>()
+                .0
+                .contains_key(&art);
+            (d && shown, skinned)
+        };
+        until(&mut app, "the helper drawn", |a| drawn(a).0);
+        {
+            let mut w = app.world_mut().resource_mut::<ScriptWorld>();
+            assert!(w.hang(helper, c, 0) && w.hang(art, c, 0));
+        }
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(drawn(&app), (true, true), "worn");
+        assert!(app.world_mut().resource_mut::<ScriptWorld>().take_off(obj));
+        until(&mut app, "neither drawn", |a| drawn(a) == (false, false));
+        assert!(
+            app.world()
+                .entity(e)
+                .get::<Children>()
+                .is_none_or(|c| c.is_empty()),
+            "its parts gone"
+        );
+        assert!(app.world_mut().resource_mut::<ScriptWorld>().put_back(obj));
+        until(&mut app, "both drawn again", |a| drawn(a) == (true, true));
     }
 
     /// The art clone, once it's drawn.

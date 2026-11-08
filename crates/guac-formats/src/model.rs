@@ -405,6 +405,20 @@ pub struct PaletteSlot<'a> {
     /// `None` for an entry wrapping no `tfbPhysicsAnimation`: an animation
     /// network, or nothing.
     pub clip: Option<PaletteClip<'a>>,
+    /// What a random animation network in the slot chooses among (openspec
+    /// AS.180): each sub-animation's clip with its row of params, in the
+    /// network's order; empty for anything else, and for a network one of
+    /// whose sub-animations is another network (none on the levels that
+    /// play), which reads as no clip as before.
+    pub choices: Vec<Choice<'a>>,
+}
+
+/// One of the clips a random animation network chooses among, and its row
+/// of the network's params as stored.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Choice<'a> {
+    pub clip: PaletteClip<'a>,
+    pub params: Vec<f32>,
 }
 
 /// A `tfbPhysicsAnimation`'s clip, with the wrapper's flags (additive,
@@ -422,7 +436,9 @@ pub struct PaletteClip<'a> {
 /// empty or past the set's end. Refused: a clip whose binding's blend hint
 /// disagrees with the wrapper's additive flag, and a NORMAL one (partial
 /// or not) that doesn't pose `skeleton` at its start and halfway; an
-/// additive clip's tracks must each name one of its bones.
+/// additive clip's tracks must each name one of its bones. A random
+/// network's clips each so, and the network when its params don't split
+/// into a row of floats per clip.
 pub fn palette_slot<'a>(
     igz: &Igz<'a>,
     hero: &Hero<'a>,
@@ -433,16 +449,75 @@ pub fn palette_slot<'a>(
         return Ok(None);
     };
     let entry = &hero.clips[&info];
-    let slot_of = |clip| PaletteSlot {
+    let slot_of = |clip, choices| PaletteSlot {
         slot,
         info,
         name: entry.info.name,
         label: entry.info.media_name,
         clip,
+        choices,
     };
     let Some((animation, a)) = entry.animation else {
-        return Ok(Some(slot_of(None)));
+        let choices = match entry.network {
+            Some(n) => network_choices(igz, n, skeleton)?,
+            None => Vec::new(),
+        };
+        return Ok(Some(slot_of(None, choices)));
     };
+    Ok(Some(slot_of(
+        Some(palette_clip(igz, animation, a, skeleton)?),
+        Vec::new(),
+    )))
+}
+
+/// The clips random network `network` chooses among, each read as a
+/// palette slot's clip is ([`palette_clip`]), with its row of params; none
+/// when one of its sub-animations isn't a clip.
+fn network_choices<'a>(
+    igz: &Igz<'a>,
+    network: usize,
+    skeleton: &havok::Skeleton<'_>,
+) -> Result<Vec<Choice<'a>>, FormatError> {
+    use crate::igz::layouts::{ObjectList, RandomNetwork, is_a};
+    let n = RandomNetwork::read(igz, network)?;
+    let Some(list) = n.sub_networks else {
+        return Ok(Vec::new());
+    };
+    let subs = ObjectList::read(igz, list)?.elements;
+    let at = igz.objects()[network].at;
+    let rows = n.rows().filter(|r| r.len() == subs.len()).ok_or_else(|| {
+        igz.err_at(
+            at,
+            "_params",
+            ErrorKind::Unsupported {
+                value: n.params.count.into(),
+            },
+        )
+    })?;
+    let mut out = Vec::new();
+    for (sub, params) in subs.into_iter().zip(rows) {
+        let Some(sub) =
+            sub.filter(|&s| is_a(igz.type_name(&igz.objects()[s]), PhysicsAnimation::TYPE))
+        else {
+            return Ok(Vec::new());
+        };
+        let a = PhysicsAnimation::read(igz, sub)?;
+        out.push(Choice {
+            clip: palette_clip(igz, sub, a, skeleton)?,
+            params,
+        });
+    }
+    Ok(out)
+}
+
+/// The clip `a` (object `animation`) wraps, read as a palette slot's clip
+/// ([`palette_slot`]'s refusals).
+fn palette_clip<'a>(
+    igz: &Igz<'a>,
+    animation: usize,
+    a: PhysicsAnimation<'a>,
+    skeleton: &havok::Skeleton<'_>,
+) -> Result<PaletteClip<'a>, FormatError> {
     let clip = decode_clip(igz, animation, &a)?;
     let additive = clip.binding.blend_hint == BlendHint::Additive;
     if additive != a.info.additive_blend() {
@@ -474,12 +549,12 @@ pub fn palette_slot<'a>(
     } else {
         poses(igz, animation, &clip, skeleton)?;
     }
-    Ok(Some(slot_of(Some(PaletteClip {
+    Ok(PaletteClip {
         animation,
         flags: a.info,
         file: clip_file(&a),
         clip,
-    }))))
+    })
 }
 
 /// Slot 0 of `hero`'s animation set: a NORMAL clip, neither additive nor

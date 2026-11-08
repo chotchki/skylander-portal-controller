@@ -1984,9 +1984,11 @@ pub(crate) fn clone_parts<'m>(
 
 /// Each clone the scripts made, drawn from its template's model off the
 /// extract's spawn part while it's on: placed each step, eased between
-/// steps, hidden once taken off. One made before the level's loaded (the
-/// start's scripts run from the part's link, openspec AG.60) waits for its
-/// models.
+/// steps, hidden once taken off or once what it hangs on is (openspec
+/// AS.186: [`ScriptWorld::hangs_on_nothing`], chapter 1's outro Mabu's
+/// beanies), drawn again if that's put back. One made before the level's
+/// loaded (the start's scripts run from the part's link, openspec AG.60)
+/// waits for its models.
 pub(crate) fn draw_clones(
     mut commands: Commands,
     world: Res<ScriptWorld>,
@@ -2007,6 +2009,7 @@ pub(crate) fn draw_clones(
             continue;
         };
         let place = clone_transform(actor);
+        let off = actor.removed || world.hangs_on_nothing(entity.to_bits());
         match (drawn, transform) {
             (None, _) => {
                 let template = actor.template.and_then(|t| world.template(t));
@@ -2016,7 +2019,7 @@ pub(crate) fn draw_clones(
                 let icon = path.and_then(crate::button_prompt::icon_face);
                 // A model whose effects draw nothing (its parts left out)
                 // draws nothing here either.
-                let draws = model.is_some_and(|parts| !parts.is_empty()) && !actor.removed;
+                let draws = model.is_some_and(|parts| !parts.is_empty()) && !off;
                 let attack = steps
                     .as_ref()
                     .is_some_and(|s| s.attacks.contains(&entity.to_bits()));
@@ -2054,7 +2057,7 @@ pub(crate) fn draw_clones(
                 }
             }
             (Some(d), Some(mut t)) => {
-                if actor.removed {
+                if off {
                     if d.draws {
                         commands
                             .entity(entity)
