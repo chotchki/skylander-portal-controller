@@ -53,8 +53,9 @@ pub(crate) struct Story {
     /// and whether a write since failed.
     quit: Option<(u64, bool)>,
     /// How many runs' definitions the title's part was asked ahead of
-    /// (openspec AS.130).
+    /// (openspec AS.130), and of those how many the save system served.
     titles_asked: u32,
+    titles_served: u32,
 }
 
 /// `/api/_test/tv`'s `story`: the session's report and the state the host
@@ -73,6 +74,21 @@ impl Story {
     #[cfg(test)]
     pub(crate) fn titles_asked(&self) -> u32 {
         self.titles_asked
+    }
+
+    /// A session whose resume is settled, as the TV's is once the pick's
+    /// resume has gone through.
+    #[cfg(test)]
+    pub(crate) fn resumed_for_tests() -> Self {
+        Self {
+            resumed: true,
+            ..Self::default()
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn titles_served(&self) -> u32 {
+        self.titles_served
     }
 
     pub(crate) fn shot(&self, world: Option<&ScriptWorld>) -> StoryShot {
@@ -321,10 +337,49 @@ pub(crate) fn title(
     if !serves(story.resumed, changing) {
         return;
     }
-    if let Err(h) = story_save::title(vm, host, &mut story.session, run) {
-        warn!(%h, "the save system's title stopped");
-        story.session.report.error = Some(h.to_string());
+    story.titles_served += 1;
+    match story_save::title(vm, host, &mut story.session, run) {
+        Ok(true) => just_done_asked(story, vm),
+        Ok(false) => {}
+        Err(h) => {
+            warn!(%h, "the save system's title stopped");
+            story.session.report.error = Some(h.to_string());
+        }
     }
+}
+
+/// The key a `test-hooks` build reads for [`just_done_asked`].
+pub(crate) const JUST_DONE_KEY: &str = "GUAC_TEST_JUST_DONE";
+
+/// `GUAC_TEST_JUST_DONE` (`test-hooks` builds, process env): the
+/// adventures at those places in `adventure data`, comma-separated, marked
+/// just done on a run whose start loaded the host's stored save, as a level
+/// end leaves them for the next run, so a resume reaches a first visit's
+/// scenes without the level before it played (`2`: the hub after level
+/// 201, the Hermit's scene and its movie). Nothing in any other build, on
+/// a run carried from the last or started fresh, or with the key unset.
+fn just_done_asked(story: &Story, vm: &mut guac_script::Vm) {
+    if !cfg!(feature = "test-hooks") || story.session.report.start.as_deref() != Some("stored") {
+        return;
+    }
+    let Some(asked) = std::env::var_os(JUST_DONE_KEY) else {
+        return;
+    };
+    let places = just_done_places(&asked.to_string_lossy());
+    let marked = story_save::mark_just_done(vm, &places);
+    info!(
+        ?places,
+        marked, "{JUST_DONE_KEY}: adventures marked just done on a resumed run"
+    );
+}
+
+/// [`JUST_DONE_KEY`]'s places: comma-separated, what doesn't read as one
+/// left out.
+fn just_done_places(asked: &str) -> Vec<usize> {
+    asked
+        .split(',')
+        .filter_map(|p| p.trim().parse().ok())
+        .collect()
 }
 
 /// The step's save requests, after the scripts' step: the run's start and
@@ -370,6 +425,14 @@ pub(crate) fn serve_saves(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `GUAC_TEST_JUST_DONE`'s places: each that reads as one, in order.
+    #[test]
+    fn the_just_done_key_reads_its_places() {
+        assert_eq!(just_done_places("2"), [2]);
+        assert_eq!(just_done_places(" 0, 2 ,x,,5"), [0, 2, 5]);
+        assert!(just_done_places("").is_empty());
+    }
 
     /// AU.15: the server's quit asks the TV's save; with no run up (the
     /// level gone, the next not started) the TV saves the last run's words

@@ -732,6 +732,20 @@ fn adventures(vm: &Vm) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+/// The adventures at `places` in `adventure data` marked just done
+/// (`complete` 2), as a level end leaves its own for the next run: what a
+/// `test-hooks` build's `GUAC_TEST_JUST_DONE` asks of a resumed run, whose
+/// stored save carries no such mark. How many it marked.
+pub fn mark_just_done(vm: &mut Vm, places: &[usize]) -> usize {
+    let ads = adventures(vm);
+    let mut marked = 0;
+    for ad in places.iter().filter_map(|&i| ads.get(i)) {
+        vm.set_field(*ad, "complete", Value::Int(2));
+        marked += 1;
+    }
+    marked
+}
+
 /// The adventure whose level loads name `level` (an archive): a load's
 /// text as the run's interface reads it, else its own name read as the
 /// archive's first words (`Level_214` names `level_214_tutotial_2`).

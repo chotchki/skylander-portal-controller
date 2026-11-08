@@ -424,10 +424,7 @@ fn read_hud(
     let lifted = play.as_deref().is_some_and(Play::lifted);
     let progress = earning
         .as_deref()
-        .filter(|_| !lifted)
-        .and_then(|e| e.slots.get(slot.as_usize()))
-        .and_then(Option::as_ref)
-        .map(|e| e.progress)
+        .and_then(|e| e.hero_progress(slot.as_usize(), placement, lifted))
         .or_else(|| placement.owner.as_ref().map(|o| o.progress))
         .unwrap_or_default();
     let table = table.and_then(|t| t.0.get());

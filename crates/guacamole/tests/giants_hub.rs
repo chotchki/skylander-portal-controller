@@ -1035,8 +1035,10 @@ fn save_with(done: usize) -> (Layout, Vec<i32>, Vec<i32>, SaveValues) {
 }
 
 /// `session`'s run on `HUB_1` to its first step, the title's part in its
-/// definition's place as the TV's first walk makes it.
-fn titled_step(session: &mut Session) -> Run {
+/// definition's place as the TV's first walk makes it, then the adventures
+/// at `just` marked just done there, as a `test-hooks` build's
+/// `GUAC_TEST_JUST_DONE` marks them on a resume.
+fn titled_step(session: &mut Session, just: &[usize]) -> Run {
     let (mut run, _found) = run_on_level(Mode::Play, HUB_1, setup(&[]));
     let definition = story_save::definition(&run.vm, &run.world).expect("a definition");
     run.vm.native_first(definition);
@@ -1044,6 +1046,7 @@ fn titled_step(session: &mut Session) -> Run {
     run.step_play_with(&mut |vm, at, host| {
         if at == definition {
             assert!(story_save::title(vm, host, session, id)?, "the save read");
+            assert_eq!(story_save::mark_just_done(vm, just), just.len());
         }
         Ok(())
     })
@@ -1065,8 +1068,8 @@ fn a_save_past_level_201_reaches_the_hubs_definition() {
     let id = layout.id();
 
     let mut stored = Session::new(Some("host".into()));
-    stored.stored = Some((id.clone(), values));
-    let mut run = titled_step(&mut stored);
+    stored.stored = Some((id.clone(), values.clone()));
+    let mut run = titled_step(&mut stored, &[]);
     assert_eq!(stored.report.start.as_deref(), Some("stored"));
     assert_eq!(global(&run, "Levels_Completed"), Some(Value::Int(3)));
     assert_eq!(global(&run, "First_Time_Here"), Some(Value::Int(0)));
@@ -1083,10 +1086,18 @@ fn a_save_past_level_201_reaches_the_hubs_definition() {
         header,
         just_done: vec![2],
     });
-    let mut run = titled_step(&mut carried);
+    let mut run = titled_step(&mut carried, &[]);
     assert_eq!(carried.report.start.as_deref(), Some("carried"));
     assert_eq!(global(&run, "Levels_Completed"), Some(Value::Int(3)));
     assert_eq!(global(&run, "First_Time_Here"), Some(Value::Int(1)));
+    // The stored save with level 201 marked just done, as the `test-hooks`
+    // key asks a resume: the carried words' count and first visit.
+    let mut marked = Session::new(Some("host".into()));
+    marked.stored = Some((id.clone(), values));
+    let resumed = titled_step(&mut marked, &[2]);
+    assert_eq!(marked.report.start.as_deref(), Some("stored"));
+    assert_eq!(global(&resumed, "Levels_Completed"), Some(Value::Int(3)));
+    assert_eq!(global(&resumed, "First_Time_Here"), Some(Value::Int(1)));
     // The start's rest makes no second title: what it carried stays what the
     // run started from.
     {

@@ -1101,10 +1101,7 @@ impl Play {
         // The TV's values for his slot: what his figure's words hold after
         // the last step (AH.23), else the row as the placement read it.
         let progress = earning
-            .filter(|_| self.lifted.is_none())
-            .and_then(|e| e.slots.get(c.slot.as_usize()))
-            .and_then(Option::as_ref)
-            .map(|e| e.progress)
+            .and_then(|e| e.hero_progress(c.slot.as_usize(), &c.placement, self.lifted.is_some()))
             .or_else(|| c.placement.owner.as_ref().map(|o| o.progress));
         // In the level with him in it: not while the portal holds it with
         // no hero (AG.29), when a replacement is only the hero-to-be.
@@ -6758,9 +6755,6 @@ mod tests {
         );
     }
 
-    /// Items, adventure-pack pieces and sidekicks never hold the level for
-    /// too many Skylanders and never answer the call for one; a second
-    /// magic item (a sidekick counted as one) holds it under its own alert.
     /// AS.112: his figure lifted under a scene's lock, the hero isn't in the
     /// count. With no one to come in the alert asks for his figure, ahead of
     /// the call and the needs-rest alert; a lone character that walks lets
@@ -6792,6 +6786,9 @@ mod tests {
         assert_eq!(judge(&lifted, true, None, false), Some(Alert::WrongToy));
     }
 
+    /// Items, adventure-pack pieces and sidekicks never hold the level for
+    /// too many Skylanders and never answer the call for one; a second
+    /// magic item (a sidekick counted as one) holds it under its own alert.
     #[test]
     fn items_packs_and_sidekicks_never_hold_it_for_too_many_skylanders() {
         let hero = Some(slot(0));

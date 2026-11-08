@@ -1454,7 +1454,7 @@ fn a_props_stop_in_play_leaves_the_scripts_the_view() {
 fn the_title_goes_ahead_of_the_definition_once_a_run() {
     let tmp = tempfile::tempdir().unwrap();
     let (mut app, tx) = play_app(tmp.path());
-    app.init_resource::<crate::story::Story>();
+    app.insert_resource(crate::story::Story::resumed_for_tests());
     write_attack_parts(tmp.path());
     write_camera(tmp.path(), spots(), CameraFault::None);
     tx.send(write_level(tmp.path(), &lights())).unwrap();
@@ -1463,6 +1463,11 @@ fn the_title_goes_ahead_of_the_definition_once_a_run() {
     });
     let steps = |app: &App| app.world().resource::<ScriptRuntime>().steps;
     until(&mut app, "the first steps", |a| steps(a) >= 5);
-    let asked = app.world().resource::<crate::story::Story>().titles_asked();
-    assert_eq!(asked, 1, "once, at the first walk");
+    let story = app.world().resource::<crate::story::Story>();
+    assert_eq!(story.titles_asked(), 1, "once, at the first walk");
+    assert_eq!(
+        story.titles_served(),
+        1,
+        "handed to the save system, the session's resume settled"
+    );
 }

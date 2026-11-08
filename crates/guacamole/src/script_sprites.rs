@@ -24,7 +24,8 @@ use crate::hero_scripts::ScriptSource;
 use crate::pad::LevelPads;
 use crate::play::PlaySystems;
 
-/// Over the level, under its HUD's words (860) and all that takes the screen.
+/// Over the level and its HUD (800), beside a bite's numbers (850), under
+/// the announcements (860) and all that takes the screen.
 const SPRITE_Z: i32 = 850;
 
 /// The model's frame, pixels.
@@ -262,6 +263,11 @@ mod tests {
     /// A world with a counter's clone and another text's, each `7` in a font
     /// off `textures/font.ktx2`: the world and the counter's clone.
     fn world() -> (ScriptWorld, SpriteId) {
+        world_with(|_, _| {})
+    }
+
+    /// [`world`], `then` given the model and the counter's clone first.
+    fn world_with(then: impl FnOnce(&mut Model, SpriteId)) -> (ScriptWorld, SpriteId) {
         let mut m = Model::default();
         let font = m.add_font(Font {
             name: None,
@@ -284,6 +290,7 @@ mod tests {
         m.spawn(other);
         let point = guac_interface::find("spriteinfo", "point size").unwrap();
         m.set(clone, point, Value::Int(82)).unwrap();
+        then(&mut m, clone);
         let files = Files::default();
         let handles = headless_handles(&files);
         let mut w = ScriptWorld::new(&files, &handles, headless_objects(&handles));
@@ -304,6 +311,29 @@ mod tests {
         assert_eq!(q.image, "textures/font.ktx2");
         assert_eq!(q.uv, [0.25, 0.5, 0.5, 1.0]);
         assert_eq!(q.colour, [255, 255, 255, 255], "its colour by its letter's");
+    }
+
+    /// AS.99: a glyph drawn takes its letter's tint over its sprite's colour
+    /// (the text colour converter's colour set), as the model draws it.
+    #[test]
+    fn a_drawn_glyph_takes_its_letters_tint() {
+        let (mut w, _) = world_with(|m, clone| {
+            let sprite = m.value_of(clone);
+            let text = guac_interface::find("textcolorconverter", "text sprite").unwrap();
+            m.set_global(text, sprite, &guac_interface::NoWorld)
+                .unwrap();
+            let colours = guac_interface::find("textcolorconverter", "color set").unwrap();
+            let letter = [0x40, 0x80, 0xFF, 0xFF];
+            m.set_global_elements(colours, &[Value::Color(u32::from_be_bytes(letter))])
+                .unwrap();
+        });
+        let quads = w.drawn_sprites();
+        assert_eq!(quads.len(), 1, "{quads:?}");
+        assert_eq!(
+            quads[0].colour,
+            [127, 255, 255, 255],
+            "half red, the rest full"
+        );
     }
 
     /// AS.99: a quad lands at its share of the picture, its cut in the

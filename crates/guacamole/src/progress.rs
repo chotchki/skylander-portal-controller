@@ -167,6 +167,28 @@ impl Earning {
         }
     }
 
+    /// The values the TV holds for the hero's figure, `placement` on
+    /// `slot`: the slot's, or with his figure lifted under a scene's lock
+    /// (openspec AS.112) what's kept for that figure, which
+    /// [`Earning::earned_off`] goes on writing, so the HUD and the report
+    /// don't fall back to the row he was first placed with (and a level he
+    /// earned since doesn't rise again when it's back). None with neither.
+    pub fn hero_progress(
+        &self,
+        slot: usize,
+        placement: &Placement,
+        lifted: bool,
+    ) -> Option<FigureProgress> {
+        if !lifted {
+            return self.slots.get(slot)?.as_ref().map(|e| e.progress);
+        }
+        let owner = placement.owner.as_ref()?;
+        self.held
+            .get(&(owner.profile_id.clone(), placement.figure_id.clone()))
+            .filter(|h| h.generation == owner.progress.generation)
+            .copied()
+    }
+
     /// [`Earning::earned`] for a hero whose figure, `placement`, came off
     /// under a scene's lock and who stands in the level still (openspec
     /// AS.112): onto what's kept for that figure, whoever stands in his slot
@@ -603,6 +625,15 @@ mod tests {
             earning.slots[0].as_ref().unwrap().progress.xp,
             1,
             "Bob's earned nothing"
+        );
+        // What the HUD reads for him: his own, not Bob's slot, not his row.
+        assert_eq!(
+            earning.hero_progress(0, &alice, true).map(|p| p.xp),
+            Some(77)
+        );
+        assert_eq!(
+            earning.hero_progress(0, &alice, false).map(|p| p.xp),
+            Some(1)
         );
         tv.app.update();
         let waiting = tv.waiting();

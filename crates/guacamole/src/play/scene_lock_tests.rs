@@ -5,6 +5,7 @@
 
 use bevy::input::gamepad::GamepadButton;
 use bevy::prelude::*;
+use bevy::time::TimeUpdateStrategy;
 use guac_script::Value;
 use guac_server::progress::ProgressSink;
 use guacamole::scripts::ScriptRuntime;
@@ -213,6 +214,9 @@ fn what_a_scene_pays_him_off_the_portal_stays_on_his_own_figure() {
         Some(0),
         "Bob's earned nothing"
     );
+    // The HUD shows his own, not Bob's slot nor the row he came in with.
+    let shown = app.world().resource::<crate::hud::Hud>().shown.clone();
+    assert_eq!(shown.map(|v| v.xp), Some(1), "his own on the HUD");
 }
 
 /// Nothing changes with no lock: a scene that lets switching through (the
@@ -295,6 +299,18 @@ fn a_scene_that_never_ends_lets_a_held_swap_go_at_the_backstop() {
     until(&mut app, "the put-back", |a| {
         alert(a) == Some(Alert::PutBack)
     });
+    // Behind the alert the level's clock stands: past the backstop on the
+    // wall clock, nothing has let go of him.
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(
+        std::time::Duration::from_secs(1),
+    ));
+    frames(&mut app, 70);
+    assert!(lifted(&app), "held past the backstop's wall time");
+    assert_eq!(alert(&app), Some(Alert::PutBack));
+    assert_eq!(hero(&app), Some(first));
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(
+        std::time::Duration::from_secs_f64(1.0 / 60.0),
+    ));
     put(&mut app, bobs(2));
     until(&mut app, "the scene running on", |a| mode(a) == Mode::Level);
     assert_eq!(hero(&app), Some(first));
