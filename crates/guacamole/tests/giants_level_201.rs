@@ -949,17 +949,30 @@ fn its_arenas_wave_stays_on_the_floor_with_him_below_it() {
     w.rest(60);
     let up = wave(&w);
     println!("the wave {} steps on: {up:?}", w.run.steps - start);
-    // Off the floor: 30 m out from its middle, 6 m under it, over nothing.
-    let below = Vec3::new(CENTRE[0] + 30.0, CENTRE[1] - 6.0, CENTRE[2]);
+    let (avoider, _) = w.run.placed("Enemy_LemmingAvoider");
+    let holding = |w: &Walker| {
+        let id = w.run.vm.placement_of(avoider)?;
+        let set = w.run.vm.local(id, "held enemies")?;
+        w.run.vm.set(set).map(<[_]>::len)
+    };
+    println!(
+        "the avoider awake {:?}, holding {:?}",
+        w.run.world.actor(avoider).map(|a| a.active),
+        holding(&w)
+    );
+    // Off the floor: 20 m out from its middle, 6 m under it, over nothing.
+    let below = Vec3::new(CENTRE[0] + 20.0, CENTRE[1] - 6.0, CENTRE[2]);
     w.run.put(below, 0.0);
     let mut lowest = f32::MAX;
     let mut moved = 0.0f32;
     let mut held = 0u32;
+    let mut most = 0usize;
     for _ in 0..90 {
         w.rest(1);
         let me = w.run.hero().pivot;
         if me.y < CENTRE[1] - 1.0 {
             held += 1;
+            most = most.max(holding(&w).unwrap_or(0));
         }
         for (h, at) in &up {
             if let Some(a) = w.run.world.actor(*h).filter(|a| !a.removed) {
@@ -969,10 +982,11 @@ fn its_arenas_wave_stays_on_the_floor_with_him_below_it() {
         }
     }
     println!(
-        "{held} steps under the floor: the wave's lowest {lowest:.2} (the floor {}), moved at most {moved:.2} m",
+        "{held} steps under the floor, the avoider holding {most} at most: the wave's lowest {lowest:.2} (the floor {}), moved at most {moved:.2} m",
         CENTRE[1]
     );
     assert!(held > 30, "he never went under");
+    assert!(most >= up.len().min(2), "the avoider held {most}");
     assert!(
         lowest > CENTRE[1] - 2.0,
         "an enemy followed him off: {lowest}"
