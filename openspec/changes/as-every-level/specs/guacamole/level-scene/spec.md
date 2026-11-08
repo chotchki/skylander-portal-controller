@@ -357,3 +357,14 @@ A level's elemental wall SHALL stand solid until a hero of its element comes wit
 #### Scenario: The story past a wall
 - **WHEN** chapter 1 or level 214 is played by a hero no wall opens for
 - **THEN** every wall stays shut and the level plays to its end
+
+### Requirement: A hero stands on what the scripts lay
+Anything a level's scripts make whose collision is a shape, solid to actors and a surface for them (a rope bridge's planks, a vine bridge, a landing pod) SHALL stand in the world where its scripts leave it, so a hero stands on it and is stopped by it, with no level naming it; once its scripts let it go it SHALL fall by its own gravity, taking with it whoever stood on it. What a hero's own attacks throw never stands so.
+
+#### Scenario: Level 201's rope bridge
+- **WHEN** a hero is set down halfway along the rope bridge over level 201's channel
+- **THEN** he stands on its planks 10 m above the channel and walks on along them
+
+#### Scenario: Level 201's first vine bridge
+- **WHEN** a Life hero walks through level 201's life wall onto its first bridge's switch
+- **THEN** the bridge grows across the gap and he walks over it to the far side

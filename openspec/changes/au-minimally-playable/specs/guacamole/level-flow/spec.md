@@ -178,6 +178,10 @@ A hero landing on level 201 SHALL play it to its end with nothing but the pads: 
 - **WHEN** the arena's outro ends
 - **THEN** the level asks for the hub's first stage
 
+#### Scenario: Off the arena's floor
+- **WHEN** a hero drops off the arena mid-wave, below its floor
+- **THEN** the wave is held where it stands until he's back up, and none follows him off
+
 #### Scenario: Out of a pit below the way
 - **WHEN** a hero walks off the landing's yard into the pit under it, 9 m down, or off the grass the bridge drops him on into the pit under that, once the bridge is down
 - **THEN** stepping onto the jump pad in the pit with the stick held toward the way puts him back up on it
