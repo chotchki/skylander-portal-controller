@@ -57,12 +57,18 @@
 //! by triangle alone it limited nothing and pinned him on the clearing's
 //! crease); off the ground it still stops the step there, as AG.16's
 //! replays have it (one of AG.39's landings comes a record early without
-//! that).
+//! that), but only for one step; over [`INSIDE`] into a triangle, or any way
+//! into one once a step has got him nowhere, a cast that stops him at once
+//! with no plane against the motion gives way to the recovery alone; one a
+//! solid answers so goes on past it; and a second step's
+//! cast stopped at once on no plane at all, a triangle met from behind, is
+//! passed over (openspec AS.159, all four a reading: no recording has a hero
+//! in a cliff or pinned on a Chompy).
 
 use std::collections::BTreeMap;
 
 use crate::ground::MAX_SLOPE_COS;
-use crate::seam::{BodyId, ContactPlane, PhysicsSeam, Pose, Quat, Shape, Vec3};
+use crate::seam::{BodyId, Cast, ContactPlane, PhysicsSeam, Pose, Quat, Shape, Vec3};
 use crate::solve::{Limit, solve};
 
 /// AG.9's gap between his shape and a wall or level ground, metres: the
@@ -91,7 +97,7 @@ pub const RECOVERY_RATE: f32 = 1.0;
 /// the wall law (AG.70, a hypothesis).
 pub const INSIDE: f32 = 0.02;
 /// A plane this near the skin is touching, metres.
-const TOUCHING: f32 = 1.0e-3;
+pub(crate) const TOUCHING: f32 = 1.0e-3;
 /// The velocity model's leave-the-ground test (as read): ground facing up
 /// less than this, or a walk moving off it faster than [`LEAVE_SPEED`] m/s,
 /// isn't walked along.
@@ -215,9 +221,39 @@ impl Proxy<'_> {
         kept
     }
 
+    /// The step's cast. A solid he's at the skin of answers it at once
+    /// though the motion only slides along it or leaves, so no plane it
+    /// names stands in his way and the cast goes on without it (openspec
+    /// AS.159: a Chompy on the rim held Tree Rex's fall against the pit's
+    /// wall, a Giant's side on its side, for good).
+    fn cast_past_solids(&self, pos: Vec3, up: Vec3, motion: Vec3, dir: Vec3) -> Option<Cast> {
+        let from = self.pose(pos, up);
+        let mut hit = self
+            .seam
+            .cast(&self.shape, from, motion, 0.0, self.exclude)?;
+        let mut past: Vec<BodyId> = Vec::new();
+        loop {
+            let leaving =
+                hit.distance <= 0.0 && hit.planes.iter().all(|p| dir.dot(p.normal) >= -1e-3);
+            let solids: Vec<BodyId> = hit
+                .planes
+                .iter()
+                .filter(|p| p.triangle.is_none() && !past.contains(&p.body))
+                .map(|p| p.body)
+                .collect();
+            if !leaving || solids.is_empty() {
+                return Some(hit);
+            }
+            past.extend(solids);
+            let skip: Vec<BodyId> = self.exclude.iter().chain(&past).copied().collect();
+            hit = self.seam.cast(&self.shape, from, motion, 0.0, &skip)?;
+        }
+    }
+
     /// Moves him from `pivot` at `velocity` (m/s) for `step` seconds;
     /// `grounded` when he's on the ground (the support check passed) and the
-    /// wall law applies.
+    /// wall law applies; `stalled` when his last step off the ground got him
+    /// nowhere, so a plane a cast stops him on limits this one's solve.
     pub fn integrate(
         &self,
         pivot: Vec3,
@@ -225,6 +261,7 @@ impl Proxy<'_> {
         velocity: Vec3,
         step: f32,
         grounded: bool,
+        stalled: bool,
     ) -> Moved {
         let asked = velocity;
         let mut pos = pivot;
@@ -299,14 +336,22 @@ impl Proxy<'_> {
             if len < 1e-7 {
                 break;
             }
-            let Some(hit) =
-                self.seam
-                    .cast(&self.shape, self.pose(pos, up), motion, 0.0, self.exclude)
-            else {
+            let dir = motion / len;
+            let Some(hit) = self.cast_past_solids(pos, up, motion, dir) else {
                 pos += motion;
                 break;
             };
-            let dir = motion / len;
+            // Stopped at once again, on nothing: a triangle met from behind
+            // gives no plane, so nothing the solve could lay him along. He's
+            // already through it, and it has no say in where he goes next
+            // (openspec AS.159: Tree Rex falling down the pit's wall). A
+            // hair's as good as none: the cast stops a few microns on as
+            // often as at once, under what a float moves him here (the
+            // AS.159 review: chapter 1, behind the air area's ledge).
+            if stalled && hit.distance <= TOUCHING && hit.planes.is_empty() {
+                pos += motion;
+                break;
+            }
             // The plane the cast ran into most squarely, and how far short of
             // it the cast stopped: he stops KEEP off it along its normal.
             let (facing, short, squarest) = hit
@@ -323,6 +368,33 @@ impl Proxy<'_> {
                 0.0
             };
             let travel = (hit.distance - back).clamp(0.0, len);
+            // Stopped at once with no plane the motion runs into: a cast from
+            // inside a triangle answers from inside it, whichever way he goes,
+            // so no solve moves him and he hangs where he is for good, stick
+            // and all (openspec AS.159: Eruptor's lean turning upright off a
+            // rim swung him 0.39 m into level 214's cliff, no cast moving him,
+            // as AG.71's replays have his lean in the air). He leaves by the
+            // recovery alone, straight out of the plane he's deepest in, from
+            // over [`INSIDE`] in or, once a step has got him nowhere, from
+            // any depth: left a hair in, a bank's slope stopped every cast
+            // along it for good (the AS.159 review, `runs/s1`). The step ends
+            // there: the rest of a walk from inside a closet's floor took a
+            // Chompy in deeper.
+            let (inside, moved) = if stalled {
+                (0.0, TOUCHING)
+            } else {
+                (INSIDE, 0.0)
+            };
+            if travel <= moved
+                && squarest.is_none()
+                && let Some(deepest) = seen
+                    .iter()
+                    .filter(|p| p.distance < -inside)
+                    .min_by(|a, b| a.distance.total_cmp(&b.distance))
+            {
+                pos += deepest.normal * (RECOVERY * remaining);
+                break;
+            }
             if travel <= 0.0
                 && let Some(p) = squarest
                 && !met.contains(&(p.body, p.triangle))
@@ -330,7 +402,7 @@ impl Proxy<'_> {
                     .iter()
                     .any(|m| (m.body, m.triangle) == (p.body, p.triangle))
             {
-                if !grounded
+                if (!grounded && !stalled)
                     || seen
                         .iter()
                         .any(|s| (s.body, s.triangle) == (p.body, p.triangle))
@@ -346,7 +418,10 @@ impl Proxy<'_> {
                     // as the cast met it, its gap past the skin from where
                     // he is. Off the ground the step still stops there, as
                     // AG.16's replays have it (a hypothesis: AG.39's
-                    // `g39_e_n60` W-00 lands a record early without it).
+                    // `g39_e_n60` W-00 lands a record early without it), but
+                    // only the once: the same stop the next step is every
+                    // step after, a hero falling down level 214's cliff hung
+                    // on its face for good (openspec AS.159).
                     met_away.push(ContactPlane {
                         distance: short + facing * hit.distance - KEEP,
                         ..*p
@@ -516,7 +591,7 @@ mod tests {
         let step = 1.0 / 60.0;
         // The jump the mouth lets him out on, and a stick along it.
         for velocity in [Vec3::new(-6.74, 11.7, -11.36), Vec3::new(-2.4, 0.0, -5.5)] {
-            let moved = proxy.integrate(Vec3::ZERO, Vec3::Y, velocity, step, false);
+            let moved = proxy.integrate(Vec3::ZERO, Vec3::Y, velocity, step, false, false);
             assert!(
                 moved.pivot.length() > velocity.length() * step * 0.3,
                 "{velocity}: {moved:?}"
@@ -604,14 +679,14 @@ mod tests {
             motion: Vec3,
             _contact_distance: f32,
             _exclude: &[BodyId],
-        ) -> Option<crate::seam::Cast> {
+        ) -> Option<Cast> {
             let len = motion.length();
             let into = -(motion / len).dot(CREASE_RISE.normalize());
             if into <= 1.0e-4 {
                 return None;
             }
             let distance = (self.rise_gap(from.position) - CREASE_SHORT) / into;
-            (distance <= len).then(|| crate::seam::Cast {
+            (distance <= len).then(|| Cast {
                 fraction: distance / len,
                 distance,
                 planes: vec![
@@ -667,7 +742,7 @@ mod tests {
         };
         let walk = Vec3::new(0.010556398, 0.0104194805, 6.5531826);
         let step = 1.0 / 60.0;
-        let moved = proxy.integrate(pivot, Vec3::Y, walk, step, true);
+        let moved = proxy.integrate(pivot, Vec3::Y, walk, step, true, false);
         let gone = moved.pivot - pivot;
         // On along the rise at nearly the whole walk: 10.8 cm north, 1 cm up
         // its 5.6°, none of it into the rise.
@@ -676,8 +751,221 @@ mod tests {
         assert!(seam.rise_gap(moved.pivot + centre) > CREASE_SHORT, "{gone}");
         // Off the ground the step still stops there, as AG.16's replays
         // have it (the twin taken by its triangle alone).
-        let aloft = proxy.integrate(pivot, Vec3::Y, walk, step, false);
+        let aloft = proxy.integrate(pivot, Vec3::Y, walk, step, false, false);
         assert_eq!(aloft.pivot, pivot);
+        // Once: a step after one that got him nowhere goes on along it
+        // (openspec AS.159).
+        let freed = proxy.integrate(pivot, Vec3::Y, walk, step, false, true);
+        assert!(freed.pivot.z - pivot.z > 0.105, "{}", freed.pivot - pivot);
+    }
+
+    /// A seam whose casts stop at once, from inside a plane leaving him along
+    /// `normal` `depth` deep, as a cast from deep in a triangle does.
+    struct Inside {
+        normal: Vec3,
+        depth: f32,
+    }
+
+    impl Inside {
+        fn plane(&self) -> ContactPlane {
+            ContactPlane {
+                normal: self.normal,
+                point: Vec3::ZERO,
+                distance: -self.depth,
+                body: BodyId(1),
+                triangle: Some(1),
+                material: Some(0),
+            }
+        }
+    }
+
+    impl PhysicsSeam for Inside {
+        fn cast(&self, _: &Shape, _: Pose, _: Vec3, _: f32, _: &[BodyId]) -> Option<Cast> {
+            Some(Cast {
+                fraction: 0.0,
+                distance: 0.0,
+                planes: vec![self.plane()],
+            })
+        }
+
+        fn contacts(&self, _: &Shape, _: Pose, _: f32, _: &[BodyId]) -> Vec<ContactPlane> {
+            vec![self.plane()]
+        }
+
+        fn ray(&self, _: Vec3, _: Vec3, _: f32, _: &[BodyId]) -> Option<crate::seam::RayHit> {
+            None
+        }
+
+        fn overlaps(&self, _: &Shape, _: Pose, _: &[BodyId]) -> Vec<BodyId> {
+            Vec::new()
+        }
+    }
+
+    fn inside(depth: f32, grounded: bool, stalled: bool) -> Vec3 {
+        let seam = Inside {
+            normal: Vec3::NEG_Z,
+            depth,
+        };
+        let proxy = Proxy {
+            seam: &seam,
+            shape: Shape::Sphere { radius: 0.5 },
+            centre: Vec3::new(0.0, 0.5, 0.0),
+            rotation: Quat::IDENTITY,
+            exclude: &[],
+            surfaces: Surfaces::NONE,
+        };
+        let falling = Vec3::new(5.0, -25.0, 0.0);
+        proxy
+            .integrate(Vec3::ZERO, Vec3::Y, falling, 1.0 / 60.0, grounded, stalled)
+            .pivot
+    }
+
+    /// openspec AS.159: deep in a plane whose casts stop him at once he comes
+    /// out of it at the recovery's speed, on the ground or off it, where the
+    /// step used to leave him for good.
+    #[test]
+    fn a_hero_deep_in_a_plane_comes_out_of_it() {
+        for grounded in [false, true] {
+            let out = inside(0.39, grounded, false);
+            assert!((out.z + RECOVERY / 60.0).abs() < 1e-5, "{out}");
+            assert_eq!((out.x, out.y), (0.0, 0.0), "straight out of it");
+        }
+    }
+
+    /// A touch stays what it was: a cast stopped at once with him barely in
+    /// the plane is the step's end.
+    #[test]
+    fn a_hero_barely_in_a_plane_stops_as_ever() {
+        assert_eq!(inside(INSIDE * 0.5, false, false), Vec3::ZERO);
+    }
+
+    /// The AS.159 review: that stop is one step's. A hero a hair in a plane
+    /// that got him nowhere last step comes out of it, or he stays for good.
+    #[test]
+    fn a_hero_barely_in_a_plane_comes_out_the_next_step() {
+        let out = inside(INSIDE * 0.5, false, true);
+        assert!((out.z + RECOVERY / 60.0).abs() < 1e-5, "{out}");
+    }
+
+    /// A seam with one solid, its plane facing +x, a hair into his shape, that
+    /// stops every cast at once unless it's left out of it; `held` when the
+    /// contact query holds it too, so the solve sees it.
+    struct AtASolid {
+        held: bool,
+    }
+
+    impl AtASolid {
+        fn plane() -> ContactPlane {
+            ContactPlane {
+                body: BodyId(2),
+                triangle: None,
+                material: None,
+                normal: Vec3::X,
+                point: Vec3::ZERO,
+                distance: -0.005,
+            }
+        }
+    }
+
+    impl PhysicsSeam for AtASolid {
+        fn cast(&self, _: &Shape, _: Pose, _: Vec3, _: f32, exclude: &[BodyId]) -> Option<Cast> {
+            (!exclude.contains(&BodyId(2))).then(|| Cast {
+                fraction: 0.0,
+                distance: 0.0,
+                planes: vec![Self::plane()],
+            })
+        }
+
+        fn contacts(&self, _: &Shape, _: Pose, _: f32, _: &[BodyId]) -> Vec<ContactPlane> {
+            if self.held {
+                vec![Self::plane()]
+            } else {
+                Vec::new()
+            }
+        }
+
+        fn ray(&self, _: Vec3, _: Vec3, _: f32, _: &[BodyId]) -> Option<crate::seam::RayHit> {
+            None
+        }
+
+        fn overlaps(&self, _: &Shape, _: Pose, _: &[BodyId]) -> Vec<BodyId> {
+            Vec::new()
+        }
+    }
+
+    fn at_a_solid(held: bool, walk: Vec3) -> Vec3 {
+        let seam = AtASolid { held };
+        let proxy = Proxy {
+            seam: &seam,
+            shape: Shape::Sphere { radius: 0.5 },
+            centre: Vec3::new(0.0, 0.5, 0.0),
+            rotation: Quat::IDENTITY,
+            exclude: &[],
+            surfaces: Surfaces::NONE,
+        };
+        proxy
+            .integrate(Vec3::ZERO, Vec3::Y, walk, 1.0 / 60.0, false, false)
+            .pivot
+    }
+
+    /// A seam whose casts all stop this far on, on nothing: a triangle met
+    /// from behind.
+    struct Behind(f32);
+
+    impl PhysicsSeam for Behind {
+        fn cast(&self, _: &Shape, _: Pose, _: Vec3, _: f32, _: &[BodyId]) -> Option<Cast> {
+            Some(Cast {
+                fraction: 0.0,
+                distance: self.0,
+                planes: Vec::new(),
+            })
+        }
+
+        fn contacts(&self, _: &Shape, _: Pose, _: f32, _: &[BodyId]) -> Vec<ContactPlane> {
+            Vec::new()
+        }
+
+        fn ray(&self, _: Vec3, _: Vec3, _: f32, _: &[BodyId]) -> Option<crate::seam::RayHit> {
+            None
+        }
+
+        fn overlaps(&self, _: &Shape, _: Pose, _: &[BodyId]) -> Vec<BodyId> {
+            Vec::new()
+        }
+    }
+
+    /// openspec AS.159: a triangle he's behind stops him for the step, as
+    /// any cast stopping him does, and has no say in the next. A cast
+    /// stopping microns on is one stopping at once (the review).
+    #[test]
+    fn a_triangle_he_is_behind_stops_him_for_a_step_alone() {
+        for stop in [0.0, 3.7e-6] {
+            let proxy = Proxy {
+                seam: &Behind(stop),
+                shape: Shape::Sphere { radius: 0.5 },
+                centre: Vec3::new(0.0, 0.5, 0.0),
+                rotation: Quat::IDENTITY,
+                exclude: &[],
+                surfaces: Surfaces::NONE,
+            };
+            let fall = Vec3::new(0.0, -36.0, 0.0);
+            let step = 1.0 / 60.0;
+            let first = proxy.integrate(Vec3::ZERO, Vec3::Y, fall, step, false, false);
+            assert!(first.pivot.length() < 1e-4, "{}", first.pivot);
+            let second = proxy.integrate(Vec3::ZERO, Vec3::Y, fall, step, false, true);
+            assert!((second.pivot.y + 0.6).abs() < 1e-4, "{}", second.pivot);
+        }
+    }
+
+    /// openspec AS.159: a solid at his side doesn't hold him up: he falls on
+    /// down it, where its cast answering at once left him there for good.
+    /// A cast running into it still stops him.
+    #[test]
+    fn a_solid_at_his_side_doesnt_stop_his_fall() {
+        let down = at_a_solid(true, Vec3::new(0.0, -36.0, 0.0));
+        assert!((down.y + 0.6).abs() < 1e-5, "{down}");
+        let into = at_a_solid(false, Vec3::new(-6.0, 0.0, 0.0));
+        assert_eq!(into, Vec3::ZERO);
     }
 
     #[test]

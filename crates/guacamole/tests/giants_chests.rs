@@ -575,6 +575,24 @@ fn a_hat_box_gives_its_hat_and_stays_taken() {
     println!("taken and off {} steps on", s.run.steps - start);
     assert!(named, "its name never read");
     assert!(s.stops.is_empty(), "{:#?}", s.stops);
+    // Its hat is nothing the TV draws, never the hero (openspec AS.158): the
+    // box's `Remove` of it took him off, the stick dead for good.
+    let minion = s.run.minion.expect("the hero left the portal");
+    assert!(!s.run.vm.removed(minion), "the box took the hero off");
+    assert!(s.run.health().is_some(), "the hero's health gone");
+    let from = s.run.hero().pivot;
+    for _ in 0..120 {
+        s.run.bench.pads[0] = Pad {
+            stick: stick_for(s.run.bench.view, 0.0),
+            actions: [false; 4],
+            connected: true,
+        };
+        let stops = s.run.step_play().unwrap();
+        s.stops.extend(stops.iter().map(ToString::to_string));
+    }
+    let walked = (s.run.hero().pivot - from).length();
+    println!("the stick walks him {walked:.2} after the box");
+    assert!(walked > 1.0, "the stick dead after the box: {walked}");
     let collected = |s: &mut Story, id: i32| {
         s.run.with_host(|vm, host| {
             let (_, back) = vm
@@ -746,6 +764,261 @@ fn a_dare_met_is_saved_met_and_reads_done_on_the_next_clear() {
     );
     println!(
         "{:.1} s, load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
+
+/// openspec AS.151: chapter 1's Eagle Paint. Walked up to, it takes itself
+/// into the collection, spins up through its scene, pays its definition's
+/// 100 gold past its report and goes; collected, it's gone at the next
+/// start, on the words carried and a session on.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_legendary_treasure_pays_out_and_stays_collected() {
+    const TREASURE: &str = "Legendary_Treasure_Eagle_Paint(2)";
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let mut s = Story::joined(CHAPTER_1, Session::new(Some(HOST.into())));
+    let (treasure, at) = s.run.placed(TREASURE);
+    assert!(!s.run.world.removed(treasure));
+    s.run.put(at + Vec3::new(0.0, 1.0, -7.0), 0.0);
+    let (start, gold) = (s.run.steps, s.gold());
+    let mut named = false;
+    while !s.run.world.removed(treasure) {
+        assert!(s.run.steps < start + 900, "{:?}", s.behaviour(treasure));
+        let view = s.run.bench.view;
+        let near = s.run.hero().pivot.distance(at) < 3.0;
+        s.run.bench.pads[0] = Pad {
+            stick: match near {
+                true => Stick::new(0.0, 0.0),
+                false => stick_for(view, 0.0),
+            },
+            actions: [false; 4],
+            connected: true,
+        };
+        let stops = s.run.step_play().unwrap();
+        s.stops.extend(stops.iter().map(ToString::to_string));
+        let lines = announcements::hat_reports(&s.run.vm, &s.run.world);
+        named |= lines.iter().any(|l| l.text.is_some());
+    }
+    println!(
+        "collected {} steps on, {} gold",
+        s.run.steps - start,
+        s.gold() - gold
+    );
+    assert_eq!(s.gold() - gold, 100, "its definition's gold");
+    assert!(named, "its name never read");
+    assert!(s.stops.is_empty(), "{:#?}", s.stops);
+    let cutscene = s.run.vm.program().global_named("Cutscene State").unwrap();
+    for _ in 0..120 {
+        s.step([false; 4]);
+    }
+    let held = s.run.vm.global_peek(cutscene).map(|v| s.run.vm.value(v));
+    assert_eq!(held.and_then(|v| v.as_i32()), Some(0), "the hero left held");
+
+    let mut again = Story::joined(CHAPTER_1, s.session.clone());
+    assert_eq!(again.session.report.start.as_deref(), Some("carried"));
+    let (treasure, _) = again.run.placed(TREASURE);
+    again.run.put(at + Vec3::new(0.0, 1.0, -7.0), 0.0);
+    for _ in 0..30 {
+        again.step([false; 4]);
+    }
+    assert!(again.run.world.removed(treasure), "back on a restart");
+
+    let mut session = s.session.clone();
+    {
+        let run = &mut s.run;
+        let mut spawn = guacamole::scripts::headless_spawner(1 << 50);
+        let mut engine = guacamole::script_engine::NoEngine;
+        let mut host = guacamole::scripts::WorldHost {
+            world: &mut run.world,
+            engine: &mut engine,
+            generator: &mut run.generator,
+            spawn: &mut spawn,
+        };
+        assert!(story_save::quit_save_run(
+            &mut run.vm,
+            &mut host,
+            &mut session
+        ));
+    }
+    let (_, layout, saved) = session.take_write().expect("the quit's save");
+    let mut later = Session::new(Some(HOST.into()));
+    later.stored = Some((layout, saved));
+    let mut again = Story::joined(CHAPTER_1, later);
+    assert_eq!(again.session.report.start.as_deref(), Some("stored"));
+    let (treasure, _) = again.run.placed(TREASURE);
+    again.run.put(at + Vec3::new(0.0, 1.0, -7.0), 0.0);
+    for _ in 0..30 {
+        again.step([false; 4]);
+    }
+    assert!(again.run.world.removed(treasure), "back a session on");
+    println!(
+        "{:.1} s, load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
+
+/// The best of four headings the stick walks the hero, a good second of each.
+fn stick_reach(s: &mut Story) -> f32 {
+    let from = s.run.hero().pivot;
+    let mut best = 0.0f32;
+    for heading in [0.0f32, 90.0, 180.0, 270.0] {
+        for _ in 0..40 {
+            s.run.bench.pads[0] = Pad {
+                stick: stick_for(s.run.bench.view, heading),
+                actions: [false; 4],
+                connected: true,
+            };
+            let stops = s.run.step_play().unwrap();
+            s.stops.extend(stops.iter().map(ToString::to_string));
+        }
+        best = best.max(s.run.hero().pivot.distance(from));
+    }
+    best
+}
+
+/// The hero on his feet: on the portal, his health read and the scene off
+/// him.
+fn left_free(s: &mut Story, what: &str) {
+    let minion = s.run.minion.expect("the hero left the portal");
+    assert!(!s.run.vm.removed(minion), "{what}: the hero's off");
+    assert!(s.run.health().is_some(), "{what}: his health gone");
+    let cutscene = s.run.vm.program().global_named("Cutscene State").unwrap();
+    for _ in 0..600 {
+        let held = s.run.vm.global_peek(cutscene).map(|v| s.run.vm.value(v));
+        if held.and_then(|v| v.as_i32()) == Some(0) {
+            break;
+        }
+        s.step([false; 4]);
+    }
+    let held = s.run.vm.global_peek(cutscene).map(|v| s.run.vm.value(v));
+    assert_eq!(held.and_then(|v| v.as_i32()), Some(0), "{what}: held");
+    let reach = stick_reach(s);
+    assert!(reach > 0.5, "{what}: a dead stick, {reach}");
+}
+
+/// AS.158's review: a box's stale scratch reached past the first box. Every
+/// box on chapter 1 and 214 in one run, the hero swapped between them, each
+/// leaves the hero walking: the outfit registered once a run holds for a
+/// second box and a second hero. A swap's next hero is a new `Minions` entry
+/// on the same run.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn every_box_in_a_run_leaves_each_hero_walking() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    for level in [CHAPTER_1, LEVEL_214] {
+        let mut s = Story::joined(level, Session::new(Some(HOST.into())));
+        past_the_intro(&mut s);
+        let boxes: Vec<(Handle, Vec3, String)> = s
+            .run
+            .files
+            .placed
+            .iter()
+            .filter(|p| p.obj.unit == LEVEL && p.activity_state == 4)
+            .filter(|p| {
+                p.script
+                    .as_deref()
+                    .is_some_and(|x| x.ends_with("/Hat_Pickup.ai"))
+            })
+            .map(|p| {
+                (
+                    s.run.handles[&p.obj],
+                    Vec3::from_array(p.position),
+                    p.name.clone(),
+                )
+            })
+            .collect();
+        assert!(!boxes.is_empty(), "{level}");
+        for (k, (h, at, name)) in boxes.iter().enumerate() {
+            if k % 2 == 1 {
+                s.run.deactivate().unwrap();
+                for _ in 0..30 {
+                    s.step([false; 4]);
+                }
+                s.run.join().unwrap();
+                for _ in 0..120 {
+                    s.step([false; 4]);
+                }
+            }
+            let took = mash_off(&mut s, *h, *at, 2400);
+            println!("{level} {name}: off after {took:?} steps");
+            assert!(took.is_some(), "{level}'s {name} stayed");
+            left_free(&mut s, name);
+        }
+        assert!(s.stops.is_empty(), "{level}: {:#?}", s.stops);
+    }
+    println!(
+        "{:.1} s, load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
+
+/// AS.151's review: every story level's legendary treasure, a hero set down
+/// by it. Its scene ends, it pays once, the hero's left free and nothing
+/// stops: no level's treasure waits on the menu the TV doesn't have.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn every_levels_legendary_treasure_pays_and_frees_the_hero() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let mut none = Vec::new();
+    for level in [CHAPTER_1, LEVEL_214].into_iter().chain(LEVELS) {
+        let mut s = Story::joined(level, Session::new(Some(HOST.into())));
+        past_the_intro(&mut s);
+        let found: Vec<(Handle, Vec3, String)> = s
+            .run
+            .files
+            .placed
+            .iter()
+            .filter(|p| p.obj.unit == LEVEL && p.activity_state == 4)
+            .filter(|p| {
+                p.script
+                    .as_deref()
+                    .is_some_and(|x| x.ends_with("/Loot_Specials.ai"))
+            })
+            .map(|p| {
+                (
+                    s.run.handles[&p.obj],
+                    Vec3::from_array(p.position),
+                    p.name.clone(),
+                )
+            })
+            .collect();
+        if found.is_empty() {
+            none.push(level);
+        }
+        for (h, at, name) in &found {
+            let gold = s.gold();
+            let by = beside(&mut s, *at);
+            s.run.put(by, 0.0);
+            // In a room its interior's controller wakes (range 0): as it would.
+            s.run.world.wake(*h);
+            let start = s.run.steps;
+            while !s.run.world.removed(*h) {
+                assert!(
+                    s.run.steps < start + 1500,
+                    "{level}'s {name}: {:?}",
+                    s.behaviour(*h)
+                );
+                s.step([false; 4]);
+            }
+            let paid = s.gold() - gold;
+            println!(
+                "{level} {name}: off after {} steps, {paid} gold",
+                s.run.steps - start
+            );
+            assert!(paid > 0, "{level}'s {name} paid nothing");
+            left_free(&mut s, name);
+        }
+        assert!(s.stops.is_empty(), "{level}: {:#?}", s.stops);
+    }
+    println!(
+        "none on {none:?}; {:.1} s, load at end: {}",
         started.elapsed().as_secs_f64(),
         load()
     );

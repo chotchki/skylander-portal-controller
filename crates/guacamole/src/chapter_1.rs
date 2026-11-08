@@ -15,6 +15,12 @@
 //!   whose chains hold the Arkeyan robot: each hit until it gives, each
 //!   giving by a cutscene of its own, the last waking the level's end
 //!   (`Temp_Level_Ender`, [`crate::scripts::LEVEL_END_SCRIPTS`]).
+//! - **Off the way, the elemental areas** (openspec AS.153), each shut by
+//!   its wall until a hero of its element comes
+//!   ([`crate::scripts::ELEMENTAL_SCRIPTS`]): the air area under the ledge by
+//!   the vista, dropped into, whose pads lift a hero to its upper ground and
+//!   back to the ledge; the death area by the quarry's fights and its spike
+//!   floor; the life area past the second cave and its three Chompies.
 
 use crate::scripts::Encounter;
 
@@ -57,13 +63,16 @@ pub const WAY: Encounter = Encounter {
         "Enemy_Chompy_Undead(1)",
         "Enemy_Chompy_Undead(2)",
         "Enemy_Chompy_Undead(3)",
+        "Enemy_Chompy_Undead(4)",
+        "Enemy_Chompy_Undead(5)",
+        "Enemy_Chompy_Undead(6)",
     ],
     clones: &[],
     steered: &[],
 };
 
 /// What takes the way on past them, listed and never walked.
-pub const PASSAGE: [&str; 66] = [
+pub const PASSAGE: [&str; 71] = [
     "213_Gigantus_IGC",
     "2.NPC_Norticus_First_Cave",
     "1.NPC_Giant",
@@ -130,6 +139,11 @@ pub const PASSAGE: [&str; 66] = [
     "Laser at End",
     "Setup_005_Controller",
     "Setup_005_Trigger(1)",
+    "PvP_JumpPad_NORMAL(7)",
+    "PvP_JumpPad_NORMAL(8)",
+    "PvP_JumpPad_NORMAL(10)",
+    "Spinner",
+    "Spike_Floor_Spawner(1)",
 ];
 
 /// The placements [`PASSAGE`] lists for the level whose archive is `level`.

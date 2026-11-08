@@ -192,6 +192,26 @@ A hero SHALL stop dead the frame a point 1.2105 m (4 ft as read) ahead along his
 - **WHEN** Eruptor walks at full stick at the ledge route's edge over the corridor, head-on, 17°-70° east of head-on or 34°-64° west of it, or creeps at it under 2 ft/s
 - **THEN** head-on and east of head-on he walks off anywhere along it from its west end, and 42° west of it only from 0.65 m along it, where his pivot crosses the edge before the next frame's probe stops him dead over it, so he slips down the cliff for 0.9-1.0 s with his walk held at 0; creeping 5.5° east of head-on he walks off 0.78 m along it
 
+#### Scenario: Knocked past a rim with nothing below
+- **WHEN** a hit or a set-down leaves a hero with his shape held on a rim, his pivot past it and no ground within 225 ft under it
+- **THEN** his gravity acts, the rim's plane slides him down and off it, he falls and his own fall check sets him back on his trail, the stick walking him again
+
+#### Scenario: Left inside a cliff
+- **WHEN** a hero walks off a rim leaning with its bank and his lean, turning upright in the air, swings him 0.39 m into the cliff under it, where every cast from him stops at once
+- **THEN** he comes straight out of the face at the recovery's speed, falls and lands, and the stick walks him
+
+#### Scenario: A hair in a steep bank
+- **WHEN** a hero falling down a bank too steep to stand on is a hair inside it, so a step along it gets him nowhere
+- **THEN** the next step takes him out of it and he slides on down, landing in under half a second
+
+#### Scenario: Falling past a foe at a wall
+- **WHEN** a Giant falls down a wall with a foe on the rim above it at his side
+- **THEN** neither holds him: he falls on and his own fall check sets him back
+
+#### Scenario: Under the level
+- **WHEN** a hero has no ground under him and only the level's underside over his head
+- **THEN** he's fallen, and his own fall check sets him back
+
 ### Requirement: He leans with the ground
 A hero SHALL turn his up axis at 120°/s of game time toward the normal of the ground under him while he's on it or within 0.375 m over ground he can stand on, and toward straight up otherwise, until he's within half a degree of it, the last frame taking what's left, so a change under 2° at 1/60 s is done in one frame. Turned about the vertical, his lean SHALL turn with him.
 

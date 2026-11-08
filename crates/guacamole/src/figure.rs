@@ -18,10 +18,11 @@
 //!   by the disc's own `Save - Set up Tag Data Fields` over the portal's two
 //!   regions ([`REGION_1`], [`REGION_2`]), the figure's words put in (the
 //!   rest a fresh figure's zeros), its toy id, serial and subtype, its load
-//!   done; then handed to the first player's slot as the portal manager
-//!   hands a new tag to a free slot (the slot's `tag data`, and its `tag`'s
-//!   `rfid` and `prodid`). The character file's definition then links the
-//!   minion's description to it itself (`Portal - Define Minion`).
+//!   done, its toy table entry (openspec AS.153: an elemental wall reads his
+//!   element off it); then handed to the first player's slot as the portal
+//!   manager hands a new tag to a free slot (the slot's `tag data`, and its
+//!   `tag`'s `rfid` and `prodid`). The character file's definition then links
+//!   the minion's description to it itself (`Portal - Define Minion`).
 //! - Its entry ([`enter`]): the links `Portal - Enter Object` makes before
 //!   the entry beam activates the minion, the rest of that macro not run:
 //!   the slot's object info's `tag data`, the first player's `loaded data`
@@ -215,6 +216,9 @@ pub struct Tag {
     pub values: Values,
 }
 
+/// What finds a toy's entry in the toy table by its id.
+const LEVEL_INFO: &str = "Portal - Get Object Level Info";
+
 /// The figure's tag on the portal, handed to the first player's slot (the
 /// module docs): returns its `Portal - Tag Data`, which [`read`] reads back.
 /// Refused, naming why, when the program lacks the shapes it builds on (the
@@ -273,6 +277,21 @@ pub fn put_on_portal(
         ("initial load complete", 1),
     ] {
         vm.set_field(data, name, Value::Int(v as i32));
+    }
+    // Its toy table entry, as the tag header's read leaves it: what an
+    // elemental wall reads his element off (openspec AS.153).
+    if vm.program().macro_named(LEVEL_INFO).is_some() {
+        let (_, back) = vm.call_with(
+            None,
+            LEVEL_INFO,
+            &[("prodid", Value::Int(tag.toy_id as i32))],
+            &["info"],
+            host,
+        )?;
+        if let Some(info) = back.first().copied().flatten() {
+            let info = vm.value(info);
+            vm.set_reference(data, "toy load hint", info);
+        }
     }
     let loaded = slot_zero(vm)?;
     if !vm.set_reference(loaded, "tag data", data) {

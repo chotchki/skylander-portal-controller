@@ -1903,8 +1903,12 @@ fn the_levels_placements_tick_as_the_scheduler_holds_them_at_the_fresh_state() {
     // AF.8's fresh state holds it (AG.7: taken off), in neither list; so
     // since AS.133 does `_FoodInit`; and `Chest(1)`, on the listing since
     // AU.39, sleeps until a run's save is in (`treasure::waits_for_the_save`),
-    // which this run has none of, so it's the read's alone.
-    assert_eq!((awake.len(), read.len(), vm.len()), (165, 86, 66));
+    // which this run has none of, so it's the read's alone. 62 since AS.153
+    // listed the elemental surfaces' definitions and the legendary
+    // treasure's: `DefineAirSurface`, `DefineDeathSurface`,
+    // `Define_LifeSurface` and `_Def_Eagle_Paint`, awake and inert before,
+    // now take themselves off at their STARTUP, as the read has them gone.
+    assert_eq!((awake.len(), read.len(), vm.len()), (165, 86, 62));
     assert_eq!((shared.len(), kept.len()), (54, 51));
     assert_eq!(
         moved,

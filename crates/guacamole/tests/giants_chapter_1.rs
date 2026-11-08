@@ -312,7 +312,17 @@ fn through_the_quarry(w: &mut Walk) {
         Some("213 First Vista IGC")
     );
     w.scene_out();
+    // The air wall's hint, for a hero not of its element, on the level's
+    // own way there (the AS.153 review: every area's zone title before it
+    // left the announce container hidden for good). Off the way, and back.
+    w.walk(&[[-38.0, 132.0], [-40.5, 124.0]]);
+    let hint = guacamole::announcements::hints(&w.run.vm, &w.run.world);
+    println!("the air wall's hints: {}", hint.len());
+    let word =
+        |l: &guacamole::announcements::Line| l.text.as_deref().is_some_and(|t| t.contains("Air"));
+    assert!(hint.iter().any(word), "no air hint at the wall");
     w.walk(&[
+        [-38.0, 132.0],
         [-43.6, 147.6],
         [-46.0, 163.0],
         [-47.6, 175.0],

@@ -25,14 +25,25 @@
 //!   are AK's: the TV shows the hat's name as a hint for the report's own
 //!   stages, passes its continue and answers the question no ([`answer_hats`];
 //!   stand-in ledger: `hats`), so a taken hat is kept in the collection and
-//!   worn by nobody, its buffs off, and no hat model draws in the box.
+//!   worn by nobody, its buffs off, and no hat model draws in the box. The
+//!   hat's stream registers nothing here, so the TV registers an outfit with
+//!   no actor in its place ([`answer_hat_load`], openspec AS.158): the box's
+//!   clone of it is skipped, where a stale scratch reference once cloned the
+//!   hero and the box's `Remove` of its hat took him off.
+//! - A legendary treasure (`Loot_Specials.ai`, openspec AS.151) is a prop till
+//!   a hero comes within 15 ft, when it takes itself into the collection
+//!   (its STARTUP takes it off once it's there, so it waits for the save as
+//!   a chest does), spins up in a scene of its own and pays out its
+//!   definition's gold past the same report, passed here. Equipping a ship
+//!   part is the treasure menu's, a screen the TV doesn't have
+//!   (stand-in ledger: `ship-parts`).
 
 use std::collections::HashMap;
 
-use guac_script::{Obj, PlacementId, Value, Vm};
+use guac_script::{Halt, Obj, PlacementId, Value, Vm};
 
 use crate::script_engine::Actor;
-use crate::scripts::{Placed, ScriptWorld};
+use crate::scripts::{Placed, ScriptWorld, WorldHost};
 
 /// A chest and what it spawns (openspec AU.39, design decision 2's
 /// whitelist), every tick, by script, on every level: the chest, its three
@@ -52,6 +63,31 @@ pub const CHEST_SCRIPTS: [&str; 6] = [
 /// (`UI_TheatricalReporter.ai`), which the box waits out.
 pub const HAT_SCRIPTS: [&str; 3] = ["/Hat_Pickup.ai", "/Hat_Lid.ai", "/UI_TheatricalReporter.ai"];
 
+/// A legendary treasure and its definition (openspec AS.151), by script: the
+/// `Legendary_Treasure_*` a level places, walked up to, spun and paid out in
+/// a scene of its own, and each level's `Def_Ship_Part_<level>.ai`, which
+/// defines what it pays. Equipping one is the treasure menu's, a screen the
+/// TV doesn't have.
+pub const LEGENDARY_SCRIPTS: [&str; 17] = [
+    "/Loot_Specials.ai",
+    "/Def_Ship_Part_200.ai",
+    "/Def_Ship_Part_201.ai",
+    "/Def_Ship_Part_202.ai",
+    "/Def_Ship_Part_203.ai",
+    "/Def_Ship_Part_204.ai",
+    "/Def_Ship_Part_205.ai",
+    "/Def_Ship_Part_206.ai",
+    "/Def_Ship_Part_207.ai",
+    "/Def_Ship_Part_208.ai",
+    "/Def_Ship_Part_209.ai",
+    "/Def_Ship_Part_210.ai",
+    "/Def_Ship_Part_211.ai",
+    "/Def_Ship_Part_212.ai",
+    "/Def_Ship_Part_213.ai",
+    "/Def_Ship_Part_214.ai",
+    "/Def_Ship_Part_215.ai",
+];
+
 /// Whether a placement whose script is `script` is treasure the TV draws as
 /// it does the hub's people, on its placement's skinned model, unwalked: a
 /// chest. A hat box's model is static: a prop's draw has it.
@@ -69,7 +105,11 @@ pub(crate) fn waits_for_the_save(templates: &HashMap<Obj, Placed>, actor: &Actor
         .obj
         .and_then(|o| templates.get(&o))
         .and_then(|p| p.script.as_deref())
-        .is_some_and(|s| s.ends_with(CHEST_SCRIPTS[0]) || s.ends_with(HAT_BOX))
+        .is_some_and(|s| {
+            s.ends_with(CHEST_SCRIPTS[0])
+                || s.ends_with(HAT_BOX)
+                || s.ends_with(LEGENDARY_SCRIPTS[0])
+        })
 }
 
 /// The hat box's script, by its file name.
@@ -87,16 +127,32 @@ const WEAR_IT: &str = "equip hat?";
 const REPORT_WAITS: i32 = 12;
 const REPORT: &str = "tr actor ref";
 const HAT_NAME: &str = "hat name";
+/// A legendary treasure's name, its `show player` holding the same report
+/// (openspec AS.151).
+const TREASURE_NAME: &str = "treasure name";
+/// What a hat's stream runs once it's in, leaving the level's outfit record
+/// for the box to clone.
+const REGISTER_OUTFIT: &str = "Portal - Register Outfit Item";
 
-/// The hat boxes the run holds, by their placements.
-fn hat_boxes(vm: &Vm, world: &ScriptWorld) -> Vec<PlacementId> {
+/// The placements the run holds of a script ending `script`.
+fn placed_by(vm: &Vm, world: &ScriptWorld, script: &str) -> Vec<PlacementId> {
     world
         .templates
         .values()
-        .filter(|p| p.script.as_deref().is_some_and(|s| s.ends_with(HAT_BOX)))
+        .filter(|p| p.script.as_deref().is_some_and(|s| s.ends_with(script)))
         .filter_map(|p| world.objects.get(&p.obj))
         .filter_map(|&h| vm.placement_of(h))
         .collect()
+}
+
+/// The hat boxes the run holds, by their placements.
+fn hat_boxes(vm: &Vm, world: &ScriptWorld) -> Vec<PlacementId> {
+    placed_by(vm, world, HAT_BOX)
+}
+
+/// The legendary treasures the run holds, by their placements.
+fn legendary(vm: &Vm, world: &ScriptWorld) -> Vec<PlacementId> {
+    placed_by(vm, world, LEGENDARY_SCRIPTS[0])
 }
 
 fn local(vm: &Vm, id: PlacementId, name: &str) -> Option<Value> {
@@ -118,24 +174,33 @@ fn report_anim(vm: &Vm, id: PlacementId) -> Option<Value> {
     vm.field(def, "anim info").map(|v| vm.value(v))
 }
 
+/// `id`'s report, waiting on the accept button, passed as a press does.
+fn pass_report(vm: &mut Vm, id: PlacementId) -> bool {
+    if showing(vm, id, REPORTS)
+        && let Some(anim) = report_anim(vm, id)
+        && vm
+            .field(anim, "stage")
+            .map(|v| vm.value(v))
+            .and_then(|v| v.as_i32())
+            == Some(REPORT_WAITS)
+    {
+        return vm.set_field(anim, "stage", Value::Int(REPORT_WAITS + 1));
+    }
+    false
+}
+
 /// Each hat box past its hat answered as a player's press answers it (the
 /// module docs): a report waiting on the accept button passed, a box
-/// waiting on `Hat_EquipHatImmediately` told no. How many were. A taken
-/// hat is in the collection by then.
+/// waiting on `Hat_EquipHatImmediately` told no, and a legendary treasure's
+/// report passed the same way (openspec AS.151). How many were. A taken hat
+/// or treasure is in the collection by then.
 pub fn answer_hats(vm: &mut Vm, world: &ScriptWorld) -> usize {
     let mut answered = 0;
+    for id in legendary(vm, world) {
+        answered += usize::from(pass_report(vm, id));
+    }
     for id in hat_boxes(vm, world) {
-        if showing(vm, id, REPORTS)
-            && let Some(anim) = report_anim(vm, id)
-            && vm
-                .field(anim, "stage")
-                .map(|v| vm.value(v))
-                .and_then(|v| v.as_i32())
-                == Some(REPORT_WAITS)
-        {
-            vm.set_field(anim, "stage", Value::Int(REPORT_WAITS + 1));
-            answered += 1;
-        }
+        answered += usize::from(pass_report(vm, id));
         if showing(vm, id, ASKS_TO_WEAR)
             && local(vm, id, WEAR_IT).and_then(|v| v.as_i32()) == Some(-1)
         {
@@ -146,15 +211,40 @@ pub fn answer_hats(vm: &mut Vm, world: &ScriptWorld) -> usize {
     answered
 }
 
-/// The name of each hat a box is showing its report for, as the report's
-/// bar names it: the strings the TV puts up in its place.
+/// The outfit record a hat box reads once its stream is in, registered with
+/// no actor, once a run on a level placing a box (openspec AS.158). With no
+/// record the box's two reads through it drop, so its clone copies whatever
+/// `Actor Scratch G1` last held, the hero as often as not, and its `my hat`
+/// is him: it hid him and took him off. With this one the scratch reads
+/// nothing, the clone is skipped and `my hat` stays nothing.
+///
+/// Whether it did, this step. A stop in the macro isn't tried again.
+pub fn answer_hat_load(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<bool, Halt> {
+    if host.world.hat_load_answered
+        || hat_boxes(vm, host.world).is_empty()
+        || vm.program().macro_named(REGISTER_OUTFIT).is_none()
+    {
+        return Ok(false);
+    }
+    host.world.hat_load_answered = true;
+    vm.call_with(None, REGISTER_OUTFIT, &[], &[], host)?;
+    Ok(true)
+}
+
+/// The name of each hat a box and each legendary treasure is showing its
+/// report for, as the report's bar names it: the strings the TV puts up in
+/// its place.
 pub fn hats_shown(vm: &Vm, world: &ScriptWorld) -> Vec<Value> {
-    hat_boxes(vm, world)
-        .into_iter()
-        .filter(|id| showing(vm, *id, REPORTS))
-        .filter_map(|id| local(vm, id, HAT_NAME))
-        .filter(|s| *s != Value::Null)
-        .collect()
+    let named = |ids: Vec<PlacementId>, name: &str| {
+        ids.into_iter()
+            .filter(|id| showing(vm, *id, REPORTS))
+            .filter_map(|id| local(vm, id, name))
+            .filter(|s| *s != Value::Null)
+            .collect::<Vec<_>>()
+    };
+    let mut shown = named(hat_boxes(vm, world), HAT_NAME);
+    shown.extend(named(legendary(vm, world), TREASURE_NAME));
+    shown
 }
 
 #[cfg(test)]
@@ -199,7 +289,11 @@ mod tests {
                     w.set(&[El::Local(stage)], zero);
                     w.set_behavior(showing);
                 },
-                |_| {},
+                |w| {
+                    let (at, _) = w.define(REGISTER_OUTFIT, &[]);
+                    w.flow_end();
+                    w.end_block(at);
+                },
                 |w| {
                     let p = w.push(showing);
                     w.end_block(p);
@@ -241,6 +335,29 @@ mod tests {
 
     fn wear(vm: &Vm, id: PlacementId) -> Option<i32> {
         local(vm, id, WEAR_IT).and_then(|v| v.as_i32())
+    }
+
+    fn answered(vm: &mut Vm, world: &mut ScriptWorld) -> bool {
+        let mut host = WorldHost {
+            world,
+            engine: &mut NoEngine,
+            generator: &mut Generator::seeded(1),
+            spawn: &mut headless_spawner(0x2000),
+        };
+        answer_hat_load(vm, &mut host).unwrap()
+    }
+
+    /// openspec AS.158: a level placing a box registers the hat's empty
+    /// outfit once a run, and one placing none registers nothing.
+    #[test]
+    fn a_box_has_its_empty_outfit_registered_once() {
+        let (mut vm, mut world, _) = hat_box();
+        assert!(answered(&mut vm, &mut world), "the box's level");
+        assert!(!answered(&mut vm, &mut world), "registered again");
+        let (mut vm, _, _) = hat_box();
+        let handles = HashMap::new();
+        let mut none = ScriptWorld::new(&Files::default(), &handles, headless_objects(&handles));
+        assert!(!answered(&mut vm, &mut none), "a level with no box");
     }
 
     /// openspec AU.39: a box waiting on the wear question is told no, once;
@@ -299,9 +416,26 @@ mod tests {
     #[test]
     fn the_listing_runs_them_on_every_level() {
         let c = crate::scripts::smash_config(Mode::Play);
-        for s in CHEST_SCRIPTS.iter().chain(&HAT_SCRIPTS) {
+        for s in CHEST_SCRIPTS
+            .iter()
+            .chain(&HAT_SCRIPTS)
+            .chain(&LEGENDARY_SCRIPTS)
+            .chain(&crate::scripts::ELEMENTAL_SCRIPTS)
+        {
             let path = format!("C:/tfb/Content/Levels/Includes/x{s}");
             assert!(c.whitelist.lists("a placement", &path), "{s}");
         }
+    }
+
+    /// openspec AS.151: a legendary treasure waits for the save as a chest
+    /// does, its STARTUP taking a collected one off.
+    #[test]
+    fn a_legendary_treasure_waits_for_the_save() {
+        const TREASURE: &str = "C:/tfb/Content/Levels/Includes/Loot_Specials/Loot_Specials.ai";
+        let placed = Placed::named(FILE, "it", Some(TREASURE), 4);
+        let mut actor = Actor::blank();
+        actor.obj = Some(FILE);
+        let templates = HashMap::from([(FILE, placed)]);
+        assert!(waits_for_the_save(&templates, &actor));
     }
 }
