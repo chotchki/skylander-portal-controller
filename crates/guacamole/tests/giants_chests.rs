@@ -72,8 +72,39 @@ impl Story {
     }
 
     fn step(&mut self, actions: [bool; 4]) {
+        self.act(Stick::new(0.0, 0.0), actions);
+    }
+
+    /// A step with the stick toward `to` across the ground.
+    fn toward(&mut self, to: [f32; 2], actions: [bool; 4]) {
+        let at = self.run.hero().pivot;
+        let heading = (to[0] - at.x).atan2(to[1] - at.z).to_degrees();
+        let stick = stick_for(self.run.bench.view, heading);
+        self.act(stick, actions);
+    }
+
+    /// On the stick to each point in turn, within 1 m, at most 600 steps a
+    /// point.
+    fn walk(&mut self, points: &[[f32; 2]]) {
+        for &to in points {
+            for _ in 0..600 {
+                let at = self.run.hero().pivot;
+                if (to[0] - at.x).hypot(to[1] - at.z) <= 1.0 {
+                    break;
+                }
+                self.toward(to, [false; 4]);
+            }
+            let at = self.run.hero().pivot;
+            assert!(
+                (to[0] - at.x).hypot(to[1] - at.z) <= 1.0,
+                "walking to {to:?}: stopped at {at}"
+            );
+        }
+    }
+
+    fn act(&mut self, stick: Stick, actions: [bool; 4]) {
         self.run.bench.pads[0] = Pad {
-            stick: Stick::new(0.0, 0.0),
+            stick,
             actions,
             connected: true,
         };
@@ -1022,4 +1053,265 @@ fn every_levels_legendary_treasure_pays_and_frees_the_hero() {
         started.elapsed().as_secs_f64(),
         load()
     );
+}
+
+/// Into one of level 214's rooms by its controller's box, at most 300 steps:
+/// where the warp landed him.
+fn into_the_room(s: &mut Story, controller: &str) -> Vec3 {
+    let (_, box_at) = s.run.placed(controller);
+    let landed0 = s.run.world.landed.len();
+    s.run.put(box_at, 0.0);
+    for _ in 0..300 {
+        s.step([false; 4]);
+        if s.run.world.landed.len() > landed0 {
+            break;
+        }
+    }
+    let landed = s.run.world.landed.get(landed0).expect("into the room").at;
+    for _ in 0..120 {
+        s.step([false; 4]);
+    }
+    landed
+}
+
+/// The bombs standing.
+fn bombs(s: &Story) -> Vec<Handle> {
+    s.run
+        .world
+        .clones()
+        .into_iter()
+        .filter(|h| s.run.world.name(*h) == "Bomb_Template" && !s.run.world.removed(*h))
+        .collect()
+}
+
+/// openspec AS.106: what level 214's rooms hold that plays without a screen
+/// of its own. In the workshop, Rob stands, a speaker with his line;
+/// the legendary treasure behind its wall, the wall opened by the room's own
+/// bomb (a run's first burst reaches 20 ft, so it takes two: AS.96's
+/// review), is taken into the collection for its gold; the pretzel heals a
+/// hurt hero who walks into it. In the south room, by one door the pub, the
+/// card pirate whose game isn't open yet stands and talks; by its other the
+/// brewery, whose food heals him too. Both people are
+/// the level's people the TV draws, on their scripts; the card game itself
+/// stays off. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_rooms_play_their_treasure_food_and_talkers() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let mut s = Story::joined(LEVEL_214, Session::new(Some(HOST.into())));
+    past_the_intro(&mut s);
+    let person = |s: &Story, name: &str| {
+        let (h, _) = s.run.placed(name);
+        let running = s
+            .run
+            .vm
+            .placement_of(h)
+            .is_some_and(|id| !s.run.vm.removed(id) && !s.run.vm.inert().contains(&h));
+        let a = s.run.world.actor(h).unwrap();
+        (
+            s.run.world.people().contains(&h) && running && a.active && !a.removed,
+            s.behaviour(h),
+        )
+    };
+    // The workshop.
+    let landed = into_the_room(&mut s, "Interior_Controller_Island_2_1");
+    println!("in the workshop at {landed}");
+    let (rob, rob_at) = s.run.placed("Rob");
+    s.walk(&[[rob_at.x + 3.0, rob_at.z - 4.0]]);
+    let mut rob_seen = Vec::new();
+    for _ in 0..120 {
+        s.step([false; 4]);
+        let (drawn, b) = person(&s, "Rob");
+        assert!(drawn, "Rob drawn: {b:?}");
+        if rob_seen.last() != Some(&b) {
+            rob_seen.push(b);
+        }
+    }
+    // His script has no behaviour of its own: its STARTUP makes him a
+    // speaker with his line, which the dialogue system plays.
+    println!("Rob: {rob_seen:?}");
+    assert!(!s.run.world.removed(rob));
+    // The pretzel, hurt.
+    let (pretzel, pretzel_at) = s.run.placed("Food_Pretzle(1)");
+    let minion = s.run.minion.expect("joined");
+    assert!(guacamole::scripts::set_health(&mut s.run.vm, minion, 100));
+    s.walk(&[[pretzel_at.x, pretzel_at.z]]);
+    for _ in 0..180 {
+        if s.run.world.removed(pretzel) {
+            break;
+        }
+        s.step([false; 4]);
+    }
+    let healed = s.run.health();
+    println!(
+        "the pretzel eaten {}, health {healed:?}",
+        s.run.world.removed(pretzel)
+    );
+    assert!(s.run.world.removed(pretzel), "the pretzel");
+    assert!(healed.is_some_and(|h| h > 100.0), "healed: {healed:?}");
+    // The wall, by the room's bomb, twice.
+    let (wall, _) = s.run.placed("Breakable_Stone_Wall(1)");
+    for k in 0..3 {
+        if s.run.world.removed(wall) {
+            break;
+        }
+        let mut bomb = None;
+        for _ in 0..900 {
+            bomb = bombs(&s)
+                .into_iter()
+                .find(|b| s.behaviour(*b).as_deref() == Some("following player"));
+            if bomb.is_some() {
+                break;
+            }
+            let at = s.run.hero().pivot;
+            let far = (at.x - 387.43).hypot(at.z - 216.0) > 0.8;
+            match far {
+                true => s.toward([387.43, 216.0], [false; 4]),
+                false => s.step([false; 4]),
+            }
+        }
+        assert!(bomb.is_some(), "throw {k}: the room's bomb");
+        for _ in 0..60 {
+            s.step([false; 4]);
+        }
+        s.run.put(Vec3::new(376.8054, -299.9297, 219.5375), 283.167);
+        s.step([false; 4]);
+        for j in 0..150u32 {
+            s.step([false, false, false, j == 0]);
+        }
+        println!("throw {k}: the wall {}", s.run.world.removed(wall));
+    }
+    assert!(s.run.world.removed(wall), "the workshop's wall");
+    // The treasure behind it.
+    let (treasure, at) = s.run.placed("Legendary_Treasure_Propeller_Roof(2)");
+    let gold = s.gold();
+    s.walk(&[[366.0, 220.5], [359.0, 221.2]]);
+    println!(
+        "by the treasure at {} ({:.1} m)",
+        s.run.hero().pivot,
+        s.run.hero().pivot.distance(at)
+    );
+    let start = s.run.steps;
+    while !s.run.world.removed(treasure) {
+        assert!(
+            s.run.steps < start + 1500,
+            "the treasure: {:?}",
+            s.behaviour(treasure)
+        );
+        s.step([false; 4]);
+    }
+    let paid = s.gold() - gold;
+    println!(
+        "the treasure at {at} taken {} steps on, {paid} gold",
+        s.run.steps - start
+    );
+    assert!(paid > 0, "the treasure paid nothing");
+    left_free(&mut s, "the treasure");
+    // The south room.
+    let landed = into_the_room(&mut s, "Interior_Controller_Island_2_3");
+    println!("in the south room at {landed}");
+    // Auric's scene, which the room sets off as he comes in (AS.98), played
+    // out first.
+    let scene_from = s.run.steps;
+    for _ in 0..3000 {
+        if cutscene_name(&s.run).is_none() {
+            let mut clear = true;
+            for _ in 0..30 {
+                s.step([false; 4]);
+                clear &= cutscene_name(&s.run).is_none();
+            }
+            if clear {
+                break;
+            }
+        }
+        s.step([false; 4]);
+    }
+    println!(
+        "Auric's scene over {} steps on, he at {}",
+        s.run.steps - scene_from,
+        s.run.hero().pivot
+    );
+    assert!(
+        cutscene_name(&s.run).is_none(),
+        "{:?}",
+        cutscene_name(&s.run)
+    );
+    let (_, pirate_at) = s.run.placed("CardGame_not_Yet");
+    // Round the room's middle table by its north side.
+    s.walk(&[[390.0, 136.0], [380.0, 136.0], [380.0, 131.5]]);
+    println!(
+        "by the card pirate at {} ({:.1} m)",
+        s.run.hero().pivot,
+        s.run.hero().pivot.distance(pirate_at)
+    );
+    let mut pirate_seen = Vec::new();
+    for _ in 0..120 {
+        s.step([false; 4]);
+        let (drawn, b) = person(&s, "CardGame_not_Yet");
+        assert!(drawn, "the card pirate drawn: {b:?}");
+        if pirate_seen.last() != Some(&b) {
+            pirate_seen.push(b);
+        }
+    }
+    println!("the card pirate: {pirate_seen:?}");
+    assert!(pirate_seen.iter().all(Option::is_some));
+    let (game, _) = s.run.placed("CardGame_Template(1)");
+    assert!(
+        s.run
+            .vm
+            .placement_of(game)
+            .is_none_or(|id| s.run.vm.removed(id))
+            || s.run.vm.inert().contains(&game),
+        "the card game itself stays off: {:?}",
+        s.behaviour(game)
+    );
+    // Out by the pub's exit, and in by the room's other door: the same room
+    // as the brewery, whose actors wake by that door (the controllers'
+    // `interior_set`s), its food among them.
+    let (pub_door, _) = s.run.placed("Interior_Controller_Island_2_3");
+    let exit = s
+        .run
+        .vm
+        .placement_of(pub_door)
+        .and_then(|id| s.run.vm.local(id, "exit teleporter"))
+        .and_then(|v| match s.run.vm.value(v) {
+            Value::Entity(e) => s.run.world.actor(e).map(|a| a.position),
+            _ => None,
+        })
+        .expect("the pub's exit");
+    let landed0 = s.run.world.landed.len();
+    s.run.put(exit, 0.0);
+    for _ in 0..300 {
+        s.step([false; 4]);
+        if s.run.world.landed.len() > landed0 {
+            break;
+        }
+    }
+    for _ in 0..120 {
+        s.step([false; 4]);
+    }
+    let landed = into_the_room(&mut s, "Interior_Controller_Island_2_2");
+    println!("in the brewery at {landed}");
+    let (food, food_at) = s.run.placed("Chinese_Food(1)");
+    assert!(guacamole::scripts::set_health(&mut s.run.vm, minion, 100));
+    s.walk(&[[380.0, 136.0], [food_at.x, 136.0]]);
+    for _ in 0..600 {
+        if s.run.world.removed(food) {
+            break;
+        }
+        s.toward([food_at.x, food_at.z], [false; 4]);
+    }
+    println!(
+        "the south room's food ({:?}, {:?} at {food_at}, he at {}) eaten {}, health {:?}; {:.1} s; load at end: {}",
+        s.behaviour(food),
+        s.run.world.actor(food).map(|a| (a.active, a.removed)),
+        s.run.hero().pivot,
+        s.run.world.removed(food),
+        s.run.health(),
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    assert!(s.run.world.removed(food), "the south room's food");
+    assert!(s.stops.is_empty(), "{:#?}", s.stops);
 }
