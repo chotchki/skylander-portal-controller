@@ -1191,14 +1191,14 @@ fn its_arenas_wave_stays_on_the_floor_with_him_below_it() {
         CENTRE[1]
     );
     assert!(held > 30, "he never went under");
+    assert!(
+        settled.is_some() && after < 0.5,
+        "the hold let one on at him: {after} m after it settled"
+    );
     assert!(most >= up.len(), "the avoider held {most} of {}", up.len());
     assert!(
         lowest > CENTRE[1] - 2.0,
         "an enemy followed him off: {lowest}"
-    );
-    assert!(
-        settled.is_some() && after < 0.5,
-        "the hold let one on at him: {after} m after it settled"
     );
     assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
 }
