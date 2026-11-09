@@ -126,13 +126,21 @@ fn gone(run: &Run, h: Handle) -> bool {
 }
 
 /// What a fight came to: the step `until` went, the foes beaten and the
-/// bites with their steps.
+/// bites with their steps; each top-up's step and the health it found.
 #[derive(Debug, Default)]
 struct Fought {
     done: Option<u32>,
     beaten: usize,
     bites: Vec<(u32, f32)>,
+    topups: Vec<(u32, f32)>,
 }
+
+/// Under this a hero is topped up to [`TOP_UP`] where his scripts hold his
+/// health, as the Mac's runs do through `/api/_test/tv/health` (AU.35 keeps
+/// the starting difficulty at 1): since the lobbers' arrows hurt (openspec
+/// AS.217) a level 1 hero can't live through Setup_004B's lobbers alone.
+const LOW: f32 = 60.0;
+const TOP_UP: i32 = 200;
 
 /// The foes standing and awake whose names are in `names` (a clone runs
 /// under its template's name), nearest first, the same height as him
@@ -196,6 +204,14 @@ fn fight_until(
             out.bites.push((run.steps, health - now));
         }
         health = now;
+        if let Some(m) = run.minion
+            && now > 0.0
+            && now < LOW
+        {
+            guacamole::scripts::set_health(&mut run.vm, m, TOP_UP);
+            out.topups.push((run.steps, now));
+            health = TOP_UP as f32;
+        }
     }
     out.beaten = seen.iter().filter(|h| gone(run, **h)).count();
     out
@@ -371,11 +387,12 @@ fn level_214s_setup_004b_is_fought_from_its_trigger_to_its_end() {
         })
         .count();
     println!(
-        "from {from}, the lobber down by {intro} at {landed}, to {:?} ({:.1} s of game): {} beaten, {clones} let out of the closets, bites {:?}; health {health_before} -> {:?}, experience {:?}; the lobber gone {}; {:.1} s; load at end: {}",
+        "from {from}, the lobber down by {intro} at {landed}, to {:?} ({:.1} s of game): {} beaten, {clones} let out of the closets, bites {:?}, top-ups {:?}; health {health_before} -> {:?}, experience {:?}; the lobber gone {}; {:.1} s; load at end: {}",
         f.done,
         f.done.map_or(0.0, |d| (d - from) as f32 / 60.0),
         f.beaten,
         f.bites,
+        f.topups,
         run.health(),
         run.figure_values().map(|v| v.xp),
         gone(&run, lobber),
@@ -822,8 +839,9 @@ fn level_214s_second_island_is_walked_to_its_second_ship_part() {
     )
     .expect("its sail woken");
     println!(
-        "Setup_004B at {fought}, the yard's Chompies at {yard}, the helper's yard at {yard_done} (bites {:?}, health {health_after_yard:?}), the pad awake at {pad_awake}, on the ledge at {on_ledge}, its lobber at {ledge_done}, on the top at {on_top}, its lobbers at {top_done}, the door opened at {opened}, Auric's scene over at {scene_over}, the part awake at {part_awake} and taken at {taken}, the sail on at {sailing} ({:?}); helper {:?}; health {:?}, experience {:?}; {:.1} s; load at end: {}",
+        "Setup_004B at {fought}, the yard's Chompies at {yard}, the helper's yard at {yard_done} (bites {:?}, top-ups {:?}, health {health_after_yard:?}), the pad awake at {pad_awake}, on the ledge at {on_ledge}, its lobber at {ledge_done}, on the top at {on_top}, its lobbers at {top_done}, the door opened at {opened}, Auric's scene over at {scene_over}, the part awake at {part_awake} and taken at {taken}, the sail on at {sailing} ({:?}); helper {:?}; health {:?}, experience {:?}; {:.1} s; load at end: {}",
         f.bites,
+        f.topups,
         cutscene_name(&run),
         behaviour(&run, helper),
         run.health(),

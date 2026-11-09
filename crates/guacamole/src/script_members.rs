@@ -33,7 +33,10 @@
 //!   neither on a supported frame);
 //!   from another actor with a solid, the gap between the two solids as
 //!   authored (AH.18: a Chompy nips at 10 ft from a hero, AH.10's middles
-//!   14.7-15.2 ft apart, both 3 ft spheres);
+//!   14.7-15.2 ft apart, both 3 ft spheres); between a solid and an actor
+//!   whose `CollisionInfo` has no shape, from the solid to that actor's
+//!   pivot every way (AS.217: a lobber's arrow hurts a foe within 6 ft of
+//!   it, where a vertical gap hurt one anywhere at its height);
 //! - a sweep stops at a creature's body as at a wall, though the ball's solid
 //!   doesn't meet actors (`interacts with actors` 0): the touch is what the
 //!   projectile manager's Targets check reads as `collision`; contacts with
@@ -1638,6 +1641,18 @@ impl ScriptWorld {
                     return Ok(Value::Float(
                         guac_motion::parry::gap(&sa, pa, &sb, pb) * FEET_PER_METRE,
                     ));
+                }
+                // From an actor whose `CollisionInfo` has no shape (openspec
+                // AS.217: a lobber's arrow, which hurts a foe within 6 ft of
+                // it), or to one: how far the other's solid is from its
+                // pivot, a point, every way; read as a vertical gap it hurt a
+                // hero anywhere at its height.
+                if let (Some(h), Some(o)) = (actor, at.other_point)
+                    && let Some(b) = self.actor_of(Some(o))
+                    && b != h
+                    && let Some(gap) = self.gap_to_shapeless(h, b, engine)
+                {
+                    return Ok(Value::Float(gap * FEET_PER_METRE));
                 }
                 let (a, b) = (me(self, engine)?, other(self, engine)?);
                 let low = actor.and_then(|h| self.bottom(h, engine)).unwrap_or(a.y);
@@ -3447,6 +3462,30 @@ impl ScriptWorld {
             solid.grown(0.0),
             solid.pose(Pose::new(a.position, rotation)),
         ))
+    }
+
+    /// The gap between actors `h` and `b` when one has a solid and the
+    /// other's `CollisionInfo` has no shape (openspec AS.217: a lobber's
+    /// arrow): metres from the solid to the shapeless one's pivot, every
+    /// way. None for any other pair (two solids, a mesh, two shapeless).
+    fn gap_to_shapeless(&self, h: Handle, b: Handle, engine: &mut dyn Engine) -> Option<f32> {
+        let shapeless = |w: &Self, x: Handle, e: &mut dyn Engine| {
+            e.hero(x).is_none()
+                && w.actors
+                    .get(&x)
+                    .is_some_and(|a| a.solid.kind() == guac_motion::solid::SolidKind::None)
+        };
+        let (solid, point) = if shapeless(self, b, engine) {
+            (h, b)
+        } else if shapeless(self, h, engine) {
+            (b, h)
+        } else {
+            return None;
+        };
+        let (s, p) = self.query(solid, engine)?;
+        let at = self.position(point, engine)?;
+        let dot = Shape::Sphere { radius: 1e-4 };
+        Some(guac_motion::parry::gap(&s, p, &dot, Pose::at(at)))
     }
 
     /// `positionmeasurement.collision`: whether two actors' solids touch,
@@ -7403,6 +7442,58 @@ mod fight_tests {
             )
             .unwrap();
         assert_eq!(contacts, vec![Value::Entity(C2), Value::Entity(C1)]);
+    }
+
+    /// openspec AS.217: a hero's separation from an actor whose
+    /// `CollisionInfo` has no shape (a lobber's arrow, which hurts a foe
+    /// within 6 ft of it) runs from his solid to its pivot every way, either
+    /// way round: 5 m off across the ground it's well past 6 ft, where read
+    /// as the vertical gap it was nothing; 1 m off it's within them.
+    #[test]
+    fn separation_from_a_shapeless_actor_is_to_its_pivot() {
+        let mut e = pit();
+        let mut hero = Hero::new(eruptor_solid(), Tuning::ERUPTOR, Vec3::ZERO, 0.0);
+        hero.settle(&e.world, &[]);
+        e.hero = Some(hero);
+        e.bodies.insert(HERO, BodyId(9));
+        let mut w = world();
+        let pivot = e.hero.as_ref().unwrap().pivot;
+        let solid = *e.hero.as_ref().unwrap().solid();
+        let reach = |at: Vec3| {
+            let (shape, pose) = (
+                solid.grown(0.0),
+                solid.pose(Pose::new(pivot, Quat::IDENTITY)),
+            );
+            let dot = Shape::Sphere { radius: 1e-4 };
+            guac_motion::parry::gap(&shape, pose, &dot, Pose::at(at)) * FEET_PER_METRE
+        };
+        let mut arrow = Actor::blank();
+        arrow.solid = Solid {
+            width: 3.0,
+            height: 6.0,
+            length: 3.0,
+            interacts_with_actors: 1,
+            interacts_with_level_mesh: 1,
+            ..Solid::default()
+        };
+        for (off, within) in [(5.0, false), (1.0, true)] {
+            let at = pivot + Vec3::new(0.0, 0.0, off);
+            arrow.position = at;
+            w.actors.insert(C1, arrow.clone());
+            for (from, to) in [(HERO, C1), (C1, HERO)] {
+                let sep = get(
+                    &mut w,
+                    &mut e,
+                    "positionmeasurement",
+                    "separation",
+                    from,
+                    to,
+                );
+                let ft = sep.as_f32().unwrap();
+                assert!((ft - reach(at)).abs() < 0.01, "{off} m: {ft} ft");
+                assert_eq!(ft < 6.0, within, "{off} m: {ft} ft");
+            }
+        }
     }
 
     /// AG.90: a hero's separation from his ground is his pivot's height over
