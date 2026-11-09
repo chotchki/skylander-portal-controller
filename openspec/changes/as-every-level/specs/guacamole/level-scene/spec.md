@@ -430,3 +430,10 @@ When a scene jumps one of a level's people to a waypoint, the TV SHALL fly him o
 #### Scenario: Brock's jump
 - **WHEN** level 201's practice pit's last scene jumps Brock off the yard
 - **THEN** he rises 6.7 m over the yard and comes down on the ground within 0.5 m of his landing
+
+### Requirement: Level 201's arena's commander
+Level 201's arena SHALL have its commander, Brock as his own heavy elf in his hat, stand on his podium over the floor through every wave, out of their fight, and once the last wave's scene ends come down his own path to the floor, where his reveal plays and he is fought until beaten; every other foe of the battle SHALL end its leap in on the floor.
+
+#### Scenario: The arena's battle
+- **WHEN** a hero fights the arena's waves on its floor
+- **THEN** Brock stands on his podium until Brock's battle scene, then comes down to the floor, is fought and beaten, and the outro plays
