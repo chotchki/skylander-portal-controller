@@ -2091,7 +2091,7 @@ fn strike(w: &mut Walker, wall: Handle) -> Option<u32> {
 
 /// openspec AS.183: the life area on foot past its second bridge, a hero who
 /// isn't a Giant (Eruptor in a Life hero's place: the area's own scripts
-/// ask nothing of his element past its wall). From the ambush's end: the
+/// ask nothing of his element past its wall). Through the ambush: the
 /// west island's push blocks pushed into their ends, the third bridge from
 /// its switch on the ledge they reach, the plateau's bomb thrown at the
 /// eyeball across the gap, the timed door below, the fourth bridge, the
@@ -2165,32 +2165,88 @@ fn the_life_area_is_walked_on_past_its_second_bridge_by_a_giant() {
 }
 
 /// A run on level 201 with `character` joined in Eruptor's place, the life
-/// island's ambush over and its second bridge crossed, him at its far end.
-/// The ambush's end is set as it leaves it (its initializer taken off) until
-/// the run fights it.
+/// island's ambush fought through and its second bridge crossed, him at its
+/// far end: the first bridge grown from its switch past the life wall (his
+/// way in), then onto the island, where its initializer wakes the battle,
+/// and the three evil Stealth Elves fought as a kid fights them (the
+/// nearest, his first attack every 20 steps within 5 m, as
+/// [`its_life_islands_ambush_is_fought_and_opens_the_second_bridge`]); the
+/// victory takes the initializer off and he walks onto the second switch,
+/// whose bridge grows, and over it.
 fn past_the_ambush(character: Option<Character>) -> Walker {
     use guac_motion::seam::Vec3;
     let mut w = fresh_as(character);
-    let (init, _) = w.run.placed("Phase Director Initializer 201 Minion");
-    assert!(w.run.vm.remove(init));
-    let obj = *w.run.handles.iter().find(|(_, h)| **h == init).unwrap().0;
-    assert!(w.run.world.take_off(obj));
-    for (pan, act) in [
-        ("Pan_Activate", "Activator_Template(1)"),
-        ("Pan_Activate(1)", "Activator_Template(2)"),
-    ] {
-        let (_, at) = w.run.placed(pan);
-        w.run.put(at + Vec3::Y, 270.0);
-        let act = w.run.placed(act).0;
-        let start = w.run.steps;
-        while !bridge_grown(&w, act) {
-            assert!(w.run.steps < start + 1500, "{pan}'s bridge never grew");
-            w.rest(1);
-        }
-        w.rest(120);
+    let (_, pan) = w.run.placed("Pan_Activate");
+    w.run.put(pan + Vec3::Y, 0.0);
+    let first = w.run.placed("Activator_Template(1)").0;
+    let start = w.run.steps;
+    while !bridge_grown(&w, first) {
+        assert!(w.run.steps < start + 1500, "the first bridge never grew");
+        w.rest(1);
     }
+    w.rest(120);
+    let init = w.run.placement("Phase Director Initializer 201 Minion");
+    let second = w.run.placed("Activator_Template(2)").0;
+    let (_, switch) = w.run.placed("Pan_Activate(1)");
+    w.run.put(Vec3::new(70.5, 30.0, -75.0), 0.0);
+    w.rest(30);
+    let (mut beaten, mut ended) = (0usize, None);
+    for k in 0..9000u32 {
+        let me = w.run.hero().pivot;
+        let up: Vec<(Handle, Vec3)> = w
+            .run
+            .world
+            .clones()
+            .into_iter()
+            .filter(|h| w.run.world.name(*h) == "026_StealthElf_Evil")
+            .filter_map(|h| {
+                w.run
+                    .world
+                    .actor(h)
+                    .filter(|a| !a.removed)
+                    .map(|a| (h, a.position))
+            })
+            .collect();
+        beaten = beaten.max(
+            up.iter()
+                .filter(|(h, _)| foe_health(&w, *h).is_some_and(|hp| hp <= 0.0))
+                .count(),
+        );
+        let target = up
+            .iter()
+            .filter(|(h, _)| foe_health(&w, *h).is_some_and(|hp| hp > 0.0))
+            .min_by(|a, b| a.1.distance(me).total_cmp(&b.1.distance(me)))
+            .map(|e| [e.1.x, e.1.z]);
+        let (stick, attack) = match (k < 300, target) {
+            (true, _) => (w.toward([70.12, -60.0], 1.0), false),
+            (false, _) if ended.is_some() => (w.toward([switch.x, switch.z], 1.0), false),
+            (false, Some(t)) => {
+                let far = (t[0] - me.x).hypot(t[1] - me.z);
+                (
+                    w.toward(t, if far > 2.5 { 1.0 } else { 0.35 }),
+                    far <= 5.0 && k.is_multiple_of(20),
+                )
+            }
+            _ => (Stick::new(0.0, 0.0), false),
+        };
+        w.step(stick, [attack, false, false, false]);
+        if ended.is_none() && w.run.vm.removed(init) {
+            ended = Some(w.run.steps);
+        }
+        if bridge_grown(&w, second) {
+            break;
+        }
+    }
+    println!(
+        "the ambush over at {ended:?}, the second bridge grown at {}, {} top-ups so far",
+        w.run.steps,
+        w.walked.topups.len()
+    );
+    assert!(ended.is_some(), "the ambush never ended");
+    assert!(bridge_grown(&w, second), "the second bridge never grew");
+    w.rest(120);
     assert!(
-        w.stretch("w 55.4 -57.3; w 33.6 -57.2"),
+        w.stretch("w 61.5 -57.4; w 55.4 -57.3; w 33.6 -57.2"),
         "over the second bridge"
     );
     w
