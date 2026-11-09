@@ -1383,7 +1383,7 @@ fn its_bridge_holds_him_by_its_planks_own_solids() {
 /// north twice into its end, the two side by side across the gap between
 /// the island's ledges; up the ramp, along the west ledge and over them
 /// onto the third bridge's switch.
-const LIFE_WEST_ISLAND: &str = "w 24 -58.5; w 14 -59; w 12 -57; w 12 -53.6; h 12 -53.5 8; push 30 -53.5 150; w 16.8 -54.4; h 16.8 -54.4 8; push 16.8 -30 150; w 16.8 -47.5; w 21.5 -47.5; w 25.5 -48; w 25.5 -57.5; w 21.35 -57.5; push 21.35 -30 150; w 21.35 -53.4; push 21.35 -30 150; w 25.5 -50; w 25.5 -57.5; w 14 -58.5; w 3 -58.5; w 3 -50; w 3 -44.5; w 12 -44.4; w 17 -44.4; w 21.5 -44.4; w 26.3 -43.5";
+const LIFE_WEST_ISLAND: &str = "w 24 -58.5; w 14 -59; w 12 -57; w 12 -53.6; h 12 -53.5 8; push 30 -53.5 150; w 16.8 -54.4; h 16.8 -54.4 8; push 16.8 -30 150; w 16.8 -48.5; w 21.5 -48.5; w 25.5 -48.5; w 25.5 -57.5; w 21.35 -57.5; push 21.35 -30 150; w 21.35 -53.4; push 21.35 -30 150; w 25.5 -50; w 25.5 -57.5; w 14 -58.5; w 3 -58.5; w 3 -50; w 3 -44.5; w 12 -44.4; w 17 -44.4; w 21.5 -44.4; w 26.3 -43.5";
 
 /// Over the third bridge onto the plateau, the bomb its spawner lays taken
 /// and thrown at the long-range eyeball across the gap, which drops the
