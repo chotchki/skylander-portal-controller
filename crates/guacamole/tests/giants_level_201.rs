@@ -2013,8 +2013,10 @@ const LIFE_GIANT_OUT: &str = "w -6 -28; w -9 -31.5; w -16 -31.5";
 /// back over the second bridge.
 const LIFE_ON_FOOT_OUT: &str = "w 5 -30; w 5 -36; w 5 -40; w 5 -43; w 12 -44.4; w 17 -44.4; w 21.5 -44.4; w 26 -44.5; w 27 -48.5; w 30 -55; w 33.6 -57.2; w 55.4 -57.3; w 63 -60; w 70.5 -66";
 
-/// Back over the first bridge from the island's landing, out of the area.
-const LIFE_OVER_BRIDGE_1: &str = "w 70.5 -74; w 70.9 -81.5; w 70.96 -103; w 70.84 -111.06";
+/// Back over the first bridge from the island's landing, out of the area:
+/// from its switch's ground down onto the level's way by Setup_002's door
+/// (the life wall's plateau stands 5 m over the switch, a way in alone).
+const LIFE_OVER_BRIDGE_1: &str = "w 70.5 -74; w 70.9 -81.5; w 70.96 -103; w 70.84 -111.06; w 72.5 -118; w 73.5 -126; w 76.2 -134.2";
 
 /// Whether the vine bridge activator `act` has laid its bridge.
 fn bridge_grown(w: &Walker, act: Handle) -> bool {
@@ -2119,7 +2121,7 @@ fn the_life_area_is_walked_on_past_its_second_bridge_and_out() {
     assert!(w.stretch(LIFE_OVER_BRIDGE_1), "over the first bridge");
     let end = w.run.hero().pivot;
     println!("out at {end}, {} top-ups", w.walked.topups.len());
-    assert!(end.z < -108.0 && end.y > 30.0, "out: {end}");
+    assert!(end.z < -133.0 && end.y < 29.0, "out on the way: {end}");
     assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
 }
 
@@ -2160,7 +2162,7 @@ fn the_life_area_is_walked_on_past_its_second_bridge_by_a_giant() {
     assert!(w.stretch(LIFE_OVER_BRIDGE_1), "over the first bridge");
     let end = w.run.hero().pivot;
     println!("out at {end}, {} top-ups", w.walked.topups.len());
-    assert!(end.z < -108.0 && end.y > 30.0, "out: {end}");
+    assert!(end.z < -133.0 && end.y < 29.0, "out on the way: {end}");
     assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
 }
 
