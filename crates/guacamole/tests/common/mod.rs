@@ -1051,6 +1051,13 @@ pub const CRUSHER: Character = Character {
     toy: 102,
 };
 
+/// Tree Rex, the life Giant (openspec AS.183: the life area's Giant wall).
+pub const TREE_REX: Character = Character {
+    archive: "character/112_titanlife.bld",
+    load_file: "112_TitanLife",
+    toy: 112,
+};
+
 /// The interface records of the script part's archives (`ARCHIVES`, by
 /// unit), read off the dump in memory by guac-extract's own reader, once a
 /// test binary (openspec AT.9): what the TV's run reads off the extract's

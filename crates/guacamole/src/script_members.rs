@@ -51,7 +51,7 @@ use guac_formats::script::Class;
 use guac_motion::hero::Hero;
 use guac_motion::proxy::Surfaces;
 use guac_motion::seam::{BodyId, CAST_SLOP, PhysicsSeam, Pose, Quat, Shape, Vec3};
-use guac_motion::solid::HavokSolid;
+use guac_motion::solid::{HavokSolid, euler};
 use guac_motion::steer::{Aim, MoveType, Physics as SteerPhysics};
 use guac_motion::stick::Push;
 use guac_script::{Access, Answer, Handle, HostFault, MemberId, Obj, OpCall, Value};
@@ -3779,7 +3779,16 @@ impl ScriptWorld {
             })
             .filter_map(|(&h, a)| {
                 let solid = a.havok()?;
-                let rotation = Quat::from_rotation_y(a.angles.facing.to_radians());
+                // A surface turns as its actor does, tilted and rolled too,
+                // as a prop's solid ([`crate::props::actor_body`]): level
+                // 201's fourth vine bridge rises 1° to the strip it reaches,
+                // a step its flat solid left too high to climb (openspec
+                // AS.183). A creature's controller body stands upright.
+                let rotation = if a.stands_for_actors() {
+                    euler([a.angles.tilt, a.angles.facing, a.angles.roll])
+                } else {
+                    Quat::from_rotation_y(a.angles.facing.to_radians())
+                };
                 Some((h, solid, solid.pose(Pose::new(a.position, rotation))))
             })
             .collect();
@@ -6273,6 +6282,70 @@ mod fight_tests {
         let y = w.actor(plank).unwrap().position.y;
         assert!(y < 6.0, "falling: {y}");
         assert_eq!(w.actor(not_solid).unwrap().position.y, 7.0);
+    }
+
+    /// openspec AS.183: a surface's body turns as its actor does, its tilt
+    /// and roll too: level 201's fourth vine bridge, a box laid along its
+    /// facing from its activator and tilted 1° nose up, rises at its far end
+    /// to the ground it reaches. A creature's body stands upright whatever
+    /// its actor's tilt.
+    #[test]
+    fn a_surface_stands_tilted_as_its_actor_is() {
+        let template = Obj { unit: 5, index: 3 };
+        let mut solid = chompy(Vec3::ZERO, 0.0).solid;
+        (
+            solid.shape,
+            solid.interacts_with_actors,
+            solid.acts_as_actor_surface,
+        ) = (1, 1, 1);
+        (solid.width, solid.height, solid.length) = (15.0, 6.0, 64.0);
+        solid.offset = [0.0, 3.0, 30.0];
+        let files = Files {
+            placed: vec![crate::scripts::Placed {
+                solid: Some(solid),
+                ..crate::scripts::Placed::named(template, "it", Some("C:/x/It.ai"), 5)
+            }],
+            ..Files::default()
+        };
+        let handles = HashMap::new();
+        let mut w = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let angles = Angles {
+            facing: 270.0,
+            tilt: 1.0,
+            roll: 0.0,
+        };
+        w.actors.insert(
+            C3,
+            Actor {
+                template: Some(template),
+                position: Vec3::new(10.0, 7.0, 0.0),
+                angles,
+                solid,
+                ..Actor::blank()
+            },
+        );
+        let mut walking = chompy(Vec3::new(0.0, 7.0, 0.0), 270.0);
+        walking.angles.tilt = 20.0;
+        w.actors.insert(C1, walking);
+        let bodies = w.creature_bodies();
+        let pose = |h| bodies.iter().find(|b| b.0 == h).unwrap().2;
+        let (bridge, creature) = (pose(C3), pose(C1));
+        assert!(
+            bridge.rotation.angle_between(euler([1.0, 270.0, 0.0])) < 1e-3,
+            "{bridge:?}"
+        );
+        // Its far end (west, along its facing) rises over its near end.
+        let top = |along: f32| bridge.position + bridge.rotation * Vec3::new(0.0, 0.0, along);
+        let (near, far) = (top(-9.0), top(9.0));
+        assert!(far.x < near.x, "laid west: {near} {far}");
+        assert!(far.y - near.y > 0.3, "rises to the far side: {near} {far}");
+        assert!(
+            creature
+                .rotation
+                .angle_between(Quat::from_rotation_y(270f32.to_radians()))
+                < 1e-3,
+            "a creature stands upright: {creature:?}"
+        );
     }
 
     /// openspec AU.53: a scene's jump (level 201's practice pit elves) takes

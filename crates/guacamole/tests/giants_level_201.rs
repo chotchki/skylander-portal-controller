@@ -832,10 +832,16 @@ fn waypoints(name: &str) -> Vec<[f32; 3]> {
 /// A fresh run on level 201 with Eruptor joined and its intro skipped, as
 /// [`walked`] starts, for a test of its own.
 fn fresh() -> Walker {
+    fresh_as(None)
+}
+
+/// [`fresh`] with `character` joined in Eruptor's place.
+fn fresh_as(character: Option<Character>) -> Walker {
     let setup = Setup {
         interface: true,
         props: true,
         sounds: true,
+        character,
         ..Setup::default()
     };
     let (run, _) = run_on_level(Mode::Play, LEVEL_201, setup);
@@ -1368,4 +1374,216 @@ fn its_bridge_holds_him_by_its_planks_own_solids() {
     assert!(walked > 8.0, "never got along it: {end}");
     assert!(low > 23.0, "fell through it: {low}");
     assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
+}
+
+/// The life area on foot past its second bridge (openspec AS.183), leg by
+/// leg as [`WAY`] spells its stretches: from the second bridge's far end
+/// up the west island's ramp into the pocket behind its push blocks; the
+/// second block east a span, the first north into its end, the second
+/// north twice into its end, the two side by side across the gap between
+/// the island's ledges; up the ramp, along the west ledge and over them
+/// onto the third bridge's switch.
+const LIFE_WEST_ISLAND: &str = "w 24 -58.5; w 14 -59; w 12 -57; w 12 -53.6; h 12 -53.5 8; push 30 -53.5 150; w 16.8 -54.4; h 16.8 -54.4 8; push 16.8 -30 150; w 16.8 -47.5; w 21.5 -47.5; w 25.5 -48; w 25.5 -57.5; w 21.35 -57.5; push 21.35 -30 150; w 21.35 -53.4; push 21.35 -30 150; w 25.5 -50; w 25.5 -57.5; w 14 -58.5; w 3 -58.5; w 3 -50; w 3 -44.5; w 12 -44.4; w 17 -44.4; w 21.5 -44.4; w 26.3 -43.5";
+
+/// Over the third bridge onto the plateau, the bomb its spawner lays taken
+/// and thrown at the long-range eyeball across the gap, which drops the
+/// timed door below; off the plateau's edge, through the door and onto the
+/// fourth bridge's switch.
+const LIFE_PLATEAU: &str = "w 27.5 -43.0; w 54.4 -43.3; w 60 -42; w 58 -40; m 12; w 62 -40; w 69 -39; w 70.6 -32; w 70.6 -25; w 68.76 -22.5";
+
+/// Over the fourth bridge onto the strip, off its west edge into the valley
+/// below, onto its jump pad and up to the ground before the wall.
+const LIFE_VALLEY: &str = "w 64.8 -21.96; w 49.3 -21.1; w 40 -21; w 37 -10.4; w 30 -10.4; s 60; w 18.4 -16.3; s 120; w 10 -26; w 3 -27.6; h -6 -27.6 40";
+
+/// A Giant's way out: through the wall his attack took, past the hat box
+/// (asleep headless, the story save's to wake: the TV's run mashes it
+/// open), to the teleporter's start.
+const LIFE_GIANT_OUT: &str = "w -6 -28; w -9 -31.5; w -16 -31.5";
+
+/// Anyone's way out on foot: up the ground's south end and off it onto the
+/// west island's ledge, over the blocks onto the switch's ledge and off it,
+/// back over the second bridge.
+const LIFE_ON_FOOT_OUT: &str = "w 5 -30; w 5 -36; w 5 -40; w 5 -43; w 12 -44.4; w 17 -44.4; w 21.5 -44.4; w 26 -44.5; w 27 -48.5; w 30 -55; w 33.6 -57.2; w 55.4 -57.3; w 63 -60; w 70.5 -66";
+
+/// Back over the first bridge from the island's landing, out of the area.
+const LIFE_OVER_BRIDGE_1: &str = "w 70.5 -74; w 70.9 -81.5; w 70.96 -103; w 70.84 -111.06";
+
+/// Whether the vine bridge activator `act` has laid its bridge.
+fn bridge_grown(w: &Walker, act: Handle) -> bool {
+    w.run
+        .vm
+        .placement_of(act)
+        .and_then(|id| w.run.vm.behaviour(id))
+        .is_some_and(|b| b.starts_with('5'))
+}
+
+/// [`LIFE_WEST_ISLAND`] on: the life area from its second bridge's far end
+/// to the ground before its wall, each puzzle as a kid plays it; each
+/// bridge's activator laid and each leg's end where it should be.
+fn life_area_on(w: &mut Walker) {
+    let at = |w: &Walker| w.run.hero().pivot;
+    let blocks = [
+        w.run.placed("Push_Block_Template_1_c(1)").0,
+        w.run.placed("Push_Block_Template_1_c(2)").0,
+    ];
+    assert!(w.stretch(LIFE_WEST_ISLAND), "the west island");
+    for b in blocks {
+        let a = w.run.world.actor(b).unwrap();
+        let beh = w
+            .run
+            .vm
+            .placement_of(b)
+            .and_then(|id| w.run.vm.behaviour(id));
+        println!("{}: at {} {beh:?}", w.run.world.name(b), a.position);
+        assert_eq!(beh, Some("special - push block inactive"), "{}", a.position);
+    }
+    let act = w.run.placed("Activator_Template(3)").0;
+    let start = w.run.steps;
+    while !bridge_grown(w, act) {
+        assert!(w.run.steps < start + 1500, "the third bridge never grew");
+        w.rest(1);
+    }
+    println!(
+        "the third bridge grown {} steps on, him at {}",
+        w.run.steps - start,
+        at(w)
+    );
+    w.rest(120);
+    let door = w.run.placed("EyE_Timer_Door_Template(3)").0;
+    let shut = w.run.world.actor(door).unwrap().position.y;
+    assert!(w.stretch(LIFE_PLATEAU), "the plateau to the fourth switch");
+    let dropped = w.run.world.actor(door).unwrap().position.y;
+    println!("the door from {shut:.2} to {dropped:.2}, him at {}", at(w));
+    assert!(dropped < shut - 5.0, "the door never dropped: {dropped}");
+    let act = w.run.placed("Activator_Template(4)").0;
+    let start = w.run.steps;
+    while !bridge_grown(w, act) {
+        assert!(w.run.steps < start + 1500, "the fourth bridge never grew");
+        w.rest(1);
+    }
+    println!("the fourth bridge grown {} steps on", w.run.steps - start);
+    w.rest(120);
+    assert!(w.stretch(LIFE_VALLEY), "the valley and its jump pad");
+    let end = at(w);
+    println!("before the wall at {end}");
+    assert!(end.y > 32.5 && end.x < 3.0, "not up before the wall: {end}");
+}
+
+/// His first attack every 7 steps at `wall` before him for at most 600
+/// steps, as a kid mashes it: the step it was taken off, if it was.
+fn strike(w: &mut Walker, wall: Handle) -> Option<u32> {
+    for k in 0..600 {
+        if w.run.world.removed(wall) {
+            return Some(k);
+        }
+        w.step(Stick::new(0.0, 0.0), [k % 7 == 0, false, false, false]);
+    }
+    None
+}
+
+/// openspec AS.183: the life area on foot past its second bridge, a hero who
+/// isn't a Giant (Eruptor in a Life hero's place: the area's own scripts
+/// ask nothing of his element past its wall). From the ambush's end: the
+/// west island's push blocks pushed into their ends, the third bridge from
+/// its switch on the ledge they reach, the plateau's bomb thrown at the
+/// eyeball across the gap, the timed door below, the fourth bridge, the
+/// valley and its jump pad; the wall before the hat box and the teleporter
+/// a Giant's (it stands to his attacks), so his way out is on foot, off the
+/// ground's south end onto the west island and back over the second and
+/// first bridges.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn the_life_area_is_walked_on_past_its_second_bridge_and_out() {
+    let mut w = past_the_ambush(None);
+    life_area_on(&mut w);
+    let wall = w.run.placed("Breakable_Stone_Wall_Castle_206(4)").0;
+    assert_eq!(
+        strike(&mut w, wall),
+        None,
+        "his attacks took a Giant's wall"
+    );
+    assert!(
+        w.run.hero().pivot.x > 0.0,
+        "past the wall: {}",
+        w.run.hero().pivot
+    );
+    assert!(w.stretch(LIFE_ON_FOOT_OUT), "back to the second bridge");
+    assert!(w.stretch(LIFE_OVER_BRIDGE_1), "over the first bridge");
+    let end = w.run.hero().pivot;
+    println!("out at {end}, {} top-ups", w.walked.topups.len());
+    assert!(end.z < -108.0 && end.y > 30.0, "out: {end}");
+    assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
+}
+
+/// openspec AS.183: the life area past its second bridge with Tree Rex,
+/// the life Giant: as [`the_life_area_is_walked_on_past_its_second_bridge_and_out`]
+/// to the wall, which his attacks take; past the hat box behind it onto the
+/// teleporter's start, carried to its end by the first bridge and back
+/// over it, out of the area.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn the_life_area_is_walked_on_past_its_second_bridge_by_a_giant() {
+    let mut w = past_the_ambush(Some(TREE_REX));
+    life_area_on(&mut w);
+    let wall = w.run.placed("Breakable_Stone_Wall_Castle_206(4)").0;
+    let struck = strike(&mut w, wall);
+    println!("the wall taken {struck:?} steps into his attacks");
+    assert!(struck.is_some(), "his attacks left the wall");
+    assert!(w.stretch(LIFE_GIANT_OUT), "past the wall");
+    let (_, start) = w.run.placed("TeleporterStart(1)");
+    let (_, end_at) = w.run.placed("TeleporterEnd(1)");
+    let mut taken = None;
+    for _ in 0..600 {
+        let s = w.toward([start.x, start.z], 1.0);
+        w.step(s, [false; 4]);
+        if w.run.hero().pivot.distance(start) > 30.0 {
+            taken = Some(w.run.steps);
+            break;
+        }
+    }
+    w.rest(120);
+    let landed = w.run.hero().pivot;
+    println!("the teleporter: taken at {taken:?}, him at {landed}, its end at {end_at}");
+    assert!(taken.is_some(), "left on its start: {landed}");
+    assert!(
+        (landed.x - end_at.x).hypot(landed.z - end_at.z) < 1.5,
+        "by its end: {landed}"
+    );
+    assert!(w.stretch(LIFE_OVER_BRIDGE_1), "over the first bridge");
+    let end = w.run.hero().pivot;
+    println!("out at {end}, {} top-ups", w.walked.topups.len());
+    assert!(end.z < -108.0 && end.y > 30.0, "out: {end}");
+    assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
+}
+
+/// A run on level 201 with `character` joined in Eruptor's place, the life
+/// island's ambush over and its second bridge crossed, him at its far end.
+/// The ambush's end is set as it leaves it (its initializer taken off) until
+/// the run fights it.
+fn past_the_ambush(character: Option<Character>) -> Walker {
+    use guac_motion::seam::Vec3;
+    let mut w = fresh_as(character);
+    let (init, _) = w.run.placed("Phase Director Initializer 201 Minion");
+    assert!(w.run.vm.remove(init));
+    let obj = *w.run.handles.iter().find(|(_, h)| **h == init).unwrap().0;
+    assert!(w.run.world.take_off(obj));
+    for (pan, act) in [
+        ("Pan_Activate", "Activator_Template(1)"),
+        ("Pan_Activate(1)", "Activator_Template(2)"),
+    ] {
+        let (_, at) = w.run.placed(pan);
+        w.run.put(at + Vec3::Y, 270.0);
+        let act = w.run.placed(act).0;
+        let start = w.run.steps;
+        while !bridge_grown(&w, act) {
+            assert!(w.run.steps < start + 1500, "{pan}'s bridge never grew");
+            w.rest(1);
+        }
+        w.rest(120);
+    }
+    assert!(
+        w.stretch("w 55.4 -57.3; w 33.6 -57.2"),
+        "over the second bridge"
+    );
+    w
 }
