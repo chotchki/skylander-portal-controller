@@ -877,14 +877,15 @@ pub fn lengths(p: &guac_ir::palette::Palette) -> Vec<f32> {
 
 /// Eruptor's rig read from his archive with the globals his model's
 /// shaders need: his model, his palette and his attach nodes, at his scale
-/// in the level (AH.50).
+/// in the level (AH.50), his random networks laid over his palette as the
+/// TV reads it (openspec AS.196: his hurt).
 pub fn eruptor_rig(part: &[Vec<u8>]) -> guacamole::hands::Rig {
     let globals = guac_extract::models::Globals::new(&part[1], &part[0]).expect("the globals");
     let read = guac_extract::models::read(&part[3], "009_Eruptor", identity(), Some(&globals))
         .expect("Eruptor's model");
     guacamole::hands::Rig {
         model: read.model,
-        palette: read.palette,
+        palette: read.palette.with_networks(&read.networks),
         nodes: read.nodes,
         scale: guac_motion::tuning::ERUPTOR_SCALE,
     }
@@ -897,7 +898,7 @@ pub fn character_rig(part: &[Vec<u8>], load_file: &str) -> guacamole::hands::Rig
         .expect("his model");
     guacamole::hands::Rig {
         model: read.model,
-        palette: read.palette,
+        palette: read.palette.with_networks(&read.networks),
         nodes: read.nodes,
         scale: guac_motion::tuning::ERUPTOR_SCALE,
     }

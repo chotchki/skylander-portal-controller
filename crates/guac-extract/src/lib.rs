@@ -71,21 +71,23 @@ pub use root::{ExtractRoot, RootMode};
 /// `portraits` (the same files, now the right way up), AH.50's `nodes/` and
 /// AH.87's `particles/` and AT.8's `interface/`, beside each level's
 /// `sprites.*`, AT.30's `models` (the files v3 and v4 added, with the
-/// stage's record `ir/models.*`) and AU.37's `spawn_rigs/`.
+/// stage's record `ir/models.*`), AU.37's `spawn_rigs/` and AS.196's
+/// `networks/`.
 pub const LAYOUT_VERSION: u32 = 4;
 
 /// The extract-wide parts this build reads (the manifest's `parts`), each
 /// recorded once its files are in: AE.31's upright portraits, AH.2's
 /// progression, AH.22's palettes, script entries and spawn models, AS.53's
 /// screen scripts, AH.50's attach nodes, AH.87's emitters, AR.5's sounds,
-/// AT.8's interface, AT.30's models, AU.37's spawn rigs. A start is current
-/// only once every one is, so an extract made before one resumes for it
-/// alone.
-pub const PARTS: [&str; 12] = [
+/// AT.8's interface, AT.30's models, AU.37's spawn rigs, AS.196's random
+/// networks. A start is current only once every one is, so an extract made
+/// before one resumes for it alone.
+pub const PARTS: [&str; 13] = [
     roster::PORTRAITS,
     progression::PART,
     models::PART,
     models::PALETTES,
+    models::NETWORKS,
     scripts::SCRIPTS,
     scripts::SPAWNS,
     scripts::SPAWN_RIGS,

@@ -245,7 +245,7 @@ fn eruptor_rig(part: &[Vec<u8>]) -> guacamole::hands::Rig {
         .expect("Eruptor's model");
     guacamole::hands::Rig {
         model: read.model,
-        palette: read.palette,
+        palette: read.palette.with_networks(&read.networks),
         nodes: read.nodes,
         scale: guac_motion::tuning::ERUPTOR_SCALE,
     }

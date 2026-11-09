@@ -993,6 +993,23 @@ fn the_palette_keeps_every_slot_the_locomotion_leaves_out() {
         *p,
         "the character's own, the network kept as one"
     );
+    // AS.196: the clips kept apart, his networks; laid back over his
+    // palette they're the full read's. Read alone they're the same.
+    assert_eq!(e.networks, guac_ir::palette::Networks::of(&full));
+    assert_eq!(
+        e.networks.slots.iter().map(|n| n.slot).collect::<Vec<_>>(),
+        [41]
+    );
+    assert_eq!(p.clone().with_networks(&e.networks), full);
+    let level = character(&fighter());
+    assert_eq!(
+        super::networks(&level, "009_Eruptor", identity()).unwrap(),
+        e.networks
+    );
+    assert!(matches!(
+        super::networks(b"not a level", "009_Eruptor", identity()),
+        Err(crate::ExtractError::ModelUnreadable { .. })
+    ));
     assert_eq!(p.refused.len(), 1);
     assert_eq!(p.refused[0].slot, 40);
     assert!(p.refused[0].reason.contains("blendHint"), "{:?}", p.refused);

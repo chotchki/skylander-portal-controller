@@ -807,6 +807,23 @@ fn log_end(end: &StageEnd) {
                 took_s = p.took.as_secs_f64(),
                 "palettes written"
             );
+            // A character's random networks (openspec AS.196): his hurt's
+            // clips, read alone once on an extract made before them.
+            let n = &m.networks;
+            info!(
+                kept = n.kept,
+                read_alone = n.read_alone,
+                characters = n.characters,
+                slots = n.slots,
+                failed = n.failed.len(),
+                written = n.files.written,
+                bytes = n.files.bytes,
+                took_s = n.took.as_secs_f64(),
+                "networks written"
+            );
+            for f in &n.failed {
+                warn!(load_file = %f.load_file, reason = %f.reason, "a character's networks didn't read: his hurt plays nothing");
+            }
         }
         StageEnd::Level(l) => {
             info!(

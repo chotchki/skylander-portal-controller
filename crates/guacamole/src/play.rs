@@ -134,7 +134,7 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 use guac_ir::clip::Clip;
 use guac_ir::model::{Sampler, Scroll};
 use guac_ir::nodes::AttachNodes;
-use guac_ir::palette::Palette;
+use guac_ir::palette::{Networks, Palette};
 use guac_ir::scroll;
 use guac_ir::shading::Scene;
 use guac_ir::{Category, Model};
@@ -515,7 +515,10 @@ fn read_nodes(shelf: &Shelf, load: &str) -> Result<AttachNodes, String> {
     Ok(nodes)
 }
 
-/// `load`'s animation palette off the extract (AH.22's part).
+/// `load`'s animation palette off the extract (AH.22's part), his random
+/// networks' clips laid over the slots it keeps as networks (openspec
+/// AS.196: his hurt), as a level's models' networks play. Networks that
+/// don't read leave those slots playing nothing, logged.
 fn read_palette(shelf: &Shelf, load: &str) -> Result<Palette, String> {
     let rel = shelf.ir.palette_path(load);
     let palette: Palette = read_ir(shelf.ir, &shelf.dir.join(&rel))?;
@@ -525,7 +528,26 @@ fn read_palette(shelf: &Shelf, load: &str) -> Result<Palette, String> {
     if palette.owner != load {
         return Err(format!("{rel} holds {}'s palette", palette.owner));
     }
-    Ok(palette)
+    match read_networks(shelf, load) {
+        Ok(n) => Ok(palette.with_networks(&n)),
+        Err(why) => {
+            warn!(load_file = load, reason = %why, "his networks didn't read: his hurt plays nothing");
+            Ok(palette)
+        }
+    }
+}
+
+/// `load`'s random networks off the extract (openspec AS.196's part).
+fn read_networks(shelf: &Shelf, load: &str) -> Result<Networks, String> {
+    let rel = shelf.ir.network_path(load);
+    let networks: Networks = read_ir(shelf.ir, &shelf.dir.join(&rel))?;
+    if networks.identity != shelf.identity {
+        return Err(format!("{rel} names another dump"));
+    }
+    if networks.owner != load {
+        return Err(format!("{rel} holds {}'s networks", networks.owner));
+    }
+    Ok(networks)
 }
 
 /// The hero's model on its way to the level.
@@ -4313,6 +4335,109 @@ mod tests {
         // Refused: not registered, so the run is the one without the key.
         assert!(matches!(run(Some("synthetic.nothing")), Join::Joined(_)));
         assert!(matches!(run(Some("")), Join::Joined(_)));
+    }
+
+    /// openspec AS.196: his palette as the TV reads it plays his random
+    /// networks' clips where his networks file holds them (his hurt, which
+    /// his palette file keeps a network), the first clip's length; with no
+    /// networks file, or one that's another character's, the slot plays
+    /// nothing, as before, and the rest of his palette reads the same.
+    #[test]
+    fn his_hurt_plays_off_his_networks_file_beside_his_palette() {
+        use guac_ir::palette::{Choice, NetworkSlot, PaletteSlot, SlotEntry};
+        let identity = guac_ir::DumpIdentity {
+            title_id: "BLUS30968".into(),
+            app_ver: "01.00".into(),
+            manifest_hash: guac_ir::Sha256([3; 32]),
+        };
+        let clip = |name: &str, duration: f32| Clip {
+            name: name.into(),
+            duration,
+            frame_duration: 1.0 / 30.0,
+            frames: 9,
+            tracks: Vec::new(),
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let shelf = Shelf {
+            dir: tmp.path().to_path_buf(),
+            ir: IrFormat::Ron,
+            identity: identity.clone(),
+            loads: std::collections::HashMap::new(),
+            kinds: std::collections::HashMap::new(),
+            failed: std::collections::HashMap::new(),
+            rig: Err("none".into()),
+        };
+        let slot = |slot, entry| PaletteSlot {
+            slot,
+            name: None,
+            label: None,
+            entry,
+        };
+        let idle = SlotEntry::Clip {
+            additive: false,
+            partial: false,
+            layered: false,
+            motion_extraction: 0,
+            clip: clip("Idle.ma", 1.0),
+        };
+        let palette = Palette {
+            identity: identity.clone(),
+            owner: "009_Eruptor".into(),
+            slots: 60,
+            entries: vec![slot(0, idle), slot(41, SlotEntry::Network)],
+            refused: Vec::new(),
+        };
+        let write = |rel: String, text: String| {
+            let path = tmp.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write(
+            IrFormat::Ron.palette_path("009_Eruptor"),
+            guac_ir::to_ron(&palette).unwrap(),
+        );
+        // No networks file yet: his hurt plays nothing.
+        let read = read_palette(&shelf, "009_Eruptor").unwrap();
+        assert!(read.duration(41).is_none());
+        assert_eq!(read, palette);
+        let choice = |name, duration| Choice {
+            additive: false,
+            partial: true,
+            layered: false,
+            motion_extraction: 0,
+            clip: clip(name, duration),
+            params: vec![1.0, 0.0, 0.0, 1.0, 1.0],
+        };
+        let networks = Networks {
+            identity: identity.clone(),
+            owner: "009_Eruptor".into(),
+            slots: vec![NetworkSlot {
+                slot: 41,
+                choices: vec![choice("Hurt00.ma", 0.4), choice("Hurt01.ma", 0.3)],
+            }],
+        };
+        write(
+            IrFormat::Ron.network_path("009_Eruptor"),
+            guac_ir::to_ron(&networks).unwrap(),
+        );
+        let read = read_palette(&shelf, "009_Eruptor").unwrap();
+        assert_eq!(read.duration(41), Some(0.4), "his hurt, its first clip");
+        assert_eq!(
+            read.clip_at(41, 0.1).map(|(c, _)| c.name.as_str()),
+            Some("Hurt00.ma")
+        );
+        assert_eq!(read.duration(0), Some(1.0));
+        // Another character's networks under his name: as before.
+        let other = Networks {
+            owner: "010_Bash".into(),
+            ..networks
+        };
+        write(
+            IrFormat::Ron.network_path("009_Eruptor"),
+            guac_ir::to_ron(&other).unwrap(),
+        );
+        let read = read_palette(&shelf, "009_Eruptor").unwrap();
+        assert!(read.duration(41).is_none());
     }
 
     /// AG.219: a walker whose script stops in play walks drawn on his own

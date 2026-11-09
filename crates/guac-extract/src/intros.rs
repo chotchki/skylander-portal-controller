@@ -458,6 +458,16 @@ impl IrFormat {
         format!("{}/{load_file}.{ext}", crate::models::PALETTE_DIR)
     }
 
+    /// The random networks `load_file`'s palette keeps as networks,
+    /// `networks/<load file>.<ron|postcard>` (openspec AS.196).
+    pub fn network_path(self, load_file: &str) -> String {
+        let ext = match self {
+            Self::Ron => "ron",
+            Self::Postcard => "postcard",
+        };
+        format!("{}/{load_file}.{ext}", crate::models::NETWORK_DIR)
+    }
+
     /// The attach nodes `load_file`'s model carries,
     /// `nodes/<load file>.<ron|postcard>` (AH.50).
     pub fn nodes_path(self, load_file: &str) -> String {
