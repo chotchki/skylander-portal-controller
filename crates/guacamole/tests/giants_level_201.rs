@@ -1535,7 +1535,7 @@ fn its_arenas_commander_comes_down_after_the_waves_and_is_beaten() {
                 let far = (t.x - me.x).hypot(t.z - me.z);
                 (
                     w.toward([t.x, t.z], if far > 2.5 { 1.0 } else { 0.35 }),
-                    far <= 5.0 && k % 20 == 0,
+                    far <= 5.0 && k.is_multiple_of(20),
                 )
             }
             None => (w.toward([ARENA[0], ARENA[2]], 0.5), false),
@@ -1774,7 +1774,7 @@ fn its_life_islands_ambush_is_fought_and_opens_the_second_bridge() {
                 let far = (t[0] - me.x).hypot(t[1] - me.z);
                 (
                     w.toward(t, if far > 2.5 { 1.0 } else { 0.35 }),
-                    far <= 5.0 && k % 20 == 0,
+                    far <= 5.0 && k.is_multiple_of(20),
                 )
             }
             _ => (Stick::new(0.0, 0.0), false),
