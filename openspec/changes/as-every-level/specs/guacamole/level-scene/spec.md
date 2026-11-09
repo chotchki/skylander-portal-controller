@@ -437,3 +437,10 @@ Level 201's arena SHALL have its commander, Brock as his own heavy elf in his ha
 #### Scenario: The arena's battle
 - **WHEN** a hero fights the arena's waves on its floor
 - **THEN** Brock stands on his podium until Brock's battle scene, then comes down to the floor, is fought and beaten, and the outro plays
+
+### Requirement: Level 201's life island's ambush
+On level 201's life island past its first vine bridge, three evil Stealth Elves SHALL be summoned through the portal's entry beam and fight the hero on Stealth Elf's own attacks, driven by their own AI, each fought until beaten; the three beaten, the battle SHALL end and open the second vine bridge's switch.
+
+#### Scenario: The ambush
+- **WHEN** a hero walks onto the life island's arena
+- **THEN** three evil Stealth Elves come in, rush and hurt him, are beaten one by one, and the second bridge grows from its switch after

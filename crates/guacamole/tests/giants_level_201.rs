@@ -1721,7 +1721,8 @@ fn its_push_blocks_lower_floor_leads_back_up_its_ramp() {
 /// scripts hold his health, counted), the defeated cutscene after each,
 /// then the victory phase ends the battle and takes the initializer off,
 /// which opens the second bridge's pan; he walks onto its switch and the
-/// bridge grows.
+/// bridge grows. The battle's camera is left off (AS.210): the gameplay
+/// camera follows him through it.
 #[test]
 #[ignore = "reads the Giants dump"]
 fn its_life_islands_ambush_is_fought_and_opens_the_second_bridge() {
@@ -1853,6 +1854,10 @@ fn its_life_islands_ambush_is_fought_and_opens_the_second_bridge() {
         grown.is_some_and(|g| g > ended),
         "the second bridge: {grown:?}"
     );
+    // Its camera off the listing, the gameplay camera following him
+    // through it (stand-in ledger: `boss-camera`).
+    let camera = w.run.placement("BossCamera");
+    assert_eq!(w.run.vm.behaviour(camera), None, "the boss camera ran");
     assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
     println!("load at end: {}", load());
 }

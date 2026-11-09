@@ -276,8 +276,12 @@ pub const OWN_SCRIPTS: [&str; 70] = [
 /// victory phase ends the battle and takes the initializer off, which
 /// opens the second bridge's pan. Their init (`EnemyMinionInit`) is left
 /// off: it scales a player's hurts by its 1.0 and zeroes one player's hits
-/// on the other's, co-op's alone.
-pub const PASSAGE: [&str; 52] = [
+/// on the other's, co-op's alone. So is the battle's camera (`BossCamera`),
+/// the gameplay camera following the hero through it: the director resets
+/// the boss camera at the battle's end, which on our host resets its
+/// buffer alone (openspec AH.80), and it framed nothing for good after
+/// (openspec AS.210; stand-in ledger: `boss-camera`).
+pub const PASSAGE: [&str; 51] = [
     "EyE_Timer_Door_Template(1)",
     "EyE_Timer_Door_Template(2)",
     "EyE_Timer_Door_Template(3)",
@@ -316,7 +320,6 @@ pub const PASSAGE: [&str; 52] = [
     "Enemy_LemmingAvoider",
     "Phase Director Initializer 201 Minion",
     "PhaseDirector",
-    "BossCamera",
     "PlayerMinionInvulnerizer",
     "Phase Cutscene Intro",
     "Phase Cutscene Victory",
