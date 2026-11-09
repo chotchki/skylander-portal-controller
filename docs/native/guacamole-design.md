@@ -2272,7 +2272,11 @@ every level on the disc without a first run writing them:
   continue (the screen's own shutdown); the movie plays on the TV's player in its state, the fader's own
   clean-up after it; the level the sequencing sets is written as the level switch would (the ledger's
   `movie-fader` and `level-switch`). From the level end to that ask the pads move no one and Start pauses
-  nothing while the level's clock runs (AS.125's pads, the original's pause holding its players); a run
+  nothing while the level's clock runs (AS.125's pads, the original's pause holding its players), and the
+  portal rests: the sequencing pauses the game at 0, which runs only the pause's ignored actors, and the
+  portal manager and the portal's control are the portal pause's alone, run by a pause of 1 (the portal's
+  own alert's), so the TV holds its portal alert as it stood and a lifted hero in the level until the
+  game's unpaused (AS.125, `scripts::portal_suspended`); a run
   whose game systems stop under the screen lets it go and takes AS.15's way. While a movie converts or the
   next level is read, the band saying so shows over the held level (AS.88), waiting under a portal alert.
 

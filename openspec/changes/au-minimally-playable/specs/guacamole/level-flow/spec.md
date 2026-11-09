@@ -20,8 +20,12 @@ When a level's own end-of-level sequencing runs, the TV SHALL show its completio
 - **WHEN** a player presses left or right on the completion screen
 - **THEN** the next tab's objectives show (its story goals, its dares, its collections), and the continue press on any tab goes on
 
-#### Scenario: The portal holds the level under the screen
-- **WHEN** a figure placed during the completion screen raises the portal's alert
+#### Scenario: The portal under the screen
+- **WHEN** a second Skylander is placed, or the hero's figure lifted, while the completion screen shows
+- **THEN** no alert shows and the screen stays, as the original's portal answers no figure under it; the portal answers once the next level's run starts
+
+#### Scenario: An alert up as the screen comes
+- **WHEN** the portal's alert is up as the completion screen comes
 - **THEN** the screen steps aside under the alert and a continue press there goes nowhere; once the alert clears the screen is back on the tab it was on
 
 #### Scenario: The time dare's clock
