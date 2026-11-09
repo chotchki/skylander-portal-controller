@@ -1540,6 +1540,30 @@ fn chapter_1s_end_sequences_its_completion_screen_movie_and_level() {
         guacamole::scripts::portal_suspended(&run.vm),
         "the portal let rest under the screen"
     );
+    // A pause the portal's own alert made (its `portal pause state` set,
+    // its scripts run) is no rest: the portal answers through it.
+    let portal_data = {
+        let g = run.vm.program().global_named("PortalData_Owner").unwrap();
+        let Some(Value::Entity(owner)) = run.vm.global_peek(g) else {
+            panic!("the portal's owner")
+        };
+        let id = run.vm.placement_of(owner).unwrap();
+        run.vm.local(id, "portal data").unwrap()
+    };
+    assert!(
+        run.vm
+            .set_field(portal_data, "portal pause state", Value::Int(1))
+    );
+    assert!(guacamole::scripts::portal_paused(&run.vm));
+    assert!(
+        !guacamole::scripts::portal_suspended(&run.vm),
+        "the portal's own pause runs it"
+    );
+    assert!(
+        run.vm
+            .set_field(portal_data, "portal pause state", Value::Int(0))
+    );
+    assert!(guacamole::scripts::portal_suspended(&run.vm));
     assert!(
         run.world
             .streams
