@@ -1895,7 +1895,7 @@ fn its_ambushs_beams_outlast_a_heros_cleared_one() {
         let n = guacamole::scripts::entry_beam_count(&mut w.run.vm).unwrap_or(0);
         if cleared.is_none() && n > 0 {
             w.run
-                .with_host(|vm, host| guacamole::scripts::clear_entry_beams(vm, host))
+                .with_host(guacamole::scripts::clear_entry_beams)
                 .unwrap_or_else(|h| panic!("{h}"));
             let left = guacamole::scripts::entry_beam_count(&mut w.run.vm);
             cleared = Some((w.run.steps, n, left));
