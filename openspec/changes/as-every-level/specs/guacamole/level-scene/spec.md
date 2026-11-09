@@ -262,6 +262,10 @@ The third island SHALL play from the second ship part to the level's end on the 
 - **WHEN** a hero enters a turret by its prompt, moves its pointer onto the calibration circle and then onto a padlock with the stick and fires
 - **THEN** the shot flies to the padlock and breaks it, and the last padlock's gate opens and lets him out
 
+#### Scenario: Out of a turret
+- **WHEN** a turret's game ends, its padlocks shot or its health gone
+- **THEN** the hero hops out over its rim and lands on the ground by the spot its get-out works out, 9 m from the first turret's middle and 11 m from the second's, and a turret lost takes him in again by its prompt
+
 #### Scenario: The level's end
 - **WHEN** the hero takes the third ship part
 - **THEN** its outro plays its seven scenes and the level's end names the village, which goes to hub stage 1
@@ -372,6 +376,10 @@ A level's elemental wall SHALL stand solid until a hero of its element comes wit
 - **WHEN** chapter 1 or level 214 is played by a hero no wall opens for
 - **THEN** every wall stays shut and the level plays to its end
 
+#### Scenario: Out of level 201's life area
+- **WHEN** a hero steps onto the life area's teleporter by its hat box
+- **THEN** he's carried back to its end by the first bridge
+
 ### Requirement: A hero stands on what the scripts lay
 Anything a level's scripts make whose collision is a shape, solid to actors and a surface for them (a rope bridge's planks, a vine bridge, a landing pod, a turret's 26 ft ball) SHALL stand in the world where its scripts leave it, so a hero stands on it and is stopped by it, with no level naming it; once its scripts let it go it SHALL fall by its own gravity, taking with it whoever stood on it. What a hero's own attacks throw never stands so.
 
@@ -382,6 +390,10 @@ Anything a level's scripts make whose collision is a shape, solid to actors and 
 #### Scenario: Level 201's first vine bridge
 - **WHEN** a Life hero walks through level 201's life wall onto its first bridge's switch
 - **THEN** the bridge grows across the gap and he walks over it to the far side
+
+#### Scenario: Level 201's later vine bridges
+- **WHEN** a hero steps onto each later switch of level 201's life area, its island's fight over
+- **THEN** each bridge grows across its gap and he walks over it, never falling
 
 #### Scenario: Level 214's turrets
 - **WHEN** a hero walks at either of the third island's turrets from any side

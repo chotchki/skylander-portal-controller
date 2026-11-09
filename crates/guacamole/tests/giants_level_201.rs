@@ -1021,11 +1021,173 @@ fn the_life_areas_first_vine_bridge_carries_him_over() {
     assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
 }
 
-/// openspec AS.177: the arena's lemming avoider. In the arena once its
-/// battle's first wave is up, the hero dropped off the arena's floor beyond
-/// its rim: while he's below it the avoider holds the wave idle, so none
-/// follows him off; the minion's own fall check brings him back up, and the
-/// wave comes on again.
+/// A life area bridge's leg: its pan and where he's set down on it, the
+/// activator it opens, where its bridge's walk starts and the far side.
+type Leg = (&'static str, [f32; 3], &'static str, [f32; 2], [f32; 2]);
+
+/// openspec AS.183: the life area past its island's ambush. Its battle's
+/// end is set as it leaves it (the initializer taken off: the TV doesn't
+/// run the battle, AS.200); then each later bridge from its pan, as the
+/// first: the fight's pan opens the second activator, the second pan (on
+/// the west island) the third, the third (north of the ambush's arena) the
+/// fourth; each lays its completed platform, which stands for actors by
+/// its own solid across its gap, and he walks over it, never falling. Then
+/// the area's way out: walked onto its teleporter's start (west, by the hat
+/// box), he's carried back to its end by the first bridge (the helper
+/// `Teleporter_Helper.ai` its start makes, on 201's listing since AS.183;
+/// off it he stood on the start).
+#[test]
+#[ignore = "reads the Giants dump"]
+fn the_life_areas_later_bridges_and_its_teleporter_carry_him() {
+    use guac_motion::seam::Vec3;
+    let mut w = fresh();
+    let (init, _) = w.run.placed("Phase Director Initializer 201 Minion");
+    assert!(w.run.vm.remove(init));
+    let obj = *w
+        .run
+        .handles
+        .iter()
+        .find(|(_, h)| **h == init)
+        .expect("its object")
+        .0;
+    assert!(w.run.world.take_off(obj));
+    let platforms = |w: &Walker| -> Vec<Vec3> {
+        w.run
+            .world
+            .creature_bodies()
+            .into_iter()
+            .filter(|(h, _, _)| {
+                w.run
+                    .world
+                    .actor(*h)
+                    .and_then(|a| a.template)
+                    .and_then(|t| w.run.world.template(t))
+                    .is_some_and(|p| p.name == "NatureBridgePlatformCompleted")
+            })
+            .map(|(_, _, pose)| pose.position)
+            .collect()
+    };
+    let legs: [Leg; 3] = [
+        (
+            "Pan_Activate(1)",
+            [58.68, 30.0, -57.63],
+            "Activator_Template(2)",
+            [55.4, -57.3],
+            [33.6, -57.2],
+        ),
+        (
+            "Pan_Activate(2)",
+            [26.32, 33.6, -43.48],
+            "Activator_Template(3)",
+            [27.5, -43.0],
+            [54.4, -43.3],
+        ),
+        (
+            "Pan_Activate(3)",
+            [68.76, 30.0, -22.02],
+            "Activator_Template(4)",
+            [64.8, -21.96],
+            [49.3, -21.1],
+        ),
+    ];
+    for (k, (pan, at, act, foot, far)) in legs.into_iter().enumerate() {
+        w.run.put(Vec3::from_array(at), 270.0);
+        let act = w.run.placed(act).0;
+        let start = w.run.steps;
+        let done = |w: &Walker| {
+            w.run
+                .vm
+                .placement_of(act)
+                .and_then(|id| w.run.vm.behaviour(id))
+                .is_some_and(|b| b.starts_with("5"))
+        };
+        while !done(&w) {
+            assert!(w.run.steps < start + 1500, "{pan}'s bridge never grew");
+            w.rest(1);
+        }
+        let grown = w.run.steps - start;
+        w.rest(120);
+        let laid = platforms(&w);
+        assert_eq!(laid.len(), k + 1, "{pan}: each bridge laid: {laid:?}");
+        let mut low = f32::MAX;
+        for (to, n) in [(foot, 400u32), (far, 900)] {
+            for _ in 0..n {
+                let me = w.run.hero().pivot;
+                if (me.x - to[0]).hypot(me.z - to[1]) < 0.8 {
+                    break;
+                }
+                let s = w.toward(to, 1.0);
+                w.step(s, [false; 4]);
+                low = low.min(w.run.hero().pivot.y);
+            }
+        }
+        let end = w.run.hero().pivot;
+        println!(
+            "{pan}: grown {grown} steps on, its platform at {}, over to {end}, lowest {low:.2}",
+            laid[k]
+        );
+        assert!(
+            (end.x - far[0]).hypot(end.z - far[1]) < 1.5,
+            "{pan}: never got over: {end}"
+        );
+        assert!(low > at[1] - 2.0, "{pan}: fell off it: {low}");
+    }
+    // The way out: onto the teleporter's start, back to its end.
+    let (_, start_at) = w.run.placed("TeleporterStart(1)");
+    let (_, end_at) = w.run.placed("TeleporterEnd(1)");
+    w.run.put(start_at + Vec3::new(0.0, 1.0, 3.0), 0.0);
+    w.rest(30);
+    let mut taken = None;
+    for _ in 0..600 {
+        let s = w.toward([start_at.x, start_at.z], 1.0);
+        w.step(s, [false; 4]);
+        if w.run.hero().pivot.distance(start_at) > 30.0 {
+            taken = Some(w.run.steps);
+            break;
+        }
+    }
+    w.rest(120);
+    let end = w.run.hero().pivot;
+    println!("the teleporter: taken at {taken:?}, him at {end}, its end at {end_at}");
+    assert!(
+        taken.is_some(),
+        "the teleporter left him on its start: {end}"
+    );
+    assert!(
+        (end.x - end_at.x).hypot(end.z - end_at.z) < 1.5,
+        "by its end: {end}"
+    );
+    assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
+}
+
+/// Whether `h` runs an enemy action queue now (`EnemySystem_ActionQueues`,
+/// one past its start): a queue that runs takes no new start, so the
+/// avoider's hold, queued then, lets it run on (openspec AS.190).
+fn queue_runs(w: &Walker, h: Handle) -> bool {
+    let vm = &w.run.vm;
+    vm.program()
+        .global_named("EnemySystem_ActionQueues")
+        .and_then(|g| vm.global_peek(g))
+        .and_then(|s| vm.set(s).map(<[_]>::to_vec))
+        .unwrap_or_default()
+        .iter()
+        .any(|q| {
+            vm.field(*q, "^enemy").map(|e| vm.value(e)) == Some(guac_script::Value::Entity(h))
+                && vm
+                    .field(*q, "executionphase")
+                    .and_then(|v| vm.value(v).as_i32())
+                    .is_some_and(|p| p > 0)
+        })
+}
+
+/// openspec AS.177, AS.190: the arena's lemming avoider. In the arena once
+/// its battle's first wave is up and its Chompies have ended their entry
+/// (each one's action queue, the leap into the arena, done: while one runs
+/// the avoider's queue takes no start), the hero dropped off the arena's
+/// floor beyond its rim: while he's below it the avoider queues each its
+/// clip and idle and holds them, so they slide out of what they were doing
+/// and stand; off the listing they run on at him to the rim. None follows him off; the
+/// minion's own fall check brings him back up, and the wave comes on again.
 #[test]
 #[ignore = "reads the Giants dump"]
 fn its_arenas_wave_stays_on_the_floor_with_him_below_it() {
@@ -1066,8 +1228,33 @@ fn its_arenas_wave_stays_on_the_floor_with_him_below_it() {
         w.rest(1);
     }
     w.rest(60);
-    let up = wave(&w);
-    println!("the wave {} steps on: {up:?}", w.run.steps - start);
+    let chompies = |w: &Walker| -> Vec<Handle> {
+        let mut c: Vec<Handle> = wave(w)
+            .into_iter()
+            .map(|(h, _)| h)
+            .filter(|h| w.run.world.name(*h).contains("Chompy"))
+            .collect();
+        c.sort_unstable();
+        c.dedup();
+        c
+    };
+    let entering = w.run.steps;
+    while chompies(&w).iter().any(|h| queue_runs(&w, *h)) {
+        assert!(
+            w.run.steps < entering + 1800,
+            "the Chompies' entry never ended"
+        );
+        w.rest(1);
+    }
+    let up: Vec<(Handle, Vec3)> = chompies(&w)
+        .into_iter()
+        .filter_map(|h| w.run.world.actor(h).map(|a| (h, a.position)))
+        .collect();
+    println!(
+        "the wave {} steps on, its Chompies' entries over {} steps after: {up:?}",
+        w.run.steps - start,
+        w.run.steps - entering
+    );
     let (avoider, _) = w.run.placed("Enemy_LemmingAvoider");
     let holding = |w: &Walker| {
         let id = w.run.vm.placement_of(avoider)?;
@@ -1086,26 +1273,50 @@ fn its_arenas_wave_stays_on_the_floor_with_him_below_it() {
     let mut moved = 0.0f32;
     let mut held = 0u32;
     let mut most = 0usize;
+    // Where each stands half a second into the hold, once the run each was
+    // on (a nip, the chase) has slid out, and how far any goes after.
+    let mut settled: Option<Vec<Vec3>> = None;
+    let mut after = 0.0f32;
     for _ in 0..90 {
         w.rest(1);
         let me = w.run.hero().pivot;
-        if me.y < CENTRE[1] - 1.0 {
+        let under = me.y < CENTRE[1] - 1.0;
+        if under {
             held += 1;
             most = most.max(holding(&w).unwrap_or(0));
+        }
+        let now: Vec<Vec3> = up
+            .iter()
+            .map(|(h, at)| w.run.world.actor(*h).map_or(*at, |a| a.position))
+            .collect();
+        if under && held == 30 {
+            settled = Some(now.clone());
+        }
+        if let Some(from) = settled.as_ref().filter(|_| under) {
+            for (a, b) in from.iter().zip(&now) {
+                after = after.max((a.x - b.x).hypot(a.z - b.z));
+            }
         }
         for (h, at) in &up {
             if let Some(a) = w.run.world.actor(*h).filter(|a| !a.removed) {
                 lowest = lowest.min(a.position.y);
-                moved = moved.max((a.position.x - at.x).hypot(a.position.z - at.z));
+                // What the hold holds: how far each goes while he's under.
+                if under {
+                    moved = moved.max((a.position.x - at.x).hypot(a.position.z - at.z));
+                }
             }
         }
     }
     println!(
-        "{held} steps under the floor, the avoider holding {most} at most: the wave's lowest {lowest:.2} (the floor {}), moved at most {moved:.2} m",
+        "{held} steps under the floor, the avoider holding {most} at most: the wave's lowest {lowest:.2} (the floor {}), moved at most {moved:.2} m while he was, {after:.2} m once it settled",
         CENTRE[1]
     );
     assert!(held > 30, "he never went under");
-    assert!(most >= up.len().min(2), "the avoider held {most}");
+    assert!(
+        settled.is_some() && after < 0.5,
+        "the hold let one on at him: {after} m after it settled"
+    );
+    assert!(most >= up.len(), "the avoider held {most} of {}", up.len());
     assert!(
         lowest > CENTRE[1] - 2.0,
         "an enemy followed him off: {lowest}"

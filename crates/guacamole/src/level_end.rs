@@ -582,7 +582,7 @@ pub fn step(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<Option<Ended>, 
         warn!(%h, "a collected ship part's equip stopped: it stays as the save had it");
         host.world.ship_parts.stopped = Some(h.to_string());
     }
-    crate::turret::step(vm, host.world);
+    crate::turret::step(vm, host.world, host.engine);
     if let Some((current, name, time)) = cutscene(vm)
         && time > 0.0
         && (SKIPPED_CUTSCENES.contains(&name.as_str()) || host.world.skip_cutscenes)

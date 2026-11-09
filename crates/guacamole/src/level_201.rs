@@ -255,7 +255,8 @@ pub const OWN_SCRIPTS: [&str; 70] = [
 
 /// What of the shared scripts its way needs, by placement name, listed and
 /// never walked: the timed doors and their eyeballs, the life area's
-/// teleporters and vine bridges, the cave's lowering gate, the Giants' floor
+/// teleporters (and the helper its start makes, which carries the hero to
+/// its end: openspec AS.183) and vine bridges, the cave's lowering gate, the Giants' floor
 /// and log, the arena's wave master, its commander, crowd and drummers and
 /// its fountain, Auric's store, and its jump pads (the AU.53 review: a walk
 /// drops into the pit below the landing's yard and the one off the grass
@@ -264,7 +265,7 @@ pub const OWN_SCRIPTS: [&str; 70] = [
 /// arena's lemming avoider (openspec AS.177: with every hero below the
 /// arena's floor it holds its enemies idle, so none follows him off it, and
 /// sends them after him again once one is back up).
-pub const PASSAGE: [&str; 35] = [
+pub const PASSAGE: [&str; 36] = [
     "EyE_Timer_Door_Template(1)",
     "EyE_Timer_Door_Template(2)",
     "EyE_Timer_Door_Template(3)",
@@ -274,6 +275,7 @@ pub const PASSAGE: [&str; 35] = [
     "Timer_Eyeball_Template_long Range",
     "TeleporterStart(1)",
     "TeleporterEnd(1)",
+    "TeleporterHelper",
     "Activator_Template(1)",
     "Activator_Template(2)",
     "Activator_Template(3)",
@@ -400,6 +402,19 @@ mod tests {
             }
         }
         assert!(shared_scripts("level_202").is_empty());
+    }
+
+    /// openspec AS.183: the helper the life area's teleporter start makes
+    /// to carry the hero to its end runs on 201's listing, as the start's
+    /// own clone, and on no other level's.
+    #[test]
+    fn its_teleporters_helper_is_listed() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, WAY.level);
+        let off = level_config(Mode::Play, &files, 5, "level_202");
+        let path = "C:/tfb/Content/Levels/Includes/Teleporter/scripts/Teleporter_Helper.ai";
+        assert!(on.whitelist.lists("TeleporterHelper", path));
+        assert!(!off.whitelist.lists("TeleporterHelper", path));
     }
 
     /// AS.160's half on level 201: the life wall's two triggers, which write

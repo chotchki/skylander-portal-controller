@@ -756,6 +756,22 @@ impl ScriptWorld {
         }
     }
 
+    /// Hung `h` hung so the next placing sets it at `p`: its offset from
+    /// what it hangs from (openspec AS.189: a turret's get-out carrying the
+    /// hero hung on it). False while it hangs from nothing.
+    pub(crate) fn hang_at(&mut self, h: Handle, p: Vec3, engine: &mut dyn Engine) -> bool {
+        let Some((at, turn)) = self.hang_frame(h, engine) else {
+            return false;
+        };
+        match self.actors.get_mut(&h) {
+            Some(a) => {
+                a.hung = turn.inverse() * (p - at);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Actor `h` put at `p` by placement `by`.
     fn set_position(
         &mut self,
@@ -5101,6 +5117,50 @@ mod tests {
         assert_eq!(w.angles(BALL, &mut e).map(|g| g.facing), Some(90.0));
         w.actors.get_mut(&BALL).unwrap().attach = Value::Null;
         assert_eq!(w.angles(BALL, &mut e).map(|g| g.facing), Some(9.0));
+    }
+
+    /// openspec AS.189: a hero hung on a turret hung at a place is carried
+    /// there, the turret turned or not, and goes on there as it turns;
+    /// hung from nothing, nothing is kept.
+    #[test]
+    fn a_hero_hung_at_a_place_is_set_there() {
+        let mut e = bench();
+        e.hero = Some(Hero::new(eruptor_solid(), Tuning::ERUPTOR, Vec3::ZERO, 0.0));
+        let mut w = world();
+        let mut turret = Actor::blank();
+        turret.position = Vec3::new(4.0, 1.0, -2.0);
+        turret.angles.facing = 70.0;
+        w.actors.insert(OWNER, turret);
+        w.actors.insert(HERO, Actor::blank());
+        w.set_member(
+            &at(
+                "abstractplacement",
+                "attach node",
+                Some(Value::Entity(HERO)),
+                None,
+            ),
+            Member::AttachNode,
+            Value::Entity(OWNER),
+            &mut e,
+        )
+        .unwrap();
+        assert!(e.hero.as_ref().unwrap().hung);
+        let to = Vec3::new(7.0, 3.5, 1.0);
+        assert!(w.hang_at(HERO, to, &mut e));
+        w.place_hung(&mut e);
+        let pivot = e.hero.as_ref().unwrap().pivot;
+        assert!(pivot.distance(to) < 1e-4, "{pivot}");
+        // Turned a quarter about itself, the turret takes him round with it.
+        w.actors.get_mut(&OWNER).unwrap().angles.facing = 160.0;
+        w.place_hung(&mut e);
+        let turned = Quat::from_rotation_y(90f32.to_radians()) * (to - Vec3::new(4.0, 1.0, -2.0));
+        let pivot = e.hero.as_ref().unwrap().pivot;
+        assert!(
+            pivot.distance(Vec3::new(4.0, 1.0, -2.0) + turned) < 1e-4,
+            "{pivot}"
+        );
+        w.actors.get_mut(&HERO).unwrap().attach = Value::Null;
+        assert!(!w.hang_at(HERO, to, &mut e), "hung from nothing");
     }
 
     /// openspec AS.76: the ray caster's collision picks what the ray passes
