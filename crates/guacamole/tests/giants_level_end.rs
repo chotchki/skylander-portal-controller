@@ -1303,7 +1303,10 @@ fn chapter_1s_outro_plays_to_its_end() {
     );
     // The first scene's walks run to the end: each Mabu stopped within its
     // walk's 20 ft of its path's last waypoint (a walk not skipped leaves
-    // him where he reached it).
+    // him where he reached it). That waypoint is 15.4 m under the platform
+    // and the walks end past its far edge, so on a body (AS.79's review)
+    // the first comes down onto the ground there, where off one he stood
+    // in the air at the platform's height.
     for (name, path) in OUTRO_MABU {
         let last = run
             .files
@@ -1323,11 +1326,17 @@ fn chapter_1s_outro_plays_to_its_end() {
             .unwrap_or_else(|| panic!("{name} cloned"));
         let at = run.world.actor(h).unwrap().position;
         let off = (at.x - x).hypot(at.z - z);
-        println!("{name} stopped {off:.2} m from {path}'s last waypoint");
+        println!("{name} stopped {off:.2} m from {path}'s last waypoint, at {at}");
         assert!(
             off <= 20.0 * 0.3048 + 0.01 && off > 5.0,
             "{name} at {at}: {off}"
         );
+        if name == "213_Outro_Mabu_A" {
+            assert!(
+                at.y < END.0[1] - 10.0 && at.y > last.y,
+                "{name} down on the ground under the edge: {at}, its end {last}"
+            );
+        }
     }
     assert!(clips.len() >= 3, "Norticus' animations: {clips:?}");
     println!("hats on at once: {hats}; the actors' scales as made and a step on: {scales:?}");

@@ -5275,11 +5275,11 @@ pub fn portal_mode(vm: &mut Vm) -> Option<String> {
         .map(|d| d.display.clone())
 }
 
-/// Whether the scripts hold the portal (openspec AS.125): `System Tools -
-/// Pause Gameplay` asked to respect the portal's pause (as a level end's
-/// sequencing asks it through its completion screen) sets `portal data`'s
-/// `portal pause state` on the portal's owner, which the portal reads as
-/// figures to leave unanswered until its `Unpause Gameplay`.
+/// Whether the portal's own pause holds (openspec AS.125): `System Tools -
+/// Pause Gameplay` at 1 or more asked to respect the portal's pause (the
+/// portal manager's alert's) marks `portal data`'s `portal pause state` on
+/// the portal's owner until its `Unpause Gameplay`; a pause at 0 (a level
+/// end's) leaves it unmarked.
 pub fn portal_paused(vm: &Vm) -> bool {
     fn read(vm: &Vm) -> Option<bool> {
         let g = vm.program().global_named("PortalData_Owner")?;
@@ -5295,14 +5295,18 @@ pub fn portal_paused(vm: &Vm) -> bool {
 }
 
 /// Whether the scripts have the game paused with the portal's own scripts
-/// let rest (openspec AS.125): `System Tools - Pause Gameplay` at a value
-/// of 0 (a level end's sequencing through its completion screen, a level
-/// stream that pauses the game, the pause menu) runs only its `Pause
-/// Ignore Actors`, which the portal manager and the portal's control
-/// aren't among (they're `Portal Pause Ignore Actors`, which only a pause
-/// of 1 or more, the portal's own alert's, runs, marking `portal pause
-/// state` as it does), so the original's portal answers no figure until
-/// the game's unpaused.
+/// let rest (openspec AS.125): `system.pause state` set, the portal's pause
+/// unmarked ([`portal_paused`]). A pause at 0 runs only its `Pause Ignore
+/// Actors`, which the portal manager and the portal's control aren't among
+/// (they're `Portal Pause Ignore Actors`, run by a pause of 1 or more), so
+/// the original's portal answers no figure until the game's unpaused: on
+/// the TV a level end's sequencing through its completion screen, a
+/// scene's movie and a step of Cali's yes (the pause menu's and a stream's
+/// pause run nowhere on it). A pause at 1 that leaves the mark alone (the
+/// portal manager's queued stats, upgrade and store screens) runs the
+/// portal's scripts but reads as a rest here; none reaches the TV (Select
+/// reaches no script, the store is a screen it answers, the upgrade menu
+/// one it backs out of).
 pub fn portal_suspended(vm: &Vm) -> bool {
     let paused = vm
         .value_cell(None, guac_script::MemberId::named("system", "pause state"))

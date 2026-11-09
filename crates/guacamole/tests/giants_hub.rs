@@ -250,13 +250,15 @@ struct Asked {
     yes: bool,
 }
 
-/// What a talk came to: the cutscene it started, when it ended, and each
-/// question asked on the way with the answer given.
+/// What a talk came to: the cutscene it started, when it ended, each
+/// question asked on the way with the answer given, and the steps the
+/// portal rested under the game's pause (AS.125's review).
 #[derive(Debug, Default)]
 struct Talk {
     cutscene: Option<(u32, Option<String>)>,
     ended: Option<u32>,
     asked: Vec<Asked>,
+    rested: Vec<u32>,
 }
 
 fn hash(line: &str) -> u64 {
@@ -292,6 +294,9 @@ fn talk(
     for k in 0..3600u32 {
         talk_button(run, out.cutscene.is_none() && k % 20 == 0);
         stops.extend(run.step_play().unwrap());
+        if guacamole::scripts::portal_suspended(&run.vm) {
+            out.rested.push(run.steps);
+        }
         let cs = cutscene_name(run);
         if out.cutscene.is_none() && cs.is_some() {
             out.cutscene = Some((run.steps, cs.clone()));
@@ -462,6 +467,61 @@ fn hub_stage_1s_way_on_is_cali_then_flynn_into_level_201() {
         started.elapsed().as_secs_f64(),
         load()
     );
+}
+
+/// The AS.125 review: Cali's challenge question answered yes by one player
+/// asks for her challenges' screen, which the TV answers with nothing
+/// shown, then pauses the game at 0 until that screen's stream reads
+/// unloaded, so the portal rests meanwhile: a step, the stream never asked
+/// for, and the portal answers again, never left deaf on the hub. Nothing
+/// stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn calis_yes_leaves_the_portal_answering() {
+    use guacamole::scripts::portal_suspended;
+    println!("load at start: {}", load());
+    let (mut run, _found) = run_on_level(Mode::Play, HUB_1, setup(&[]));
+    let mut stops = Vec::new();
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap());
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    let intro = run.placement("CS_Intro_Controller");
+    while !run.vm.removed(intro) {
+        assert!(run.steps < 3600, "the intro's end");
+        stops.extend(run.step_play().unwrap());
+    }
+    assert!(!portal_suspended(&run.vm), "the portal answers in play");
+    let v = guac_motion::seam::Vec3::from_array;
+    talk(&mut run, &mut stops, v(BY_FLYNN), |_| true);
+    let cali = talk(&mut run, &mut stops, v(BY_CALI), |_| true);
+    let [asked] = cali.asked.as_slice() else {
+        panic!("one question: {cali:?}");
+    };
+    assert_eq!(asked.id.as_deref(), Some("03_Cali_WantToTry?"), "{cali:?}");
+    assert!(asked.yes, "{cali:?}");
+    let mut rested = cali.rested.clone();
+    for _ in 0..600 {
+        stops.extend(run.step_play().unwrap());
+        if portal_suspended(&run.vm) {
+            rested.push(run.steps);
+        }
+    }
+    println!(
+        "Cali: {cali:?}; the portal rested {} steps ({:?}..{:?})",
+        rested.len(),
+        rested.first(),
+        rested.last()
+    );
+    assert!(!rested.is_empty(), "her yes paused the game");
+    assert!(!portal_suspended(&run.vm), "the portal answers again");
+    assert!(rested.len() < 60, "rested {} steps", rested.len());
+    assert!(
+        stops.is_empty(),
+        "{:#?}",
+        stops.iter().map(ToString::to_string).collect::<Vec<_>>()
+    );
+    println!("load at end: {}", load());
 }
 
 /// The object the program names `name`, on any of its units.
@@ -999,12 +1059,23 @@ fn the_hermits_scene_waits_on_its_movie() {
         stops.extend(run.step_play().unwrap());
     }
     assert_eq!(scene_of(&run), scene, "held on it while it plays");
+    // The AS.125 review: the movie's pause rests the portal while it plays
+    // and lifts with it, so the hub's portal is never left deaf.
+    let resting = guacamole::scripts::portal_suspended(&run.vm);
     run.world.movie_over(MovieEnd::Finished);
     for _ in 0..60 {
         stops.extend(run.step_play().unwrap());
     }
     assert_ne!(scene_of(&run), scene, "on past it");
     assert!(run.world.level_end_movie().is_none(), "over and let go");
+    println!(
+        "the portal rested under the movie: {resting}; after it: {}",
+        guacamole::scripts::portal_suspended(&run.vm)
+    );
+    assert!(
+        !guacamole::scripts::portal_suspended(&run.vm),
+        "the portal answers after it"
+    );
     println!("load at end: {}", load());
     assert!(stops.is_empty(), "{stops:#?}");
 }

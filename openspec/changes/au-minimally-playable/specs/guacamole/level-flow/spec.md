@@ -22,7 +22,7 @@ When a level's own end-of-level sequencing runs, the TV SHALL show its completio
 
 #### Scenario: The portal under the screen
 - **WHEN** a second Skylander is placed, or the hero's figure lifted, while the completion screen shows
-- **THEN** no alert shows and the screen stays, as the original's portal answers no figure under it; the portal answers once the next level's run starts
+- **THEN** no alert shows and the screen stays, as the original's portal answers no figure under it; the portal answers once the game's unpaused (the level end's movie over) or the next level's run starts
 
 #### Scenario: An alert up as the screen comes
 - **WHEN** the portal's alert is up as the completion screen comes

@@ -1354,16 +1354,23 @@ impl Plugin for PlayPlugin {
 #[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PortalSuspended(pub(crate) bool);
 
-/// [`PortalSuspended`] off the level's run, each frame there's one (a level
-/// left keeps the last, read again by the next level's run).
+/// [`PortalSuspended`] off the level's run, each frame there's one. The run
+/// taken down takes its pause with it (`had`): a level end pauses through
+/// to its switch, and a next level whose scripts didn't link would
+/// otherwise keep the portal deaf throughout.
 fn read_portal_suspended(
     runtime: Option<Res<ScriptRuntime>>,
     mut suspended: ResMut<PortalSuspended>,
+    mut had: Local<bool>,
 ) {
-    let Some(rt) = runtime else {
-        return;
+    let now = match runtime {
+        Some(rt) => {
+            *had = true;
+            guacamole::scripts::portal_suspended(&rt.vm)
+        }
+        None if std::mem::take(&mut *had) => false,
+        None => return,
     };
-    let now = guacamole::scripts::portal_suspended(&rt.vm);
     if suspended.0 != now {
         info!(
             suspended = now,
@@ -7229,6 +7236,57 @@ mod tests {
         until(&mut app, "the second one in", |a| mode(a) == Mode::Level);
         let c = app.world().resource::<Play>().candidate.as_ref().unwrap();
         assert_eq!(c.slot.as_u8(), 3, "the other comes in in his place");
+    }
+
+    /// AS.125's review: the rest is read off the level's run each frame,
+    /// a run pausing nothing ending one left standing, and the run taken
+    /// down takes its rest with it (a level end pauses through to its
+    /// switch, and a next level whose scripts didn't link would keep the
+    /// portal deaf throughout); with no run since, nothing reads it.
+    #[test]
+    fn the_portals_rest_is_its_runs_and_goes_with_it() {
+        use std::sync::Arc;
+
+        use guac_formats::igz::Igz;
+        use guac_formats::script::{Graph, builder};
+        use guac_script::{Config, Generator, Role, Unit, Vm};
+        let run = || {
+            let bytes = builder::ui_containers();
+            let igz = Igz::parse(&bytes).unwrap();
+            let graph = Graph::read(&igz).unwrap();
+            let unit = Unit {
+                name: "global",
+                role: Role::Other,
+                igz: &igz,
+                graph: &graph,
+            };
+            let program = Arc::new(guac_script::Program::link(&[unit]).unwrap());
+            ScriptRuntime {
+                vm: Vm::new(program, Config::new(guac_script::Mode::Strict)),
+                generator: Generator::seeded(1),
+                player_loop: Default::default(),
+                steps: 0,
+                stopped: Vec::new(),
+                entry_stopped: None,
+            }
+        };
+        let mut app = App::new();
+        app.init_resource::<PortalSuspended>()
+            .add_systems(Update, read_portal_suspended);
+        let rest = |app: &App| app.world().resource::<PortalSuspended>().0;
+        app.insert_resource(PortalSuspended(true));
+        app.update();
+        assert!(rest(&app), "no run yet: nothing reads it");
+        app.insert_resource(run());
+        app.update();
+        assert!(!rest(&app), "a run pausing nothing");
+        app.insert_resource(PortalSuspended(true));
+        app.world_mut().remove_resource::<ScriptRuntime>();
+        app.update();
+        assert!(!rest(&app), "the run taken down, its rest with it");
+        app.insert_resource(PortalSuspended(true));
+        app.update();
+        assert!(rest(&app), "no run since: nothing reads it");
     }
 
     /// AG.63: with a second Eruptor holding the level, the hero taken off
