@@ -1360,7 +1360,14 @@ pub fn spawn_rigs(
         };
         let read = (|| -> Result<SpawnRig, String> {
             let skeleton = fmodel::skeleton(igz, &hero).map_err(|e| e.to_string())?;
-            let palette = models::palette(igz, &hero, &skeleton, path, identity.clone());
+            // Kept extract-wide, so as an older build reads it (AS.196).
+            let palette = models::without_random_networks(models::palette(
+                igz,
+                &hero,
+                &skeleton,
+                path,
+                identity.clone(),
+            ));
             let joints: Vec<&str> = skeleton
                 .bones
                 .iter()

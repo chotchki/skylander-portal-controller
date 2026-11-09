@@ -238,19 +238,23 @@ pub const PLAYED: [&str; 10] = [
 
 /// The palettes part's rule past the first run's levels (openspec AS.54:
 /// every skinned model a placement names, [`palettes`]), which its file's
-/// name carries, `palettes.v3.<ron|postcard>`, so a level extracted on
+/// name carries, `palettes.v4.<ron|postcard>`, so a level extracted on
 /// demand under an older rule reads its palettes again on its next ask: v2
 /// held none of its creatures, v3 (AS.78) reads a clip past one Havok block
-/// (level 214's intro's 15 s camera shot) where v2 refused it. The first
-/// run's levels' rule has its own ([`PALETTES_FIRST_RUN`]).
-pub const PALETTES_PAST_FIRST_RUN: u32 = 3;
+/// (level 214's intro's 15 s camera shot) where v2 refused it, v4 (AS.180)
+/// a random animation network's clips (level 214's Rob and its card pirate
+/// at rest) where v3 kept none. The first run's levels' rule has its own
+/// ([`PALETTES_FIRST_RUN`]).
+pub const PALETTES_PAST_FIRST_RUN: u32 = 4;
 
 /// Chapter 1's palettes part's rule (since openspec AU.33 every skinned
 /// model a placement names, as past the first run's levels, for the way past
-/// its first fight; the whitelist's before), which its file's name carries,
-/// `palettes.v4.<ron|postcard>`, so an extract written under an older rule
-/// reads chapter 1's palettes again, and nothing else, on its next start.
-pub const PALETTES_FIRST_RUN: u32 = 4;
+/// its first fight; the whitelist's before; since AS.180 a random network's
+/// clips, its Mabu's talk and a Chompy's hurt), which its file's name
+/// carries, `palettes.v5.<ron|postcard>`, so an extract written under an
+/// older rule reads chapter 1's palettes again, and nothing else, on its
+/// next start.
+pub const PALETTES_FIRST_RUN: u32 = 5;
 
 /// Where the cinematics' camera rigs' models sit: an animator camera's
 /// `anim owner` places one (openspec AS.78).
@@ -309,7 +313,8 @@ pub fn complete(m: &Manifest) -> bool {
 /// file's name carries its rule: recorded under an older name it's a part
 /// to read again (openspec AS.52: chapter 1's palettes recorded as
 /// `palettes.<ext>` before its rule's `palettes.v2`, AS.78 `palettes.v2`
-/// before `palettes.v3`). Any other part is
+/// before `palettes.v3`, AS.180 a level's `v3` before `v4` and chapter 1's
+/// `v4` before `v5`). Any other part is
 /// held once it's recorded.
 fn holds_current(level: &str, part: &str, files: &[String]) -> bool {
     if part != PALETTES {

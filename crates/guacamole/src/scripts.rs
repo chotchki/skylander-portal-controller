@@ -1975,6 +1975,18 @@ impl ScriptWorld {
         }
     }
 
+    /// Puts the file placement `obj` back on after [`ScriptWorld::take_off`],
+    /// as a reset of it after a remove does; false for none.
+    pub fn put_back(&mut self, obj: Obj) -> bool {
+        match self.objects.get(&obj).and_then(|h| self.actors.get_mut(h)) {
+            Some(a) => {
+                a.removed = false;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Whether a remove took the file placement `obj` off (openspec AH.21:
     /// a breakable broken): the prop it stands for stands nowhere again,
     /// its solid gone from both sides of the seam.
@@ -2960,7 +2972,10 @@ pub const HUB_DOORS: [&str; 2] = ["/Utilities_Controller.ai", "/Hub2_Door.ai"];
 /// the quarry, who leads him to the way on and stands there, and the Mabu
 /// at work along the way. Walked, Auric's scene never ended (a reading:
 /// its `Turn to Target` left to the walk's steering, as Cali's was at AU.6).
-pub const LEVEL_PEOPLE: [(&str, &str); 27] = [
+/// Level 214's rooms' talkers (AS.180): Rob in the workshop and the card
+/// pirate whose game isn't open yet in the pub, each at rest on its
+/// palette's slot 0, a random network.
+pub const LEVEL_PEOPLE: [(&str, &str); 29] = [
     ("level_213_tutotial", "2.NPC_Norticus_First_Cave"),
     ("level_213_tutotial", "Slave_1_hammer(3)"),
     ("level_213_tutotial", "Slave_Carry(3)"),
@@ -2981,6 +2996,8 @@ pub const LEVEL_PEOPLE: [(&str, &str); 27] = [
     ("level_214_tutotial_2", "Auric_store"),
     ("level_214_tutotial_2", "Flynn_Island_3"),
     ("level_214_tutotial_2", "Cali_Island_3"),
+    ("level_214_tutotial_2", "Rob"),
+    ("level_214_tutotial_2", "CardGame_not_Yet"),
     // Level 201's (openspec AU.53): Flynn by the landing, Quigley by the
     // door to the life mage and on the cliff path, Brock in the practice
     // pit's scenes, running over the bridge and in his arena, Auric's store.
@@ -4131,7 +4148,9 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
 /// to the keys he lacks; the door open, a hero near Auric sets off his scene
 /// (`Moneybags_end`, woken in the south room by `Activate_Auric`), which wakes
 /// his teleporter, which wakes the part (`Ship_part_2(1)`), whose shutdown
-/// wakes the sail to the third island (`214_Final_Island_IGC`).
+/// wakes the sail to the third island (`214_Final_Island_IGC`). And the rooms'
+/// talkers, who take nothing on but talk (AS.180: Rob in the workshop, the
+/// card pirate whose game isn't open yet in the pub).
 pub const PASSAGES: [(&str, &[&str]); 1] = [(
     "level_214_tutotial_2",
     &[
@@ -4156,6 +4175,9 @@ pub const PASSAGES: [(&str, &[&str]); 1] = [(
         "MoneyBags Temp_Teleporter",
         "Ship_part_2(1)",
         "214_Final_Island_IGC",
+        // The rooms' talkers, who only talk (AS.106, AS.180).
+        "Rob",
+        "CardGame_not_Yet",
     ],
 )];
 
@@ -6722,11 +6744,12 @@ mod tests {
         }
         // A template of theirs isn't one.
         assert!(!is_level_person("level_213_tutotial", "Slave_1_hammer(1)"));
-        // Level 214's rooms' talkers stay off till they pose (AS.106,
-        // AS.180): each would draw in its bind pose.
+        // Level 214's rooms' talkers, listed and drawn since they pose at
+        // rest (AS.180), there alone.
         for name in ["Rob", "CardGame_not_Yet"] {
-            assert!(!is_level_person("level_214_tutotial_2", name), "{name}");
-            assert!(!passages("level_214_tutotial_2").contains(&name), "{name}");
+            assert!(is_level_person("level_214_tutotial_2", name), "{name}");
+            assert!(passages("level_214_tutotial_2").contains(&name), "{name}");
+            assert!(!is_level_person("level_201", name), "{name}");
         }
         world.walk(0x10A);
         assert_eq!(world.people(), [0x10B], "a walked one isn't");

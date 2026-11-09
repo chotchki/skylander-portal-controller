@@ -1161,7 +1161,9 @@ fn from_the_start_to_anchor_b_and_the_open_gate_on_the_scripts_alone() {
     }
     // AG.150: each clip the scripts played on the tortoises and the
     // cannon's top along the route is in its model's palette, the one the
-    // TV poses it by; the tortoises' pushes played some.
+    // TV poses it by; the tortoises' pushes played some. A random network
+    // poses by its first clip (AS.180: a tortoise's slot 10, its idle's
+    // three, which played nothing before and now lasts its first's 4 s).
     let models = skinned_models();
     let palettes = level_palettes();
     println!(
@@ -1187,7 +1189,7 @@ fn from_the_start_to_anchor_b_and_the_open_gate_on_the_scripts_alone() {
             .unwrap_or_else(|| panic!("{name}: {model}'s palette"));
         for &slot in slots {
             assert!(
-                palette.clip(slot as u16).is_some(),
+                palette.clip_at(slot as u16, 0.0).is_some(),
                 "{name}: slot {slot} isn't a clip of {model}'s palette"
             );
         }

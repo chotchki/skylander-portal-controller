@@ -51,7 +51,7 @@ use guac_ir::model::{
     Sampler, Scroll, Segment, Skeleton, TextureRole, TextureSlot, Transform, Wrap,
 };
 use guac_ir::nodes::{AttachNode, AttachNodes};
-use guac_ir::palette::{Palette, PaletteSlot, RefusedSlot, SlotEntry};
+use guac_ir::palette::{Choice, Palette, PaletteSlot, RefusedSlot, SlotEntry};
 use guac_ir::{Category, DumpIdentity, Hero, Model, Rig, RigLight, Roster, Sha256};
 use sha2::Digest;
 
@@ -275,13 +275,13 @@ pub fn read(
         .map_err(|e| e.to_string());
     let hero_took = started.elapsed();
     let started = Instant::now();
-    let palette = self::palette(
+    let palette = without_random_networks(self::palette(
         &igz,
         &portal.hero,
         &havok_skeleton,
         load_file,
         identity.clone(),
-    );
+    ));
     let palette_took = started.elapsed();
     let nodes = self::nodes(&igz, &portal, load_file, &skeleton, identity.clone())
         .map_err(|e| refused(load_file, format!("its attach list: {e}")))?;
@@ -352,9 +352,28 @@ pub fn attach_node(p: &BoneAttachInfo<'_>, joints: &[&str]) -> AttachNode {
     }
 }
 
+/// `palette` as the extract-wide parts keep it (`palettes/`, `spawn_rigs/`):
+/// a random network's slot a network again, its clips dropped, as before
+/// openspec AS.180. Those files carry no rule in their names and a start
+/// keeps them once recorded, so a build before AS.180, which knows no
+/// [`SlotEntry::Random`], reads them on an extract a later build wrote, and
+/// an extract written before reads as one written now. A level's palettes
+/// keep their networks' clips: their file names carry their rule, which an
+/// older build never opens. So the heroes' hurt (slot 41, a network on 46
+/// of the 67 characters) stays unplayed (openspec AS.196).
+pub fn without_random_networks(mut palette: Palette) -> Palette {
+    for e in &mut palette.entries {
+        if matches!(e.entry, SlotEntry::Random { .. }) {
+            e.entry = SlotEntry::Network;
+        }
+    }
+    palette
+}
+
 /// Every filled slot of `hero`'s animation set as a palette (AH.22): each
-/// clip on `skeleton`'s joints with how it blends, a network as one, and a
-/// slot that won't play listed with why.
+/// clip on `skeleton`'s joints with how it blends, a network as one (a
+/// random network's clips among it, AS.180), and a slot that won't play
+/// listed with why.
 pub fn palette(
     igz: &Igz<'_>,
     hero: &guac_formats::igz::layouts::Hero<'_>,
@@ -374,6 +393,29 @@ pub fn palette(
                 name: s.name.map(str::to_owned),
                 label: s.label.map(str::to_owned),
                 entry: match s.clip {
+                    // A random network's clips, each of one block (openspec
+                    // AS.180: a Mabu's idle and talk, a hurt); one past a
+                    // block, or a network of networks, plays nothing here.
+                    None if !s.choices.is_empty()
+                        && s.choices
+                            .iter()
+                            .all(|c| c.clip.clip.animation.more.is_empty()) =>
+                    {
+                        SlotEntry::Random {
+                            choices: s
+                                .choices
+                                .iter()
+                                .map(|c| Choice {
+                                    additive: c.clip.flags.additive_blend(),
+                                    partial: c.clip.flags.partial_animation(),
+                                    layered: c.clip.flags.layered(),
+                                    motion_extraction: c.clip.flags.motion_extraction_flags() as u8,
+                                    clip: self::clip(&c.clip.clip, c.clip.file.unwrap_or_default()),
+                                    params: c.params.clone(),
+                                })
+                                .collect(),
+                        }
+                    }
                     None => SlotEntry::Network,
                     // Past one block (openspec AS.78: the cinematics'
                     // animator cameras), each block a clip of its own.

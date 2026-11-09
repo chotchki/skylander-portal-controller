@@ -79,7 +79,8 @@ pub use sprite::{
 };
 pub use tfb::{
     AnimationInfo, AnimationInfoList, BodyInfo, BuildDataInfo, HAVOK_MAGIC, Info, LIP_SYNC_MAGIC,
-    ModelInfo, Payload, PhysicsAnimation, PhysicsBody, PhysicsModel, TfbAnimationInfo,
+    ModelInfo, Payload, PhysicsAnimation, PhysicsBody, PhysicsModel, RandomNetwork,
+    TfbAnimationInfo,
 };
 pub use world::{PhysicsWorld, WorldInfo};
 
@@ -168,7 +169,8 @@ pub const TYPES: &[TypeDef] = &[
     def("tfbBuildDataInfo", "tfbComplexDataInfo", 0x20),
     def("tfbAnimationInfo", "tfbBuildDataInfo", 0x28),
     def("tfbPhysicsAnimation", "tfbAnimationInfo", 0x2C),
-    // Clip choosers `_tfbAnimation` can name, listed for is_a only.
+    // Clip choosers `_tfbAnimation` can name, listed for is_a; a random
+    // one is read for the clips it chooses among (openspec AS.180).
     def("animationNetwork", "tfbAnimationInfo", 0x2C),
     def("randomAnimationNetwork", "animationNetwork", 0x38),
     def(
@@ -176,6 +178,7 @@ pub const TYPES: &[TypeDef] = &[
         "randomAnimationNetwork",
         0x3C,
     ),
+    def("tfbAnimationInfoList", "igObjectList", 0x18),
     def("tfbBodyInfo", "tfbBuildDataInfo", 0x3C),
     def("tfbPhysicsBody", "tfbBodyInfo", 0x40),
     def("tfbModelInfo", "tfbComplexDataInfo", 0x2C),

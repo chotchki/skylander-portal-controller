@@ -238,20 +238,6 @@ fn treasure(s: &Story) -> Vec<(Handle, Vec3, i32)> {
         .collect()
 }
 
-/// Each piece in play walked up: the hero set down on it and held there
-/// until it's his.
-fn collect(s: &mut Story) {
-    for _ in 0..40 {
-        let Some((_, at, _)) = treasure(s).first().copied() else {
-            return;
-        };
-        s.run.put(at, 0.0);
-        for _ in 0..90 {
-            s.step([false; 4]);
-        }
-    }
-}
-
 /// openspec AU.39: chapter 1's first chest. It waits out of reach; a hero
 /// in reach sees it rise and hang there with the mash prompt up, a lone tap
 /// not opening it; mashing opens it in the script's 3 s, it flings out its
@@ -299,15 +285,22 @@ fn a_chest_opens_pays_and_stays_opened() {
         "a lone tap"
     );
 
+    let at_open = s.gold();
     let took = open(&mut s, chest, at);
     println!("opened after {took} steps of mashing");
     assert!((170..=200).contains(&took), "{took}");
     assert_eq!(s.behaviour(chest).as_deref(), Some(PAYING));
     assert_eq!(s.local(chest, "coin amount"), Some(Value::Int(63)));
+    // Every piece it throws, with its worth, as each comes into play: one
+    // thrown past the ledge's rim is out of play while it comes back, so
+    // what's in play at any one step can miss it (the au-idle-hats review:
+    // two worth 10 were out as the chest went).
+    let mut thrown: std::collections::BTreeMap<Handle, i32> = Default::default();
     let start = s.run.steps;
     while !s.run.world.removed(chest) {
         assert!(s.run.steps < start + 900, "{:?}", s.behaviour(chest));
         s.step([false; 4]);
+        thrown.extend(treasure(&s).into_iter().map(|p| (p.0, p.2)));
     }
     println!("off {} steps on", s.run.steps - start);
     let before = s.gold();
@@ -318,11 +311,26 @@ fn a_chest_opens_pays_and_stays_opened() {
         pieces.len()
     );
     assert!(pieces.len() >= 3, "{pieces:?}");
-    collect(&mut s);
+    // Each piece in play walked up: the hero set down on it and held there
+    // until it's his.
+    for _ in 0..40 {
+        let Some((_, at, _)) = treasure(&s).first().copied() else {
+            break;
+        };
+        s.run.put(at, 0.0);
+        for _ in 0..90 {
+            s.step([false; 4]);
+            thrown.extend(treasure(&s).into_iter().map(|p| (p.0, p.2)));
+        }
+    }
     assert!(treasure(&s).is_empty());
     let gold = s.gold();
-    println!("the chest paid {gold}");
-    assert_eq!(gold as i32, before as i32 + worth);
+    let all: i32 = thrown.values().sum();
+    println!(
+        "the chest paid {gold}: {} pieces worth {all} thrown",
+        thrown.len()
+    );
+    assert_eq!(gold as i32, at_open as i32 + all);
     // Its count runs a piece's worth and one more a piece until it passes
     // the level's value, and every piece of it is walked up: one thrown past
     // the ledge's rim comes back (`already corrected trajectory`).

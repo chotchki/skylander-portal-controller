@@ -1151,7 +1151,13 @@ impl ScriptWorld {
             Some(a) => {
                 a.velocity = v;
                 // A creature walks by it, and a scene walk steers from it
-                // (AS.68); anything else flies.
+                // (AS.68), or a rise flies it till one of nothing ends the
+                // jump (AS.187); anything else flies.
+                if a.walker.is_none()
+                    && let Some(walk) = self.scene_walks.get_mut(&h)
+                {
+                    walk.jump = v.y > 0.0 || (walk.jump && v != Vec3::ZERO);
+                }
                 a.launched |=
                     a.walker.is_none() && !self.scene_walks.contains_key(&h) && v != Vec3::ZERO;
                 Ok(())
@@ -2935,7 +2941,15 @@ impl ScriptWorld {
     /// over none; the ground the ray caster's (the level, or an actor that
     /// acts as an actor surface: the hub's walking Mabu crossing a barrel
     /// stepped 1.78 m up onto it); a scene's actors stay at the height
-    /// they stand.
+    /// they stand. A scene's jump flies instead (openspec AS.187: level
+    /// 201's practice pit's scene jumps Brock 25 ft to his landing 3.4 m
+    /// below, his walk carried it flat and short): from the velocity its
+    /// sequence writes with a rise, on that velocity under the actor's own
+    /// gravity, through whatever's there as its shape is off; within a foot
+    /// of its landing's height the sequence gives it its shape back, and
+    /// one whose solid meets the level then comes down on the ground under
+    /// it and stops there, the jump over (a write of nothing ends it too),
+    /// to walk and stand as before.
     pub(crate) fn move_scene_walks(&mut self, dt: f32, engine: &mut dyn Engine) {
         let mut walking: Vec<Handle> = self.scene_walks.keys().copied().collect();
         walking.sort_unstable();
@@ -2962,6 +2976,51 @@ impl ScriptWorld {
             };
             let aim = std::mem::take(&mut walk.aim);
             let dt = dt * a.physics.time_scale / 100.0;
+            // A scene's jump (AS.187): on its velocity under its gravity,
+            // through whatever's there while its shape is off; given its
+            // shape back (the sequence's, within a foot of its landing's
+            // height), coming down it lands on the ground under it and
+            // stops, as a person's walk stands it.
+            if walk.jump {
+                let p = &a.physics;
+                if p.gravity_acceleration > 0.0 {
+                    a.velocity.y -= p.gravity_acceleration * dt;
+                    if p.gravity_max_speed > 0.0 {
+                        a.velocity.y = a.velocity.y.max(-p.gravity_max_speed);
+                    }
+                }
+                let next = a.position + a.velocity * (dt * METRES_PER_FOOT);
+                let lands = a.solid.shape != 0
+                    && a.solid.interacts_with_level_mesh != 0
+                    && a.velocity.y < 0.0;
+                let ground = lands
+                    .then(|| {
+                        self.surface_ray(
+                            engine,
+                            next + Vec3::Y * 2.0,
+                            Vec3::NEG_Y,
+                            6.0,
+                            bodies.clone(),
+                        )
+                    })
+                    .flatten()
+                    .filter(|hit| hit.point.y >= next.y);
+                if let Some(a) = self.actors.get_mut(&h) {
+                    match ground {
+                        Some(hit) => {
+                            a.position = Vec3::new(next.x, hit.point.y, next.z);
+                            a.velocity = Vec3::ZERO;
+                        }
+                        None => a.position = next,
+                    }
+                }
+                if ground.is_some()
+                    && let Some(walk) = self.scene_walks.get_mut(&h)
+                {
+                    walk.jump = false;
+                }
+                continue;
+            }
             let frame = guac_motion::steer::step(
                 guac_motion::steer::Frame {
                     velocity: a.velocity * METRES_PER_FOOT,
@@ -3510,6 +3569,36 @@ impl ScriptWorld {
         owners.sort_unstable();
         owners.dedup();
         owners
+    }
+
+    /// Whether what actor `h` hangs on, a node of another actor or that
+    /// actor itself, was taken off, or what that hangs on was, up the
+    /// chain (openspec AS.186): what hangs on nothing, which the TV doesn't
+    /// draw. It stays in the world, as the engine keeps a minion hung on an
+    /// actor destroyed under him (the cutscene system's own clean-up
+    /// detaches him), its scripts and its own reads unchanged; whether the
+    /// original draws it is unread (stand-in ledger: `hung-draw`). False for
+    /// one hanging from nothing, from itself or from a ground.
+    pub fn hangs_on_nothing(&self, h: Handle) -> bool {
+        let mut at = h;
+        for _ in 0..HUNG_DEPTH {
+            let Some(a) = self.actors.get(&at) else {
+                return false;
+            };
+            let owner = match self.object(Some(a.attach)) {
+                Some(Object::Node(owner, _)) => Some(owner),
+                None => self.actor_of(Some(a.attach)),
+                _ => None,
+            };
+            let Some(owner) = owner.filter(|&o| o != at) else {
+                return false;
+            };
+            if self.actors.get(&owner).is_some_and(|o| o.removed) {
+                return true;
+            }
+            at = owner;
+        }
+        false
     }
 
     /// Each actor hung from a node set at it, as the engine's frame leaves
@@ -5284,6 +5373,64 @@ mod tests {
         assert_eq!(e.hero.as_ref().unwrap().walk.velocity, Vec3::X);
     }
 
+    /// AS.186: what hangs on an actor taken off, by a node of his or on him
+    /// itself, or on what hangs so, hangs on nothing (chapter 1's outro
+    /// takes its Mabu off with their beanies on their node 2, a hat box's
+    /// bow hangs on its lid on the box); put back, it hangs on him again.
+    /// What hangs from nothing, from itself, from a ground or round a loop
+    /// of live actors hangs on something.
+    #[test]
+    fn what_hangs_on_an_actor_taken_off_hangs_on_nothing() {
+        const MABU: Handle = 0x60;
+        const HAT: Handle = 0x61;
+        const BOX: Handle = 0x62;
+        const LID: Handle = 0x63;
+        const BOW: Handle = 0x64;
+        const LOOSE: Handle = 0x65;
+        const A: Handle = 0x66;
+        const B: Handle = 0x67;
+        let mut w = world();
+        let hung = |w: &mut ScriptWorld, h: Handle, attach: Value| {
+            let mut a = Actor::blank();
+            a.attach = attach;
+            w.actors.insert(h, a);
+        };
+        for h in [MABU, BOX] {
+            hung(&mut w, h, Value::Null);
+        }
+        let node =
+            |w: &mut ScriptWorld, owner: Handle, i: u32| w.objs.value(Object::Node(owner, i));
+        let on_mabu = node(&mut w, MABU, 2);
+        hung(&mut w, HAT, on_mabu);
+        let on_box = node(&mut w, BOX, 0);
+        hung(&mut w, LID, on_box);
+        let on_lid = node(&mut w, LID, 0);
+        hung(&mut w, BOW, on_lid);
+        hung(&mut w, LOOSE, Value::Entity(MABU));
+        assert!(!w.hangs_on_nothing(HAT), "on him");
+        assert!(!w.hangs_on_nothing(BOW), "on the lid on the box");
+        w.actors.get_mut(&MABU).unwrap().removed = true;
+        assert!(w.hangs_on_nothing(HAT), "on his node, him taken off");
+        assert!(w.hangs_on_nothing(LOOSE), "on him, him taken off");
+        assert!(!w.hangs_on_nothing(MABU), "he hangs on nothing himself");
+        w.actors.get_mut(&MABU).unwrap().removed = false;
+        assert!(!w.hangs_on_nothing(HAT), "put back");
+        w.actors.get_mut(&BOX).unwrap().removed = true;
+        assert!(w.hangs_on_nothing(LID));
+        assert!(w.hangs_on_nothing(BOW), "up the chain");
+        // Hung from itself, from a ground of something taken off, round a
+        // loop: on something.
+        hung(&mut w, A, Value::Entity(A));
+        assert!(!w.hangs_on_nothing(A));
+        let ground = w.objs.value(Object::Facet(BOX, Facet::Ground));
+        hung(&mut w, A, ground);
+        assert!(!w.hangs_on_nothing(A), "a ground isn't a hang");
+        hung(&mut w, A, Value::Entity(B));
+        hung(&mut w, B, Value::Entity(A));
+        assert!(!w.hangs_on_nothing(A), "a loop of live actors");
+        assert!(!w.hangs_on_nothing(0x99), "no such actor");
+    }
+
     /// AU.37: what hangs on an actor itself turns as he turns (Pop Fizz's
     /// beast, hung on him), by what he turned through, so a spin of its own
     /// goes on; what hangs on nothing keeps its facing.
@@ -6648,6 +6795,102 @@ mod fight_tests {
         let after = w.actor(C1).unwrap().position;
         let slid = Vec3::new(after.x - before.x, 0.0, after.z - before.z).length() / STEP / FOOT;
         assert!((slid - 25.0).abs() < 1e-2, "{slid}");
+    }
+
+    /// openspec AS.187: a scene's jump on an actor its scene walks (level
+    /// 201's practice pit jumps Brock to his landing): from a velocity
+    /// written with a rise, it flies on it under its own gravity (128
+    /// ft/s², as the jump sets it), never steered toward the walk's last
+    /// aim, up and down through the floor under it as its shape is off;
+    /// a velocity of nothing, the jump's end, holds it where its sequence
+    /// sets it down. Its shape given back on the way down, it lands on the
+    /// floor and stops there, the jump over. A velocity with no rise is the
+    /// walk's to steer from.
+    #[test]
+    fn a_scene_jump_flies_its_arc_until_its_end() {
+        let mut e = pit();
+        let mut w = world();
+        let mut brock = chompy(Vec3::new(0.0, 1.0, 0.0), 0.0);
+        brock.walker = None;
+        brock.solid.shape = 0;
+        brock.physics.gravity_acceleration = 128.0;
+        brock.physics.gravity_max_speed = 9999.0;
+        w.actors.insert(C1, brock);
+        assert!(matches!(
+            ask(&mut w, &mut e, &move_to(Value::Object(WP), 0)),
+            Answer::Done
+        ));
+        // A write with no rise: the walk's, no jump.
+        w.set_velocity(C1, Vec3::new(0.0, 0.0, 5.0), &mut e)
+            .unwrap();
+        assert!(!w.scene_walks[&C1].jump);
+        // Up at 40 ft/s, across at 20 along +z.
+        w.set_velocity(C1, Vec3::new(0.0, 40.0, 20.0), &mut e)
+            .unwrap();
+        assert!(w.scene_walks[&C1].jump);
+        let start = w.actor(C1).unwrap().position;
+        let mut top = start.y;
+        let mut path = Vec::new();
+        for _ in 0..60 {
+            w.advance(STEP, &mut e);
+            let a = w.actor(C1).unwrap();
+            top = top.max(a.position.y);
+            path.push(a.position);
+        }
+        // 40 ft/s up against 128 ft/s² peaks 6.25 ft over, less half a
+        // step's climb (a frame's velocity before its move, as a launched
+        // actor's): 5.92 ft, 1.80 m.
+        let rise = top - start.y;
+        let want = (6.25 - 40.0 * STEP / 2.0) * FOOT;
+        assert!((rise - want).abs() < 0.01, "rose {rise} m, want {want}");
+        let a = w.actor(C1).unwrap().clone();
+        assert!(a.velocity.y < -80.0, "coming down: {:?}", a.velocity);
+        assert!(
+            a.position.y < 0.0,
+            "through the floor under it: {}",
+            a.position
+        );
+        assert!(a.position.x.abs() < 1e-4, "never steered to the walk's aim");
+        assert!(
+            (a.position.z - 20.0 * FOOT).abs() < 0.01,
+            "a second along at 20 ft/s: {}",
+            a.position
+        );
+        // Its end: nothing written, set down at its landing.
+        w.set_velocity(C1, Vec3::ZERO, &mut e).unwrap();
+        assert!(!w.scene_walks[&C1].jump);
+        let landing = Vec3::new(0.0, -1.0, 6.1);
+        w.actors.get_mut(&C1).unwrap().position = landing;
+        for _ in 0..30 {
+            w.advance(STEP, &mut e);
+        }
+        let held = w.actor(C1).unwrap().position;
+        assert!(held.distance(landing) < 1e-4, "held at its landing: {held}");
+        // Again from the floor, its shape back (a box meeting the level) as
+        // it comes down: on the floor, and there.
+        let a = w.actors.get_mut(&C1).unwrap();
+        a.position = Vec3::new(0.0, 0.0, 0.0);
+        a.solid.interacts_with_level_mesh = 1;
+        w.set_velocity(C1, Vec3::new(0.0, 40.0, 0.0), &mut e)
+            .unwrap();
+        for _ in 0..20 {
+            w.advance(STEP, &mut e);
+        }
+        assert!(w.actor(C1).unwrap().position.y > 1.0, "up");
+        w.actors.get_mut(&C1).unwrap().solid.shape = 1;
+        // Given back over the floor, it falls on to it rather than being
+        // set down on it at once (the review: the ground a ray meets under
+        // it is a landing only once the step reaches it).
+        w.advance(STEP, &mut e);
+        let y = w.actor(C1).unwrap().position.y;
+        assert!(y > 1.0, "still falling: {y}");
+        for _ in 0..60 {
+            w.advance(STEP, &mut e);
+        }
+        let a = w.actor(C1).unwrap();
+        assert!(a.position.y.abs() < 1e-3, "on the floor: {}", a.position);
+        assert_eq!(a.velocity, Vec3::ZERO);
+        assert!(!w.scene_walks[&C1].jump, "the jump over");
     }
 
     #[test]

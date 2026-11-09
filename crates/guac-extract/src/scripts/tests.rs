@@ -342,7 +342,14 @@ fn spawn_models_are_every_placements_but_the_fighters_body() {
 /// as the spawn models part names it; static models have none.
 #[test]
 fn spawn_rigs_are_every_skinned_model_but_the_fighters_body() {
-    let bytes: &'static [u8] = Vec::leak(model::character(&model::attached()));
+    let mut spec = model::attached();
+    // A random network (AS.180): kept a network in the rig's palette, which
+    // a build before it reads (AS.196).
+    spec.slots.push(model::SlotSpec::network(
+        41,
+        &["Eruptor_DamageFrontv00.ma", "Eruptor_DamageFrontv01.ma"],
+    ));
+    let bytes: &'static [u8] = Vec::leak(model::character(&spec));
     let igz = Igz::parse(bytes).unwrap();
     let archive = "character/009_eruptor.bld";
     let hero = body(&igz, archive);
@@ -355,6 +362,11 @@ fn spawn_rigs_are_every_skinned_model_but_the_fighters_body() {
     };
     assert_eq!(rig.palette.owner, "Models/Characters/Eruptor/Eruptor.mdl");
     assert!(rig.palette.slots > 0 && !rig.palette.entries.is_empty());
+    let hurt = rig.palette.get(41).map(|s| &s.entry);
+    assert!(
+        matches!(hurt, Some(guac_ir::palette::SlotEntry::Network)),
+        "{hurt:?}"
+    );
     assert_eq!(
         rig.nodes.as_ref().map(|n| n.load_file.as_str()),
         Some("Models/Characters/Eruptor/Eruptor.mdl"),

@@ -542,16 +542,23 @@ fn every_level_part_is_named_and_complete_wants_them_all() {
         );
         assert_eq!(
             part_path(ir, LEVELS[0], PALETTES),
-            ir.level_path(LEVELS[0], "palettes.v4")
+            ir.level_path(LEVELS[0], "palettes.v5")
         );
     }
     // Named for its rule since AS.52 (its outro's actors), v3 since AS.78
-    // (its camera rigs), v4 since AU.33 (every skinned model it places), so
-    // an extract before it reads it again.
+    // (its camera rigs), v4 since AU.33 (every skinned model it places), v5
+    // since AS.180 (a random network's clips), so an extract before it reads
+    // it again.
     assert_eq!(
         part_path(crate::intros::IrFormat::Ron, LEVELS[0], PALETTES),
-        "levels/level_213_tutotial/palettes.v4.ron"
+        "levels/level_213_tutotial/palettes.v5.ron"
     );
+    // A v4 file, AU.33's, is a part to read again.
+    m.levels.get_mut(LEVELS[0]).unwrap().parts.insert(
+        PALETTES.to_owned(),
+        vec![crate::intros::IrFormat::Ron.level_path(LEVELS[0], "palettes.v4")],
+    );
+    assert!(!complete(&m), "the palettes under AU.33's name");
     // A v2 file, the rule before AS.78's, is a part to read again too.
     m.levels.get_mut(LEVELS[0]).unwrap().parts.insert(
         PALETTES.to_owned(),
@@ -656,6 +663,7 @@ fn the_palettes_read_every_skinned_model_a_placement_names() {
         .map(|e| {
             let what = match &e.entry {
                 SlotEntry::Network => "network".to_owned(),
+                SlotEntry::Random { choices } => format!("random of {}", choices.len()),
                 SlotEntry::Blocks { clip, .. } => format!("blocks {}", clip.name),
                 SlotEntry::Clip {
                     additive,
@@ -771,7 +779,7 @@ fn the_palettes_read_every_skinned_model_a_placement_names() {
             "level_999_elsewhere",
             PALETTES
         ),
-        "levels/level_999_elsewhere/palettes.v3.ron"
+        "levels/level_999_elsewhere/palettes.v4.ron"
     );
     assert_eq!(
         part_path(crate::intros::IrFormat::Postcard, LEVEL, PALETTES),

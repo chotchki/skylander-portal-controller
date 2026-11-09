@@ -848,8 +848,33 @@ fn fighter() -> CharacterSpec {
             properties: 0x620,
             ..SlotSpec::new(40, 1.0 / 30.0, "Eruptor_Odd.ma")
         },
+        // A hurt that's a random network of two clips (openspec AS.180).
+        SlotSpec::network(
+            41,
+            &["Eruptor_DamageFrontv00.ma", "Eruptor_DamageFrontv01.ma"],
+        ),
     ]);
     s
+}
+
+/// A palette's random networks (AS.180): each slot's clips with their
+/// lengths and params.
+type Randoms = Vec<(u16, Vec<(String, f32, Vec<f32>)>)>;
+
+fn randoms(p: &Palette) -> Randoms {
+    p.entries
+        .iter()
+        .filter_map(|s| match &s.entry {
+            SlotEntry::Random { choices } => Some((
+                s.slot,
+                choices
+                    .iter()
+                    .map(|c| (c.clip.name.clone(), c.clip.duration, c.params.clone()))
+                    .collect(),
+            )),
+            _ => None,
+        })
+        .collect()
 }
 
 #[test]
@@ -883,6 +908,7 @@ fn the_palette_keeps_every_slot_the_locomotion_leaves_out() {
             }
             SlotEntry::Network => networks.push(s.slot),
             SlotEntry::Blocks { clip, .. } => panic!("{}: no clip past a block here", clip.name),
+            SlotEntry::Random { .. } => panic!("slot {}: kept a network (AS.196)", s.slot),
         }
     }
     let three = || vec![0, 1, 2];
@@ -932,7 +958,41 @@ fn the_palette_keeps_every_slot_the_locomotion_leaves_out() {
             ),
         ]
     );
-    assert_eq!(networks, [7]);
+    // The hurt, a random network, kept a network in the character's own
+    // palette, which a build before AS.180 reads (AS.196): it plays
+    // nothing, as before.
+    assert_eq!(networks, [7, 41]);
+    assert!(p.duration(41).is_none() && p.clip(41).is_none());
+    // AS.180: read in full (a level's palettes), the random network's
+    // clips, each its own length, with their params as stored; a play of
+    // it its first clip's length.
+    let bytes = character(&fighter());
+    let igz = Igz::parse(&bytes).unwrap();
+    let portal = fmodel::in_play(&igz, fmodel::portal_model(&igz).unwrap(), "009_Eruptor").unwrap();
+    let skeleton = fmodel::skeleton(&igz, &portal.hero).unwrap();
+    let full = palette(&igz, &portal.hero, &skeleton, "009_Eruptor", identity());
+    let row = vec![1.0, 0.0, 0.0, 1.0, 1.0];
+    assert_eq!(
+        randoms(&full),
+        [(
+            41,
+            vec![
+                (
+                    "Eruptor_DamageFrontv00.ma".to_owned(),
+                    8.0 / 30.0,
+                    row.clone()
+                ),
+                ("Eruptor_DamageFrontv01.ma".to_owned(), 16.0 / 30.0, row),
+            ]
+        )]
+    );
+    assert_eq!(full.duration(41), Some(8.0 / 30.0));
+    assert!(full.clip(41).is_none(), "no locomotion's clip");
+    assert_eq!(
+        without_random_networks(full.clone()),
+        *p,
+        "the character's own, the network kept as one"
+    );
     assert_eq!(p.refused.len(), 1);
     assert_eq!(p.refused[0].slot, 40);
     assert!(p.refused[0].reason.contains("blendHint"), "{:?}", p.refused);

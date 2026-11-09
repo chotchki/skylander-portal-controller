@@ -405,3 +405,28 @@ Past level 214's earth wall a Giant's attacks SHALL break the super hard rocks, 
 #### Scenario: Crusher through the earth area
 - **WHEN** Crusher walks in past the wall
 - **THEN** his attacks, the area's bomb and its key take him to the hat box, which gives its hat
+
+### Requirement: What hangs on someone taken off
+When a level's scripts take off an actor something hangs on, a hat, a tool, a lid or an effect, the TV SHALL draw nothing of what hangs on him, nor of what hangs on that, while he's off, and SHALL draw it on him again if he's put back. What hangs on him stays in the level for its scripts: chapter 1's outro takes its three Mabu off with their beanies 2.2 m up on them.
+
+#### Scenario: Chapter 1's outro
+- **WHEN** chapter 1's outro ends and takes its three Mabu off
+- **THEN** none of their three beanies hangs 2.2 m up over where they stood behind the completion screen
+
+#### Scenario: A bomb thrown
+- **WHEN** a hero throws level 214's workshop bomb at its wall and it bursts
+- **THEN** nothing of the bomb stays drawn where it was
+
+### Requirement: A person rests on its own idle
+A level's people SHALL stand at rest on the idle their model plays, never in their bind pose. Where that idle is a set of clips the original picks among, the TV SHALL play the set's clips: level 214's Rob in the workshop and the card pirate in the pub rest on their three idles.
+
+#### Scenario: Level 214's rooms' talkers
+- **WHEN** a hero walks into the workshop or the pub and talks to Rob or the card pirate
+- **THEN** each stands on his idles, arms at his sides, at rest and while he talks
+
+### Requirement: A scene's jump flies to its landing
+When a scene jumps one of a level's people to a waypoint, the TV SHALL fly him on the jump's own arc, up and then down under his gravity through whatever is in the way until his landing's height, then bring him down on the ground there, never under it: level 201's practice pit's last scene jumps Brock off the yard to the landing 3.4 m below.
+
+#### Scenario: Brock's jump
+- **WHEN** level 201's practice pit's last scene jumps Brock off the yard
+- **THEN** he rises 6.7 m over the yard and comes down on the ground within 0.5 m of his landing
