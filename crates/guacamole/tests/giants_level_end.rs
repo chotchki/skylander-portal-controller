@@ -1641,10 +1641,18 @@ fn chapter_1s_end_sequences_its_completion_screen_movie_and_level() {
         ]
     );
     // Waits there for the continue, the level let rest under it (openspec
-    // AS.205): no creature, clone or hero ticking, moving or playing on.
+    // AS.205): no creature, clone or hero ticking, moving or playing on,
+    // the systems the pause runs stepping on (the music controller's).
+    let music = guacamole::scripts::running(&run.vm, &run.world, "MusicController.ai")
+        .expect("the music controller");
+    let heard = run.vm.active_seconds(music);
     let under = under_pause(&mut run, 60, |run| {
         stops.extend(saved_step(run, &mut session));
     });
+    assert!(
+        run.vm.active_seconds(music) > heard,
+        "the music controller rested: {heard:?}"
+    );
     println!(
         "under the screen: {} awake, {} resting, stepped {:?}",
         under.awake, under.resting, under.stepped
