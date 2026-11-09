@@ -1916,10 +1916,18 @@ fn its_ambushs_beams_outlast_a_heros_cleared_one() {
     );
     let (_, made, left) = cleared.expect("the summon's beams");
     assert_eq!(made, 3, "the summon's three beams");
-    assert_eq!(left, Some(3), "a hero's clean-up took an enemy minion's beam");
+    assert_eq!(
+        left,
+        Some(3),
+        "a hero's clean-up took an enemy minion's beam"
+    );
     assert_eq!(elves, 3, "the three landed");
     assert_eq!(ais, 3, "each with its AI");
-    assert_ne!(past.as_deref(), Some("minion summon cutscene"), "past the summon");
+    assert_ne!(
+        past.as_deref(),
+        Some("minion summon cutscene"),
+        "past the summon"
+    );
     assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
     println!("load at end: {}", load());
 }
