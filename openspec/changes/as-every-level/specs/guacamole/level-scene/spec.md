@@ -457,7 +457,7 @@ Past the life island's ambush a hero SHALL walk level 201's life area on foot as
 - **THEN** his attacks take the wall, he mashes the hat box open and the teleporter carries him to its end by the first bridge, which he walks back over
 
 ### Requirement: The level rests while the game is paused
-While the original's pause holds the game with the portal's own pause unmarked (a level end's sequencing, a scene's movie, a question asking for a screen), every creature, clone and hero SHALL stand still, its scripts let rest and its animations held; the screens, the music, the game's own systems and whatever made the pause SHALL run on, and once it's lifted each SHALL go on where it was.
+While the original's pause holds the game with the portal's own pause unmarked (a level end's sequencing, a scene's movie, a question asking for a screen), every creature, clone and hero SHALL stand still, its scripts let rest and its animations held; the screens, the music, the game's own systems, whatever made the pause and what it takes control of SHALL run on, and once it's lifted each SHALL go on where it was.
 
 #### Scenario: Under a completion screen
 - **WHEN** level 214's completion screen shows with an Elf Lobber awake and his arrows in the air
