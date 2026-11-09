@@ -1862,6 +1862,68 @@ fn its_life_islands_ambush_is_fought_and_opens_the_second_bridge() {
     println!("load at end: {}", load());
 }
 
+/// The au-201-elves review (openspec AS.200): a hero taken off before his
+/// entry beam activated him has his beam cleared
+/// (`scripts::clear_entry_beams`, the deactivate path's), and only his: an
+/// enemy minion's beam carries no controller. Cleared the step the life
+/// island's summon has made its three beams, all three still land, each
+/// evil Stealth Elf made with its AI, and the director goes on past its
+/// summon; with every beam cleared none of them lands and the battle never
+/// ends, the second bridge with it.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn its_ambushs_beams_outlast_a_heros_cleared_one() {
+    use guac_motion::seam::Vec3;
+    println!("load at start: {}", load());
+    let mut w = fresh();
+    let director = w.run.placement("PhaseDirector");
+    w.run.put(Vec3::new(70.5, 30.0, -75.0), 0.0);
+    w.rest(30);
+    let start = w.run.steps;
+    let alive = |w: &Walker, name: &str| {
+        w.run
+            .world
+            .clones()
+            .into_iter()
+            .filter(|h| w.run.world.name(*h) == name)
+            .filter(|h| w.run.world.actor(*h).is_some_and(|a| !a.removed))
+            .count()
+    };
+    let mut cleared = None;
+    let (mut elves, mut ais) = (0, 0);
+    for _ in 0..900u32 {
+        let n = guacamole::scripts::entry_beam_count(&mut w.run.vm).unwrap_or(0);
+        if cleared.is_none() && n > 0 {
+            w.run
+                .with_host(|vm, host| guacamole::scripts::clear_entry_beams(vm, host))
+                .unwrap_or_else(|h| panic!("{h}"));
+            let left = guacamole::scripts::entry_beam_count(&mut w.run.vm);
+            cleared = Some((w.run.steps, n, left));
+        }
+        let s = w.toward([70.12, -60.0], 1.0);
+        w.step(s, [false; 4]);
+        elves = alive(&w, "026_StealthElf_Evil");
+        ais = alive(&w, "026_StealthElf_AI");
+        let summoning = w.run.vm.behaviour(director) == Some("minion summon cutscene");
+        if elves == 3 && ais == 3 && !summoning {
+            break;
+        }
+    }
+    let past = w.run.vm.behaviour(director).map(str::to_owned);
+    println!(
+        "the beams cleared at {cleared:?} (step, beams, beams after); {} steps on: {elves} evil elves up, {ais} AIs, the director {past:?}",
+        w.run.steps - start
+    );
+    let (_, made, left) = cleared.expect("the summon's beams");
+    assert_eq!(made, 3, "the summon's three beams");
+    assert_eq!(left, Some(3), "a hero's clean-up took an enemy minion's beam");
+    assert_eq!(elves, 3, "the three landed");
+    assert_eq!(ais, 3, "each with its AI");
+    assert_ne!(past.as_deref(), Some("minion summon cutscene"), "past the summon");
+    assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
+    println!("load at end: {}", load());
+}
+
 /// openspec AS.168: the rope bridge over the channel holds the hero by its
 /// planks' own solids, no way naming them: set down on it halfway over the
 /// channel, 10 m above its floor, he stands on its planks and walks on

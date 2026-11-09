@@ -4689,10 +4689,11 @@ pub fn entry_beams(
     let Some(pcd) = vm.global(g) else {
         return Ok(None);
     };
-    // With no hero's join waiting on a beam, what the beams' on-spawn logic
-    // spawns joins the VM the moment a find asks for it, as in the walk:
-    // an enemy minion's sets the minion controller it spawns the op after
-    // (openspec AS.200). A hero's join adds his own once his beam is done.
+    // With no hero's beam waiting, what the beams' on-spawn logic spawns
+    // joins the VM as a find asks for it, as in the walk (an enemy minion's
+    // controller, openspec AS.200). While one waits his join adds his own,
+    // since his activation's find on his fresh minion would adopt him ahead
+    // of it, and an enemy minion landing then gets no AI (AS.218).
     vm.set_adopt_in_calls(waiting.is_none());
     let managed = vm.call_for(pm, ENTRY_MANAGE, &[(param.as_str(), pcd)], &[], host);
     vm.set_adopt_in_calls(false);
@@ -4721,14 +4722,17 @@ pub fn activate_without_beam(
     joined(vm, host, ready.pm, hero)
 }
 
-/// Every entry beam cleaned up as the original's [`ENTRY_CLEAN_UP`] does
-/// (its column, its follow actor and what it tracks off, the beam out of
-/// the set): a hero taken off before his beam activated him leaves none to
-/// activate his minion after he's gone.
+/// Every player's entry beam cleaned up as the original's [`ENTRY_CLEAN_UP`]
+/// does (its column, its follow actor and what it tracks off, the beam out
+/// of the set): a hero taken off before his beam activated him leaves none
+/// to activate his minion after he's gone. A beam with no controller, an
+/// enemy minion's (openspec AS.200: the Phase Director's summon), isn't a
+/// player's and lands as it would: cleared, its minion would never be made
+/// and its battle never end.
 pub fn clear_entry_beams(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<(), Halt> {
-    let Some(n) = entry_beam_count(vm).filter(|n| *n > 0) else {
+    if entry_beam_count(vm).unwrap_or(0) == 0 {
         return Ok(());
-    };
+    }
     let pm = portal_manager(vm, host.world)?;
     let program = vm.program_arc();
     let (Some(param), Some(g)) = (
@@ -4737,16 +4741,20 @@ pub fn clear_entry_beams(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<()
     ) else {
         return Ok(());
     };
-    for _ in 0..n {
-        let Some(pcd) = vm.global(g) else {
-            return Ok(());
-        };
-        let Some(beam) = vm
-            .field(pcd, "entry beams")
-            .and_then(|s| vm.set(s).and_then(|e| e.first().copied()))
-        else {
-            return Ok(());
-        };
+    let Some(pcd) = vm.global(g) else {
+        return Ok(());
+    };
+    let players: Vec<Value> = vm
+        .field(pcd, "entry beams")
+        .and_then(|s| vm.set(s).map(<[Value]>::to_vec))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|b| {
+            vm.field(*b, "controller")
+                .is_some_and(|c| !matches!(vm.value(c), Value::Null))
+        })
+        .collect();
+    for beam in players {
         vm.call_for(pm, ENTRY_CLEAN_UP, &[(param.as_str(), beam)], &[], host)?;
     }
     Ok(())
