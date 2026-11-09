@@ -1313,12 +1313,14 @@ impl Plugin for PlayPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(HeroPlugin)
             .init_resource::<Play>()
+            .init_resource::<PortalSuspended>()
             .add_message::<RestartLevel>()
             .add_message::<LevelEnded>()
             .add_systems(
                 Update,
                 (
                     restart,
+                    read_portal_suspended,
                     follow_portal,
                     ask_items,
                     keep_unlinked,
@@ -1344,6 +1346,33 @@ impl Plugin for PlayPlugin {
     }
 }
 
+/// Whether the level's scripts have the game paused with the portal let
+/// rest (openspec AS.125, [`guacamole::scripts::portal_suspended`]): a
+/// level end's completion screen. The original's portal answers no figure
+/// then, so the TV's portal holds its alert as it stood and a hero's figure
+/// lifted leaves him in the level, to be answered once the game's unpaused.
+#[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PortalSuspended(pub(crate) bool);
+
+/// [`PortalSuspended`] off the level's run, each frame there's one (a level
+/// left keeps the last, read again by the next level's run).
+fn read_portal_suspended(
+    runtime: Option<Res<ScriptRuntime>>,
+    mut suspended: ResMut<PortalSuspended>,
+) {
+    let Some(rt) = runtime else {
+        return;
+    };
+    let now = guacamole::scripts::portal_suspended(&rt.vm);
+    if suspended.0 != now {
+        info!(
+            suspended = now,
+            "the portal's scripts let rest by the game's pause"
+        );
+        suspended.0 = now;
+    }
+}
+
 /// `placement` is the toy `hero` stood on the portal as, its words still
 /// good: the same figure for the same profile, no edit or reset since
 /// (AS.112; the original's portal knows a toy by its serial).
@@ -1363,7 +1392,11 @@ fn follow_portal(
     mut level: ResMut<Level>,
     mut commands: Commands,
     bodies: Query<(&HeroBody, Option<&HeroRun>)>,
-    (runtime, game): (Option<Res<ScriptRuntime>>, Res<Time<Virtual>>),
+    (runtime, game, suspended): (
+        Option<Res<ScriptRuntime>>,
+        Res<Time<Virtual>>,
+        Res<PortalSuspended>,
+    ),
 ) {
     for PortalChanged(change) in heard.read() {
         let slot = match change {
@@ -1396,6 +1429,15 @@ fn follow_portal(
             info!(
                 slot = slot.display(),
                 "the hero's figure left the portal under a scene's lock"
+            );
+            play.lifted = Some(game.elapsed());
+            continue;
+        }
+        // The portal let rest by the game's pause (AS.125): he stays.
+        if suspended.0 && play.on_stage().is_some() {
+            info!(
+                slot = slot.display(),
+                "the hero's figure left the portal while the game's paused"
             );
             play.lifted = Some(game.elapsed());
             continue;
@@ -1446,11 +1488,15 @@ fn let_go(
     mut commands: Commands,
     bodies: Query<(&HeroBody, Option<&HeroRun>)>,
     runtime: Option<Res<ScriptRuntime>>,
-    game: Res<Time<Virtual>>,
+    (game, suspended): (Res<Time<Virtual>>, Res<PortalSuspended>),
 ) {
     let Some(at) = play.lifted else {
         return;
     };
+    // The game's pause holds him as long as it lasts (AS.125).
+    if suspended.0 {
+        return;
+    }
     let overdue = game.elapsed() >= at + HELD_SWAP_BACKSTOP;
     if !overdue && scene_keeps_him(&play, &bodies, runtime.as_deref()) {
         return;
@@ -2000,13 +2046,19 @@ fn judge_portal(
     (prepare, queue): (Option<Res<Prepare>>, Option<Res<IntroQueue>>),
     mut pads: ResMut<LevelPads>,
     source: Option<Res<ScriptSource>>,
-    (choice, movies): (
+    (choice, movies, suspended): (
         Option<Res<crate::level_choice::LevelChoice>>,
         Option<Res<crate::movies::Movies>>,
+        Option<Res<PortalSuspended>>,
     ),
 ) {
     let on_portal = current.is_some_and(|c| matches!(c.screen, TvScreen::Portal { .. }));
+    // The portal let rest by the game's pause (AS.125): its alert stands as
+    // it stood until the game's unpaused, as the original's portal answers
+    // no figure then.
+    let rests = on_portal && play.inside.is_some() && suspended.is_some_and(|s| s.0);
     let alert = match turntables.shelf().filter(|_| on_portal) {
+        Some(_) if rests => play.alert,
         Some(shelf) => {
             let mut lineup = Lineup::of(
                 &play.order,
@@ -7145,6 +7197,38 @@ mod tests {
         }
         let on = hero(&app).pivot;
         assert!(on.distance(at) > 0.1, "he walks on: {at} -> {on}");
+    }
+
+    /// AS.125: while the level's scripts rest the portal (a level end's
+    /// completion screen), a second Skylander placed raises no alert and
+    /// holds nothing, and the hero's figure lifted leaves him in the level;
+    /// the rest over, the portal answers both: he's taken off and the other
+    /// comes in in his place.
+    #[test]
+    fn a_portal_the_scripts_rest_answers_no_figure_until_they_wake_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = walking(tmp.path());
+        app.insert_resource(PortalSuspended(true));
+        place(&mut app, 3, ERUPTOR, "Eruptor");
+        for _ in 0..30 {
+            app.update();
+            assert_eq!(alert(&app), None, "no alert under the rest");
+            assert_eq!(mode(&app), Mode::Level, "nothing held");
+        }
+        clear(&mut app, 0);
+        for _ in 0..30 {
+            app.update();
+            assert_eq!(alert(&app), None, "no alert under the rest");
+        }
+        assert!(app.world().resource::<Play>().lifted(), "he stays, lifted");
+        assert!(app.world().resource::<Play>().on_stage().is_some());
+        app.insert_resource(PortalSuspended(false));
+        until(&mut app, "his figure answered", |a| {
+            !a.world().resource::<Play>().lifted()
+        });
+        until(&mut app, "the second one in", |a| mode(a) == Mode::Level);
+        let c = app.world().resource::<Play>().candidate.as_ref().unwrap();
+        assert_eq!(c.slot.as_u8(), 3, "the other comes in in his place");
     }
 
     /// AG.63: with a second Eruptor holding the level, the hero taken off

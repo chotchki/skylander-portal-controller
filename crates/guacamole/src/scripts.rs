@@ -5310,6 +5310,42 @@ pub fn portal_mode(vm: &mut Vm) -> Option<String> {
         .map(|d| d.display.clone())
 }
 
+/// Whether the scripts hold the portal (openspec AS.125): `System Tools -
+/// Pause Gameplay` asked to respect the portal's pause (as a level end's
+/// sequencing asks it through its completion screen) sets `portal data`'s
+/// `portal pause state` on the portal's owner, which the portal reads as
+/// figures to leave unanswered until its `Unpause Gameplay`.
+pub fn portal_paused(vm: &Vm) -> bool {
+    fn read(vm: &Vm) -> Option<bool> {
+        let g = vm.program().global_named("PortalData_Owner")?;
+        let Value::Entity(owner) = vm.global_peek(g)? else {
+            return None;
+        };
+        let id = vm.placement_of(owner)?;
+        let data = vm.local(id, "portal data")?;
+        let state = vm.field(data, "portal pause state")?;
+        Some(vm.value(state).as_f32().is_some_and(|v| v != 0.0))
+    }
+    read(vm).unwrap_or(false)
+}
+
+/// Whether the scripts have the game paused with the portal's own scripts
+/// let rest (openspec AS.125): `System Tools - Pause Gameplay` at a value
+/// of 0 (a level end's sequencing through its completion screen, a level
+/// stream that pauses the game, the pause menu) runs only its `Pause
+/// Ignore Actors`, which the portal manager and the portal's control
+/// aren't among (they're `Portal Pause Ignore Actors`, which only a pause
+/// of 1 or more, the portal's own alert's, runs, marking `portal pause
+/// state` as it does), so the original's portal answers no figure until
+/// the game's unpaused.
+pub fn portal_suspended(vm: &Vm) -> bool {
+    let paused = vm
+        .value_cell(None, guac_script::MemberId::named("system", "pause state"))
+        .and_then(|v| v.as_f32())
+        .is_some_and(|v| v != 0.0);
+    paused && !portal_paused(vm)
+}
+
 /// Whether a scene keeps the playing heroes' figures on the portal (openspec
 /// AS.112): `Game - Cutscene`, started with `skylander switching not
 /// allowed` (its default, which the interiors, the chests and the other

@@ -1487,6 +1487,10 @@ fn chapter_1s_end_sequences_its_completion_screen_movie_and_level() {
         stops.extend(saved_step(&mut run, &mut session));
         played += u32::from(in_play(&run));
     }
+    assert!(
+        !guacamole::scripts::portal_suspended(&run.vm),
+        "the portal answers in play"
+    );
     run.put(Vec3::from_array(END.0), END.1);
     let (ender, _) = run.placed("Temp_Level_Ender");
     assert!(run.world.wake(ender));
@@ -1530,6 +1534,12 @@ fn chapter_1s_end_sequences_its_completion_screen_movie_and_level() {
     );
     let layer = run.vm.program().global_named("Pause Layer").unwrap();
     assert_eq!(run.vm.global_peek(layer), Some(Value::Int(1)), "paused");
+    // The portal let rest through the screen (openspec AS.125): the game
+    // paused at 0, which runs no portal script, where in play it wasn't.
+    assert!(
+        guacamole::scripts::portal_suspended(&run.vm),
+        "the portal let rest under the screen"
+    );
     assert!(
         run.world
             .streams
