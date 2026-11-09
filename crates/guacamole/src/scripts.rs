@@ -657,6 +657,9 @@ pub struct ScriptWorld {
     /// to` with no creature's body (openspec AS.52,
     /// [`crate::script_engine::SceneWalk`]), by handle.
     pub(crate) scene_walks: HashMap<Handle, crate::script_engine::SceneWalk>,
+    /// The body a scene walk steps an actor on whose solid meets the level
+    /// (openspec AS.79), as a creature's: kept while it's walked.
+    pub(crate) scene_bodies: HashMap<Handle, guac_motion::hero::Hero>,
     /// The heroes whose walk a script set this step (openspec AU.37): the
     /// engine's own model leaves it as written ([`ScriptWorld::engine_walk`]).
     pub(crate) walk_written: std::collections::HashSet<Handle>,
@@ -974,6 +977,7 @@ impl ScriptWorld {
             surfaces_stood: Default::default(),
             intro_held: None,
             scene_walks: HashMap::new(),
+            scene_bodies: HashMap::new(),
             walk_written: std::collections::HashSet::new(),
             told: Value::Null,
             interface: None,
