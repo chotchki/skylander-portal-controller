@@ -472,7 +472,8 @@ pub struct ScriptWorld {
     /// The slots a hero's palette set holds nothing in (openspec AS.196):
     /// the set's element there reads as nothing, as the original's null
     /// element does, where every other template's reads a clip of no
-    /// length ([`ScriptWorld::set_holes_of`]).
+    /// length ([`ScriptWorld::set_holes_of`]; stand-in ledger:
+    /// `palette-holes`).
     pub(crate) holes: HashMap<Obj, Vec<bool>>,
     /// Whether a scene held the game as the last step ended
     /// ([`crate::anchors::scene_holds`], [`add_scripted`]).

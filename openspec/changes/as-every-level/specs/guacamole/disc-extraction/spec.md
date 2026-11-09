@@ -34,3 +34,14 @@ A level's palettes SHALL hold every slot of each placed cinematic camera rig (a 
 #### Scenario: An extract from before the camera rigs
 - **WHEN** guacamole starts on an extract whose chapter 1 palettes predate the camera rigs
 - **THEN** it reads chapter 1's palettes again, extracts nothing else, and the outro's camera shot lasts its clip
+
+### Requirement: A hero's hurts reach an extract made before them
+An extract made before a hero's hurts were extracted SHALL read them on its next start alone, every model kept, once (8 s on the Mac), and a build from before them SHALL play every hero's attacks on an extract a newer build wrote or brought up to date, reading nothing again.
+
+#### Scenario: chotchki's dev extract
+- **WHEN** guacamole starts on an extract its models went into before the hurts
+- **THEN** it reads the heroes' hurts alone, Eruptor's the same as a new extract's, and a second start reads nothing
+
+#### Scenario: Back to the build before
+- **WHEN** the build before starts on that extract and Eruptor attacks
+- **THEN** it reads nothing again and his throw and eruption play

@@ -418,3 +418,10 @@ When a scene jumps one of a level's people to a waypoint, the TV SHALL fly him o
 #### Scenario: Brock's jump
 - **WHEN** level 201's practice pit's last scene jumps Brock off the yard
 - **THEN** he rises 6.7 m over the yard and comes down on the ground within 0.5 m of his landing
+
+### Requirement: A hero flinches when he's hit
+When a hit hurts a hero, the TV SHALL play his own hurt on him over his walk: where his hurt is a set of clips the original picks among, the set's first (Eruptor's 0.67 s), a Giant his one (Crusher's 0.43 s). The hurt SHALL hold him no longer than the hit's push: walking on the stick, he walks at its speed again 0.28 s after a Chompy's bite, his hurt still playing.
+
+#### Scenario: A Chompy bites Eruptor
+- **WHEN** a Chompy bites Eruptor at level 1 in chapter 1's first fight as he walks at it
+- **THEN** he flinches for 0.64 s, and walks on under the flinch once the bite's push is over
