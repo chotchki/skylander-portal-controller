@@ -426,8 +426,17 @@ impl Run {
         let joined = self.minion.is_some();
         let player_loop = self.player_loop.clone();
         let mut stopped = Vec::new();
+        // The frame's slides, then the entry beams between them and the walk
+        // as the TV's step runs them (openspec AH.224): a level's own, an
+        // enemy minion's summoned through one (AS.200). The headless join
+        // activates the hero with none.
+        let slid = self.with_host(|vm, host| vm.slide(host))?;
+        assert!(slid.stopped.is_empty(), "strict mode stops by halting");
+        if scripts::entry_beam_count(&mut self.vm).unwrap_or(0) > 0 {
+            self.with_host(|vm, host| scripts::entry_beams(vm, host, None))?;
+        }
         let r =
-            self.with_host(|vm, host| player_loop.frame_with(vm, host, joined, &mut stopped, then));
+            self.with_host(|vm, host| player_loop.walk_with(vm, host, joined, &mut stopped, then));
         assert!(stopped.is_empty(), "strict mode stops by halting");
         // The level's end where the host doesn't run the original's, as the
         // TV's step makes it (openspec AS.15).
@@ -482,8 +491,18 @@ impl Run {
         let joined = self.minion.is_some();
         let player_loop = self.player_loop.clone();
         let mut stopped = Vec::new();
+        // The frame's slides, then the entry beams, as `step_with`'s.
+        match self.with_host(|vm, host| vm.slide(host)) {
+            Ok(slid) => stopped.extend(slid.stopped),
+            Err(h) => stopped.push(h),
+        }
+        if scripts::entry_beam_count(&mut self.vm).unwrap_or(0) > 0
+            && let Err(h) = self.with_host(|vm, host| scripts::entry_beams(vm, host, None))
+        {
+            stopped.push(h);
+        }
         let r =
-            self.with_host(|vm, host| player_loop.frame_with(vm, host, joined, &mut stopped, then));
+            self.with_host(|vm, host| player_loop.walk_with(vm, host, joined, &mut stopped, then));
         if let Err(h) = self.with_host(guacamole::level_end::step) {
             stopped.push(h);
         }

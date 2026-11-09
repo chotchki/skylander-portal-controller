@@ -1330,6 +1330,614 @@ fn its_arenas_wave_stays_on_the_floor_with_him_below_it() {
     assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
 }
 
+/// Level 201's arena's middle (`arenaCenter`), metres.
+const ARENA: [f32; 3] = [-198.16, 24.05, 76.91];
+
+/// Set down past the fifth gate and walked through its two eyeballs into
+/// the arena, whose intro plays and is waited out, as the walk goes.
+fn into_the_arena(w: &mut Walker) {
+    w.run
+        .put(guac_motion::seam::Vec3::new(-175.8, 26.0, 22.2), 0.0);
+    w.rest(30);
+    assert!(w.stretch(
+        "h -180.3 20.7 20; a 150; s 30; w -173.2 22.2; w -171.2 24.2; w -168.2 25.2; w -165.2 26.2; w -162.8 27.8; w -162.8 31.8; w -160.2 32.2; h -158.6 34.3 20; a 150; w -162.8 30.2; w -163.2 26.8; w -166.8 26.2; w -168.2 28.8; w -172.2 28.8; w -175.8 29.2; w -175.8 33.2; w -175.8 37.2; w -175.8 41.2; s 120; cs; s 200"
+    ));
+}
+
+/// The arena's foes a kid fights on its floor: awake, within 40 m of its
+/// middle and 2 m of his height, their entry over (one still on its leap
+/// is on the rim, out of his reach), nearest first.
+fn arena_foes(w: &Walker) -> Vec<(Handle, guac_motion::seam::Vec3)> {
+    let run = &w.run;
+    let me = run.hero().pivot;
+    let mut foes: Vec<(Handle, guac_motion::seam::Vec3)> = run
+        .world
+        .creatures()
+        .into_iter()
+        .chain(run.world.clones())
+        .filter(|h| is_foe(&run.world.name(*h)))
+        .filter(|h| {
+            run.vm
+                .placement_of(*h)
+                .is_some_and(|i| !run.vm.removed(i) && !run.vm.asleep(i))
+        })
+        .filter_map(|h| {
+            run.world
+                .actor(h)
+                .filter(|a| !a.removed)
+                .map(|a| (h, a.position))
+        })
+        .filter(|(_, p)| (p.x - ARENA[0]).hypot(p.z - ARENA[2]) < 40.0)
+        .filter(|(_, p)| (p.y - me.y).abs() < 2.0)
+        .filter(|(h, _)| !queue_runs(w, *h))
+        .collect();
+    foes.sort_by(|a, b| a.1.distance(me).total_cmp(&b.1.distance(me)));
+    foes.dedup_by_key(|f| f.0);
+    foes
+}
+
+/// One foe of the arena's battle: its name, the step it's first up and
+/// where, whether its entry's action queue has run, and the step that
+/// queue ended and where it stood then.
+struct Entry {
+    name: String,
+    first: (u32, guac_motion::seam::Vec3),
+    ran: bool,
+    end: Option<(u32, guac_motion::seam::Vec3)>,
+    hp: Option<f32>,
+}
+
+/// A foe's health as its scripts hold it.
+fn foe_health(w: &Walker, h: Handle) -> Option<f32> {
+    let vm = &w.run.vm;
+    let d = vm
+        .local(vm.placement_of(h)?, "description")
+        .map(|v| vm.value(v))?;
+    let c = vm.field(d, "creature info").map(|v| vm.value(v))?;
+    vm.field(c, "hp").map(|v| vm.value(v))?.as_f32()
+}
+
+/// The commander the arena's script set up (its `commanderactor`).
+fn commander(w: &Walker) -> Option<Handle> {
+    let castle = w.run.placement("castleArena_script");
+    match w
+        .run
+        .vm
+        .local(castle, "commanderactor")
+        .map(|v| w.run.vm.value(v))
+    {
+        Some(guac_script::Value::Entity(h)) => Some(h),
+        _ => None,
+    }
+}
+
+/// The commander's health as the arena's script reads it.
+fn commander_health(w: &Walker) -> Option<f32> {
+    let vm = &w.run.vm;
+    let castle = w.run.placement("castleArena_script");
+    let info = vm.local(castle, "commanderinfo").map(|v| vm.value(v))?;
+    vm.field(info, "hp").map(|v| vm.value(v))?.as_f32()
+}
+
+/// openspec AS.201: the heavy elf over the arena's first wave is its
+/// commander, Brock as his own heavy elf in his hat (`Wave Master - Setup
+/// Commander`, the castle's `Real Brock`): made on his podium by its intro
+/// path's place, 12 m over the floor, and held there under designer
+/// control through every wave (his action queue held with it, his own
+/// behaviour disabled), out of the waves and their avoider. Once the last
+/// wave ends Brock's battle scene, his script clears that control and walks
+/// him down his enter-combat path to the floor, where the castle's reveal
+/// plays (within 2 ft of the middle's height, the castle's own check) and
+/// his fight runs: hurt past 90 % and 50 % he brings a wave of life mages
+/// each, beaten the dying Brock, the loot and the outro. Every other foe the
+/// waves bring (Chompies, Elf Nears, lobbers, life mages) leaps in off the
+/// rim and ends its entry on the floor. A kid's fight on the floor, the
+/// nearest whose entry is over, his first attack every 20 steps within
+/// 5 m; the hero topped up where his scripts hold his health, counted.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn its_arenas_commander_comes_down_after_the_waves_and_is_beaten() {
+    use guac_motion::seam::Vec3;
+    println!("load at start: {}", load());
+    let mut w = fresh();
+    into_the_arena(&mut w);
+    let castle = w.run.placement("castleArena_script");
+    let (_, podium) = w.run.placed("castleArena_Commander_Intro");
+    let way = waypoints("castleArena_Commander_EnterCombatPath");
+    let foot = *way.last().unwrap();
+    let start = w.run.steps;
+    // Each foe the battle brings: its name, the step it's first up and
+    // where, whether its entry's queue has run, and the step that queue
+    // ended and where it stood then.
+    let mut entries: HashMap<Handle, Entry> = HashMap::new();
+    let mut brock_scene: Option<(u32, Option<u32>)> = None;
+    let mut reveal: Option<u32> = None;
+    // Through the waves: his farthest off his podium and lowest over the
+    // floor, his health; after Brock's scene: the step he's down, where.
+    let (mut off_podium, mut lowest_up) = (0.0f32, f32::MAX);
+    let mut full: Option<f32> = None;
+    let mut down: Option<(u32, Vec3)> = None;
+    let mut least: Option<f32> = None;
+    // The step he's beaten, his health under 1 (the castle's own check).
+    let mut beaten: Option<u32> = None;
+    let mut since_moved = (w.run.hero().pivot, 0u32);
+    let mut k = 0u32;
+    let ended = |w: &Walker| {
+        w.run.vm.removed(castle)
+            || w.run
+                .vm
+                .behaviour(castle)
+                .is_some_and(|b| b.eq_ignore_ascii_case("end"))
+    };
+    while !ended(&w) {
+        assert!(w.run.steps < start + 40_000, "the battle never ended");
+        k += 1;
+        let scene = cutscene_name(&w.run);
+        let in_brock = scene.as_deref() == Some("IGC_Arena_BrockBattle");
+        match brock_scene {
+            None if in_brock => brock_scene = Some((w.run.steps, None)),
+            Some((from, None)) if !in_brock => brock_scene = Some((from, Some(w.run.steps))),
+            _ => {}
+        }
+        if scene.as_deref() == Some("IGC_Elf_Heavy_Reveal") && reveal.is_none() {
+            reveal = Some(w.run.steps);
+        }
+        let brock = commander(&w);
+        if let Some(c) = brock.and_then(|h| w.run.world.actor(h)).map(|a| a.position) {
+            match brock_scene {
+                None => {
+                    off_podium = off_podium.max((c.x - podium.x).hypot(c.z - podium.z));
+                    lowest_up = lowest_up.min(c.y - ARENA[1]);
+                    full = commander_health(&w).or(full);
+                }
+                Some((_, Some(_))) if down.is_none() && (c.y - ARENA[1]).abs() < 0.61 => {
+                    down = Some((w.run.steps, c));
+                }
+                _ => {}
+            }
+            if let Some(h) = commander_health(&w).filter(|_| down.is_some()) {
+                least = Some(least.map_or(h, |l: f32| l.min(h)));
+                if h < 1.0 && beaten.is_none() {
+                    beaten = Some(w.run.steps);
+                }
+            }
+        }
+        for h in w
+            .run
+            .world
+            .creatures()
+            .into_iter()
+            .chain(w.run.world.clones())
+        {
+            let name = w.run.world.name(h);
+            if !is_foe(&name) || Some(h) == brock {
+                continue;
+            }
+            let Some(a) = w.run.world.actor(h).filter(|a| !a.removed) else {
+                continue;
+            };
+            if (a.position.x - ARENA[0]).hypot(a.position.z - ARENA[2]) > 40.0 {
+                continue;
+            }
+            let e = entries.entry(h).or_insert(Entry {
+                name,
+                first: (w.run.steps, a.position),
+                ran: false,
+                end: None,
+                hp: None,
+            });
+            let runs = queue_runs(&w, h);
+            e.ran |= runs;
+            if e.ran && !runs && e.end.is_none() {
+                e.end = Some((w.run.steps, a.position));
+                e.hp = foe_health(&w, h);
+            }
+        }
+        // The kid's fight.
+        let me = w.run.hero().pivot;
+        let target = arena_foes(&w).first().map(|f| f.1);
+        let (stick, attack) = match target {
+            Some(t) => {
+                let far = (t.x - me.x).hypot(t.z - me.z);
+                (
+                    w.toward([t.x, t.z], if far > 2.5 { 1.0 } else { 0.35 }),
+                    far <= 5.0 && k.is_multiple_of(20),
+                )
+            }
+            None => (w.toward([ARENA[0], ARENA[2]], 0.5), false),
+        };
+        if me.distance(since_moved.0) > 0.5 {
+            since_moved = (me, 0);
+        } else {
+            since_moved.1 += 1;
+        }
+        if since_moved.1 > 240 {
+            // Held up 4 s: a step back toward the middle.
+            for _ in 0..30 {
+                let s = w.toward([ARENA[0], ARENA[2]], 1.0);
+                w.step(s, [false; 4]);
+            }
+            since_moved = (w.run.hero().pivot, 0);
+            continue;
+        }
+        w.step(stick, [attack, false, false, false]);
+    }
+    // The castle spawns the outro as it goes to its end.
+    for _ in 0..120 {
+        if cutscene_name(&w.run).is_some() {
+            break;
+        }
+        w.rest(1);
+    }
+    let outro = cutscene_name(&w.run).filter(|n| n == "IGC_Arena_Outro");
+    println!(
+        "the battle {} steps, {} top-ups: on his podium {:.2} m off it at most, {:.2} m over the floor at least, health {full:?}; Brock's scene {brock_scene:?}, down {down:?} ({:.2} m from his path's foot {foot:?}), the reveal at {reveal:?}, his health down to {least:?}, beaten at {beaten:?}, the outro {outro:?}",
+        w.run.steps - start,
+        w.walked.topups.len(),
+        off_podium,
+        lowest_up,
+        down.map_or(f32::NAN, |(_, c)| (c.x - foot[0]).hypot(c.z - foot[2])),
+    );
+    // The waves, made before Brock's scene, and the life mages and lobbers
+    // his hurts call after it, some of whom the battle's end sends off
+    // mid-entry (at his defeat the castle walks every one of the wave's to
+    // an exit point).
+    let brock_from = brock_scene.map_or(u32::MAX, |b| b.0);
+    let (waves, later): (Vec<&Entry>, Vec<&Entry>) =
+        entries.values().partition(|e| e.first.0 < brock_from);
+    let mut kinds: HashMap<&str, (u32, u32, f32)> = HashMap::new();
+    for e in waves.iter().chain(&later) {
+        let k = kinds.entry(e.name.as_str()).or_default();
+        k.0 += 1;
+        if let Some((_, at)) = e.end {
+            k.1 += 1;
+            k.2 = k.2.max((at.y - ARENA[1]).abs());
+        }
+    }
+    for e in waves.iter().chain(&later) {
+        if let Some((step, at)) = e.end.filter(|(_, at)| (at.y - ARENA[1]).abs() >= 0.5) {
+            println!(
+                "  off the floor: {} from {:?}, ended {step} at {at}, health {:?}",
+                e.name, e.first, e.hp
+            );
+        }
+    }
+    let cut_short: Vec<String> = later
+        .iter()
+        .filter(|e| e.end.is_none())
+        .map(|e| format!("{} from {} at {}", e.name, e.first.1, e.first.0))
+        .collect();
+    println!(
+        "the battle's foes (made, entries ended, farthest off the floor's height as one ended): {kinds:?}; {} in the waves, {} after Brock's scene, cut short by the battle's end: {cut_short:?}",
+        waves.len(),
+        later.len()
+    );
+    assert!(full.is_some(), "no commander through the waves");
+    assert!(off_podium < 1.0, "off his podium: {off_podium}");
+    assert!(lowest_up > 10.0, "down among the waves: {lowest_up}");
+    let (_, Some(scene_end)) = brock_scene.expect("Brock's battle scene") else {
+        panic!("Brock's battle scene never ended");
+    };
+    let (down_at, c) = down.expect("never came down to the floor");
+    assert!(
+        down_at - scene_end < 600,
+        "down {} steps after the scene",
+        down_at - scene_end
+    );
+    assert!(
+        (c.x - foot[0]).hypot(c.z - foot[2]) < 2.0,
+        "down off his path: {c} against {foot:?}"
+    );
+    assert!(
+        reveal.is_some_and(|r| r >= down_at.saturating_sub(30)),
+        "the reveal {reveal:?}, down {down_at}"
+    );
+    assert!(
+        least.is_some_and(|l| l < full.unwrap() * 0.5),
+        "never fought: {least:?} of {full:?}"
+    );
+    assert!(outro.is_some(), "no outro: {:?}", w.walked.scenes);
+    assert!(waves.len() >= 30, "the waves' foes: {}", waves.len());
+    // An entry ends on the floor, or with the foe beaten on its way in.
+    let on_floor = |e: &&Entry| {
+        e.end.is_some_and(|(_, at)| (at.y - ARENA[1]).abs() < 0.5)
+            || (e.end.is_some() && e.hp.is_some_and(|h| h <= 0.0))
+    };
+    assert!(
+        waves.iter().all(on_floor),
+        "a wave's entry off the floor or never over: {kinds:?}"
+    );
+    let beaten = beaten.expect("never beaten");
+    assert!(
+        later
+            .iter()
+            .filter(|e| e.end.is_some_and(|(step, _)| step < beaten))
+            .all(on_floor),
+        "a later entry off the floor: {kinds:?}"
+    );
+    assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
+    println!("load at end: {}", load());
+}
+
+/// Level 201's push-block puzzle's lower floor (the au-201-elves lane's
+/// reading): the dry channel and its basins sit 3.7 m under the puzzle's
+/// top, and its one way back up is the ramp at the north basin's middle
+/// (x -106 to -98, z -54 to -44), up to the top by the second house's door.
+/// A kid off the puzzle lands on that floor: the Mac drivers' two stops, in
+/// the north basin's west end after its first block and in the channel by
+/// the side blocks' bridge, and the channel's south end and its south basin,
+/// each walked north along the floor and up the ramp, never higher than the
+/// top's 13.9 m nor out of it. The walk's own way takes the same ramp out of
+/// the south basin past Setup_005's blocks.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn its_push_blocks_lower_floor_leads_back_up_its_ramp() {
+    use guac_motion::seam::Vec3;
+    const RAMP: [[f32; 2]; 5] = [
+        [-101.0, -34.0],
+        [-102.0, -40.0],
+        [-102.0, -45.0],
+        [-102.5, -50.0],
+        [-103.0, -57.0],
+    ];
+    println!("load at start: {}", load());
+    let mut w = fresh();
+    for (from, label) in [
+        ([-113.5, 10.4, -35.2], "the north basin's west end"),
+        ([-98.2, 10.4, -22.8], "the channel by the side blocks"),
+        ([-100.5, 10.4, -18.0], "the channel's south end"),
+        ([-95.0, 10.4, -10.0], "the south basin"),
+    ] {
+        w.run.put(Vec3::from_array(from), 0.0);
+        w.rest(30);
+        let landed = w.run.hero().pivot;
+        let mut legs = Vec::new();
+        for to in std::iter::once([-100.5, -26.0]).chain(RAMP) {
+            for _ in 0..600 {
+                let me = w.run.hero().pivot;
+                if (me.x - to[0]).hypot(me.z - to[1]) < 1.0 {
+                    break;
+                }
+                let s = w.toward(to, 1.0);
+                w.step(s, [false; 4]);
+            }
+            legs.push(w.run.hero().pivot);
+        }
+        let end = w.run.hero().pivot;
+        println!("{label}: landed {landed}, up the ramp to {end}, by way of {legs:?}");
+        assert!(landed.y < 10.5, "{label}: not on the floor: {landed}");
+        assert!(end.y > 13.5, "{label}: never back up: {end}");
+        assert!(
+            (end.x + 103.0).hypot(end.z + 57.0) < 1.0,
+            "{label}: up somewhere else: {end}"
+        );
+    }
+    assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
+    println!("load at end: {}", load());
+}
+
+/// openspec AS.200: the life island's ambush. A hero on the island past
+/// the first vine bridge wakes its initializer, which defines a minion boss
+/// battle: the phase director's summon cutscene brings three evil Stealth
+/// Elves in through the portal's entry beam, each on Stealth Elf's own
+/// scripts, walked as a creature, with a minion controller, its button
+/// controllers and its AI (`026_StealthElf_AI`), which bull-rushes him,
+/// presses the elf's attack and smokes away; a kid's fight beats each (the
+/// nearest, his first attack every 20 steps within 5 m, topped up where his
+/// scripts hold his health, counted), the defeated cutscene after each,
+/// then the victory phase ends the battle and takes the initializer off,
+/// which opens the second bridge's pan; he walks onto its switch and the
+/// bridge grows. The battle's camera is left off (AS.210): the gameplay
+/// camera follows him through it.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn its_life_islands_ambush_is_fought_and_opens_the_second_bridge() {
+    use guac_motion::seam::Vec3;
+    println!("load at start: {}", load());
+    let mut w = fresh();
+    let (init, _) = w.run.placed("Phase Director Initializer 201 Minion");
+    let (bridge, _) = w.run.placed("Activator_Template(2)");
+    let (_, switch) = w.run.placed("Pan_Activate(1)");
+    let director = w.run.placement("PhaseDirector");
+    w.run.put(Vec3::new(70.5, 30.0, -75.0), 0.0);
+    w.rest(30);
+    let start = w.run.steps;
+    // Each evil elf: the step it's first up, its least health, the step
+    // it's beaten; the director's behaviours in order; the hero's health
+    // drops while one stands.
+    let mut evil: HashMap<Handle, (u32, f32, Option<u32>)> = HashMap::new();
+    let mut director_went: Vec<String> = Vec::new();
+    let mut rushes = 0u32;
+    let mut hurts = 0u32;
+    let mut last_health = w.run.health();
+    let (mut ended, mut grown) = (None, None);
+    for k in 0..9000u32 {
+        let me = w.run.hero().pivot;
+        let up: Vec<(Handle, Vec3)> = w
+            .run
+            .world
+            .clones()
+            .into_iter()
+            .filter(|h| w.run.world.name(*h) == "026_StealthElf_Evil")
+            .filter_map(|h| {
+                w.run
+                    .world
+                    .actor(h)
+                    .filter(|a| !a.removed)
+                    .map(|a| (h, a.position))
+            })
+            .collect();
+        let target = up
+            .iter()
+            .filter(|(h, _)| foe_health(&w, *h).is_some_and(|hp| hp > 0.0))
+            .min_by(|a, b| a.1.distance(me).total_cmp(&b.1.distance(me)))
+            .map(|e| [e.1.x, e.1.z]);
+        let (stick, attack) = match (k < 300, target) {
+            (true, _) => (w.toward([70.12, -60.0], 1.0), false),
+            // The battle over, onto the second bridge's switch by its foot.
+            (false, _) if ended.is_some() => (w.toward([switch.x, switch.z], 1.0), false),
+            (false, Some(t)) => {
+                let far = (t[0] - me.x).hypot(t[1] - me.z);
+                (
+                    w.toward(t, if far > 2.5 { 1.0 } else { 0.35 }),
+                    far <= 5.0 && k.is_multiple_of(20),
+                )
+            }
+            _ => (Stick::new(0.0, 0.0), false),
+        };
+        w.step(stick, [attack, false, false, false]);
+        for (h, _) in &up {
+            let hp = foe_health(&w, *h).unwrap_or(0.0);
+            let e = evil.entry(*h).or_insert((w.run.steps, hp, None));
+            e.1 = e.1.min(hp);
+            if hp <= 0.0 && e.2.is_none() {
+                e.2 = Some(w.run.steps);
+            }
+        }
+        let health = w.run.health();
+        if let (Some(was), Some(now)) = (last_health, health)
+            && now < was
+            && !up.is_empty()
+        {
+            hurts += 1;
+        }
+        last_health = health;
+        let vm = &w.run.vm;
+        if let Some(b) = vm.behaviour(director)
+            && director_went.last().map(String::as_str) != Some(b)
+        {
+            director_went.push(b.to_owned());
+        }
+        rushes += w
+            .run
+            .world
+            .clones()
+            .into_iter()
+            .filter(|h| w.run.world.name(*h) == "026_StealthElf_AI")
+            .filter_map(|h| vm.placement_of(h).and_then(|id| vm.behaviour(id)))
+            .filter(|b| *b == "bull rush")
+            .count() as u32;
+        if ended.is_none() && vm.placement_of(init).is_some_and(|id| vm.removed(id)) {
+            ended = Some(w.run.steps);
+        }
+        if grown.is_none()
+            && vm
+                .placement_of(bridge)
+                .and_then(|id| vm.behaviour(id))
+                .is_some_and(|b| b.starts_with('5'))
+        {
+            grown = Some(w.run.steps);
+            break;
+        }
+    }
+    let mut elves: Vec<_> = evil.values().copied().collect();
+    elves.sort_by_key(|e| e.0);
+    println!(
+        "{} steps: the elves (up, least health, beaten) {elves:?}; the director {director_went:?}; their AIs' rush steps {rushes}; the hero hurt {hurts} times while one stood, {} top-ups; the battle over at {ended:?}, the second bridge grown at {grown:?}",
+        w.run.steps - start,
+        w.walked.topups.len()
+    );
+    assert_eq!(elves.len(), 3, "the three summoned: {elves:?}");
+    assert!(
+        elves.iter().all(|e| e.2.is_some()),
+        "each beaten: {elves:?}"
+    );
+    for b in [
+        "minion summon cutscene",
+        "phase update",
+        "minion defeated cutscene",
+    ] {
+        assert!(
+            director_went.iter().any(|d| d == b),
+            "{b}: {director_went:?}"
+        );
+    }
+    assert!(rushes > 0, "their AIs never rushed him");
+    assert!(hurts > 0, "they never hurt him");
+    let ended = ended.expect("the battle never ended");
+    assert!(ended > elves.iter().filter_map(|e| e.2).max().unwrap());
+    assert!(
+        grown.is_some_and(|g| g > ended),
+        "the second bridge: {grown:?}"
+    );
+    // Its camera off the listing, the gameplay camera following him
+    // through it (stand-in ledger: `boss-camera`).
+    let camera = w.run.placement("BossCamera");
+    assert_eq!(w.run.vm.behaviour(camera), None, "the boss camera ran");
+    assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
+    println!("load at end: {}", load());
+}
+
+/// The au-201-elves review (openspec AS.200): a hero taken off before his
+/// entry beam activated him has his beam cleared
+/// (`scripts::clear_entry_beams`, the deactivate path's), and only his: an
+/// enemy minion's beam carries no controller. Cleared the step the life
+/// island's summon has made its three beams, all three still land, each
+/// evil Stealth Elf made with its AI, and the director goes on past its
+/// summon; with every beam cleared none of them lands and the battle never
+/// ends, the second bridge with it.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn its_ambushs_beams_outlast_a_heros_cleared_one() {
+    use guac_motion::seam::Vec3;
+    println!("load at start: {}", load());
+    let mut w = fresh();
+    let director = w.run.placement("PhaseDirector");
+    w.run.put(Vec3::new(70.5, 30.0, -75.0), 0.0);
+    w.rest(30);
+    let start = w.run.steps;
+    let alive = |w: &Walker, name: &str| {
+        w.run
+            .world
+            .clones()
+            .into_iter()
+            .filter(|h| w.run.world.name(*h) == name)
+            .filter(|h| w.run.world.actor(*h).is_some_and(|a| !a.removed))
+            .count()
+    };
+    let mut cleared = None;
+    let (mut elves, mut ais) = (0, 0);
+    for _ in 0..900u32 {
+        let n = guacamole::scripts::entry_beam_count(&mut w.run.vm).unwrap_or(0);
+        if cleared.is_none() && n > 0 {
+            w.run
+                .with_host(guacamole::scripts::clear_entry_beams)
+                .unwrap_or_else(|h| panic!("{h}"));
+            let left = guacamole::scripts::entry_beam_count(&mut w.run.vm);
+            cleared = Some((w.run.steps, n, left));
+        }
+        let s = w.toward([70.12, -60.0], 1.0);
+        w.step(s, [false; 4]);
+        elves = alive(&w, "026_StealthElf_Evil");
+        ais = alive(&w, "026_StealthElf_AI");
+        let summoning = w.run.vm.behaviour(director) == Some("minion summon cutscene");
+        if elves == 3 && ais == 3 && !summoning {
+            break;
+        }
+    }
+    let past = w.run.vm.behaviour(director).map(str::to_owned);
+    println!(
+        "the beams cleared at {cleared:?} (step, beams, beams after); {} steps on: {elves} evil elves up, {ais} AIs, the director {past:?}",
+        w.run.steps - start
+    );
+    let (_, made, left) = cleared.expect("the summon's beams");
+    assert_eq!(made, 3, "the summon's three beams");
+    assert_eq!(
+        left,
+        Some(3),
+        "a hero's clean-up took an enemy minion's beam"
+    );
+    assert_eq!(elves, 3, "the three landed");
+    assert_eq!(ais, 3, "each with its AI");
+    assert_ne!(
+        past.as_deref(),
+        Some("minion summon cutscene"),
+        "past the summon"
+    );
+    assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
+    println!("load at end: {}", load());
+}
+
 /// openspec AS.168: the rope bridge over the channel holds the hero by its
 /// planks' own solids, no way naming them: set down on it halfway over the
 /// channel, 10 m above its floor, he stands on its planks and walks on

@@ -178,7 +178,9 @@
 //! `dying actor` the op after the spawn and sets it, which reads as the
 //! original's spawn making the placement, variables and all, at once
 //! (AH.39's Mac step). Outside a step's walk the embedder adds what's
-//! spawned. A held
+//! spawned, or asks the VM to adopt in its calls as the walk does
+//! ([`Vm::set_adopt_in_calls`]; AS.200: an enemy minion's entry beam sets
+//! the minion controller it spawns the op after). A held
 //! placement (below) runs what the embedder does in its place natively
 //! ([`Vm::step_with`]), where the walk reaches it: design decision 2's
 //! player loop runs the portal manager's and the game systems' ticks so.

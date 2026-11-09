@@ -171,6 +171,7 @@ pub const WAY: Encounter = Encounter {
         "Enemy_Elemental_Mage_Life",
         "Enemy_Elf_Heavy_S2",
         "Practice_Pit_Cutscene_Elf_Near",
+        "026_StealthElf_Evil",
     ],
     steered: &[],
 };
@@ -264,8 +265,23 @@ pub const OWN_SCRIPTS: [&str; 70] = [
 /// third wakes once its crate is broken, by its own activator); and the
 /// arena's lemming avoider (openspec AS.177: with every hero below the
 /// arena's floor it holds its enemies idle, so none follows him off it, and
-/// sends them after him again once one is back up).
-pub const PASSAGE: [&str; 36] = [
+/// sends them after him again once one is back up); and the life island's
+/// ambush (openspec AS.200): its initializer, woken as a hero comes onto the
+/// island past the first vine bridge, defines a minion boss battle the
+/// phase director runs beside its camera and the players' invulnerizer;
+/// it summons three evil Stealth Elves through the portal's entry beam,
+/// each on Stealth Elf's own scripts (walked as [`WAY`]'s clones), driven
+/// by a minion controller, its button controllers and its AI
+/// (`026_StealthElf_AI`); each beaten, its defeated scene; all three, the
+/// victory phase ends the battle and takes the initializer off, which
+/// opens the second bridge's pan. Their init (`EnemyMinionInit`) is left
+/// off: it scales a player's hurts by its 1.0 and zeroes one player's hits
+/// on the other's, co-op's alone. So is the battle's camera (`BossCamera`),
+/// the gameplay camera following the hero through it: the director resets
+/// the boss camera at the battle's end, which on our host resets its
+/// buffer alone (openspec AH.80), and it framed nothing for good after
+/// (openspec AS.210; stand-in ledger: `boss-camera`).
+pub const PASSAGE: [&str; 51] = [
     "EyE_Timer_Door_Template(1)",
     "EyE_Timer_Door_Template(2)",
     "EyE_Timer_Door_Template(3)",
@@ -302,6 +318,21 @@ pub const PASSAGE: [&str; 36] = [
     "PvP_JumpPad_NORMAL(4)",
     "PvP_JumpPad_NORMAL(5)",
     "Enemy_LemmingAvoider",
+    "Phase Director Initializer 201 Minion",
+    "PhaseDirector",
+    "PlayerMinionInvulnerizer",
+    "Phase Cutscene Intro",
+    "Phase Cutscene Victory",
+    "MinionController",
+    "MinionController_Button",
+    "MinionController_Movement",
+    "026_StealthElf_AI",
+    "026_StealthElf_Tuning Actor",
+    "Evil Minion Defeated Cutscene",
+    "Delayed Player Minion Vulnerizer",
+    "Delayed Xp Ball Collector",
+    "Delayed Xp Ball Collector (Defeated Cutscene)",
+    "Delayed Food Spawner",
 ];
 
 /// The life area's vine bridges' own clones (openspec AS.175), by their

@@ -466,3 +466,17 @@ While the original's pause holds the game with the portal's own pause unmarked (
 #### Scenario: Cali's yes
 - **WHEN** a kid answers yes to Cali's challenge question on the hub
 - **THEN** the level rests a step while she waits on her challenges' screen and goes on after it
+
+### Requirement: Level 201's arena's commander
+Level 201's arena SHALL have its commander, Brock as his own heavy elf in his hat, stand on his podium 12 m over the floor through every wave, out of their fight, and once the last wave's scene ends come down his own path to the floor within 3 s, where his reveal plays and he is fought until beaten; every other foe of the battle SHALL end its leap in on the floor.
+
+#### Scenario: The arena's battle
+- **WHEN** a hero fights the arena's waves on its floor
+- **THEN** Brock stands within 0.02 m of his podium 12.2 m up until Brock's battle scene, is on the floor 1.2 m from his path's foot 2.2 s after it with his reveal, is fought from his 136 to beaten, and the outro plays
+
+### Requirement: Level 201's life island's ambush
+On level 201's life island past its first vine bridge, three evil Stealth Elves SHALL be summoned through the portal's entry beam and fight the hero on Stealth Elf's own attacks, driven by their own AI, each fought until beaten; the three beaten, the battle SHALL end within 4 s and open the second vine bridge's switch.
+
+#### Scenario: The ambush
+- **WHEN** a hero walks onto the life island's arena
+- **THEN** three evil Stealth Elves come in through the beam within 10 s, rush and hurt him, are beaten one by one, the battle ends 3.8 s after the last, and the second bridge grows from its switch after
