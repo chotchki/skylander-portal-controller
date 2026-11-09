@@ -657,6 +657,10 @@ pub struct ScriptWorld {
     /// The placements that made the pause holding now, each with its value
     /// and whether it plays sound (openspec AS.205): each runs on through it.
     pub(crate) pausers: Vec<(Handle, i32, bool)>,
+    /// What a pause's maker took control of while it held (openspec
+    /// AS.205): each runs on through it, as the original's `control` of an
+    /// actor keeps it updating under a pause.
+    pub(crate) pause_controlled: Vec<Handle>,
     /// The level's intro held until a hero's minion is in (openspec AS.47,
     /// [`hold_intro`]), by handle.
     pub(crate) intro_held: Option<Handle>,
@@ -985,6 +989,7 @@ impl ScriptWorld {
             resting: Default::default(),
             pause_asked: None,
             pausers: Vec::new(),
+            pause_controlled: Vec::new(),
             intro_held: None,
             scene_walks: HashMap::new(),
             scene_bodies: HashMap::new(),
@@ -2244,19 +2249,30 @@ impl ScriptWorld {
             // op reads as it on a path (`<OpControl>.placement.scale`: AH.54,
             // the eruption grows and moves each blob so; read as nothing, the
             // writes went nowhere and the lava sat still at his feet).
-            Class::Control => Ok(match (first, target) {
-                (_, Some(h)) if self.actors.get(&h).is_some_and(|k| k.removed) => Answer::Skip,
-                (Some(v), _) if self.sprite_removed(v) => Answer::Skip,
-                (Some(v), Some(_)) => Answer::Run {
-                    receiver: Some(v),
-                    result: Some(v),
-                },
-                // An object no placement stands for: the pads, the portal.
-                (Some(v @ Value::Entity(_)), None) => Answer::Run {
-                    receiver: Some(v),
-                    result: Some(v),
-                },
-                _ => Answer::Skip,
+            Class::Control => Ok({
+                // What a pause's maker takes control of runs on through the
+                // pause (openspec AS.205: a report's own actor, controlled
+                // the op after the pause it makes).
+                if let Some(h) = target
+                    && self.pausers.iter().any(|p| p.0 == call.placement)
+                    && !self.pause_controlled.contains(&h)
+                {
+                    self.pause_controlled.push(h);
+                }
+                match (first, target) {
+                    (_, Some(h)) if self.actors.get(&h).is_some_and(|k| k.removed) => Answer::Skip,
+                    (Some(v), _) if self.sprite_removed(v) => Answer::Skip,
+                    (Some(v), Some(_)) => Answer::Run {
+                        receiver: Some(v),
+                        result: Some(v),
+                    },
+                    // An object no placement stands for: the pads, the portal.
+                    (Some(v @ Value::Entity(_)), None) => Answer::Run {
+                        receiver: Some(v),
+                        result: Some(v),
+                    },
+                    _ => Answer::Skip,
+                }
             }),
             Class::Spawn => {
                 // Nothing to clone (openspec AG.160: the locomotion clones a
@@ -5386,7 +5402,9 @@ pub fn note_pause(world: &mut ScriptWorld, name: &str, args: &[(&str, Value)]) {
 /// checks), the music when asked to play sound, and at 1 or more the
 /// portal's own (`Portal Pause Ignore Actors`); the placement making the
 /// pause runs on through it (Cali waits out her challenges' screen and
-/// unpauses, a scene its movie); and the game's own systems step on (the
+/// unpauses, a scene its movie), and so does what it takes control of (a
+/// report's own actor, controlled the op after the pause its creation
+/// makes); and the game's own systems step on (the
 /// game systems' update set carries the level end's sequencing through its
 /// pause: read so, the original's engine doesn't pause its systems). So
 /// every other placement and clone rests: the level's placements, its
@@ -5402,6 +5420,7 @@ pub fn pause_rest(vm: &mut Vm, world: &mut ScriptWorld) -> bool {
     world.pause_asked = None;
     if !portal_suspended(vm) {
         world.pausers.clear();
+        world.pause_controlled.clear();
         if !world.resting.is_empty() {
             vm.unrest();
             world.resting.clear();
@@ -5438,6 +5457,7 @@ pub fn pause_rest(vm: &mut Vm, world: &mut ScriptWorld) -> bool {
             .is_some_and(|obj| is_system(vm, obj));
         let runs = ignored.contains(&h)
             || world.pausers.iter().any(|p| p.0 == h)
+            || world.pause_controlled.contains(&h)
             || if portal.contains(&h) {
                 portal_runs
             } else {
@@ -6073,6 +6093,18 @@ mod tests {
         )
         .unwrap();
         assert_eq!(w.pausers, [(0x42, 0, true)], "a freeze frame names no one");
+        // What the maker takes control of runs on through the pause; what
+        // another placement controls doesn't.
+        let mut control = call(Class::Control, Some(Value::Entity(1)));
+        control.placement = 0x42;
+        w.op(&control, &mut |_| 0, &mut NoEngine).unwrap();
+        w.op(
+            &call(Class::Control, Some(Value::Entity(2))),
+            &mut |_| 0,
+            &mut NoEngine,
+        )
+        .unwrap();
+        assert_eq!(w.pause_controlled, [1]);
     }
 
     #[test]
