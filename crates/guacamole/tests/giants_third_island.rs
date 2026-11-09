@@ -479,6 +479,10 @@ fn shoot_padlocks(run: &mut Run, stops: &mut Vec<String>, count: usize) {
     let from = turret::view(&run.vm, &run.world)
         .expect("a turret running")
         .hits;
+    // Where he hangs hidden in it while its game runs: its middle, its
+    // shots' recoil moving him nowhere (AS.189's carry is the get-out's).
+    let middle = turret_middle(run).expect("its turret");
+    let (mut strayed, mut over) = (0.0f32, f32::MIN);
     for k in 0..7200u32 {
         let Some(v) = turret::view(&run.vm, &run.world) else {
             break;
@@ -486,6 +490,9 @@ fn shoot_padlocks(run: &mut Run, stops: &mut Vec<String>, count: usize) {
         if v.hits as usize >= count || v.targets.is_empty() {
             break;
         }
+        let me = run.hero().pivot;
+        strayed = strayed.max((me.x - middle.x).hypot(me.z - middle.z));
+        over = over.max(me.y - middle.y);
         let p = v.pointer.expect("its pointer");
         let t = v
             .targets
@@ -504,6 +511,8 @@ fn shoot_padlocks(run: &mut Run, stops: &mut Vec<String>, count: usize) {
     }
     let hit = turret::view(&run.vm, &run.world).map_or(count as i32, |v| v.hits);
     assert_eq!(hit as usize, count, "every padlock: from {from}");
+    println!("in its game he strayed {strayed:.2} m from its middle, {over:.2} m over it at most");
+    assert!(strayed < 0.5, "moved in its game: {strayed} m");
 }
 
 /// Out of the turret its game let go of him: carried over the arc its

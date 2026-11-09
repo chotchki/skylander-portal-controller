@@ -346,9 +346,6 @@ mod tests {
         assert_eq!(e.hero.pivot, written, "once");
     }
 
-    /// openspec AS.76: a pointer's offset for a place on the screen is what
-    /// `New Turret - Find Target` turns back into that place: 1.5 pixels a
-    /// unit, its graphic read 10 pixels left of the ray.
     /// openspec AS.189: the get-out's arc runs from the turret's middle to
     /// its spot by how far along the way the first value has come, the
     /// second its height over the way, and stops at the spot.
@@ -369,6 +366,9 @@ mod tests {
         assert!(near(arc(from, from, 10.0, 0.0), from), "a spot on it");
     }
 
+    /// openspec AS.76: a pointer's offset for a place on the screen is what
+    /// `New Turret - Find Target` turns back into that place: 1.5 pixels a
+    /// unit, its graphic read 10 pixels left of the ray.
     #[test]
     fn a_pointers_offset_lands_on_its_place() {
         assert_eq!(pointer_at(630.0, 360.0), [0.0, 0.0]);
