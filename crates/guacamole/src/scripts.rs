@@ -5394,7 +5394,7 @@ pub fn note_pause(world: &mut ScriptWorld, name: &str, args: &[(&str, Value)]) {
 /// its tick (its camera's frame and its combat), their scripts passed
 /// ([`guac_script::Vm::rest`]) and the engine moving none and holding their
 /// clips. The music plays on under any such pause (a scene's movie asks it
-/// not to: a stand-in, ledger `pause-rest`). Not paused, or paused by the
+/// not to; stand-in ledger: `pause-rest`). Not paused, or paused by the
 /// portal's own alert (which runs its scripts), nothing rests. Whether
 /// anything rests now.
 pub fn pause_rest(vm: &mut Vm, world: &mut ScriptWorld) -> bool {
