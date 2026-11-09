@@ -116,6 +116,12 @@ const WAY: [(&str, &str); 18] = [
     ),
 ];
 
+/// How far past a block's middle a kid's push aims, metres (openspec
+/// AS.219): near enough that he comes back onto its line as he pushes,
+/// where an aim 20 m out let him drift a metre and more off it, round the
+/// dam's south side into the channel once the top block was down.
+const KID_AIM: f32 = 5.0;
+
 /// The placements whose behaviour, wake and range the walk records: the
 /// setups' controllers, the life wall's controller and its two triggers,
 /// what the first trigger takes off at the start, the arena's script and
@@ -417,9 +423,9 @@ impl Walker {
     }
 
     /// A kid's push (openspec AS.219): the stick held toward `to` along the
-    /// block's middle (a point 20 m past it the way `to` lies from it, as
-    /// a hand steers a block straight rather than at a far point, which
-    /// slid him round its corner while it waited between pushes) until
+    /// block's middle (a point [`KID_AIM`] past it the way `to` lies from
+    /// it, as a hand steers a block straight rather than at a far point,
+    /// which slid him round its corner while it waited between pushes) until
     /// `block` has moved `moves` times and come to rest (or gone, a block
     /// that lands in its pit taking itself off), then a half second more,
     /// as a hand holds it until the block goes and a moment past; at most
@@ -430,7 +436,7 @@ impl Walker {
         let start = self.run.world.actor(h).map(|a| a.position).expect(block);
         let (dx, dz) = (to[0] - start.x, to[1] - start.z);
         let n = dx.hypot(dz).max(1e-3);
-        let along = [dx / n * 20.0, dz / n * 20.0];
+        let along = [dx / n * KID_AIM, dz / n * KID_AIM];
         let moving = |w: &Self| {
             w.run
                 .vm
