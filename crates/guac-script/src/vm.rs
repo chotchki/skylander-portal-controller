@@ -785,6 +785,9 @@ pub struct Vm {
     capture: Option<Capture>,
     /// [`Vm::trace`]: each op executed, up to a cap.
     trace: Option<(usize, Vec<(ScriptId, u32)>)>,
+    /// The placements a pause lets rest ([`Vm::rest`]): the walk passes
+    /// them, nothing wakes them and their slides hold.
+    resting: HashSet<PlacementId>,
     /// Every slider made, in the order begun ([`Value::Slider`] names one);
     /// those running are stepped once a frame ([`Vm::slide`]).
     sliders: Vec<Slider>,
@@ -898,6 +901,7 @@ impl Vm {
             executed: 0,
             capture: None,
             trace: None,
+            resting: HashSet::new(),
             sliders: Vec::new(),
             running: 0,
             live: Vec::new(),
@@ -1086,6 +1090,33 @@ impl Vm {
         };
         self.placements[id as usize].suspended = suspended;
         true
+    }
+
+    /// Lets every placement rest whose handle `rests` names (crate docs, The
+    /// tick: the original's pause): the walk passes it as a suspended one,
+    /// the asleep among them aren't asked whether they wake, and the slides
+    /// it began hold where they are; it keeps its locals, its behaviour and
+    /// its clock, and runs no SHUTDOWN or STARTUP. Asked again each step, it
+    /// names the placements spawned since; [`Vm::unrest`] lets them all go
+    /// on where they were.
+    pub fn rest(&mut self, rests: impl Fn(Handle) -> bool) {
+        self.resting = self
+            .placements
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| !p.removed && rests(p.handle))
+            .map(|(id, _)| id as PlacementId)
+            .collect();
+    }
+
+    /// Ends a rest ([`Vm::rest`]).
+    pub fn unrest(&mut self) {
+        self.resting.clear();
+    }
+
+    /// Whether a rest holds placement `id` ([`Vm::rest`]).
+    pub fn resting(&self, id: PlacementId) -> bool {
+        self.resting.contains(&id)
     }
 
     pub fn held(&self) -> Vec<Handle> {
@@ -1931,6 +1962,7 @@ impl Vm {
         let asleep: Vec<Handle> = self
             .sleeping
             .iter()
+            .filter(|id| !self.resting.contains(id))
             .map(|&id| &self.placements[id as usize])
             .filter(|p| p.asleep && !p.last_tick && !p.removed)
             .map(|p| p.handle)
@@ -1966,6 +1998,9 @@ impl Vm {
         let p = &self.placements[id as usize];
         if p.inert || p.removed || (p.asleep && !p.last_tick) || p.suspended || p.stopped.is_some()
         {
+            return Ok(());
+        }
+        if self.resting.contains(&id) {
             return Ok(());
         }
         if p.held {
@@ -2013,7 +2048,10 @@ impl Vm {
         for &id in &live {
             let i = id as usize;
             let s = &mut self.sliders[i];
-            if !s.running || s.begun >= self.frame {
+            if !s.running
+                || s.begun >= self.frame
+                || s.placement.is_some_and(|p| self.resting.contains(&p))
+            {
                 continue;
             }
             s.elapsed += dt * s.rate / 100.0;

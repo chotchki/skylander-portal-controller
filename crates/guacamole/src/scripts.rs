@@ -647,6 +647,16 @@ pub struct ScriptWorld {
     /// AS.168, [`Actor::stands_for_actors`]): one its script lets go of
     /// falls by its gravity.
     pub(crate) surfaces_stood: std::collections::HashSet<Handle>,
+    /// The actors the game's pause lets rest (openspec AS.205,
+    /// [`pause_rest`]): the engine moves none of them and their clips hold.
+    pub(crate) resting: std::collections::HashSet<Handle>,
+    /// A pause asked ([`PAUSE`] called, its value and whether it plays
+    /// sound) and not yet made: its first write, `system.game time scale`,
+    /// names the placement making it.
+    pub(crate) pause_asked: Option<(i32, bool)>,
+    /// The placements that made the pause holding now, each with its value
+    /// and whether it plays sound (openspec AS.205): each runs on through it.
+    pub(crate) pausers: Vec<(Handle, i32, bool)>,
     /// The level's intro held until a hero's minion is in (openspec AS.47,
     /// [`hold_intro`]), by handle.
     pub(crate) intro_held: Option<Handle>,
@@ -972,6 +982,9 @@ impl ScriptWorld {
             music_silent: 0,
             walk_clones: Default::default(),
             surfaces_stood: Default::default(),
+            resting: Default::default(),
+            pause_asked: None,
+            pausers: Vec::new(),
             intro_held: None,
             scene_walks: HashMap::new(),
             scene_bodies: HashMap::new(),
@@ -1867,11 +1880,24 @@ impl ScriptWorld {
     pub fn advance(&mut self, dt: f32, engine: &mut dyn Engine) {
         self.walk_written.clear();
         for s in &mut self.sequences {
-            s.advance(dt);
+            // A clip on an actor the pause lets rest holds (openspec AS.205).
+            if !self.resting.contains(&s.actor) {
+                s.advance(dt);
+            }
         }
         self.move_actors(dt, engine);
         crate::interiors::land(self, dt, engine);
         self.advance_sounds(engine);
+    }
+
+    /// How many actors the game's pause lets rest now (openspec AS.205).
+    pub fn resting_count(&self) -> usize {
+        self.resting.len()
+    }
+
+    /// The placements making the pause that holds now (openspec AS.205).
+    pub fn pausers(&self) -> Vec<Handle> {
+        self.pausers.iter().map(|p| p.0).collect()
     }
 
     /// The actor under `h`, if the scripts reach one.
@@ -2098,7 +2124,14 @@ impl ScriptWorld {
         };
         let on = at.receiver.and_then(|r| self.handle(r));
         match (m, v) {
-            (Member::TimeScale, Value::Float(f)) => self.time_scale = f,
+            (Member::TimeScale, Value::Float(f)) => {
+                self.time_scale = f;
+                // The pause's first write, by the placement making it
+                // (openspec AS.205).
+                if let Some((value, sound)) = self.pause_asked.take() {
+                    self.pausers.push((at.placement, value, sound));
+                }
+            }
             (Member::LoadLevel, v) => self.load_level = v,
             // An unlock (openspec AH.220): kept and logged, nothing awarded
             // (stand-in ledger: `achievements`).
@@ -2533,6 +2566,7 @@ impl Host for WorldHost<'_, '_> {
         self.world.wakes(asleep)
     }
     fn answer(&mut self, name: &str, args: &[(&str, Value)]) -> bool {
+        note_pause(self.world, name, args);
         crate::prompt::answer_screen(self.world, name)
             || crate::interiors::answer(self.world, name, args)
     }
@@ -2671,6 +2705,8 @@ pub fn hero_config(mode: Mode) -> Config {
     // A warp lands the minion where it asks, his minion kept (openspec
     // AS.96; stand-in ledger: `warp`).
     c.answered.push(crate::interiors::WARP.to_owned());
+    // Each pause's maker noted, its body run (openspec AS.205).
+    c.answered.push(PAUSE.to_owned());
     c.answered
         .extend(crate::prompt::SCREENS.iter().map(|s| (*s).to_owned()));
     c
@@ -5315,6 +5351,107 @@ pub fn portal_suspended(vm: &Vm) -> bool {
     paused && !portal_paused(vm)
 }
 
+/// Whether the file placement `obj` is one of the game's systems: placed by
+/// the bootstrap or `global.bld`, which every level links.
+fn is_system(vm: &Vm, obj: Obj) -> bool {
+    vm.program()
+        .roles
+        .get(usize::from(obj.unit))
+        .is_some_and(|r| matches!(r, guac_script::Role::Bootstrap | guac_script::Role::Global))
+}
+
+/// The original's pause (`System Tools - Pause Gameplay`), which the host
+/// notes as it's called, its body run ([`note_pause`]).
+pub const PAUSE: &str = "System Tools - Pause Gameplay";
+
+/// A call of [`PAUSE`] noted (openspec AS.205): its value and whether it
+/// plays sound kept until its first write names who makes it. Its body runs.
+pub fn note_pause(world: &mut ScriptWorld, name: &str, args: &[(&str, Value)]) {
+    if name != PAUSE {
+        return;
+    }
+    let arg = |n: &str| {
+        args.iter()
+            .find(|(k, _)| *k == n)
+            .and_then(|(_, v)| v.as_f32())
+            .unwrap_or(0.0)
+    };
+    world.pause_asked = Some((arg("value") as i32, arg("play sound during pause") != 0.0));
+}
+
+/// The level let rest while the game's paused with the portal unmarked (a
+/// pause at 0: openspec AS.205), as the original's pause does, asked each
+/// step before the walk. `System Tools - Pause Gameplay` keeps updating what
+/// `Pause Ignore Actors` names (the UI, the pause controller, the trophy
+/// checks), the music when asked to play sound, and at 1 or more the
+/// portal's own (`Portal Pause Ignore Actors`); the placement making the
+/// pause runs on through it (Cali waits out her challenges' screen and
+/// unpauses, a scene its movie); and the game's own systems step on (the
+/// game systems' update set carries the level end's sequencing through its
+/// pause: read so, the original's engine doesn't pause its systems). So
+/// every other placement and clone rests: the level's placements, its
+/// clones, the heroes' and their files', and at 0 the portal manager with
+/// its tick (its camera's frame and its combat), their scripts passed
+/// ([`guac_script::Vm::rest`]) and the engine moving none and holding their
+/// clips. The music plays on under any such pause (a scene's movie asks it
+/// not to: a stand-in, ledger `pause-rest`). Not paused, or paused by the
+/// portal's own alert (which runs its scripts), nothing rests. Whether
+/// anything rests now.
+pub fn pause_rest(vm: &mut Vm, world: &mut ScriptWorld) -> bool {
+    // A pause noted but never made (its body left early) names no one.
+    world.pause_asked = None;
+    if !portal_suspended(vm) {
+        world.pausers.clear();
+        if !world.resting.is_empty() {
+            vm.unrest();
+            world.resting.clear();
+        }
+        return false;
+    }
+    let named = |set: &str| -> Vec<Handle> {
+        vm.program()
+            .global_named(set)
+            .and_then(|g| vm.global_peek(g))
+            .and_then(|set| vm.set(set).map(<[Value]>::to_vec))
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|v| match v {
+                Value::Entity(h) => Some(h),
+                _ => None,
+            })
+            .collect()
+    };
+    let ignored = named("Pause Ignore Actors");
+    let music = crate::player_loop::Places::of(vm, world)
+        .music
+        .and_then(|id| vm.handle_of(id));
+    let portal_runs = world.pausers.iter().any(|p| p.1 >= 1);
+    let portal: Vec<Handle> = named("Portal Pause Ignore Actors")
+        .into_iter()
+        .filter(|h| !ignored.contains(h) && Some(*h) != music)
+        .collect();
+    let rests = |h: Handle| {
+        let system = world
+            .actors
+            .get(&h)
+            .and_then(|a| a.obj)
+            .is_some_and(|obj| is_system(vm, obj));
+        let runs = ignored.contains(&h)
+            || world.pausers.iter().any(|p| p.0 == h)
+            || if portal.contains(&h) {
+                portal_runs
+            } else {
+                system
+            };
+        !runs
+    };
+    let resting: std::collections::HashSet<Handle> =
+        world.actors.keys().copied().filter(|h| rests(*h)).collect();
+    vm.rest(|h| resting.contains(&h));
+    world.resting = resting;
+    true
+}
+
 /// Whether a scene keeps the playing heroes' figures on the portal (openspec
 /// AS.112): `Game - Cutscene`, started with `skylander switching not
 /// allowed` (its default, which the interiors, the chests and the other
@@ -5902,6 +6039,40 @@ mod tests {
             words: Vec::new(),
             sets: Vec::new(),
         }
+    }
+
+    /// openspec AS.205: a call of the original's pause is noted with its
+    /// value and whether it plays sound, and its first write (the game's
+    /// time scale) names the placement making it, which runs on through the
+    /// pause; another macro, or a later time scale write (a hit's freeze
+    /// frame), names no one.
+    #[test]
+    fn a_pause_is_named_by_the_placement_making_it() {
+        let (mut w, ..) = world();
+        note_pause(&mut w, "System Tools - Unpause Gameplay", &[]);
+        assert_eq!(w.pause_asked, None);
+        note_pause(
+            &mut w,
+            PAUSE,
+            &[
+                ("value", Value::Int(0)),
+                ("set/respect portal pause val", Value::Int(1)),
+                ("play sound during pause", Value::Int(1)),
+            ],
+        );
+        assert_eq!(w.pause_asked, Some((0, true)));
+        let mut making = at("system", "game time scale", None);
+        making.placement = 0x42;
+        w.set(&making, Value::Float(100.0), &mut NoEngine).unwrap();
+        assert_eq!(w.pausers, [(0x42, 0, true)]);
+        assert_eq!(w.pause_asked, None);
+        w.set(
+            &at("system", "game time scale", None),
+            Value::Float(50.0),
+            &mut NoEngine,
+        )
+        .unwrap();
+        assert_eq!(w.pausers, [(0x42, 0, true)], "a freeze frame names no one");
     }
 
     #[test]

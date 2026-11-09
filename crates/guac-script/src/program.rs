@@ -356,6 +356,9 @@ pub struct ScriptInfo {
 #[derive(Debug, Clone, Default)]
 pub struct Program {
     pub units: Vec<String>,
+    /// Each unit's role, by unit: which are the game's systems (the
+    /// bootstrap and `global.bld`) and which a level's or a character's.
+    pub roles: Vec<Role>,
     pub scripts: Vec<ScriptInfo>,
     pub ops: Vec<Ins>,
     pub op_info: Vec<OpInfo>,
@@ -578,6 +581,7 @@ impl<'l, 'u, 'a> Linker<'l, 'u, 'a> {
             exports,
             p: Program {
                 units: units.iter().map(|u| u.name.to_owned()).collect(),
+                roles: units.iter().map(|u| u.role).collect(),
                 ..Program::default()
             },
             operands_by_obj: HashMap::new(),

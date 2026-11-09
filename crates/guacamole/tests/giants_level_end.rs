@@ -1640,10 +1640,17 @@ fn chapter_1s_end_sequences_its_completion_screen_movie_and_level() {
             (0.0, 1.0)
         ]
     );
-    // Waits there for the continue.
-    for _ in 0..60 {
-        stops.extend(saved_step(&mut run, &mut session));
-    }
+    // Waits there for the continue, the level let rest under it (openspec
+    // AS.205): no creature, clone or hero ticking, moving or playing on.
+    let under = under_pause(&mut run, 60, |run| {
+        stops.extend(saved_step(run, &mut session));
+    });
+    println!(
+        "under the screen: {} awake, {} resting, stepped {:?}",
+        under.awake, under.resting, under.stepped
+    );
+    assert!(under.stepped.is_empty(), "{:#?}", under.stepped);
+    assert!(under.awake > 0 && under.resting == under.awake, "{under:?}");
     assert_eq!(seq(&run.vm), Some(COMPLETION), "waiting on the screen");
     run.world
         .sequence

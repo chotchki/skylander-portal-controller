@@ -822,6 +822,15 @@ fn level_214s_third_island_is_walked_to_its_end() {
         run.world.level_change().is_none(),
         "the screen before the level"
     );
+    // The level let rest under the screen (openspec AS.205): no creature,
+    // clone or hero ticking, moving or playing on.
+    let under = under_pause(&mut run, 60, |run| still(run, &mut stops, [false; 4]));
+    println!(
+        "under the screen: {} awake, {} resting, stepped {:?}",
+        under.awake, under.resting, under.stepped
+    );
+    assert!(under.stepped.is_empty(), "{:#?}", under.stepped);
+    assert_eq!(under.resting, under.awake, "{under:?}");
     run.world
         .sequence
         .completion

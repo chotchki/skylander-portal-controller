@@ -1732,3 +1732,74 @@ pub fn skip_214s_intro(run: &mut Run) -> Vec<Halt> {
     );
     stops
 }
+
+/// What stepped while the game's pause let the level rest (openspec
+/// AS.205): the awake creatures and clones (the level's enemies, what they
+/// threw, the heroes) whose scripts ticked, that moved or whose clips went
+/// on over the window, and of those with scripts how many stood awake and
+/// how many rested.
+#[derive(Debug, Default)]
+pub struct UnderPause {
+    pub stepped: Vec<String>,
+    pub awake: usize,
+    pub resting: usize,
+}
+
+/// `steps` steps of `step` measured as [`UnderPause`] says.
+pub fn under_pause(run: &mut Run, steps: u32, mut step: impl FnMut(&mut Run)) -> UnderPause {
+    let actors = |run: &Run| -> Vec<Handle> {
+        let mut v: Vec<Handle> = run
+            .world
+            .creatures()
+            .into_iter()
+            .chain(run.world.clones())
+            .filter(|h| run.world.actor(*h).is_some_and(|a| a.active && !a.removed))
+            .collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    };
+    let state = |run: &Run, h: Handle| {
+        let clock = run
+            .vm
+            .placement_of(h)
+            .and_then(|id| run.vm.active_seconds(id));
+        let at = run.world.actor(h).map(|a| a.position);
+        let clips: Vec<f32> = run
+            .world
+            .sequences()
+            .iter()
+            .filter(|s| s.actor == h && !s.done && !s.stopped)
+            .map(|s| s.time)
+            .collect();
+        (clock, at, clips)
+    };
+    let before: Vec<(Handle, _)> = actors(run)
+        .into_iter()
+        .map(|h| (h, state(run, h)))
+        .collect();
+    for _ in 0..steps {
+        step(run);
+    }
+    let mut out = UnderPause::default();
+    for (h, was) in before {
+        if run.world.actor(h).is_none_or(|a| a.removed) {
+            continue;
+        }
+        let now = state(run, h);
+        let moved = match (was.1, now.1) {
+            (Some(a), Some(b)) => a.distance(b) > 1e-4,
+            (a, b) => a != b,
+        };
+        if was.0 != now.0 || moved || was.2 != now.2 {
+            out.stepped
+                .push(format!("{} {was:?} -> {now:?}", run.world.name(h)));
+        }
+        // Those with scripts: each one rests.
+        if let Some(id) = run.vm.placement_of(h) {
+            out.awake += 1;
+            out.resting += usize::from(run.vm.resting(id));
+        }
+    }
+    out
+}

@@ -2951,7 +2951,12 @@ impl ScriptWorld {
     /// it and stops there, the jump over (a write of nothing ends it too),
     /// to walk and stand as before.
     pub(crate) fn move_scene_walks(&mut self, dt: f32, engine: &mut dyn Engine) {
-        let mut walking: Vec<Handle> = self.scene_walks.keys().copied().collect();
+        let mut walking: Vec<Handle> = self
+            .scene_walks
+            .keys()
+            .copied()
+            .filter(|h| !self.resting.contains(h))
+            .collect();
         walking.sort_unstable();
         let walks = &self.scene_walks;
         self.scene_bodies.retain(|h, _| walks.contains_key(h));
@@ -3532,6 +3537,7 @@ impl ScriptWorld {
                     && a.attach == Value::Null
                     && a.launched
                     && !self.scene_walks.contains_key(h)
+                    && !self.resting.contains(h)
             })
             .map(|(&h, _)| h)
             .collect();
@@ -3648,10 +3654,11 @@ impl ScriptWorld {
     /// it: [`ScriptWorld::move_actors`]' last part, and what an embedder
     /// posing the nodes after that frame (openspec AH.50) runs again.
     pub(crate) fn place_hung_actors(&mut self, engine: &mut dyn Engine) {
+        // One the pause lets rest holds where it hangs (openspec AS.205).
         let mut hung: Vec<(Handle, Value)> = self
             .actors
             .iter()
-            .filter(|(_, a)| !a.removed && a.attach != Value::Null)
+            .filter(|(h, a)| !a.removed && a.attach != Value::Null && !self.resting.contains(h))
             .map(|(&h, a)| (h, a.attach))
             .collect();
         hung.sort_unstable_by_key(|k| k.0);
@@ -3808,8 +3815,12 @@ impl ScriptWorld {
         let mut walkers: Vec<Handle> = self
             .actors
             .iter()
-            .filter(|(_, a)| {
-                a.walker.is_some() && !a.removed && a.active && a.attach == Value::Null
+            .filter(|(h, a)| {
+                a.walker.is_some()
+                    && !a.removed
+                    && a.active
+                    && a.attach == Value::Null
+                    && !self.resting.contains(h)
             })
             .map(|(h, _)| *h)
             .collect();

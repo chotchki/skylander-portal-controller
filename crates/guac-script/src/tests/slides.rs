@@ -181,6 +181,55 @@ fn an_ended_slider_leaves_the_scan() {
     }
 }
 
+/// openspec AS.205: a placement let rest ([`Vm::rest`], the original's
+/// gameplay pause) is passed by the walk, its ticks, its clock and its
+/// slide held where they stood while another goes on; the rest ended, it
+/// ticks and slides on from there, its STARTUP not run again.
+#[test]
+fn a_resting_placement_holds_its_tick_and_its_slide_until_the_rest_ends() {
+    let p = knock_slide(0.5, |_, _, _| {});
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let (a, b) = (vm.add(HANDLE, "Resting", 0), vm.add(HANDLE + 1, "Going", 0));
+    let mut host = Bare;
+    for _ in 0..3 {
+        vm.step(&mut host).unwrap();
+    }
+    vm.rest(|h| h == HANDLE);
+    assert!(vm.resting(a) && !vm.resting(b));
+    let (ticks, v, clock) = (
+        vm.local(a, "ticks"),
+        float(&vm, a, "v"),
+        vm.active_seconds(a),
+    );
+    let going = float(&vm, b, "v");
+    for _ in 0..5 {
+        vm.step(&mut host).unwrap();
+    }
+    assert_eq!(vm.local(a, "ticks"), ticks, "passed");
+    assert_eq!(float(&vm, a, "v"), v, "its slide held");
+    assert_eq!(vm.active_seconds(a), clock, "its clock held");
+    assert_eq!(
+        vm.local(b, "ticks"),
+        Some(Value::Int(8)),
+        "the other ticks on"
+    );
+    assert!(float(&vm, b, "v") > going, "the other's slide goes on");
+    vm.unrest();
+    assert!(!vm.resting(a));
+    vm.step(&mut host).unwrap();
+    assert_eq!(vm.local(a, "ticks"), Some(Value::Int(4)), "on from there");
+    assert!(float(&vm, a, "v") > v, "its slide on from there");
+    assert!(
+        float(&vm, a, "v") < float(&vm, b, "v"),
+        "behind the other's"
+    );
+    assert_eq!(
+        vm.local(a, "inside"),
+        Some(Value::Int(1)),
+        "no STARTUP again"
+    );
+}
+
 /// [`Vm::step`] slides itself only when the embedder hasn't this frame:
 /// [`Vm::slide`] first, then a step, moves a slide once.
 #[test]

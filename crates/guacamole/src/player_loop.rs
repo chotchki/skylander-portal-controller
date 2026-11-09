@@ -502,6 +502,8 @@ impl PlayerLoop {
             Err(h) if vm.config().mode == Mode::Play => stopped.push(h),
             other => other?,
         }
+        // The level let rest while the game's paused at 0 (openspec AS.205).
+        crate::scripts::pause_rest(vm, host.world);
         let places = Places::of(vm, host.world);
         let play = vm.config().mode == Mode::Play;
         let mut native = |vm: &mut Vm, id: PlacementId, host: &mut dyn Host| {
