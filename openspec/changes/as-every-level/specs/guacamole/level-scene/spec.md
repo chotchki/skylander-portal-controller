@@ -425,3 +425,10 @@ When a hit hurts a hero, the TV SHALL play his own hurt on him over his walk: wh
 #### Scenario: A Chompy bites Eruptor
 - **WHEN** a Chompy bites Eruptor at level 1 in chapter 1's first fight as he walks at it
 - **THEN** he flinches for 0.64 s, and walks on under the flinch once the bite's push is over
+
+### Requirement: A scene's actor walks against the level
+When a scene walks one of a level's actors whose solid meets the level, the TV SHALL walk it as it walks a creature: a wall stops it and it stands on the ground, coming down off an edge by its gravity. Level 214's key, whose script takes its solid and its fall away, SHALL float 15-16 ft over its taker's ground beside him until the locked door takes it to its lock and off.
+
+#### Scenario: Level 214's first key
+- **WHEN** the hero takes level 214's first key and walks it up to the locked door
+- **THEN** it floats over him all the way, and once the door opens nothing of it is left
