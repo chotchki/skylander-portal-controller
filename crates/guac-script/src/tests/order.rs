@@ -385,6 +385,33 @@ fn an_asleep_placement_the_host_finds_awake_after_the_walk_ticks_that_step() {
     assert_eq!(host.asked[2], [0x30], "C, never named, still asked");
 }
 
+/// openspec AS.205: an asleep placement a pause lets rest ([`Vm::rest`])
+/// isn't asked whether it wakes while the rest holds, the host ready to
+/// wake it; the rest ended, it's asked and wakes.
+#[test]
+fn an_asleep_placement_let_rest_is_asked_to_wake_only_once_the_rest_ends() {
+    let mut vm = Vm::new(counting(), Config::new(Mode::Strict));
+    let ids = [vm.add(0x10, "A", 0), vm.add(0x20, "B", 0)];
+    let mut host = Waking::default();
+    vm.step(&mut host).unwrap();
+    vm.set_asleep(0x20, true);
+    vm.step(&mut host).unwrap();
+    host.wake = vec![0x20];
+    vm.rest(|h| h == 0x20);
+    for _ in 0..3 {
+        vm.step(&mut host).unwrap();
+    }
+    assert!(
+        host.asked.iter().all(|a| !a.contains(&0x20)),
+        "asked while it rests: {:?}",
+        host.asked
+    );
+    assert!(vm.asleep(ids[1]), "woken while it rests");
+    vm.unrest();
+    vm.step(&mut host).unwrap();
+    assert!(!vm.asleep(ids[1]), "still asleep once the rest ended");
+}
+
 /// openspec AS.130: a placement asked for runs the step's native in its
 /// place once, between what ticks ahead of it and its own first tick, and
 /// never again; one not asked for runs none.

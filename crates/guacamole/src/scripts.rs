@@ -5480,8 +5480,14 @@ pub fn pause_rest(vm: &mut Vm, world: &mut ScriptWorld) -> bool {
             };
         !runs
     };
-    let resting: std::collections::HashSet<Handle> =
-        world.actors.keys().copied().filter(|h| rests(*h)).collect();
+    // An actor taken off isn't one the pause holds: counted, it swelled
+    // `run.resting` with every clone the level had made and let go.
+    let resting: std::collections::HashSet<Handle> = world
+        .actors
+        .iter()
+        .filter(|(h, a)| !a.removed && rests(**h))
+        .map(|(h, _)| *h)
+        .collect();
     vm.rest(|h| resting.contains(&h));
     world.resting = resting;
     true

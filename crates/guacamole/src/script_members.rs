@@ -6728,6 +6728,55 @@ mod fight_tests {
         );
     }
 
+    /// openspec AS.205: what the game's pause lets rest the engine moves
+    /// none of, mid-motion as the pause finds them: a Chompy walking toward
+    /// a point, a scene's actor led there with no body and a clone flying
+    /// on its velocity each stand where they were for as long as the rest
+    /// holds, then go on from there.
+    #[test]
+    fn the_engine_holds_what_the_pause_lets_rest() {
+        let mut e = pit();
+        let mut w = world();
+        w.actors.insert(C1, chompy(Vec3::ZERO, 0.0));
+        let mut led = chompy(Vec3::new(0.0, 0.3, 4.0), 0.0);
+        led.walker = None;
+        led.solid.interacts_with_level_mesh = 0;
+        w.actors.insert(C2, led);
+        let mut flying = Actor::blank();
+        flying.position = Vec3::new(-5.0, 10.0, 0.0);
+        flying.launched = true;
+        flying.velocity = Vec3::new(10.0, 0.0, 0.0);
+        flying.physics.gravity_acceleration = 32.0;
+        w.actors.insert(C3, flying);
+        let go = |w: &mut ScriptWorld, e: &mut Pit| {
+            for walker in [C1, C2] {
+                let mut call = move_to(Value::Object(WP), 1);
+                (call.placement, call.receiver) = (walker, Value::Entity(walker));
+                ask(w, e, &call);
+            }
+            w.advance(STEP, e);
+        };
+        for _ in 0..10 {
+            go(&mut w, &mut e);
+        }
+        let at = |w: &ScriptWorld| [C1, C2, C3].map(|h| w.actor(h).unwrap().position);
+        let before = at(&w);
+        assert!(w.scene_walks.contains_key(&C2), "led as a scene leads it");
+        w.resting = [C1, C2, C3].into_iter().collect();
+        for _ in 0..30 {
+            w.advance(STEP, &mut e);
+        }
+        assert_eq!(at(&w), before, "moved while resting");
+        w.resting.clear();
+        for _ in 0..10 {
+            go(&mut w, &mut e);
+        }
+        let after = at(&w);
+        for k in 0..3 {
+            assert!(after[k].distance(before[k]) > 0.05, "{k}: {after:?}");
+        }
+    }
+
     /// AS.166: one of the people the TV draws, its solid meeting the level,
     /// led up a slope by `move to` stands on the ground under each step, as
     /// chapter 1's Norticus at the quarry climbs its slope; a scene's actor
