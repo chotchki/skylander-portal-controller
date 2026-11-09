@@ -431,16 +431,30 @@ When a scene jumps one of a level's people to a waypoint, the TV SHALL fly him o
 - **WHEN** level 201's practice pit's last scene jumps Brock off the yard
 - **THEN** he rises 6.7 m over the yard and comes down on the ground within 0.5 m of his landing
 
+### Requirement: A hero flinches when he's hit
+When a hit hurts a hero, the TV SHALL play his own hurt on him over his walk: where his hurt is a set of clips the original picks among, the set's first (Eruptor's 0.67 s), a Giant his one (Crusher's 0.43 s). The hurt SHALL hold him no longer than the hit's push: walking on the stick, he walks at its speed again 0.28 s after a Chompy's bite, his hurt still playing.
+
+#### Scenario: A Chompy bites Eruptor
+- **WHEN** a Chompy bites Eruptor at level 1 in chapter 1's first fight as he walks at it
+- **THEN** he flinches for 0.64 s, and walks on under the flinch once the bite's push is over
+
+### Requirement: A scene's actor walks against the level
+When a scene walks one of a level's actors whose solid meets the level, the TV SHALL walk it as it walks a creature: a wall stops it and it stands on the ground, coming down off an edge by its gravity. Level 214's key, whose script takes its solid and its fall away, SHALL float 15-16 ft over its taker's ground beside him until the locked door takes it to its lock and off.
+
+#### Scenario: Level 214's first key
+- **WHEN** the hero takes level 214's first key and walks it up to the locked door
+- **THEN** it floats over him all the way, and once the door opens nothing of it is left
+
 ### Requirement: Level 201's arena's commander
-Level 201's arena SHALL have its commander, Brock as his own heavy elf in his hat, stand on his podium over the floor through every wave, out of their fight, and once the last wave's scene ends come down his own path to the floor, where his reveal plays and he is fought until beaten; every other foe of the battle SHALL end its leap in on the floor.
+Level 201's arena SHALL have its commander, Brock as his own heavy elf in his hat, stand on his podium 12 m over the floor through every wave, out of their fight, and once the last wave's scene ends come down his own path to the floor within 3 s, where his reveal plays and he is fought until beaten; every other foe of the battle SHALL end its leap in on the floor.
 
 #### Scenario: The arena's battle
 - **WHEN** a hero fights the arena's waves on its floor
-- **THEN** Brock stands on his podium until Brock's battle scene, then comes down to the floor, is fought and beaten, and the outro plays
+- **THEN** Brock stands within 0.02 m of his podium 12.2 m up until Brock's battle scene, is on the floor 1.2 m from his path's foot 2.2 s after it with his reveal, is fought from his 136 to beaten, and the outro plays
 
 ### Requirement: Level 201's life island's ambush
-On level 201's life island past its first vine bridge, three evil Stealth Elves SHALL be summoned through the portal's entry beam and fight the hero on Stealth Elf's own attacks, driven by their own AI, each fought until beaten; the three beaten, the battle SHALL end and open the second vine bridge's switch.
+On level 201's life island past its first vine bridge, three evil Stealth Elves SHALL be summoned through the portal's entry beam and fight the hero on Stealth Elf's own attacks, driven by their own AI, each fought until beaten; the three beaten, the battle SHALL end within 4 s and open the second vine bridge's switch.
 
 #### Scenario: The ambush
 - **WHEN** a hero walks onto the life island's arena
-- **THEN** three evil Stealth Elves come in, rush and hurt him, are beaten one by one, and the second bridge grows from its switch after
+- **THEN** three evil Stealth Elves come in through the beam within 10 s, rush and hurt him, are beaten one by one, the battle ends 3.8 s after the last, and the second bridge grows from its switch after

@@ -51,7 +51,7 @@ use guac_ir::model::{
     Sampler, Scroll, Segment, Skeleton, TextureRole, TextureSlot, Transform, Wrap,
 };
 use guac_ir::nodes::{AttachNode, AttachNodes};
-use guac_ir::palette::{Choice, Palette, PaletteSlot, RefusedSlot, SlotEntry};
+use guac_ir::palette::{Choice, Networks, Palette, PaletteSlot, RefusedSlot, SlotEntry};
 use guac_ir::{Category, DumpIdentity, Hero, Model, Rig, RigLight, Roster, Sha256};
 use sha2::Digest;
 
@@ -69,6 +69,13 @@ pub const PALETTE_DIR: &str = "palettes";
 /// The palettes' part in the manifest: every character's, recorded once
 /// the model stage has been through them all.
 pub const PALETTES: &str = "palettes";
+/// Where a character's random networks go, one `<load file>.<ron|postcard>`
+/// each (openspec AS.196): his hurt's clips, kept apart from his palette so
+/// a build before AS.180 never opens them.
+pub const NETWORK_DIR: &str = "networks";
+/// The networks' part in the manifest: every character's whose model reads,
+/// written beside his palette, or read alone on an extract made before it.
+pub const NETWORKS: &str = "networks";
 /// Where the attach nodes go, one `<load file>.<ron|postcard>` each (AH.50).
 pub const NODE_DIR: &str = "nodes";
 /// The attach nodes' part in the manifest, recorded as the palettes' is.
@@ -127,8 +134,12 @@ pub struct Extracted {
     pub hero: std::result::Result<Hero, String>,
     /// What reading the hero side took, of the whole read.
     pub hero_took: Duration,
-    /// Every slot of the model's animation set (AH.22).
+    /// Every slot of the model's animation set (AH.22), a random network
+    /// kept as a network ([`without_random_networks`]).
     pub palette: Palette,
+    /// The set's random networks with their clips (openspec AS.196), which
+    /// [`Extracted::palette`] keeps as networks.
+    pub networks: Networks,
     /// What reading the palette took, of the whole read.
     pub palette_took: Duration,
     /// The model's attach list (AH.50).
@@ -275,13 +286,15 @@ pub fn read(
         .map_err(|e| e.to_string());
     let hero_took = started.elapsed();
     let started = Instant::now();
-    let palette = without_random_networks(self::palette(
+    let full = self::palette(
         &igz,
         &portal.hero,
         &havok_skeleton,
         load_file,
         identity.clone(),
-    ));
+    );
+    let networks = Networks::of(&full);
+    let palette = without_random_networks(full);
     let palette_took = started.elapsed();
     let nodes = self::nodes(&igz, &portal, load_file, &skeleton, identity.clone())
         .map_err(|e| refused(load_file, format!("its attach list: {e}")))?;
@@ -302,9 +315,24 @@ pub fn read(
         hero,
         hero_took,
         palette,
+        networks,
         palette_took,
         nodes,
     })
+}
+
+/// The random networks of the model `load_file`'s archive level holds
+/// (openspec AS.196), read alone: its animation set off the hero it plays
+/// in play, as [`read`] reads it, nothing else opened. What a start reads
+/// on an extract whose models went in before the networks' part.
+pub fn networks(level: &[u8], load_file: &str, identity: DumpIdentity) -> Result<Networks> {
+    let bad = |e: FormatError| refused(load_file, e);
+    let igz = Igz::parse(level).map_err(bad)?;
+    let portal = fmodel::portal_model(&igz).map_err(bad)?;
+    let portal = fmodel::in_play(&igz, portal, load_file).map_err(bad)?;
+    let havok_skeleton = fmodel::skeleton(&igz, &portal.hero).map_err(bad)?;
+    let full = self::palette(&igz, &portal.hero, &havok_skeleton, load_file, identity);
+    Ok(Networks::of(&full))
 }
 
 /// The attach list of the model `portal`'s hero draws (AH.50), each node
@@ -359,8 +387,10 @@ pub fn attach_node(p: &BoneAttachInfo<'_>, joints: &[&str]) -> AttachNode {
 /// [`SlotEntry::Random`], reads them on an extract a later build wrote, and
 /// an extract written before reads as one written now. A level's palettes
 /// keep their networks' clips: their file names carry their rule, which an
-/// older build never opens. So the heroes' hurt (slot 41, a network on 46
-/// of the 67 characters) stays unplayed (openspec AS.196).
+/// older build never opens. A character's clips go in a part of their own
+/// beside it (`networks/`, [`Networks`]: the heroes' hurt, slot 41, a
+/// network on 46 of the 67 characters), which the TV lays over his palette
+/// (openspec AS.196).
 pub fn without_random_networks(mut palette: Palette) -> Palette {
     for e in &mut palette.entries {
         if matches!(e.entry, SlotEntry::Random { .. }) {

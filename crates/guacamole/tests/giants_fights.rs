@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use guac_motion::seam::Vec3;
 use guac_motion::stick::{DEAD_ZONE, Stick};
+use guac_motion::tuning::FOOT;
 use guac_script::{Handle, Mode, Value};
 use guacamole::script_engine::Pad;
 
@@ -2185,5 +2186,145 @@ fn level_214s_second_door_opens_to_the_key_a_bomb_from_the_house_frees() {
         step(&mut run, &mut stops, [false; 4]);
     }
     assert!(gone(&run, key), "the second key's spawner done");
+    assert!(stops.is_empty(), "{stops:#?}");
+}
+
+/// The key nearest the hero (`Key Pickup`'s clones): its handle.
+fn nearest_key(run: &Run) -> Option<Handle> {
+    let at = run.hero().pivot;
+    run.world
+        .clones()
+        .into_iter()
+        .filter(|h| run.world.name(*h) == "Key Pickup")
+        .min_by(|a, b| {
+            let d = |h: Handle| {
+                let p = run.world.actor(h).unwrap().position;
+                (p.x - at.x).hypot(p.z - at.z)
+            };
+            d(*a).total_cmp(&d(*b))
+        })
+}
+
+/// openspec AS.79: level 214's first key, from its spawner to the door it
+/// opens, as its own script moves it. Its STARTUP takes its shape off and
+/// its gravity's top speed to nothing, so nothing in the level meets it and
+/// it never falls: waiting, it bobs 7 ft over its spawner; taken, it rises
+/// to 15-16.5 ft over his ground and follows him within a few feet; by the
+/// locked door the door takes it to its lock and off, nothing of it left.
+/// Setup_003 fought on the stick first, as AS.84's route.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_key_floats_over_its_taker_until_the_door_takes_it() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, mut stops) = joined_214();
+    let door = handle(&run, "Door_Template_Skylanders_2(1)");
+    let sail = handle(&run, "214_Recover_First_Part_IGC");
+    let spawner = run.at("Key Spawner(1)");
+    let setup_003: Vec<Handle> = [
+        "Enemy_TreeRex(2)",
+        "Enemy_Chompy2_E(1)",
+        "Enemy_Chompy2_E(2)",
+        "Enemy_Chompy2_E(3)",
+        "Enemy_Chompy2_E(4)",
+    ]
+    .iter()
+    .map(|n| handle(&run, n))
+    .collect();
+    run.put(Vec3::from_array(SHIP_PART_1), 0.0);
+    for k in 0..600u32 {
+        let pads = skipping_the_sail(&run, k);
+        step(&mut run, &mut stops, pads);
+        if gone(&run, sail) {
+            break;
+        }
+    }
+    assert_eq!(walk(&mut run, &mut stops, &[SETUP_003_TRIGGER]), Ok(()));
+    on_the_stick_at(&mut run, &mut stops, &setup_003, 3600, None);
+    // Over the lobe: the key waiting over its spawner.
+    assert_eq!(walk(&mut run, &mut stops, &KEY_1[..1]), Ok(()));
+    let key = nearest_key(&run).expect("the key");
+    let a = run.world.actor(key).unwrap().clone();
+    let over_spawner = a.position.y - spawner.y;
+    println!(
+        "waiting at {:.2}, {over_spawner:.2} m over its spawner at {spawner:.2}; shape {}, level {}, gravity {} to {}",
+        a.position,
+        a.solid.shape,
+        a.solid.interacts_with_level_mesh,
+        a.physics.gravity_acceleration,
+        a.physics.gravity_max_speed
+    );
+    assert_eq!((a.solid.shape, a.solid.interacts_with_level_mesh), (0, 0));
+    assert_eq!(a.physics.gravity_max_speed, 0.0, "it never falls");
+    assert!(
+        (6.0 * FOOT..8.5 * FOOT).contains(&over_spawner),
+        "bobbing 7 ft over its spawner: {over_spawner}"
+    );
+    // Taken, then carried to the door: over his ground, by him.
+    assert_eq!(walk(&mut run, &mut stops, &KEY_1[1..]), Ok(()));
+    let mut over = Vec::new();
+    let mut across: f32 = 0.0;
+    let mut steps = 0;
+    for p in TO_THE_DOOR.iter() {
+        for _ in 0..1200 {
+            let at = run.hero().pivot;
+            if (p[0] - at.x).hypot(p[1] - at.z) <= 1.0 {
+                break;
+            }
+            push_toward(&mut run, &mut stops, *p);
+            steps += 1;
+            let k = run.world.actor(key).unwrap();
+            if k.removed || behaviour(&run, door).as_deref() != Some("main loop") {
+                continue;
+            }
+            let hero = run.hero();
+            let ground = hero.pivot.y - hero.footing.height.unwrap_or(0.0);
+            if steps > 120 {
+                over.push(k.position.y - ground);
+                across =
+                    across.max((k.position.x - hero.pivot.x).hypot(k.position.z - hero.pivot.z));
+            }
+        }
+    }
+    let low = over.iter().copied().fold(f32::MAX, f32::min);
+    let high = over.iter().copied().fold(f32::MIN, f32::max);
+    println!(
+        "carried {} steps read: {low:.2}-{high:.2} m over his ground, at most {across:.2} m off him across",
+        over.len()
+    );
+    assert!(over.len() > 60, "carried a while: {}", over.len());
+    assert!(
+        low > 13.0 * FOOT && high < 17.5 * FOOT,
+        "15-16.5 ft over his ground: {low}-{high}"
+    );
+    assert!(across < 6.0 * FOOT, "by him: {across}");
+    // △ by the door: it takes the key to its lock and off.
+    let mut opened = None;
+    for k in 0..900u32 {
+        step(&mut run, &mut stops, [false, false, false, k % 20 < 2]);
+        if behaviour(&run, door).as_deref() == Some("done") {
+            opened = Some(run.steps);
+            break;
+        }
+    }
+    let opened = opened.expect("the door opened to its key");
+    let left: Vec<Handle> = run
+        .world
+        .clones()
+        .into_iter()
+        .filter(|h| run.world.name(*h) == "Key Pickup")
+        .filter(|h| run.world.actor(*h).is_some_and(|a| !a.removed))
+        .filter(|h| {
+            let p = run.world.actor(*h).unwrap().position;
+            (p.x - spawner.x).hypot(p.z - spawner.z) < 60.0
+        })
+        .collect();
+    println!(
+        "the door open at {opened}; keys left by it {left:?}; {:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    assert!(run.world.actor(key).is_none_or(|a| a.removed), "taken off");
+    assert!(left.is_empty(), "nothing of it left: {left:?}");
     assert!(stops.is_empty(), "{stops:#?}");
 }

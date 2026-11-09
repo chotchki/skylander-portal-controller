@@ -261,6 +261,44 @@ fn the_fights_parts_extract_whole_and_resume() {
         eruptor.refused
     );
 
+    // The characters' random networks (openspec AS.196): one file each,
+    // 46 holding their hurt (slot 41), Eruptor's the first of his four, his
+    // palette keeping the slot a network.
+    let networks = &m.parts[guac_extract::models::NETWORKS];
+    assert_eq!(networks.len(), 67);
+    let mut hurts = 0;
+    for rel in networks {
+        let n: guac_ir::palette::Networks = read(&dir, rel);
+        hurts += usize::from(n.slots.iter().any(|s| s.slot == 41));
+    }
+    let eruptor_networks: guac_ir::palette::Networks =
+        read(&dir, &IrFormat::Ron.network_path("009_Eruptor"));
+    let hurt = &eruptor_networks.slots[0];
+    println!(
+        "  networks: {} files, {hurts} with a hurt; Eruptor's slot {}: {:?}",
+        networks.len(),
+        hurt.slot,
+        hurt.choices
+            .iter()
+            .map(|c| (c.clip.name.as_str(), c.clip.duration))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(hurts, 46);
+    assert_eq!(
+        (
+            hurt.slot,
+            hurt.choices.len(),
+            hurt.choices[0].clip.name.as_str()
+        ),
+        (41, 4, "Eruptor_DamageFrontv00.ma")
+    );
+    assert!(matches!(
+        eruptor.get(41).map(|e| &e.entry),
+        Some(SlotEntry::Network)
+    ));
+    let laid = eruptor.clone().with_networks(&eruptor_networks);
+    assert!((laid.duration(41).unwrap() - 2.0 / 3.0).abs() < 1e-4);
+
     // Chapter 1's Chompies: the template's model and the placements'.
     let owners: Vec<&str> = creatures
         .palettes

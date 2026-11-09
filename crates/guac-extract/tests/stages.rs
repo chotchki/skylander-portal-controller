@@ -157,11 +157,17 @@ fn make_dump_from(tmp: &Path, roster: &DiscSpec, level: &StageSpec) -> PathBuf {
     // The fighter's archive (AH.22): a script and what it hangs.
     let fighter = model::archive(&model::character(&model::attached()));
     fs::write(usr.join(scripts::character_archive("009_Eruptor")), fighter).unwrap();
-    let good = model::archive(&model::character(&model::sample()));
-    let mut bad = model::sample();
+    // Each character's hurt a random network (openspec AS.196), as on 46
+    // of the disc's 67.
+    let mut sample = model::sample();
+    sample
+        .slots
+        .push(model::SlotSpec::network(41, &["Hurt00.ma", "Hurt01.ma"]));
+    let good = model::archive(&model::character(&sample));
+    let mut bad = sample.clone();
     bad.materials[0].pixel = Some((0x5C, 0x2FF));
     let bad = model::archive(&model::character(&bad));
-    let mut heroless = model::sample();
+    let mut heroless = sample.clone();
     heroless.actors.clear();
     let heroless = model::archive(&model::character(&heroless));
     for load in [
@@ -552,11 +558,11 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     assert!(!dir.join(format!("heroes/{HEROLESS}.ron")).exists());
     assert!(md.heroes_took <= md.took);
     // A palette for each model, the hero-less one's too, its files apart
-    // from the models'.
+    // from the models', each one's hurt a network (AS.196).
     let pc = &md.palettes;
     assert_eq!(
         (pc.palettes, pc.clips, pc.networks, pc.refused),
-        (MODELS, MODELS * SAMPLE_CLIPS, 0, 0)
+        (MODELS, MODELS * SAMPLE_CLIPS, MODELS, 0)
     );
     assert_eq!((pc.files.written, pc.files.kept), (MODELS, 0));
     assert!(pc.took <= md.took);
@@ -2417,6 +2423,126 @@ fn a_record_for_other_load_files_reads_the_models_again() {
     assert!(opened.dir.part_holds(models::PALETTES, &[]).unwrap());
 }
 
+/// openspec AS.196: a whole read writes each model's random networks beside
+/// its palette, which keeps them as networks; an extract made before the
+/// part (no record, no files) keeps its models and reads the networks
+/// alone, the same files a whole read writes, under one manifest save, and
+/// the next start keeps them unread. A character whose archive went
+/// missing is reported and left out, the others written.
+#[test]
+fn an_extract_made_before_the_networks_reads_them_alone_and_keeps_its_models() {
+    use guac_ir::palette::{Networks, Palette, SlotEntry};
+    let s = setup();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    let first = stages::run(&mut opened.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    let n = &first.models.networks;
+    assert!(!n.kept && !n.read_alone, "written with the models");
+    assert_eq!((n.characters, n.slots), (MODELS, MODELS));
+    assert_eq!((n.files.written, n.files.kept), (MODELS, 0));
+    let dir = opened.dir.path().to_path_buf();
+    let load = "MinionLoad_007_GemGolem";
+    let read = |rel: &str| fs::read_to_string(dir.join(rel)).unwrap();
+    let palette: Palette = guac_ir::from_ron(&read(&IrFormat::Ron.palette_path(load))).unwrap();
+    assert!(
+        matches!(palette.get(41).map(|e| &e.entry), Some(SlotEntry::Network)),
+        "his palette keeps the hurt a network, as a build before AS.180 reads it"
+    );
+    let networks: Networks = guac_ir::from_ron(&read(&IrFormat::Ron.network_path(load))).unwrap();
+    assert_eq!(networks.owner, load);
+    assert_eq!(networks.slots.len(), 1);
+    assert_eq!(networks.slots[0].slot, 41);
+    let names: Vec<&str> = networks.slots[0]
+        .choices
+        .iter()
+        .map(|c| c.clip.name.as_str())
+        .collect();
+    assert_eq!(names, ["Hurt00.ma", "Hurt01.ma"]);
+    let laid = palette.with_networks(&networks);
+    assert_eq!(laid.duration(41), Some(8.0 / 30.0), "the first clip's");
+    let whole: Vec<(String, String)> = opened.dir.manifest().parts[models::NETWORKS]
+        .iter()
+        .map(|rel| (rel.clone(), read(rel)))
+        .collect();
+    assert_eq!(whole.len(), MODELS);
+    drop(opened);
+
+    // Made before the part: no record, no outputs, no files.
+    let path = dir.join("manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    json["parts"]
+        .as_object_mut()
+        .unwrap()
+        .remove(models::NETWORKS)
+        .unwrap();
+    let prefix = format!("{}/", models::NETWORK_DIR);
+    json["outputs"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|o| !o["path"].as_str().unwrap().starts_with(&prefix));
+    fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+    fs::remove_dir_all(dir.join(models::NETWORK_DIR)).unwrap();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    assert_eq!(opened.state, DirState::Resume, "a part this build reads");
+    let roster = guac_extract::roster::load(&opened.dir, IrFormat::Ron).unwrap();
+    let m = stages::model_stage(&mut opened.dir, &roster, IrFormat::Ron, &|_| {}).unwrap();
+    assert!(m.kept, "the models kept");
+    assert_eq!(m.files.written + m.palettes.files.written, 0);
+    let n = &m.networks;
+    assert!(n.read_alone && !n.kept);
+    assert_eq!((n.characters, n.slots), (MODELS, MODELS));
+    assert_eq!((n.files.written, n.files.kept), (MODELS, 0));
+    assert!(n.failed.is_empty(), "{:?}", n.failed);
+    let again: Vec<(String, String)> = opened.dir.manifest().parts[models::NETWORKS]
+        .iter()
+        .map(|rel| (rel.clone(), read(rel)))
+        .collect();
+    assert_eq!(again, whole, "the files a whole read writes");
+    // The next start keeps them unread.
+    let m = stages::model_stage(&mut opened.dir, &roster, IrFormat::Ron, &|_| {}).unwrap();
+    assert!(m.kept && m.networks.kept && !m.networks.read_alone);
+    assert_eq!(
+        (m.networks.files.written, m.networks.files.kept),
+        (0, MODELS)
+    );
+    drop(opened);
+
+    // Read alone with a character's archive gone: he's reported and left
+    // out, the others written, the part in.
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    json["parts"]
+        .as_object_mut()
+        .unwrap()
+        .remove(models::NETWORKS)
+        .unwrap();
+    fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    // Gone after the dump was scanned, as a disc unplugged mid-start.
+    let usr = s.dump.join("PS3_GAME/USRDIR");
+    fs::remove_file(models::archive_path(&usr, load)).unwrap();
+    let m = stages::model_stage(&mut opened.dir, &roster, IrFormat::Ron, &|_| {}).unwrap();
+    assert!(m.kept && m.networks.read_alone);
+    assert_eq!(m.networks.characters, MODELS - 1);
+    let failed: Vec<&str> = m
+        .networks
+        .failed
+        .iter()
+        .map(|f| f.load_file.as_str())
+        .collect();
+    assert_eq!(failed, [load]);
+    assert_eq!(
+        (m.networks.files.written, m.networks.files.kept),
+        (0, MODELS - 1),
+        "the others as they were"
+    );
+    assert!(opened.dir.part_holds(models::NETWORKS, &[]).unwrap());
+    assert_eq!(
+        opened.dir.manifest().parts[models::NETWORKS].len(),
+        MODELS - 1
+    );
+}
+
 /// AT.30: a model's files go in under one manifest save; a stage stopped
 /// partway (its last models' files on disk but unrecorded, the part and
 /// its record not yet in) is read again by the next start and comes out
@@ -2441,7 +2567,12 @@ fn a_model_batch_stopped_partway_resumes_to_the_same_extract() {
     let path = dir.join("manifest.json");
     let mut json: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
-    for part in [models::PART, models::PALETTES, models::NODES] {
+    for part in [
+        models::PART,
+        models::PALETTES,
+        models::NETWORKS,
+        models::NODES,
+    ] {
         json["parts"].as_object_mut().unwrap().remove(part).unwrap();
     }
     let last = "MinionLoad_112_TitanLife";
@@ -2454,8 +2585,8 @@ fn a_model_batch_stopped_partway_resumes_to_the_same_extract() {
     let dropped = before - json["outputs"].as_array().unwrap().len();
     assert_eq!(
         dropped,
-        1 + 1 + 1 + 1 + 1,
-        "its model, hero, palette, nodes and the record"
+        1 + 1 + 1 + 1 + 1 + 1,
+        "its model, hero, palette, networks, nodes and the record"
     );
     fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
 
@@ -2463,7 +2594,10 @@ fn a_model_batch_stopped_partway_resumes_to_the_same_extract() {
     let roster = guac_extract::roster::load(&opened.dir, IrFormat::Ron).unwrap();
     let m = stages::model_stage(&mut opened.dir, &roster, IrFormat::Ron, &|_| {}).unwrap();
     assert!(!m.kept);
-    assert_eq!(m.files.written + m.palettes.files.written, dropped);
+    assert_eq!(
+        m.files.written + m.palettes.files.written + m.networks.files.written,
+        dropped
+    );
     let again: Vec<(String, u64, String)> = opened
         .dir
         .manifest()
@@ -2472,7 +2606,12 @@ fn a_model_batch_stopped_partway_resumes_to_the_same_extract() {
         .map(|o| (o.path.clone(), o.size, o.sha256.to_string()))
         .collect();
     assert_eq!(again, whole, "the same extract, file for file");
-    for part in [models::PART, models::PALETTES, models::NODES] {
+    for part in [
+        models::PART,
+        models::PALETTES,
+        models::NETWORKS,
+        models::NODES,
+    ] {
         assert!(opened.dir.part_holds(part, &[]).unwrap(), "{part}");
     }
 }

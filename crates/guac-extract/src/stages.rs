@@ -197,6 +197,9 @@ pub struct ModelStage {
     /// The palettes written or kept (AH.22), one per model, and what they
     /// hold.
     pub palettes: PaletteCount,
+    /// The characters' random networks written, kept or read alone
+    /// (openspec AS.196).
+    pub networks: NetworkCount,
     /// Distinct texture files, and texture binds over every material.
     pub textures: usize,
     pub binds: usize,
@@ -234,6 +237,28 @@ impl PaletteCount {
         }
         self.refused += p.refused.len();
     }
+}
+
+/// The characters' random networks' part (openspec AS.196,
+/// [`models::NETWORKS`]): written with the models, kept as recorded, or,
+/// on an extract whose models went in before it, read alone.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NetworkCount {
+    /// In already and kept, its files unread.
+    pub kept: bool,
+    /// Read alone this run, the models kept.
+    pub read_alone: bool,
+    /// Characters whose networks this run wrote, and their slots holding a
+    /// random network (none counted when kept).
+    pub characters: usize,
+    pub slots: usize,
+    /// Characters whose networks didn't read alone: no file, so his
+    /// networks play nothing, as before the part.
+    pub failed: Vec<ModelFailure>,
+    /// Their IR files, written or kept.
+    pub files: Files,
+    /// Reading and writing them, of the stage's time.
+    pub took: Duration,
 }
 
 /// A level part that didn't read: its level and part, and
@@ -1140,6 +1165,7 @@ pub fn model_stage(
         unsettled: Vec::new(),
         heroes_took: Duration::ZERO,
         palettes: PaletteCount::default(),
+        networks: NetworkCount::default(),
         textures: 0,
         binds: 0,
         files: Files::default(),
@@ -1169,6 +1195,18 @@ pub fn model_stage(
         stage.heroes = record.heroes;
         stage.unsettled = record.unsettled.into_iter().map(failure).collect();
         (stage.textures, stage.binds) = (record.textures, record.binds);
+        let read = |load: &str| {
+            let path = models::archive_path(&usrdir, load);
+            models::archive(&path, load)
+                .and_then(|bytes| models::level(&bytes, load))
+                .and_then(|level| models::networks(&level, load, identity.clone()))
+        };
+        let models_in: Vec<&str> = loads
+            .iter()
+            .copied()
+            .filter(|l| !stage.failed.iter().any(|f| f.load_file == *l))
+            .collect();
+        stage.networks = network_part(dir, ir, &models_in, read)?;
         stage.took = started.elapsed();
         send(Event::Models { done: total, total });
         return Ok(stage);
@@ -1176,6 +1214,7 @@ pub fn model_stage(
     let mut written: HashSet<String> = HashSet::new();
     let mut files: Vec<String> = Vec::new();
     let mut palette_files = Vec::new();
+    let mut network_files = Vec::new();
     let mut node_files = Vec::new();
     // `global.bld` and `bootstrap.bld`, for the attachments a global
     // template draws (AE.23); without them those sets stay unsettled.
@@ -1247,6 +1286,16 @@ pub fn model_stage(
                 stage.palettes.add(&m.palette);
                 stage.palettes.took += m.palette_took + started.elapsed();
                 palette_files.push(palette_rel);
+                let started = Instant::now();
+                let network_rel = ir.network_path(load);
+                let networks = ir.encode(&m.networks, dir, &network_rel)?;
+                if !held(dir, &network_rel, &networks, &mut stage.networks.files)? {
+                    new.push((network_rel.clone(), &networks));
+                }
+                stage.networks.characters += 1;
+                stage.networks.slots += m.networks.slots.len();
+                stage.networks.took += started.elapsed();
+                network_files.push(network_rel);
                 let nodes_rel = ir.nodes_path(load);
                 let nodes = ir.encode(&m.nodes, dir, &nodes_rel)?;
                 if !held(dir, &nodes_rel, &nodes, &mut stage.files)? {
@@ -1264,8 +1313,10 @@ pub fn model_stage(
         send(Event::Models { done: i + 1, total });
     }
     stage.textures = written.len();
-    // Every model that read has its palette in: the part is.
+    // Every model that read has its palette in: the part is. Its networks
+    // too (openspec AS.196).
     dir.record_part(models::PALETTES, palette_files)?;
+    dir.record_part(models::NETWORKS, network_files)?;
     dir.record_part(models::NODES, node_files)?;
     let rig = std::fs::read(usrdir.join(roster::GLOBAL))
         .map_err(ExtractError::io(usrdir.join(roster::GLOBAL)))
@@ -1307,6 +1358,58 @@ pub fn model_stage(
     dir.record_part(models::PART, files)?;
     stage.took = started.elapsed();
     Ok(stage)
+}
+
+/// The networks' part on an extract whose models are kept (openspec
+/// AS.196): kept while it's recorded with every file it names intact, else
+/// each of `loads`' networks read alone by `read` and written, then the part
+/// recorded with those that read; one that doesn't is reported and plays
+/// nothing, as before the part. A file that won't write stops the run.
+fn network_part(
+    dir: &mut IdentityDir,
+    ir: IrFormat,
+    loads: &[&str],
+    read: impl Fn(&str) -> Result<guac_ir::palette::Networks>,
+) -> Result<NetworkCount> {
+    let started = Instant::now();
+    let mut count = NetworkCount::default();
+    if dir.part_holds(models::NETWORKS, &[])? {
+        let recorded = dir.manifest().parts[models::NETWORKS].clone();
+        count_kept(dir, &recorded, &mut count.files);
+        count.kept = true;
+        count.took = started.elapsed();
+        return Ok(count);
+    }
+    count.read_alone = true;
+    let mut read_in: Vec<(String, Vec<u8>)> = Vec::with_capacity(loads.len());
+    for load in loads {
+        match read(load) {
+            Ok(networks) => {
+                let rel = ir.network_path(load);
+                let bytes = ir.encode(&networks, dir, &rel)?;
+                count.characters += 1;
+                count.slots += networks.slots.len();
+                read_in.push((rel, bytes));
+            }
+            Err(e @ ExtractError::ModelUnreadable { .. }) => count.failed.push(ModelFailure {
+                load_file: (*load).to_owned(),
+                reason: e.to_string(),
+            }),
+            Err(e) => return Err(e),
+        }
+    }
+    // Under one manifest save (AS.26's batching), then the part.
+    let mut new: Vec<(String, &[u8])> = Vec::new();
+    for (rel, bytes) in &read_in {
+        if !held(dir, rel, bytes, &mut count.files)? {
+            new.push((rel.clone(), bytes));
+        }
+    }
+    dir.write_outputs(&new)?;
+    let files = read_in.into_iter().map(|(rel, _)| rel).collect();
+    dir.record_part(models::NETWORKS, files)?;
+    count.took = started.elapsed();
+    Ok(count)
 }
 
 /// A part's IR in its format, and the textures it binds by path.

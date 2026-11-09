@@ -2431,6 +2431,23 @@ fn write_models(dir: &mut guac_extract::IdentityDir, walking: bool, fighting: bo
         palettes.push(rel);
     }
     dir.record_part(guac_extract::models::PALETTES, palettes)?;
+    // AS.196's random networks: none in the made-up palettes.
+    let mut networks = Vec::new();
+    let owners = [
+        Some(model.load_file.clone()),
+        fighting.then(|| WALKING_LOAD.to_owned()),
+    ];
+    for owner in owners.into_iter().flatten() {
+        let n = guac_ir::palette::Networks {
+            identity: identity.clone(),
+            owner: owner.clone(),
+            slots: Vec::new(),
+        };
+        let rel = ir.network_path(&owner);
+        dir.write_output(&rel, &ir.encode(&n, dir, &rel)?)?;
+        networks.push(rel);
+    }
+    dir.record_part(guac_extract::models::NETWORKS, networks)?;
     // AH.50's attach nodes, none on the made-up models: a node there sits
     // at the actor's pivot.
     let mut nodes = Vec::new();

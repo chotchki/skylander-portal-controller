@@ -134,7 +134,7 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 use guac_ir::clip::Clip;
 use guac_ir::model::{Sampler, Scroll};
 use guac_ir::nodes::AttachNodes;
-use guac_ir::palette::Palette;
+use guac_ir::palette::{Networks, Palette};
 use guac_ir::scroll;
 use guac_ir::shading::Scene;
 use guac_ir::{Category, Model};
@@ -515,7 +515,10 @@ fn read_nodes(shelf: &Shelf, load: &str) -> Result<AttachNodes, String> {
     Ok(nodes)
 }
 
-/// `load`'s animation palette off the extract (AH.22's part).
+/// `load`'s animation palette off the extract (AH.22's part), his random
+/// networks' clips laid over the slots it keeps as networks (openspec
+/// AS.196: his hurt), as a level's models' networks play. Networks that
+/// don't read leave those slots playing nothing, logged.
 fn read_palette(shelf: &Shelf, load: &str) -> Result<Palette, String> {
     let rel = shelf.ir.palette_path(load);
     let palette: Palette = read_ir(shelf.ir, &shelf.dir.join(&rel))?;
@@ -525,7 +528,26 @@ fn read_palette(shelf: &Shelf, load: &str) -> Result<Palette, String> {
     if palette.owner != load {
         return Err(format!("{rel} holds {}'s palette", palette.owner));
     }
-    Ok(palette)
+    match read_networks(shelf, load) {
+        Ok(n) => Ok(palette.with_networks(&n)),
+        Err(why) => {
+            warn!(load_file = load, reason = %why, "his networks didn't read: his hurt plays nothing");
+            Ok(palette)
+        }
+    }
+}
+
+/// `load`'s random networks off the extract (openspec AS.196's part).
+fn read_networks(shelf: &Shelf, load: &str) -> Result<Networks, String> {
+    let rel = shelf.ir.network_path(load);
+    let networks: Networks = read_ir(shelf.ir, &shelf.dir.join(&rel))?;
+    if networks.identity != shelf.identity {
+        return Err(format!("{rel} names another dump"));
+    }
+    if networks.owner != load {
+        return Err(format!("{rel} holds {}'s networks", networks.owner));
+    }
+    Ok(networks)
 }
 
 /// The hero's model on its way to the level.
@@ -1291,12 +1313,14 @@ impl Plugin for PlayPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(HeroPlugin)
             .init_resource::<Play>()
+            .init_resource::<PortalSuspended>()
             .add_message::<RestartLevel>()
             .add_message::<LevelEnded>()
             .add_systems(
                 Update,
                 (
                     restart,
+                    read_portal_suspended,
                     follow_portal,
                     ask_items,
                     keep_unlinked,
@@ -1322,6 +1346,40 @@ impl Plugin for PlayPlugin {
     }
 }
 
+/// Whether the level's scripts have the game paused with the portal let
+/// rest (openspec AS.125, [`guacamole::scripts::portal_suspended`]): a
+/// level end's completion screen. The original's portal answers no figure
+/// then, so the TV's portal holds its alert as it stood and a hero's figure
+/// lifted leaves him in the level, to be answered once the game's unpaused.
+#[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PortalSuspended(pub(crate) bool);
+
+/// [`PortalSuspended`] off the level's run, each frame there's one. The run
+/// taken down takes its pause with it (`had`): a level end pauses through
+/// to its switch, and a next level whose scripts didn't link would
+/// otherwise keep the portal deaf throughout.
+fn read_portal_suspended(
+    runtime: Option<Res<ScriptRuntime>>,
+    mut suspended: ResMut<PortalSuspended>,
+    mut had: Local<bool>,
+) {
+    let now = match runtime {
+        Some(rt) => {
+            *had = true;
+            guacamole::scripts::portal_suspended(&rt.vm)
+        }
+        None if std::mem::take(&mut *had) => false,
+        None => return,
+    };
+    if suspended.0 != now {
+        info!(
+            suspended = now,
+            "the portal's scripts let rest by the game's pause"
+        );
+        suspended.0 = now;
+    }
+}
+
 /// `placement` is the toy `hero` stood on the portal as, its words still
 /// good: the same figure for the same profile, no edit or reset since
 /// (AS.112; the original's portal knows a toy by its serial).
@@ -1341,7 +1399,11 @@ fn follow_portal(
     mut level: ResMut<Level>,
     mut commands: Commands,
     bodies: Query<(&HeroBody, Option<&HeroRun>)>,
-    (runtime, game): (Option<Res<ScriptRuntime>>, Res<Time<Virtual>>),
+    (runtime, game, suspended): (
+        Option<Res<ScriptRuntime>>,
+        Res<Time<Virtual>>,
+        Res<PortalSuspended>,
+    ),
 ) {
     for PortalChanged(change) in heard.read() {
         let slot = match change {
@@ -1374,6 +1436,15 @@ fn follow_portal(
             info!(
                 slot = slot.display(),
                 "the hero's figure left the portal under a scene's lock"
+            );
+            play.lifted = Some(game.elapsed());
+            continue;
+        }
+        // The portal let rest by the game's pause (AS.125): he stays.
+        if suspended.0 && play.on_stage().is_some() {
+            info!(
+                slot = slot.display(),
+                "the hero's figure left the portal while the game's paused"
             );
             play.lifted = Some(game.elapsed());
             continue;
@@ -1424,11 +1495,15 @@ fn let_go(
     mut commands: Commands,
     bodies: Query<(&HeroBody, Option<&HeroRun>)>,
     runtime: Option<Res<ScriptRuntime>>,
-    game: Res<Time<Virtual>>,
+    (game, suspended): (Res<Time<Virtual>>, Res<PortalSuspended>),
 ) {
     let Some(at) = play.lifted else {
         return;
     };
+    // The game's pause holds him as long as it lasts (AS.125).
+    if suspended.0 {
+        return;
+    }
     let overdue = game.elapsed() >= at + HELD_SWAP_BACKSTOP;
     if !overdue && scene_keeps_him(&play, &bodies, runtime.as_deref()) {
         return;
@@ -1978,13 +2053,19 @@ fn judge_portal(
     (prepare, queue): (Option<Res<Prepare>>, Option<Res<IntroQueue>>),
     mut pads: ResMut<LevelPads>,
     source: Option<Res<ScriptSource>>,
-    (choice, movies): (
+    (choice, movies, suspended): (
         Option<Res<crate::level_choice::LevelChoice>>,
         Option<Res<crate::movies::Movies>>,
+        Option<Res<PortalSuspended>>,
     ),
 ) {
     let on_portal = current.is_some_and(|c| matches!(c.screen, TvScreen::Portal { .. }));
+    // The portal let rest by the game's pause (AS.125): its alert stands as
+    // it stood until the game's unpaused, as the original's portal answers
+    // no figure then.
+    let rests = on_portal && play.inside.is_some() && suspended.is_some_and(|s| s.0);
     let alert = match turntables.shelf().filter(|_| on_portal) {
+        Some(_) if rests => play.alert,
         Some(shelf) => {
             let mut lineup = Lineup::of(
                 &play.order,
@@ -4313,6 +4394,109 @@ mod tests {
         // Refused: not registered, so the run is the one without the key.
         assert!(matches!(run(Some("synthetic.nothing")), Join::Joined(_)));
         assert!(matches!(run(Some("")), Join::Joined(_)));
+    }
+
+    /// openspec AS.196: his palette as the TV reads it plays his random
+    /// networks' clips where his networks file holds them (his hurt, which
+    /// his palette file keeps a network), the first clip's length; with no
+    /// networks file, or one that's another character's, the slot plays
+    /// nothing, as before, and the rest of his palette reads the same.
+    #[test]
+    fn his_hurt_plays_off_his_networks_file_beside_his_palette() {
+        use guac_ir::palette::{Choice, NetworkSlot, PaletteSlot, SlotEntry};
+        let identity = guac_ir::DumpIdentity {
+            title_id: "BLUS30968".into(),
+            app_ver: "01.00".into(),
+            manifest_hash: guac_ir::Sha256([3; 32]),
+        };
+        let clip = |name: &str, duration: f32| Clip {
+            name: name.into(),
+            duration,
+            frame_duration: 1.0 / 30.0,
+            frames: 9,
+            tracks: Vec::new(),
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let shelf = Shelf {
+            dir: tmp.path().to_path_buf(),
+            ir: IrFormat::Ron,
+            identity: identity.clone(),
+            loads: std::collections::HashMap::new(),
+            kinds: std::collections::HashMap::new(),
+            failed: std::collections::HashMap::new(),
+            rig: Err("none".into()),
+        };
+        let slot = |slot, entry| PaletteSlot {
+            slot,
+            name: None,
+            label: None,
+            entry,
+        };
+        let idle = SlotEntry::Clip {
+            additive: false,
+            partial: false,
+            layered: false,
+            motion_extraction: 0,
+            clip: clip("Idle.ma", 1.0),
+        };
+        let palette = Palette {
+            identity: identity.clone(),
+            owner: "009_Eruptor".into(),
+            slots: 60,
+            entries: vec![slot(0, idle), slot(41, SlotEntry::Network)],
+            refused: Vec::new(),
+        };
+        let write = |rel: String, text: String| {
+            let path = tmp.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write(
+            IrFormat::Ron.palette_path("009_Eruptor"),
+            guac_ir::to_ron(&palette).unwrap(),
+        );
+        // No networks file yet: his hurt plays nothing.
+        let read = read_palette(&shelf, "009_Eruptor").unwrap();
+        assert!(read.duration(41).is_none());
+        assert_eq!(read, palette);
+        let choice = |name, duration| Choice {
+            additive: false,
+            partial: true,
+            layered: false,
+            motion_extraction: 0,
+            clip: clip(name, duration),
+            params: vec![1.0, 0.0, 0.0, 1.0, 1.0],
+        };
+        let networks = Networks {
+            identity: identity.clone(),
+            owner: "009_Eruptor".into(),
+            slots: vec![NetworkSlot {
+                slot: 41,
+                choices: vec![choice("Hurt00.ma", 0.4), choice("Hurt01.ma", 0.3)],
+            }],
+        };
+        write(
+            IrFormat::Ron.network_path("009_Eruptor"),
+            guac_ir::to_ron(&networks).unwrap(),
+        );
+        let read = read_palette(&shelf, "009_Eruptor").unwrap();
+        assert_eq!(read.duration(41), Some(0.4), "his hurt, its first clip");
+        assert_eq!(
+            read.clip_at(41, 0.1).map(|(c, _)| c.name.as_str()),
+            Some("Hurt00.ma")
+        );
+        assert_eq!(read.duration(0), Some(1.0));
+        // Another character's networks under his name: as before.
+        let other = Networks {
+            owner: "010_Bash".into(),
+            ..networks
+        };
+        write(
+            IrFormat::Ron.network_path("009_Eruptor"),
+            guac_ir::to_ron(&other).unwrap(),
+        );
+        let read = read_palette(&shelf, "009_Eruptor").unwrap();
+        assert!(read.duration(41).is_none());
     }
 
     /// AG.219: a walker whose script stops in play walks drawn on his own
@@ -7020,6 +7204,89 @@ mod tests {
         }
         let on = hero(&app).pivot;
         assert!(on.distance(at) > 0.1, "he walks on: {at} -> {on}");
+    }
+
+    /// AS.125: while the level's scripts rest the portal (a level end's
+    /// completion screen), a second Skylander placed raises no alert and
+    /// holds nothing, and the hero's figure lifted leaves him in the level;
+    /// the rest over, the portal answers both: he's taken off and the other
+    /// comes in in his place.
+    #[test]
+    fn a_portal_the_scripts_rest_answers_no_figure_until_they_wake_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = walking(tmp.path());
+        app.insert_resource(PortalSuspended(true));
+        place(&mut app, 3, ERUPTOR, "Eruptor");
+        for _ in 0..30 {
+            app.update();
+            assert_eq!(alert(&app), None, "no alert under the rest");
+            assert_eq!(mode(&app), Mode::Level, "nothing held");
+        }
+        clear(&mut app, 0);
+        for _ in 0..30 {
+            app.update();
+            assert_eq!(alert(&app), None, "no alert under the rest");
+        }
+        assert!(app.world().resource::<Play>().lifted(), "he stays, lifted");
+        assert!(app.world().resource::<Play>().on_stage().is_some());
+        app.insert_resource(PortalSuspended(false));
+        until(&mut app, "his figure answered", |a| {
+            !a.world().resource::<Play>().lifted()
+        });
+        until(&mut app, "the second one in", |a| mode(a) == Mode::Level);
+        let c = app.world().resource::<Play>().candidate.as_ref().unwrap();
+        assert_eq!(c.slot.as_u8(), 3, "the other comes in in his place");
+    }
+
+    /// AS.125's review: the rest is read off the level's run each frame,
+    /// a run pausing nothing ending one left standing, and the run taken
+    /// down takes its rest with it (a level end pauses through to its
+    /// switch, and a next level whose scripts didn't link would keep the
+    /// portal deaf throughout); with no run since, nothing reads it.
+    #[test]
+    fn the_portals_rest_is_its_runs_and_goes_with_it() {
+        use std::sync::Arc;
+
+        use guac_formats::igz::Igz;
+        use guac_formats::script::{Graph, builder};
+        use guac_script::{Config, Generator, Role, Unit, Vm};
+        let run = || {
+            let bytes = builder::ui_containers();
+            let igz = Igz::parse(&bytes).unwrap();
+            let graph = Graph::read(&igz).unwrap();
+            let unit = Unit {
+                name: "global",
+                role: Role::Other,
+                igz: &igz,
+                graph: &graph,
+            };
+            let program = Arc::new(guac_script::Program::link(&[unit]).unwrap());
+            ScriptRuntime {
+                vm: Vm::new(program, Config::new(guac_script::Mode::Strict)),
+                generator: Generator::seeded(1),
+                player_loop: Default::default(),
+                steps: 0,
+                stopped: Vec::new(),
+                entry_stopped: None,
+            }
+        };
+        let mut app = App::new();
+        app.init_resource::<PortalSuspended>()
+            .add_systems(Update, read_portal_suspended);
+        let rest = |app: &App| app.world().resource::<PortalSuspended>().0;
+        app.insert_resource(PortalSuspended(true));
+        app.update();
+        assert!(rest(&app), "no run yet: nothing reads it");
+        app.insert_resource(run());
+        app.update();
+        assert!(!rest(&app), "a run pausing nothing");
+        app.insert_resource(PortalSuspended(true));
+        app.world_mut().remove_resource::<ScriptRuntime>();
+        app.update();
+        assert!(!rest(&app), "the run taken down, its rest with it");
+        app.insert_resource(PortalSuspended(true));
+        app.update();
+        assert!(rest(&app), "no run since: nothing reads it");
     }
 
     /// AG.63: with a second Eruptor holding the level, the hero taken off

@@ -2953,6 +2953,8 @@ impl ScriptWorld {
     pub(crate) fn move_scene_walks(&mut self, dt: f32, engine: &mut dyn Engine) {
         let mut walking: Vec<Handle> = self.scene_walks.keys().copied().collect();
         walking.sort_unstable();
+        let walks = &self.scene_walks;
+        self.scene_bodies.retain(|h, _| walks.contains_key(h));
         let people = self.people();
         let mut bodies = self.actor_bodies(engine);
         bodies.extend(people.iter().filter_map(|p| engine.body(*p)));
@@ -3019,6 +3021,47 @@ impl ScriptWorld {
                 {
                     walk.jump = false;
                 }
+                continue;
+            }
+            // One whose solid meets the level, not one of the people the
+            // ground under each step stands (AS.166), walks on a body as
+            // the engine walks a creature (AS.79): its solid swept through
+            // the level, so a wall stops it, and its gravity under it, so
+            // it comes down onto the ground and off an edge, through its
+            // walk and once it ends. Chapter 1's outro's Mabu and level
+            // 214's intro's: capsules that meet the level, 32 and 50 ft/s².
+            let person = people.binary_search(&h).is_ok();
+            let solid = a
+                .havok()
+                .filter(|_| !person && a.solid.interacts_with_level_mesh != 0);
+            if let Some(solid) = solid {
+                let own: Vec<BodyId> = engine.body(h).into_iter().collect();
+                let fresh = self
+                    .scene_bodies
+                    .get(&h)
+                    .is_none_or(|b| *b.solid() != solid);
+                if fresh {
+                    let mut b = Hero::actor(solid, a.position, a.angles.facing);
+                    b.settle(engine.seam(), &own);
+                    self.scene_bodies.insert(h, b);
+                }
+                let Some(b) = self.scene_bodies.get_mut(&h) else {
+                    continue;
+                };
+                b.pivot = a.position;
+                b.facing = a.angles.facing;
+                b.walk.velocity = a.velocity;
+                b.step_steered(
+                    engine.seam(),
+                    &steer_physics(&a.physics),
+                    aim,
+                    dt,
+                    &own,
+                    Surfaces::NONE,
+                );
+                a.position = b.pivot;
+                a.angles.facing = b.facing;
+                a.velocity = b.walk.velocity;
                 continue;
             }
             let frame = guac_motion::steer::step(
@@ -6525,6 +6568,9 @@ mod fight_tests {
         let mut w = world();
         let mut mabu = chompy(Vec3::new(0.0, 0.3, 0.0), 0.0);
         mabu.walker = None;
+        // Its solid meets no level, as the Tree Rex's homing charge's: no
+        // body (one that does walks on one: AS.79's test).
+        mabu.solid.interacts_with_level_mesh = 0;
         w.actors.insert(C1, mabu);
         let goal = Vec3::new(8.0, 0.0, -6.0);
         let (mut frames, mut top) = (0, 0.0f32);
@@ -6709,14 +6755,101 @@ mod fight_tests {
             (at.x - 14.0).abs() < 1.0 && (at.y - 3.5).abs() < 0.3,
             "{at}"
         );
-        for (h, meets_level) in [(C2, 1), (C1, 0)] {
-            let (_, at) = walk(h, meets_level, up);
-            assert!(at.y.abs() < 1e-6, "at its height: {at}");
-            assert!(at.x > 13.0, "walked all the same: {at}");
-        }
+        // A person whose solid meets no level stays at its height (a
+        // scene's actor whose solid meets the level walks on a body: AS.79).
+        let (_, at) = walk(C1, 0, up);
+        assert!(at.y.abs() < 1e-6, "at its height: {at}");
+        assert!(at.x > 13.0, "walked all the same: {at}");
         // Off the ramp's end at 5 m, over nothing: at the height it left it.
         let (_, at) = walk(C1, 1, past);
         assert!(at.x > 25.0 && (at.y - 5.0).abs() < 0.05, "{at}");
+    }
+
+    /// openspec AS.79: an actor a scene walks whose solid meets the level
+    /// (chapter 1's outro's Mabu, level 214's intro's) walks on a body, as
+    /// the engine walks a creature: a wall across its way stops it short of
+    /// its aim, standing on the floor; walked off a ledge with its gravity
+    /// (32 ft/s² to 120) it falls and stands on the ground below, and one
+    /// whose gravity's top speed is nothing (level 214's key's, as its
+    /// script sets it) walks on at its height; put over the floor and its
+    /// walk over, it comes down onto it.
+    #[test]
+    fn a_scene_walk_meeting_the_level_walks_on_a_body() {
+        let floor = |id: u32, x: [f32; 2], top: f32| Body {
+            id: BodyId(id),
+            kind: BodyKind::Static,
+            pose: Pose::at(Vec3::new((x[0] + x[1]) / 2.0, top - 0.5, 0.0)),
+            collider: Collider::Convex(Shape::Box {
+                half_extents: Vec3::new((x[1] - x[0]) / 2.0, 0.5, 20.0),
+                margin: 0.0,
+            }),
+        };
+        let wall = Body {
+            id: BodyId(9),
+            kind: BodyKind::Static,
+            pose: Pose::at(Vec3::new(4.0, 1.0, 0.0)),
+            collider: Collider::Convex(Shape::Box {
+                half_extents: Vec3::new(0.2, 1.0, 20.0),
+                margin: 0.0,
+            }),
+        };
+        let mabu = |at: Vec3, max: f32| {
+            let mut a = chompy(at, 90.0);
+            a.walker = None;
+            a.physics.gravity_acceleration = 32.0;
+            a.physics.gravity_max_speed = max;
+            a
+        };
+        // Walked toward `to` (metres) for up to 200 frames: where it ends.
+        let walk = |bodies: &[Body], a: Actor, to: Vec3| {
+            let mut e = pit();
+            e.world = ParryWorld::new(bodies).unwrap();
+            let mut w = world();
+            w.points.insert(WP, to);
+            w.actors.insert(C1, a);
+            for _ in 0..200 {
+                if matches!(
+                    ask(&mut w, &mut e, &move_to(Value::Object(WP), 1)),
+                    Answer::Run { .. }
+                ) {
+                    break;
+                }
+                w.advance(STEP, &mut e);
+            }
+            for _ in 0..60 {
+                w.advance(STEP, &mut e);
+            }
+            w.actor(C1).unwrap().position
+        };
+        let to = Vec3::new(8.0, 0.0, 0.0);
+        // A wall at x = 4: stopped short of it, on the floor.
+        let at = walk(
+            &[floor(1, [-20.0, 20.0], 0.0), wall.clone()],
+            mabu(Vec3::ZERO, 120.0),
+            to,
+        );
+        assert!(at.x < 3.8 && at.x > 2.0, "stopped by the wall: {at}");
+        assert!(at.y.abs() < 0.05, "on the floor: {at}");
+        // Its solid meeting no level: through the wall at its height.
+        let mut ghost = mabu(Vec3::ZERO, 120.0);
+        ghost.solid.interacts_with_level_mesh = 0;
+        let at = walk(&[floor(1, [-20.0, 20.0], 0.0), wall], ghost, to);
+        assert!(at.x > 6.0 && at.y.abs() < 1e-6, "through it: {at}");
+        // A ledge at x = 5, 2 m down: off it, onto the ground below.
+        let ledge = [floor(1, [-20.0, 5.0], 0.0), floor(2, [5.0, 20.0], -2.0)];
+        let at = walk(&ledge, mabu(Vec3::ZERO, 120.0), to);
+        assert!(at.x > 6.0, "walked on: {at}");
+        assert!((at.y + 2.0).abs() < 0.05, "down on the ground below: {at}");
+        // Its gravity's top speed nothing: on at its height over nothing.
+        let at = walk(&ledge, mabu(Vec3::ZERO, 0.0), to);
+        assert!(at.x > 6.0 && at.y.abs() < 0.05, "at its height: {at}");
+        // Over the floor with its walk over: down onto it.
+        let at = walk(
+            &[floor(1, [-20.0, 20.0], 0.0)],
+            mabu(Vec3::new(8.0, 1.5, 0.0), 120.0),
+            to,
+        );
+        assert!(at.y.abs() < 0.05, "down on the floor: {at}");
     }
 
     /// AS.68: a scene walk steps from its actor's velocity, which is its
@@ -6888,7 +7021,12 @@ mod fight_tests {
             w.advance(STEP, &mut e);
         }
         let a = w.actor(C1).unwrap();
-        assert!(a.position.y.abs() < 1e-3, "on the floor: {}", a.position);
+        // On it as its body stands it (AS.79: a creature's skin over it).
+        assert!(
+            a.position.y >= 0.0 && a.position.y < 0.05,
+            "on the floor: {}",
+            a.position
+        );
         assert_eq!(a.velocity, Vec3::ZERO);
         assert!(!w.scene_walks[&C1].jump, "the jump over");
     }

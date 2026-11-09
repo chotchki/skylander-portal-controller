@@ -148,6 +148,14 @@ fn sound_part(l: &Level) -> &'static guacamole::sounds::SoundPart {
     })
 }
 
+/// `load`'s palette off the extract with his random networks laid over it,
+/// as the TV reads it (openspec AS.196: his hurt).
+fn palette_of(dir: &Path, load: &str) -> Palette {
+    let palette: Palette = read_ron(dir, &IrFormat::Ron.palette_path(load));
+    let networks: guac_ir::palette::Networks = read_ron(dir, &IrFormat::Ron.network_path(load));
+    palette.with_networks(&networks)
+}
+
 fn read_ron<T: serde::de::DeserializeOwned>(dir: &Path, rel: &str) -> T {
     let text = std::fs::read_to_string(dir.join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"));
     guac_ir::from_ron(&text).unwrap_or_else(|e| panic!("{rel}: {e}"))
@@ -487,7 +495,7 @@ impl W {
         // (openspec AH.150).
         world.answer_from_view(on_screen::answered(&l.program, on_screen::READ));
         // His palette on his template, as the TV's join sets it.
-        let palette: Palette = read_ron(&l.dir, &IrFormat::Ron.palette_path(load));
+        let palette = palette_of(&l.dir, load);
         // As the TV's join: on the minion's template his definition names, a
         // fighter's the one named for him.
         if let Some(template) = walker.and_then(|w| w.template).or_else(|| {
@@ -841,7 +849,7 @@ impl W {
         }
         let unit = l.unit_of(load).unwrap_or_else(|| panic!("{load}: no unit"));
         let walker = l.walkers.iter().find(|w| w.load_file == load);
-        let palette: Palette = read_ron(&l.dir, &IrFormat::Ron.palette_path(load));
+        let palette = palette_of(&l.dir, load);
         if let Some(template) = walker.and_then(|w| w.template).or_else(|| {
             l.files
                 .placed
@@ -1707,7 +1715,7 @@ fn every_walkers_stand_in_gaits_are_his_own_locomotion_states() {
             .unwrap();
         let states = walkers::locomotion_states(&w.vm, &w.world, w.hero)
             .unwrap_or_else(|| panic!("{load}: his locomotion states"));
-        let palette: Palette = read_ron(&l.dir, &IrFormat::Ron.palette_path(load));
+        let palette = palette_of(&l.dir, load);
         let hero: guac_ir::Hero = read_ron(&l.dir, &IrFormat::Ron.hero_path(load));
         let g = walkers::ScriptedGaits::of(
             &states,
@@ -1755,7 +1763,7 @@ fn stand_in_of(
     load: &str,
 ) -> (guac_motion::locomotion::Locomotion, guacamole::picks::Four) {
     use guac_motion::locomotion::{Gaits, Locomotion, Loops};
-    let palette: Palette = read_ron(&l.dir, &IrFormat::Ron.palette_path(load));
+    let palette = palette_of(&l.dir, load);
     let hero: guac_ir::Hero = read_ron(&l.dir, &IrFormat::Ron.hero_path(load));
     let states = walkers::locomotion_states(&w.vm, &w.world, w.hero).expect("his states");
     let four = four_of(&palette, &hero, &states);
@@ -4630,7 +4638,7 @@ fn a_fallen_back_heros_stand_in_carries_on_from_his_picks() {
         ("018_Wizard", PLAY, true),
     ] {
         let mut w = joined_on_the_tv(&l, load, o, 120, true, true);
-        let palette: Palette = read_ron(&l.dir, &IrFormat::Ron.palette_path(load));
+        let palette = palette_of(&l.dir, load);
         let hero: guac_ir::Hero = read_ron(&l.dir, &IrFormat::Ron.hero_path(load));
         let states = walkers::locomotion_states(&w.vm, &w.world, w.hero).expect("his states");
         let four = four_of(&palette, &hero, &states);
@@ -4897,7 +4905,7 @@ fn a_hero_put_in_after_a_fall_back_has_the_scripts_view_again() {
         .find(|x| x.load_file == next)
         .and_then(|x| x.template)
         .expect("his minion's template");
-    let palette: Palette = read_ron(&l.dir, &IrFormat::Ron.palette_path(&next));
+    let palette = palette_of(&l.dir, &next);
     let infos = scripts::clip_infos(&palette);
     let held: Vec<scripts::ClipInfo> = (0..infos.len() as u32)
         .map(|slot| w.world.clip_info(template, slot))
@@ -5234,7 +5242,7 @@ fn the_key_stops_twelve_and_tree_rex_has_a_walk_and_a_run() {
         }
         let states = walkers::locomotion_states(&w.vm, &w.world, w.hero)
             .unwrap_or_else(|| panic!("{load}: his locomotion states"));
-        let palette: Palette = read_ron(&l.dir, &IrFormat::Ron.palette_path(&load));
+        let palette = palette_of(&l.dir, &load);
         let hero: guac_ir::Hero = read_ron(&l.dir, &IrFormat::Ron.hero_path(&load));
         let g = walkers::ScriptedGaits::of(
             &states,

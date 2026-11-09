@@ -227,6 +227,22 @@ fn palettes_line(p: &stages::PaletteCount) -> String {
     )
 }
 
+fn networks_line(n: &stages::NetworkCount) -> String {
+    let how = match (n.kept, n.read_alone) {
+        (true, _) => "kept",
+        (false, true) => "read alone",
+        (false, false) => "written with the models",
+    };
+    format!(
+        "{how}: {} characters, {} slots, {} failed; {}; {:.2} s",
+        n.characters,
+        n.slots,
+        n.failed.len(),
+        files_line(&n.files),
+        n.took.as_secs_f64()
+    )
+}
+
 fn scripts_line(s: &stages::ScriptStage) -> String {
     format!(
         "{} parts read, {} kept, {} failed; {} entries, {} scripts ({}); {} spawn models, {} refused ({}); {:.2} s",
@@ -283,6 +299,7 @@ fn models(dump: &Path) -> Result<(), guac_extract::ExtractError> {
     let m = stages::model_stage(&mut opened.dir, &roster.roster, IrFormat::Ron, &|_| {})?;
     println!("models      {}", models_line(&m));
     println!("palettes    {}", palettes_line(&m.palettes));
+    println!("networks    {}", networks_line(&m.networks));
     model_failures(&m);
     println!("extract     {}", opened.dir.path().display());
     Ok(())
@@ -371,6 +388,7 @@ fn extract(dump: &Path) -> Result<(), guac_extract::ExtractError> {
     }
     println!("models      {}", models_line(&done.models));
     println!("palettes    {}", palettes_line(&done.models.palettes));
+    println!("networks    {}", networks_line(&done.models.networks));
     model_failures(&done.models);
     println!("levels      {}", levels_line(&done.levels));
     println!(

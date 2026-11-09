@@ -654,6 +654,9 @@ pub struct ScriptWorld {
     /// to` with no creature's body (openspec AS.52,
     /// [`crate::script_engine::SceneWalk`]), by handle.
     pub(crate) scene_walks: HashMap<Handle, crate::script_engine::SceneWalk>,
+    /// The body a scene walk steps an actor on whose solid meets the level
+    /// (openspec AS.79), as a creature's: kept while it's walked.
+    pub(crate) scene_bodies: HashMap<Handle, guac_motion::hero::Hero>,
     /// The heroes whose walk a script set this step (openspec AU.37): the
     /// engine's own model leaves it as written ([`ScriptWorld::engine_walk`]).
     pub(crate) walk_written: std::collections::HashSet<Handle>,
@@ -971,6 +974,7 @@ impl ScriptWorld {
             surfaces_stood: Default::default(),
             intro_held: None,
             scene_walks: HashMap::new(),
+            scene_bodies: HashMap::new(),
             walk_written: std::collections::HashSet::new(),
             told: Value::Null,
             interface: None,
@@ -5276,6 +5280,46 @@ pub fn portal_mode(vm: &mut Vm) -> Option<String> {
         .iter()
         .find(|d| d.obj == obj)
         .map(|d| d.display.clone())
+}
+
+/// Whether the portal's own pause holds (openspec AS.125): `System Tools -
+/// Pause Gameplay` at 1 or more asked to respect the portal's pause (the
+/// portal manager's alert's) marks `portal data`'s `portal pause state` on
+/// the portal's owner until its `Unpause Gameplay`; a pause at 0 (a level
+/// end's) leaves it unmarked.
+pub fn portal_paused(vm: &Vm) -> bool {
+    fn read(vm: &Vm) -> Option<bool> {
+        let g = vm.program().global_named("PortalData_Owner")?;
+        let Value::Entity(owner) = vm.global_peek(g)? else {
+            return None;
+        };
+        let id = vm.placement_of(owner)?;
+        let data = vm.local(id, "portal data")?;
+        let state = vm.field(data, "portal pause state")?;
+        Some(vm.value(state).as_f32().is_some_and(|v| v != 0.0))
+    }
+    read(vm).unwrap_or(false)
+}
+
+/// Whether the scripts have the game paused with the portal's own scripts
+/// let rest (openspec AS.125): `system.pause state` set, the portal's pause
+/// unmarked ([`portal_paused`]). A pause at 0 runs only its `Pause Ignore
+/// Actors`, which the portal manager and the portal's control aren't among
+/// (they're `Portal Pause Ignore Actors`, run by a pause of 1 or more), so
+/// the original's portal answers no figure until the game's unpaused: on
+/// the TV a level end's sequencing through its completion screen, a
+/// scene's movie and a step of Cali's yes (the pause menu's and a stream's
+/// pause run nowhere on it). A pause at 1 that leaves the mark alone (the
+/// portal manager's queued stats, upgrade and store screens) runs the
+/// portal's scripts but reads as a rest here; none reaches the TV (Select
+/// reaches no script, the store is a screen it answers, the upgrade menu
+/// one it backs out of).
+pub fn portal_suspended(vm: &Vm) -> bool {
+    let paused = vm
+        .value_cell(None, guac_script::MemberId::named("system", "pause state"))
+        .and_then(|v| v.as_f32())
+        .is_some_and(|v| v != 0.0);
+    paused && !portal_paused(vm)
 }
 
 /// Whether a scene keeps the playing heroes' figures on the portal (openspec

@@ -13,8 +13,11 @@
 //! every file written before them reads unchanged, so it holds that too. A
 //! build before AS.180 meets no `Random`: only a level's palettes hold one,
 //! under a file name carrying its rule that such a build never opens; the
-//! per-character files keep a random network as a network (openspec
-//! AS.196).
+//! per-character files keep a random network as a network. A character's
+//! random networks (a hero's hurt) go in a record of their own,
+//! [`Networks`] (openspec AS.196), `networks/<load file>.<ron|postcard>`,
+//! a part an older build never opens, and the TV lays them over his
+//! palette ([`Palette::with_networks`]).
 
 use serde::{Deserialize, Serialize};
 
@@ -110,7 +113,74 @@ pub struct LevelPalettes {
     pub palettes: Vec<Palette>,
 }
 
+/// A character's random networks (openspec AS.196): each slot of his
+/// animation set holding one, with its clips, which his own palette file
+/// keeps as a [`SlotEntry::Network`] so a build before AS.180 reads it.
+/// `networks/<load file>.<ron|postcard>`, one per character load file whose
+/// model reads, its `slots` empty where his set holds none.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Networks {
+    pub identity: DumpIdentity,
+    /// The character's load file, as his palette's owner.
+    pub owner: String,
+    /// Each slot holding a random network, in slot order.
+    pub slots: Vec<NetworkSlot>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NetworkSlot {
+    pub slot: u16,
+    /// The clips the original chooses among, in the network's order.
+    pub choices: Vec<Choice>,
+}
+
+impl Networks {
+    /// `palette`'s random networks, read in full (a palette as the model
+    /// reader returns it, before the per-character file keeps them as
+    /// networks).
+    pub fn of(palette: &Palette) -> Self {
+        let slots = palette
+            .entries
+            .iter()
+            .filter_map(|e| match &e.entry {
+                SlotEntry::Random { choices } => Some(NetworkSlot {
+                    slot: e.slot,
+                    choices: choices.clone(),
+                }),
+                _ => None,
+            })
+            .collect();
+        Self {
+            identity: palette.identity.clone(),
+            owner: palette.owner.clone(),
+            slots,
+        }
+    }
+}
+
 impl Palette {
+    /// The palette with `networks`' clips in each slot it keeps as a
+    /// network (openspec AS.196): what a character's slot plays once his
+    /// networks file is read beside his palette. A slot holding anything
+    /// else, or none, is left as it is, and so is every slot `networks`
+    /// doesn't name; networks of another owner or dump change nothing.
+    pub fn with_networks(mut self, networks: &Networks) -> Self {
+        if networks.owner != self.owner || networks.identity != self.identity {
+            return self;
+        }
+        for n in &networks.slots {
+            if let Ok(i) = self.entries.binary_search_by_key(&n.slot, |e| e.slot)
+                && matches!(self.entries[i].entry, SlotEntry::Network)
+                && !n.choices.is_empty()
+            {
+                self.entries[i].entry = SlotEntry::Random {
+                    choices: n.choices.clone(),
+                };
+            }
+        }
+        self
+    }
+
     /// The entry in `slot`, if it holds one that reads.
     pub fn get(&self, slot: u16) -> Option<&PaletteSlot> {
         self.entries
@@ -304,6 +374,66 @@ mod tests {
         for slot in [9, 8, 400] {
             assert!(p.get(slot).is_none(), "{slot}");
         }
+    }
+
+    /// openspec AS.196: a character's random networks kept apart, read off
+    /// a palette in full and laid back over one that keeps them as
+    /// networks, round-tripping through both formats; a slot holding a
+    /// clip or none, and networks of another owner or dump, change nothing.
+    #[test]
+    fn a_characters_networks_lay_back_over_the_palette_that_keeps_them_as_networks() {
+        let full = palette();
+        let networks = Networks::of(&full);
+        assert_eq!(networks.owner, "009_Eruptor");
+        assert_eq!(
+            networks.slots.iter().map(|n| n.slot).collect::<Vec<_>>(),
+            [41]
+        );
+        assert_eq!(networks.slots[0].choices.len(), 2);
+        assert_eq!(
+            from_ron::<Networks>(&to_ron(&networks).unwrap()).unwrap(),
+            networks
+        );
+        assert_eq!(
+            from_postcard::<Networks>(&to_postcard(&networks).unwrap()).unwrap(),
+            networks
+        );
+        // The character's own file: the hurt a network, playing nothing.
+        let mut kept = full.clone();
+        kept.entries[2].entry = SlotEntry::Network;
+        assert!(kept.duration(41).is_none());
+        let laid = kept.clone().with_networks(&networks);
+        assert_eq!(laid, full, "the hurt's clips back in slot 41");
+        assert_eq!(laid.duration(41), Some(0.5));
+        // Slot 7's network has no clips of its own to lay: kept a network.
+        assert_eq!(laid.get(7).unwrap().entry, SlotEntry::Network);
+        // A clip isn't replaced, a slot the palette lacks isn't added.
+        let mut more = networks.clone();
+        more.slots.push(NetworkSlot {
+            slot: 20,
+            choices: networks.slots[0].choices.clone(),
+        });
+        more.slots.push(NetworkSlot {
+            slot: 99,
+            choices: networks.slots[0].choices.clone(),
+        });
+        let laid = kept.clone().with_networks(&more);
+        assert_eq!(laid.clip(20).unwrap().name, "Eruptor_LavaLob.ma");
+        assert!(laid.get(99).is_none());
+        assert_eq!(laid.entries.len(), kept.entries.len());
+        // Another character's, or another dump's: nothing.
+        let other = Networks {
+            owner: "010_Bash".into(),
+            ..networks.clone()
+        };
+        assert_eq!(kept.clone().with_networks(&other), kept);
+        let mut elsewhere = networks.clone();
+        elsewhere.identity.app_ver = "01.01".into();
+        assert_eq!(kept.clone().with_networks(&elsewhere), kept);
+        // None at all.
+        let none = Networks::of(&kept);
+        assert!(none.slots.is_empty());
+        assert_eq!(kept.clone().with_networks(&none), kept);
     }
 
     /// openspec AS.180: a random network plays its first clip, that clip's

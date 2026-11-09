@@ -1303,7 +1303,10 @@ fn chapter_1s_outro_plays_to_its_end() {
     );
     // The first scene's walks run to the end: each Mabu stopped within its
     // walk's 20 ft of its path's last waypoint (a walk not skipped leaves
-    // him where he reached it).
+    // him where he reached it). That waypoint is 15.4 m under the platform
+    // and the walks end past its far edge, so on a body (AS.79's review)
+    // the first comes down onto the ground there, where off one he stood
+    // in the air at the platform's height.
     for (name, path) in OUTRO_MABU {
         let last = run
             .files
@@ -1323,11 +1326,17 @@ fn chapter_1s_outro_plays_to_its_end() {
             .unwrap_or_else(|| panic!("{name} cloned"));
         let at = run.world.actor(h).unwrap().position;
         let off = (at.x - x).hypot(at.z - z);
-        println!("{name} stopped {off:.2} m from {path}'s last waypoint");
+        println!("{name} stopped {off:.2} m from {path}'s last waypoint, at {at}");
         assert!(
             off <= 20.0 * 0.3048 + 0.01 && off > 5.0,
             "{name} at {at}: {off}"
         );
+        if name == "213_Outro_Mabu_A" {
+            assert!(
+                at.y < END.0[1] - 10.0 && at.y > last.y,
+                "{name} down on the ground under the edge: {at}, its end {last}"
+            );
+        }
     }
     assert!(clips.len() >= 3, "Norticus' animations: {clips:?}");
     println!("hats on at once: {hats}; the actors' scales as made and a step on: {scales:?}");
@@ -1487,6 +1496,10 @@ fn chapter_1s_end_sequences_its_completion_screen_movie_and_level() {
         stops.extend(saved_step(&mut run, &mut session));
         played += u32::from(in_play(&run));
     }
+    assert!(
+        !guacamole::scripts::portal_suspended(&run.vm),
+        "the portal answers in play"
+    );
     run.put(Vec3::from_array(END.0), END.1);
     let (ender, _) = run.placed("Temp_Level_Ender");
     assert!(run.world.wake(ender));
@@ -1530,6 +1543,36 @@ fn chapter_1s_end_sequences_its_completion_screen_movie_and_level() {
     );
     let layer = run.vm.program().global_named("Pause Layer").unwrap();
     assert_eq!(run.vm.global_peek(layer), Some(Value::Int(1)), "paused");
+    // The portal let rest through the screen (openspec AS.125): the game
+    // paused at 0, which runs no portal script, where in play it wasn't.
+    assert!(
+        guacamole::scripts::portal_suspended(&run.vm),
+        "the portal let rest under the screen"
+    );
+    // A pause the portal's own alert made (its `portal pause state` set,
+    // its scripts run) is no rest: the portal answers through it.
+    let portal_data = {
+        let g = run.vm.program().global_named("PortalData_Owner").unwrap();
+        let Some(Value::Entity(owner)) = run.vm.global_peek(g) else {
+            panic!("the portal's owner")
+        };
+        let id = run.vm.placement_of(owner).unwrap();
+        run.vm.local(id, "portal data").unwrap()
+    };
+    assert!(
+        run.vm
+            .set_field(portal_data, "portal pause state", Value::Int(1))
+    );
+    assert!(guacamole::scripts::portal_paused(&run.vm));
+    assert!(
+        !guacamole::scripts::portal_suspended(&run.vm),
+        "the portal's own pause runs it"
+    );
+    assert!(
+        run.vm
+            .set_field(portal_data, "portal pause state", Value::Int(0))
+    );
+    assert!(guacamole::scripts::portal_suspended(&run.vm));
     assert!(
         run.world
             .streams

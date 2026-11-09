@@ -416,6 +416,11 @@ struct Script {
     /// Called after each step from F0 - 1 with the run and the step from
     /// F0 (openspec AT.44, AR.17: what a scene's dialogue does each step).
     each: Option<fn(&mut Run, i64)>,
+    /// The stick held from F0 + 10, where he otherwise stands (openspec
+    /// AS.196: whether a bite holds him).
+    walk: Option<[f32; 2]>,
+    /// Who joins in Eruptor's place (openspec AS.196: a Giant's bites).
+    character: Option<Character>,
 }
 
 /// The last step [`Script::pinned`] sets the four at.
@@ -776,6 +781,7 @@ fn fight_swapping(script: Script) -> (Run, Vec<Snap>, Vec<(scripts::Deactivated,
             props: script.props,
             sounds: script.sounds,
             interface: script.interface,
+            character: script.character,
             ..Setup::default()
         },
     );
@@ -870,10 +876,10 @@ fn fight_swapping(script: Script) -> (Run, Vec<Snap>, Vec<(scripts::Deactivated,
             run.bench.view = guacamole::script_engine::heading_of(to);
         }
         let f = k as i64 - OPENING as i64;
-        let mut pad = if (0..10).contains(&f) {
-            stick(Stick::new(0.0, 1.0))
-        } else {
-            stick(Stick::CENTRED)
+        let mut pad = match script.walk {
+            _ if (0..10).contains(&f) => stick(Stick::new(0.0, 1.0)),
+            Some([x, y]) if f >= 10 => stick(Stick::new(x, y)),
+            _ => stick(Stick::CENTRED),
         };
         let at = |s: Option<u32>| s.is_some_and(|s| (s as i64..s as i64 + 6).contains(&f));
         if let Some(p) = &pin {
@@ -3308,6 +3314,208 @@ fn bites_push_him_by_his_resistance_and_hurt_him_for_0_6_s() {
             assert!(!started, "a bite at F0 + {k} started his reaction");
         }
     }
+    println!("load after: {}", load());
+}
+
+/// One bite's hold (openspec AS.196): its step, his reaction's steps from
+/// it, and the steps until he walks at the stick's speed again.
+#[derive(Debug)]
+#[allow(dead_code)]
+struct Held {
+    k: i64,
+    reaction: usize,
+    walking: Option<usize>,
+}
+
+/// Each bite's hold in `played`, printed with his speed each step from it:
+/// the stick's speed is his commonest speed off a bite.
+fn bite_holds(played: &[Snap], who: &str) -> Vec<Held> {
+    let mut seen: BTreeMap<i32, usize> = BTreeMap::new();
+    for s in played.iter().filter(|s| s.k > 10) {
+        *seen
+            .entry((s.hero_speed * 100.0).round() as i32)
+            .or_default() += 1;
+    }
+    let walk = seen
+        .iter()
+        .filter(|(v, _)| **v > 50)
+        .max_by_key(|(_, n)| **n)
+        .map_or(0.0, |(v, _)| *v as f32 / 100.0);
+    println!("{who}'s walk on the stick {walk:.2} m/s");
+    let mut out = Vec::new();
+    for (k, _) in bites_of(played) {
+        let at = played.iter().position(|s| s.k == k).unwrap();
+        let reaction = played[at + 1..]
+            .iter()
+            .take_while(|s| s.hero_hurt.mode == 1)
+            .count();
+        let walking = played[at + 1..]
+            .iter()
+            .position(|s| s.hero_speed > 1.0 && (s.hero_speed - walk).abs() < 0.05)
+            .map(|i| i + 1);
+        let speeds: Vec<String> = played[at..(at + 48).min(played.len())]
+            .iter()
+            .map(|s| {
+                let mark = if s.hero_hurt.mode == 1 { "*" } else { "" };
+                format!("{:.2}{mark}", s.hero_speed)
+            })
+            .collect();
+        println!(
+            "  {who} bitten at F0 + {k}: his reaction {reaction} steps, walking at {walk:.2} m/s again {walking:?} steps on; {}",
+            speeds.join(" ")
+        );
+        out.push(Held {
+            k,
+            reaction,
+            walking,
+        });
+    }
+    out
+}
+
+/// His hurt's clips taken back out of his palette, as a palette file keeps
+/// them (openspec AS.196: as before his networks file was read), his
+/// palette's lengths and his rig's together, before any bite.
+fn hurt_as_a_network(run: &mut Run, f: i64) {
+    if f != -1 {
+        return;
+    }
+    let kept = guac_extract::models::without_random_networks(run.rig.palette.clone());
+    let template = run
+        .files
+        .placed
+        .iter()
+        .find(|p| p.name == "009_Eruptor")
+        .expect("his template")
+        .obj;
+    run.world.set_palette_of(template, &kept);
+    run.rig.palette = kept;
+}
+
+/// Each start of his hurt (palette slot 41) on him, in order: its length
+/// at 100 % and whether it played to its end.
+fn hurts_on(run: &Run) -> Vec<(f32, bool)> {
+    run.world
+        .sequences()
+        .iter()
+        .filter(|s| s.actor == run.hero)
+        .filter(|s| run.world.clip_of(s).is_some_and(|(_, slot)| slot == 41))
+        .map(|s| (s.length, s.done))
+        .collect()
+}
+
+/// openspec AS.196: a bite plays his hurt, his palette's slot 41 a random
+/// network of hurts his networks file holds, its first clip at its own
+/// length (a Giant's, one clip, played already); taken back out it plays
+/// nothing. Walking at them on the stick, he's held by his hurt reaction
+/// (his script's 0.6 s) and the push, and the hurt's length holds him no
+/// longer: the same bites, pushes, reactions and steps whether it plays
+/// or not.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn a_bite_plays_his_hurt_and_its_length_holds_him_no_longer() {
+    println!("load before: {}", load());
+    let script = |each| Script {
+        steps: 900,
+        walk: Some([0.0, 0.5]),
+        each,
+        ..Script::default()
+    };
+    let (laid, played) = fight(script(None));
+    let (kept, unplayed) = fight(script(Some(hurt_as_a_network)));
+    let hurt = laid.rig.palette.duration(41).expect("his hurt, laid");
+    let clip = laid.rig.palette.clip_at(41, 0.0).unwrap().0.name.clone();
+    assert!(kept.rig.palette.duration(41).is_none(), "taken back out");
+    let bites = bites_of(&played);
+    let hurts = hurts_on(&laid);
+    println!(
+        "his hurt {clip}, {hurt:.4} s; bites {bites:?}; hurts started {:?}",
+        hurts
+    );
+    assert!(bites.len() >= 3, "{bites:?}");
+    assert!((0.2..1.0).contains(&hurt), "{hurt}");
+    assert!(!hurts.is_empty(), "a bite plays it");
+    for (length, _) in &hurts {
+        assert!((length - hurt).abs() < 1e-6, "{length} against {hurt}");
+    }
+    let unhurt = hurts_on(&kept);
+    assert_eq!(unhurt.len(), hurts.len(), "started as often");
+    assert!(unhurt.iter().all(|(l, _)| *l == 0.0), "{unhurt:?}");
+    // Where he stands, how fast, his health and his reaction, step by step:
+    // the hurt's length moves none of them.
+    assert_eq!(played.len(), unplayed.len());
+    for (a, b) in played.iter().zip(&unplayed) {
+        assert_eq!(a.k, b.k);
+        assert_eq!(
+            (a.hero, a.hero_speed, a.health, a.hero_hurt.mode),
+            (b.hero, b.hero_speed, b.health, b.hero_hurt.mode),
+            "F0 + {}",
+            a.k
+        );
+    }
+    // How long a bite holds him: his speed each step from the bite and
+    // when he walks at the stick's speed again; a bite that starts his
+    // reaction leaves him walking at it while the reaction still runs:
+    // the push holds him, not the reaction.
+    let held = bite_holds(&played, "Eruptor");
+    assert!(
+        held.iter()
+            .any(|h| h.walking.is_some_and(|w| w < h.reaction)),
+        "walking again in his reaction: {held:?}"
+    );
+    // A Giant's (Crusher), his hurt one clip (0.43 s), the same walk at
+    // them: the four nip at him, which hurts nothing, and go down under his
+    // feet, so none bites him and his hurt never plays here (on the Mac at
+    // level 1 neither does Tree Rex's, here or among level 214's pods).
+    let (giant, gsnaps) = fight(Script {
+        character: Some(CRUSHER),
+        ..script(None)
+    });
+    let ghurt = giant.rig.palette.duration(41);
+    let gname = giant
+        .rig
+        .palette
+        .clip_at(41, 0.0)
+        .map(|(c, _)| c.name.clone());
+    let ghurts = hurts_on(&giant);
+    println!(
+        "Crusher's hurt {gname:?}, {ghurt:?} s; bites {:?}; hurts started {ghurts:?}",
+        bites_of(&gsnaps)
+    );
+    bite_holds(&gsnaps, "Crusher");
+    for f in [0usize, 100, 300, 600, 900] {
+        if let Some(s) = gsnaps.iter().find(|s| s.k == f as i64) {
+            let c: Vec<String> = s
+                .chompies
+                .iter()
+                .map(|c| {
+                    format!(
+                        "{:?} {:.0} hp, {:.1} m off{}",
+                        c.beh,
+                        c.health,
+                        (c.pos - s.hero).length(),
+                        if c.gone { " gone" } else { "" }
+                    )
+                })
+                .collect();
+            println!("  Crusher at F0 + {f}: the four {c:?}");
+        }
+    }
+    for (length, _) in &ghurts {
+        assert_eq!(Some(*length), ghurt, "his own clip's length");
+    }
+    assert!(
+        ghurt.is_some(),
+        "a Giant's hurt is a clip of his palette's own"
+    );
+    assert!(bites_of(&gsnaps).is_empty(), "no Chompy bites a Giant");
+    assert!(
+        gsnaps.iter().any(|s| s
+            .chompies
+            .iter()
+            .any(|c| c.beh.as_deref() == Some("attack - nip"))),
+        "they nip at him"
+    );
     println!("load after: {}", load());
 }
 
