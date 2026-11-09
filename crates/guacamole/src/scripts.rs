@@ -469,6 +469,11 @@ pub struct ScriptWorld {
     /// Each template's animation palette: every slot's clip length,
     /// seconds at 100 %, 0 where a slot is empty.
     pub(crate) palettes: HashMap<Obj, Vec<f32>>,
+    /// The slots a hero's palette set holds nothing in (openspec AS.196):
+    /// the set's element there reads as nothing, as the original's null
+    /// element does, where every other template's reads a clip of no
+    /// length ([`ScriptWorld::set_holes_of`]).
+    pub(crate) holes: HashMap<Obj, Vec<bool>>,
     /// Whether a scene held the game as the last step ended
     /// ([`crate::anchors::scene_holds`], [`add_scripted`]).
     pub(crate) in_scene: bool,
@@ -904,6 +909,7 @@ impl ScriptWorld {
             sequences: Vec::new(),
             restarts: Vec::new(),
             palettes: HashMap::new(),
+            holes: HashMap::new(),
             in_scene: false,
             went_round: Vec::new(),
             rigs: Default::default(),
@@ -1721,6 +1727,38 @@ impl ScriptWorld {
     pub fn set_palette_of(&mut self, template: Obj, palette: &guac_ir::palette::Palette) {
         self.set_palette(template, crate::level_scripts::lengths(palette));
         self.set_clip_info(template, clip_infos(palette));
+    }
+
+    /// The slots `palette`'s set holds nothing in, for `template` (a hero's
+    /// minion: openspec AS.196): each reads as nothing where it's indexed,
+    /// as the original's set reads its null element, so a pick falling on
+    /// one falls back as its script does (the state system's knockback on
+    /// a palette past 200 slots: Gill Grunt's 201 and 205, then his hurt).
+    /// A slot holding a clip, a network or one the extract refused reads a
+    /// clip as before.
+    pub fn set_holes_of(&mut self, template: Obj, palette: &guac_ir::palette::Palette) {
+        let mut holes = vec![true; usize::from(palette.slots)];
+        let filled = palette
+            .entries
+            .iter()
+            .map(|e| e.slot)
+            .chain(palette.refused.iter().map(|r| r.slot));
+        for slot in filled {
+            if let Some(h) = holes.get_mut(usize::from(slot)) {
+                *h = false;
+            }
+        }
+        self.holes.insert(template, holes);
+    }
+
+    /// Whether `template`'s palette set holds nothing in `slot`
+    /// ([`ScriptWorld::set_holes_of`]).
+    pub fn is_hole(&self, template: Obj, slot: u32) -> bool {
+        self.holes
+            .get(&template)
+            .and_then(|h| h.get(slot as usize))
+            .copied()
+            .unwrap_or(false)
     }
 
     /// `rigs`' palettes for the templates of `unit` (a character's own file)

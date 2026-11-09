@@ -2187,3 +2187,82 @@ fn level_214s_second_door_opens_to_the_key_a_bomb_from_the_house_frees() {
     assert!(gone(&run, key), "the second key's spawner done");
     assert!(stops.is_empty(), "{stops:#?}");
 }
+
+/// A probe (AS.79): level 214's first key from its spawner to the door it
+/// opens, read every 30 steps.
+#[test]
+#[ignore = "a probe: reads the Giants dump"]
+fn probe_the_key() {
+    let (mut run, mut stops) = joined_214();
+    let door = handle(&run, "Door_Template_Skylanders_2(1)");
+    run.put(Vec3::new(KEY_1[0][0], -14.3, KEY_1[0][1]), 0.0);
+    let key = |run: &Run| {
+        run.world
+            .clones()
+            .into_iter()
+            .find(|h| run.world.name(*h) == "Key Pickup")
+    };
+    let show = |run: &Run, what: &str| {
+        let hero = run.hero();
+        let ground = hero.pivot.y - hero.footing.height.unwrap_or(f32::NAN);
+        match key(run) {
+            Some(k) => {
+                let a = run.world.actor(k).unwrap();
+                let id = run.vm.placement_of(k);
+                let local = |n: &str| id.and_then(|i| run.vm.local(i, n));
+                println!(
+                    "{what} step {}: key at {:.2} ({:.2} over his ground, {:.2} off him across), removed {}, behaviour {:?}, velocity {:.2}, shape {} level {} gravity {:.1}/{:.1}, verticle offset {:?}, base {:?}; hero at {:.2}",
+                    run.steps,
+                    a.position,
+                    a.position.y - ground,
+                    (a.position.x - hero.pivot.x).hypot(a.position.z - hero.pivot.z),
+                    a.removed,
+                    id.and_then(|i| run.vm.behaviour(i)),
+                    a.velocity,
+                    a.solid.shape,
+                    a.solid.interacts_with_level_mesh,
+                    a.physics.gravity_acceleration,
+                    a.physics.gravity_max_speed,
+                    local("verticle offset"),
+                    local("base verticle offset"),
+                    hero.pivot
+                );
+            }
+            None => println!(
+                "{what} step {}: no key; hero at {:.2}",
+                run.steps, hero.pivot
+            ),
+        }
+    };
+    show(&run, "set down");
+    for (i, p) in KEY_1.iter().enumerate() {
+        let r = walk(&mut run, &mut stops, &[*p]);
+        show(&run, &format!("walked to KEY_1[{i}] {r:?}"));
+    }
+    for _ in 0..8 {
+        for _ in 0..30 {
+            step(&mut run, &mut stops, [false; 4]);
+        }
+        show(&run, "waiting");
+    }
+    for (i, p) in TO_THE_DOOR.iter().enumerate() {
+        let r = walk(&mut run, &mut stops, &[*p]);
+        show(&run, &format!("walked to TO_THE_DOOR[{i}] {r:?}"));
+    }
+    for k in 0..900u32 {
+        step(&mut run, &mut stops, [false, false, false, k % 20 < 2]);
+        if k % 30 == 0 {
+            show(&run, &format!("at the door ({:?})", behaviour(&run, door)));
+        }
+        if behaviour(&run, door).as_deref() == Some("done") && k % 30 == 29 {
+            break;
+        }
+    }
+    for _ in 0..4 {
+        for _ in 0..30 {
+            step(&mut run, &mut stops, [false; 4]);
+        }
+        show(&run, &format!("after ({:?})", behaviour(&run, door)));
+    }
+    println!("stops {stops:?}");
+}

@@ -1279,6 +1279,7 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
         None => eruptor_rig(&part),
     };
     world.set_palette_of(template, &rig.palette);
+    world.set_holes_of(template, &rig.palette);
     // The creatures' palettes, by the model each placement names.
     let palettes = levels::palettes(&igzs[LEVEL as usize], level, identity())
         .expect("the level's palettes")
