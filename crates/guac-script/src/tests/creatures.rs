@@ -450,6 +450,13 @@ fn a_find_on_a_clone_spawned_this_turn_reaches_its_declared_local() {
     let child = vm.placement_of(0x901).expect("adopted");
     assert_eq!(vm.local(child, "given"), Some(Value::Int(7)));
     assert!(host.pending.is_empty(), "nothing left for the embedder");
+    // Off again, the next call outside the walk leaves its clone to the
+    // embedder as before.
+    let second = vm.add(0x11, "Spawner", 0);
+    vm.tick(second, &mut host).unwrap();
+    assert_eq!(vm.local(second, "found"), None, "nothing found once off");
+    assert_eq!(vm.placement_of(0x902), None, "not adopted once off");
+    assert_eq!(host.pending.len(), 1, "kept for the embedder once off");
 }
 
 /// The same find from a held placement's native, the way production reaches
