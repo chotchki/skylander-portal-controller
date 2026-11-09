@@ -426,6 +426,12 @@ impl Run {
         let joined = self.minion.is_some();
         let player_loop = self.player_loop.clone();
         let mut stopped = Vec::new();
+        // The entry beams each step, as the TV runs them (openspec AH.224):
+        // a level's own, an enemy minion's summoned through one (AS.200).
+        // The headless join activates the hero with none.
+        if scripts::entry_beam_count(&mut self.vm).unwrap_or(0) > 0 {
+            self.with_host(|vm, host| scripts::entry_beams(vm, host, None))?;
+        }
         let r =
             self.with_host(|vm, host| player_loop.frame_with(vm, host, joined, &mut stopped, then));
         assert!(stopped.is_empty(), "strict mode stops by halting");
@@ -482,6 +488,14 @@ impl Run {
         let joined = self.minion.is_some();
         let player_loop = self.player_loop.clone();
         let mut stopped = Vec::new();
+        // The entry beams each step, as the TV runs them (openspec AH.224):
+        // a level's own, an enemy minion's summoned through one (AS.200).
+        // The headless join activates the hero with none.
+        if scripts::entry_beam_count(&mut self.vm).unwrap_or(0) > 0
+            && let Err(h) = self.with_host(|vm, host| scripts::entry_beams(vm, host, None))
+        {
+            stopped.push(h);
+        }
         let r =
             self.with_host(|vm, host| player_loop.frame_with(vm, host, joined, &mut stopped, then));
         if let Err(h) = self.with_host(guacamole::level_end::step) {

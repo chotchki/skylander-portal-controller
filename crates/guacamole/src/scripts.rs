@@ -4685,7 +4685,14 @@ pub fn entry_beams(
     let Some(pcd) = vm.global(g) else {
         return Ok(None);
     };
-    vm.call_for(pm, ENTRY_MANAGE, &[(param.as_str(), pcd)], &[], host)?;
+    // With no hero's join waiting on a beam, what the beams' on-spawn logic
+    // spawns joins the VM the moment a find asks for it, as in the walk:
+    // an enemy minion's sets the minion controller it spawns the op after
+    // (openspec AS.200). A hero's join adds his own once his beam is done.
+    vm.set_adopt_in_calls(waiting.is_none());
+    let managed = vm.call_for(pm, ENTRY_MANAGE, &[(param.as_str(), pcd)], &[], host);
+    vm.set_adopt_in_calls(false);
+    managed?;
     match waiting {
         Some(hero) if host.world.actors.contains_key(&hero) => joined(vm, host, pm, hero).map(Some),
         _ => Ok(None),

@@ -2377,6 +2377,12 @@ pub const LEVEL_UP: &[Registered] = &[m(
 /// `load level variation`, the slot a stream loads into, written beside
 /// `system.load level` (the TV streams nothing in: a stream reads as
 /// loaded the next step, the `level-request` row).
+///
+/// What a minion boss battle's camera reaches (AS.200: level 201's life
+/// island ambush), a value cell: the gameplay viewport's blur effect, whose
+/// level `BossCamera.ai` eases down after a cut every tick of the battle;
+/// it reads nothing, so the level's writes go nowhere (nothing draws a
+/// blur).
 pub const LEVELS: &[Registered] = &[
     m("clonedsequence", "clones", "SetVariant", "", 0.0, 0.0, Host),
     // The labels as the live table cuts them.
@@ -2522,6 +2528,15 @@ pub const LEVELS: &[Registered] = &[
         "percent",
         0.0,
         700.0,
+        Cell,
+    ),
+    m(
+        "viewportinfo",
+        "blur effect",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
         Cell,
     ),
     m(
@@ -4719,6 +4734,17 @@ mod tests {
         assert_eq!((r.kind(), place), (Kind::Int, Place::ValueCell));
         assert_eq!(r.spec().default, Value::Int(0));
         assert_eq!(convert(&r.spec(), Value::Float(2.7)), Some(Value::Int(2)));
+    }
+
+    /// AS.200: a minion boss battle's camera: the viewport's blur effect
+    /// an object cell reading nothing, its level unregistered (written on
+    /// nothing, the write goes nowhere).
+    #[test]
+    fn the_boss_cameras_blur_is_a_cell() {
+        let (r, place) = level_member("viewportinfo", "blur effect");
+        assert_eq!((r.kind(), place), (Kind::Reference, Place::ValueCell));
+        assert_eq!(r.spec().default, Value::Null);
+        assert!(find(LEVELS, "viewportblureffectinfo", "level").is_none());
     }
 
     /// AS.34: the save system's state, the host's enum over the

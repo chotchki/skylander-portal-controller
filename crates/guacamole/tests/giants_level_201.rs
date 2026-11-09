@@ -1710,6 +1710,153 @@ fn its_push_blocks_lower_floor_leads_back_up_its_ramp() {
     println!("load at end: {}", load());
 }
 
+/// openspec AS.200: the life island's ambush. A hero on the island past
+/// the first vine bridge wakes its initializer, which defines a minion boss
+/// battle: the phase director's summon cutscene brings three evil Stealth
+/// Elves in through the portal's entry beam, each on Stealth Elf's own
+/// scripts, walked as a creature, with a minion controller, its button
+/// controllers and its AI (`026_StealthElf_AI`), which bull-rushes him,
+/// presses the elf's attack and smokes away; a kid's fight beats each (the
+/// nearest, his first attack every 20 steps within 5 m, topped up where his
+/// scripts hold his health, counted), the defeated cutscene after each,
+/// then the victory phase ends the battle and takes the initializer off,
+/// which opens the second bridge's pan; he walks onto its switch and the
+/// bridge grows.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn its_life_islands_ambush_is_fought_and_opens_the_second_bridge() {
+    use guac_motion::seam::Vec3;
+    println!("load at start: {}", load());
+    let mut w = fresh();
+    let (init, _) = w.run.placed("Phase Director Initializer 201 Minion");
+    let (bridge, _) = w.run.placed("Activator_Template(2)");
+    let (_, switch) = w.run.placed("Pan_Activate(1)");
+    let director = w.run.placement("PhaseDirector");
+    w.run.put(Vec3::new(70.5, 30.0, -75.0), 0.0);
+    w.rest(30);
+    let start = w.run.steps;
+    // Each evil elf: the step it's first up, its least health, the step
+    // it's beaten; the director's behaviours in order; the hero's health
+    // drops while one stands.
+    let mut evil: HashMap<Handle, (u32, f32, Option<u32>)> = HashMap::new();
+    let mut director_went: Vec<String> = Vec::new();
+    let mut rushes = 0u32;
+    let mut hurts = 0u32;
+    let mut last_health = w.run.health();
+    let (mut ended, mut grown) = (None, None);
+    for k in 0..9000u32 {
+        let me = w.run.hero().pivot;
+        let up: Vec<(Handle, Vec3)> = w
+            .run
+            .world
+            .clones()
+            .into_iter()
+            .filter(|h| w.run.world.name(*h) == "026_StealthElf_Evil")
+            .filter_map(|h| {
+                w.run
+                    .world
+                    .actor(h)
+                    .filter(|a| !a.removed)
+                    .map(|a| (h, a.position))
+            })
+            .collect();
+        let target = up
+            .iter()
+            .filter(|(h, _)| foe_health(&w, *h).is_some_and(|hp| hp > 0.0))
+            .min_by(|a, b| a.1.distance(me).total_cmp(&b.1.distance(me)))
+            .map(|e| [e.1.x, e.1.z]);
+        let (stick, attack) = match (k < 300, target) {
+            (true, _) => (w.toward([70.12, -60.0], 1.0), false),
+            // The battle over, onto the second bridge's switch by its foot.
+            (false, _) if ended.is_some() => (w.toward([switch.x, switch.z], 1.0), false),
+            (false, Some(t)) => {
+                let far = (t[0] - me.x).hypot(t[1] - me.z);
+                (
+                    w.toward(t, if far > 2.5 { 1.0 } else { 0.35 }),
+                    far <= 5.0 && k % 20 == 0,
+                )
+            }
+            _ => (Stick::new(0.0, 0.0), false),
+        };
+        w.step(stick, [attack, false, false, false]);
+        for (h, _) in &up {
+            let hp = foe_health(&w, *h).unwrap_or(0.0);
+            let e = evil.entry(*h).or_insert((w.run.steps, hp, None));
+            e.1 = e.1.min(hp);
+            if hp <= 0.0 && e.2.is_none() {
+                e.2 = Some(w.run.steps);
+            }
+        }
+        let health = w.run.health();
+        if let (Some(was), Some(now)) = (last_health, health)
+            && now < was
+            && !up.is_empty()
+        {
+            hurts += 1;
+        }
+        last_health = health;
+        let vm = &w.run.vm;
+        if let Some(b) = vm.behaviour(director)
+            && director_went.last().map(String::as_str) != Some(b)
+        {
+            director_went.push(b.to_owned());
+        }
+        rushes += w
+            .run
+            .world
+            .clones()
+            .into_iter()
+            .filter(|h| w.run.world.name(*h) == "026_StealthElf_AI")
+            .filter_map(|h| vm.placement_of(h).and_then(|id| vm.behaviour(id)))
+            .filter(|b| *b == "bull rush")
+            .count() as u32;
+        if ended.is_none() && vm.placement_of(init).is_some_and(|id| vm.removed(id)) {
+            ended = Some(w.run.steps);
+        }
+        if grown.is_none()
+            && vm
+                .placement_of(bridge)
+                .and_then(|id| vm.behaviour(id))
+                .is_some_and(|b| b.starts_with('5'))
+        {
+            grown = Some(w.run.steps);
+            break;
+        }
+    }
+    let mut elves: Vec<_> = evil.values().copied().collect();
+    elves.sort_by_key(|e| e.0);
+    println!(
+        "{} steps: the elves (up, least health, beaten) {elves:?}; the director {director_went:?}; their AIs' rush steps {rushes}; the hero hurt {hurts} times while one stood, {} top-ups; the battle over at {ended:?}, the second bridge grown at {grown:?}",
+        w.run.steps - start,
+        w.walked.topups.len()
+    );
+    assert_eq!(elves.len(), 3, "the three summoned: {elves:?}");
+    assert!(
+        elves.iter().all(|e| e.2.is_some()),
+        "each beaten: {elves:?}"
+    );
+    for b in [
+        "minion summon cutscene",
+        "phase update",
+        "minion defeated cutscene",
+    ] {
+        assert!(
+            director_went.iter().any(|d| d == b),
+            "{b}: {director_went:?}"
+        );
+    }
+    assert!(rushes > 0, "their AIs never rushed him");
+    assert!(hurts > 0, "they never hurt him");
+    let ended = ended.expect("the battle never ended");
+    assert!(ended > elves.iter().filter_map(|e| e.2).max().unwrap());
+    assert!(
+        grown.is_some_and(|g| g > ended),
+        "the second bridge: {grown:?}"
+    );
+    assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
+    println!("load at end: {}", load());
+}
+
 /// openspec AS.168: the rope bridge over the channel holds the hero by its
 /// planks' own solids, no way naming them: set down on it halfway over the
 /// channel, 10 m above its floor, he stands on its planks and walks on

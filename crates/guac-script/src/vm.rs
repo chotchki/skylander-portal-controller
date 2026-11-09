@@ -744,6 +744,9 @@ pub struct Vm {
     /// spawns is adopted at its end ([`Host::adopt`]), or sooner by a
     /// `find variable` on it.
     walking: bool,
+    /// Whether an embedder's call outside the walk adopts as the walk does
+    /// on a `find variable` ([`Vm::set_adopt_in_calls`]).
+    adopt_in_calls: bool,
     cells: Vec<Cell>,
     sets: Vec<SetObj>,
     /// The sets of one lone objects written into set references read as,
@@ -872,6 +875,7 @@ impl Vm {
             shutting: Vec::new(),
             cursor: None,
             walking: false,
+            adopt_in_calls: false,
             cells: Vec::new(),
             sets: Vec::new(),
             lone: HashMap::new(),
@@ -2095,6 +2099,16 @@ impl Vm {
         self.live.len()
     }
 
+    /// Whether an embedder's calls outside a step's walk adopt what the
+    /// host has spawned on a `find variable` on it, as the walk does (crate
+    /// docs, The tick): the TV's entry beams' manager on its own (openspec
+    /// AS.200: an enemy minion's beam's on-spawn logic sets the minion
+    /// controller it spawns the op after). Off, the embedder adds what a
+    /// call spawned once it's done.
+    pub fn set_adopt_in_calls(&mut self, on: bool) {
+        self.adopt_in_calls = on;
+    }
+
     /// What the host has spawned with scripts of their own, added at the
     /// order's end.
     fn adopt(&mut self, program: &Program, host: &mut dyn Host) {
@@ -2952,8 +2966,9 @@ impl Vm {
         // it before then adopts what the host has spawned now, in the order
         // the turn's end would, so it finds the clone's declared locals (the
         // portal manager sets its death actor's `dying actor` so, the op
-        // after the spawn). Outside a step's walk the embedder adopts.
-        if self.walking
+        // after the spawn). Outside a step's walk the embedder adopts, or
+        // asks the VM to as the walk does (`Vm::set_adopt_in_calls`).
+        if (self.walking || self.adopt_in_calls)
             && let Value::Entity(h) = owner
             && !self.handles.contains_key(&h)
         {

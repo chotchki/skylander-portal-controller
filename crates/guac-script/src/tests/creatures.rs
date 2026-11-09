@@ -352,7 +352,8 @@ fn a_placement_spawned_with_a_script_ticks_the_tick_it_was_spawned() {
 /// reaches its declared local and its first tick, later that tick, reads
 /// what the spawner set. Outside a step's walk (a tick the embedder runs
 /// itself) nothing is adopted early: the host keeps the clone for the
-/// embedder and the find finds nothing.
+/// embedder and the find finds nothing, unless the embedder asks its calls
+/// to adopt (`Vm::set_adopt_in_calls`, openspec AS.200).
 #[test]
 fn a_find_on_a_clone_spawned_this_turn_reaches_its_declared_local() {
     let p = program(|w| {
@@ -429,13 +430,26 @@ fn a_find_on_a_clone_spawned_this_turn_reaches_its_declared_local() {
     );
     assert_eq!(vm.placement_of(0x902), None, "not adopted after a step");
     assert_eq!(host.pending.len(), 1, "kept for the embedder");
-    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let mut vm = Vm::new(p.clone(), Config::new(Mode::Strict));
     let spawner = vm.add(0x10, "Spawner", 0);
     let mut host = Spawning::default();
     vm.tick(spawner, &mut host).unwrap();
     assert_eq!(vm.local(spawner, "found"), None, "nothing found");
     assert_eq!(vm.placement_of(0x901), None, "not adopted");
     assert_eq!(host.pending.len(), 1, "kept for the embedder");
+    // An embedder that asks its calls to adopt as the walk does (openspec
+    // AS.200: the TV's entry beams' manager): the same tick outside the
+    // walk finds the clone's local, the clone adopted at the order's end.
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let spawner = vm.add(0x10, "Spawner", 0);
+    let mut host = Spawning::default();
+    vm.set_adopt_in_calls(true);
+    vm.tick(spawner, &mut host).unwrap();
+    vm.set_adopt_in_calls(false);
+    assert_eq!(vm.local(spawner, "found"), Some(Value::Int(1)), "found");
+    let child = vm.placement_of(0x901).expect("adopted");
+    assert_eq!(vm.local(child, "given"), Some(Value::Int(7)));
+    assert!(host.pending.is_empty(), "nothing left for the embedder");
 }
 
 /// The same find from a held placement's native, the way production reaches
