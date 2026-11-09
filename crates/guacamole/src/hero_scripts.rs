@@ -1445,7 +1445,6 @@ pub(crate) fn step_scripts(
                 })
         {
             world.set_palette_of(template, palette);
-            world.set_holes_of(template, palette);
         }
         if let Some(rigs) = run.as_deref().and_then(|r| r.rigs.as_ref()) {
             world.set_rigs(files, unit, rigs);

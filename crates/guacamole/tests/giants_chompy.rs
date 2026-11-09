@@ -3317,13 +3317,6 @@ fn bites_push_him_by_his_resistance_and_hurt_him_for_0_6_s() {
     println!("load after: {}", load());
 }
 
-/// Gill Grunt, a core whose palette runs past 200 slots (openspec AS.196).
-const GILL_GRUNT: Character = Character {
-    archive: "character/014_gillgrunt.bld",
-    load_file: "014_GillGrunt",
-    toy: 14,
-};
-
 /// One bite's hold (openspec AS.196): its step, his reaction's steps from
 /// it, and the steps until he walks at the stick's speed again.
 #[derive(Debug)]
@@ -3469,39 +3462,6 @@ fn a_bite_plays_his_hurt_and_its_length_holds_him_no_longer() {
         held.iter()
             .any(|h| h.walking.is_some_and(|w| w < h.reaction)),
         "walking again in his reaction: {held:?}"
-    );
-    // A core whose palette runs past 200 slots (Gill Grunt's 213): the
-    // knockback picks his slot 201 or 205 by the bite's side, which his set
-    // holds nothing in, so it falls back to his hurt, as on the original's
-    // null element (on the base the empty slot played, nothing showing).
-    let (gill, gsnaps) = fight(Script {
-        character: Some(GILL_GRUNT),
-        ..script(None)
-    });
-    let ghurt = gill.rig.palette.duration(41).expect("his hurt, laid");
-    let started: Vec<(u32, f32)> = gill
-        .world
-        .sequences()
-        .iter()
-        .filter(|s| s.actor == gill.hero)
-        .filter_map(|s| gill.world.clip_of(s).map(|(_, slot)| (slot, s.length)))
-        .collect();
-    println!(
-        "Gill Grunt's hurt {ghurt:.4} s; bites {:?}; clips started on him {started:?}",
-        bites_of(&gsnaps)
-    );
-    bite_holds(&gsnaps, "Gill Grunt");
-    assert!(!bites_of(&gsnaps).is_empty(), "bitten");
-    let hurts: Vec<f32> = started
-        .iter()
-        .filter(|(slot, _)| *slot == 41)
-        .map(|(_, l)| *l)
-        .collect();
-    assert!(!hurts.is_empty(), "his hurt plays");
-    assert!(hurts.iter().all(|l| (l - ghurt).abs() < 1e-6), "{hurts:?}");
-    assert!(
-        !started.iter().any(|(slot, _)| (200..=207).contains(slot)),
-        "no empty knocked slot played: {started:?}"
     );
     // A Giant's (Crusher), his hurt one clip (0.43 s), the same walk at
     // them: the four nip at him, which hurts nothing, and go down under his

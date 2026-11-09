@@ -352,7 +352,6 @@ fn run_on(mode: Mode, open: bool) -> (Run, HashMap<MemberId, String>) {
         .obj;
     let rig = eruptor_rig(&part);
     world.set_palette_of(template, &rig.palette);
-    world.set_holes_of(template, &rig.palette);
     let (parry, start) = if open {
         let ground = scenarios::bodies(&scenarios::open_ground(), &[]);
         (ParryWorld::new(&ground).unwrap(), Vec3::new(0.0, 1.0, 0.0))

@@ -2420,12 +2420,8 @@ impl ScriptWorld {
                     .and_then(|h| of(self, h));
                 let lengths = told.or_else(|| of(self, at.placement));
                 match lengths {
-                    // A hero's empty slot reads as nothing (AS.196).
                     Some((t, n)) => (0..n as u32)
-                        .map(|slot| match self.is_hole(t, slot) {
-                            true => Value::Null,
-                            false => self.objs.value(Object::Clip { template: t, slot }),
-                        })
+                        .map(|slot| self.objs.value(Object::Clip { template: t, slot }))
                         .collect(),
                     None => return Err(HostFault::Nothing),
                 }
@@ -2661,8 +2657,7 @@ impl ScriptWorld {
                     .find(|(n, _)| *n == "_LHS")
                     .and_then(|(_, e)| index.and_then(|i| e.get(usize::try_from(i).ok()?)))
                     .copied();
-                // Nothing (a hero's empty slot, AS.196) starts nothing.
-                let Some(template) = indexed.or(first).filter(|v| *v != Value::Null) else {
+                let Some(template) = indexed.or(first) else {
                     return Some(Ok(Answer::Skip));
                 };
                 let Some(actor) = self.handle(call.receiver) else {
@@ -8901,73 +8896,6 @@ mod animation_tests {
             .unwrap()
         };
         assert_eq!(length(&mut w, &mut e, told[2]), Value::Float(3.0));
-    }
-
-    /// AS.196: a hero's palette set reads nothing in a slot it holds
-    /// nothing in, as the original's null element, so the state system's
-    /// knockback picked off an empty slot past 200 falls back to his hurt
-    /// (Gill Grunt's 201 and 205); a slot holding a clip, a network or one
-    /// the extract refused reads a clip, and a palette given no holes reads
-    /// a clip in every slot. A start of nothing starts nothing.
-    #[test]
-    fn a_heros_palette_reads_nothing_where_its_set_holds_nothing() {
-        use guac_ir::palette::{Palette, PaletteSlot, RefusedSlot, SlotEntry};
-        let (mut w, mut e) = (world(), pit());
-        let own = palette(&mut w);
-        let read = Access {
-            placement: C1,
-            receiver: None,
-            member: MemberId::named("animationinfo", "animation palette"),
-            other_point: None,
-            via: None,
-            op: None,
-        };
-        assert_eq!(w.elements(&read, &mut e).unwrap(), own, "no holes given");
-        let identity = guac_ir::DumpIdentity {
-            title_id: "BLUS30968".into(),
-            app_ver: "01.00".into(),
-            manifest_hash: guac_ir::Sha256([0; 32]),
-        };
-        let slot = |slot, entry| PaletteSlot {
-            slot,
-            name: None,
-            label: None,
-            entry,
-        };
-        let p = Palette {
-            identity,
-            owner: "014_GillGrunt".into(),
-            slots: 4,
-            entries: vec![slot(0, SlotEntry::Network), slot(1, SlotEntry::Network)],
-            refused: vec![RefusedSlot {
-                slot: 2,
-                reason: "blendHint".into(),
-            }],
-        };
-        w.set_holes_of(TEMPLATE, &p);
-        assert!(w.is_hole(TEMPLATE, 3) && !w.is_hole(TEMPLATE, 2) && !w.is_hole(TEMPLATE, 9));
-        let els = w.elements(&read, &mut e).unwrap();
-        assert_eq!(&els[..3], &own[..3], "a network, a clip, a refused one");
-        assert_eq!(els[3], Value::Null, "the empty slot");
-        let start = |w: &mut ScriptWorld, e: &mut super::fight_tests::Pit, index: i32| {
-            let call = OpCall {
-                placement: C1,
-                receiver: Value::Entity(C1),
-                class: Class::StartSequence,
-                operands: vec![
-                    ("_LHS", Some(Value::Null)),
-                    ("_indexRHS", Some(Value::Int(index))),
-                ],
-                words: Vec::new(),
-                sets: vec![("_LHS", els.clone())],
-            };
-            w.op(&call, &mut |_| 0, e).unwrap()
-        };
-        let before = w.sequences().len();
-        assert_eq!(start(&mut w, &mut e, 3), Answer::Skip, "nothing started");
-        assert_eq!(w.sequences().len(), before);
-        assert!(matches!(start(&mut w, &mut e, 0), Answer::Run { .. }));
-        assert_eq!(w.sequences().len(), before + 1);
     }
 
     /// AU.37: `Movement - Add Mover` leaves the engine a top speed of 10,000

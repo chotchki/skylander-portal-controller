@@ -506,7 +506,6 @@ impl W {
                 .map(|p| p.obj)
         }) {
             world.set_palette_of(template, &palette);
-            world.set_holes_of(template, &palette);
         }
         if let Ok(rigs) = level_scripts::spawn_rigs(&l.dir, load, IrFormat::Ron) {
             world.set_rigs(&l.files, unit, &rigs);
@@ -859,7 +858,6 @@ impl W {
                 .map(|p| p.obj)
         }) {
             self.world.set_palette_of(template, &palette);
-            self.world.set_holes_of(template, &palette);
         }
         if let Ok(rigs) = level_scripts::spawn_rigs(&l.dir, load, IrFormat::Ron) {
             self.world.set_rigs(&l.files, unit, &rigs);
