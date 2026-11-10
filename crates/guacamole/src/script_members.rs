@@ -36,7 +36,10 @@
 //!   14.7-15.2 ft apart, both 3 ft spheres); between a solid and an actor
 //!   whose `CollisionInfo` has no shape, from the solid to that actor's
 //!   pivot every way (AS.217: a lobber's arrow hurts a foe within 6 ft of
-//!   it, where a vertical gap hurt one anywhere at its height);
+//!   it, where a vertical gap hurt one anywhere at its height; it reaches
+//!   Eruptor's lava ball's area of effect too, where a door or an elf
+//!   9-285 ft off it read the vertical gap, 0-136 ft, and a lobber's or an
+//!   enemy Tree Rex's check of a door or a turret base);
 //! - a sweep stops at a creature's body as at a wall, though the ball's solid
 //!   doesn't meet actors (`interacts with actors` 0): the touch is what the
 //!   projectile manager's Targets check reads as `collision`; contacts with
@@ -4412,6 +4415,136 @@ mod tests {
         w.actors.insert(0x6000_0013, a);
         gravity(&mut w, &mut e, 0x6000_0013, 500.0);
         assert!(!w.actor(0x6000_0013).unwrap().launched);
+    }
+
+    /// A lobber's arrow under the game's pause (openspec AS.217 beside
+    /// AS.205): one dropped and in flight when the level rests holds where
+    /// it is with its fall's speed, and falls on to the floor once the pause
+    /// lifts, so none is left hanging for good.
+    #[test]
+    fn a_dropped_actor_holds_under_the_pause_and_falls_on_after_it() {
+        const ARROW: Handle = 0x6000_0010;
+        let mut e = bench();
+        let mut w = world();
+        w.actors.insert(
+            ARROW,
+            Actor {
+                position: Vec3::new(-5.0, 24.384, -5.0),
+                physics: Physics {
+                    gravity_max_speed: 100.0,
+                    time_scale: 100.0,
+                    ..Physics::default()
+                },
+                ..Actor::blank()
+            },
+        );
+        let movement = w.objs.value(Object::Facet(ARROW, Facet::Movement));
+        let access = at("actorphysics", "gravity acceleration", Some(movement), None);
+        w.set_member(
+            &access,
+            Member::Physics(PhysicsField::GravityAcceleration),
+            Value::Float(500.0),
+            &mut e,
+        )
+        .unwrap();
+        fly(&mut w, &mut e, 20);
+        let a = w.actor(ARROW).unwrap();
+        let (at, v) = (a.position, a.velocity);
+        assert!(
+            at.y < 24.0 && at.y > 1.0 && v.y < 0.0,
+            "in flight: {at} {v}"
+        );
+        w.resting.insert(ARROW);
+        fly(&mut w, &mut e, 120);
+        let a = w.actor(ARROW).unwrap();
+        assert_eq!((a.position, a.velocity), (at, v), "moved while resting");
+        w.resting.clear();
+        fly(&mut w, &mut e, 120);
+        let a = w.actor(ARROW).unwrap();
+        assert!(a.position.y.abs() < 1e-4, "on the floor: {}", a.position);
+        assert_eq!(a.velocity, Vec3::ZERO);
+    }
+
+    /// A lobber's arrow over a tilted surface (openspec AS.217 beside
+    /// AS.183, whose vine bridges' platforms tilt as their actors do): it
+    /// comes to rest on the plank's top under its pivot, not on the floor
+    /// under the plank, where one past the plank's end lands. The plank's
+    /// body is a kinematic one, as a clone's surface is in the seam.
+    #[test]
+    fn a_dropped_actor_lands_on_a_tilted_surface() {
+        const ARROW: Handle = 0x6000_0010;
+        let tilt = 20f32.to_radians();
+        let centre = Vec3::new(10.0, 3.0, 0.0);
+        let half = Vec3::new(4.0, 0.25, 2.0);
+        let floor = Body {
+            id: BodyId(1),
+            kind: BodyKind::Static,
+            pose: Pose::at(Vec3::new(0.0, -0.5, 0.0)),
+            collider: Collider::Convex(Shape::Box {
+                half_extents: Vec3::new(30.0, 0.5, 30.0),
+                margin: 0.0,
+            }),
+        };
+        let plank = Body {
+            id: BodyId(4),
+            kind: BodyKind::Kinematic,
+            pose: Pose::new(centre, Quat::from_rotation_z(tilt)),
+            collider: Collider::Convex(Shape::Box {
+                half_extents: half,
+                margin: 0.0,
+            }),
+        };
+        let mut e = Bench {
+            world: ParryWorld::new(&[floor, plank]).unwrap(),
+            hero: None,
+        };
+        // The plank's top under x: its face's points are the centre plus
+        // the turned (u, 0.25, v).
+        let top = |x: f32| {
+            let u = (x - centre.x + half.y * tilt.sin()) / tilt.cos();
+            centre.y + u * tilt.sin() + half.y * tilt.cos()
+        };
+        let mut w = world();
+        w.actors.insert(
+            ARROW,
+            Actor {
+                position: Vec3::new(11.0, 24.384, 0.5),
+                physics: Physics {
+                    gravity_max_speed: 100.0,
+                    time_scale: 100.0,
+                    ..Physics::default()
+                },
+                ..Actor::blank()
+            },
+        );
+        const PAST: Handle = 0x6000_0011;
+        let past = Actor {
+            position: Vec3::new(16.0, 24.384, 0.5),
+            ..w.actor(ARROW).unwrap().clone()
+        };
+        w.actors.insert(PAST, past);
+        for h in [ARROW, PAST] {
+            let movement = w.objs.value(Object::Facet(h, Facet::Movement));
+            let access = at("actorphysics", "gravity acceleration", Some(movement), None);
+            w.set_member(
+                &access,
+                Member::Physics(PhysicsField::GravityAcceleration),
+                Value::Float(500.0),
+                &mut e,
+            )
+            .unwrap();
+        }
+        fly(&mut w, &mut e, 180);
+        let a = w.actor(ARROW).unwrap();
+        assert!(
+            (a.position.y - top(11.0)).abs() < 1e-3,
+            "on the plank at {:.3}: {}",
+            top(11.0),
+            a.position
+        );
+        assert_eq!(a.velocity, Vec3::ZERO);
+        let p = w.actor(PAST).unwrap();
+        assert!(p.position.y.abs() < 1e-4, "on the floor: {}", p.position);
     }
 
     #[test]

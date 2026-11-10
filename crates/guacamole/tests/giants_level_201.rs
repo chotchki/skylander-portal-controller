@@ -609,12 +609,11 @@ impl Walker {
     }
 }
 
-/// The walk, once for every test.
-fn walked() -> &'static Walked {
-    static WALKED: OnceLock<Walked> = OnceLock::new();
-    WALKED.get_or_init(|| {
-        let started = std::time::Instant::now();
-        println!("load at start: {}", load());
+impl Walker {
+    /// Level 201 from its landing, its intro skipped as a player skips it
+    /// (△ every 20 steps past its second) until it hands him over: where
+    /// [`WAY`] starts.
+    fn on_the_way() -> Walker {
         let setup = Setup {
             interface: true,
             props: true,
@@ -633,8 +632,6 @@ fn walked() -> &'static Walked {
         };
         w.rest(2);
         w.run.join().unwrap_or_else(|h| panic!("{h}"));
-        // Its intro skipped as a player skips it: △ every 20 steps past
-        // its second, until it hands him over.
         for k in 0..3000u32 {
             w.step(
                 Stick::new(0.0, 0.0),
@@ -646,6 +643,17 @@ fn walked() -> &'static Walked {
         }
         w.rest(60);
         println!("handed over at step {} {}", w.run.steps, w.run.hero().pivot);
+        w
+    }
+}
+
+/// The walk, once for every test.
+fn walked() -> &'static Walked {
+    static WALKED: OnceLock<Walked> = OnceLock::new();
+    WALKED.get_or_init(|| {
+        let started = std::time::Instant::now();
+        println!("load at start: {}", load());
+        let mut w = Walker::on_the_way();
         for (name, plan) in WAY {
             w.walked.low = None;
             let ok = w.stretch(plan);
@@ -1900,6 +1908,66 @@ fn its_side_blocks_land_under_a_kids_held_pushes() {
     );
 }
 
+/// openspec AS.219, the review: the channel's side blocks pushed out of
+/// order, as a kid may. The top block held south into its lane before block
+/// 7 is down stands against block 7, so neither goes east: block 7's push
+/// spot is under the top block. No script resets them; a push north from
+/// the plateau south of the lane takes the top block back a span, and the
+/// pushes in order then make the dam he walks over.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn its_side_blocks_pushed_out_of_order_are_pushed_back() {
+    let mut w = Walker::on_the_way();
+    for (name, plan) in WAY {
+        if name.starts_with("the channel: the side") {
+            break;
+        }
+        assert!(w.stretch(plan), "{name}");
+    }
+    let at = |w: &Walker, n: &str| {
+        let a = w.run.world.actor(w.run.placed(n).0).unwrap();
+        (a.position.to_array(), a.removed)
+    };
+    let near = |a: [f32; 3], b: [f32; 3]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 0.1);
+    const TOP: &str = "EPush_Block_Template_Stack_Top";
+    const SEVEN: &str = "Push_Block_Template(7)";
+    let lane = [-113.19, 13.88, -23.08];
+    let seven = [-108.66, 13.88, -22.74];
+    // Into its lane first: block 7 stands in its way east.
+    assert!(w.stretch(&format!("w -113.2 -33; k -113.2 -10 {TOP}")));
+    assert!(near(at(&w, TOP).0, lane), "{:?}", at(&w, TOP));
+    assert!(!w.stretch(&format!(
+        "w -113.2 -33; w -117.8 -31; w -117.8 -23; k -80 -23.08 {TOP}"
+    )));
+    assert!(near(at(&w, TOP).0, lane), "{:?}", at(&w, TOP));
+    assert!(near(at(&w, SEVEN).0, seven), "{:?}", at(&w, SEVEN));
+    // Back north from the plateau south of the lane.
+    assert!(w.stretch("w -117.8 -19; w -113.2 -18.5"));
+    assert!(w.run.hero().pivot.y > 13.5, "{}", w.run.hero().pivot);
+    assert!(w.stretch(&format!("k -113.2 -40 {TOP}")));
+    assert!(
+        near(at(&w, TOP).0, [-113.19, 13.88, -27.65]),
+        "{:?}",
+        at(&w, TOP)
+    );
+    // Then in order: block 7 east, the top block south and east onto the dam.
+    w.walked.low = None;
+    assert!(w.stretch(&format!(
+        "w -117.8 -19; w -117.8 -22.7; w -112 -22.7; k -80 -22.7 {SEVEN}; w -117.8 -22.7; w -117.8 -31; w -113.2 -33; k -113.2 -10 {TOP}; w -117.8 -31; w -117.8 -22.7; k -80 -22.7 {TOP} 3; w -100 -22.7; w -94 -24; s 60"
+    )));
+    for p in &w.walked.pushes {
+        println!("{p:?}");
+    }
+    let (top, off) = at(&w, TOP);
+    assert!(off && near(top, [-99.48, 10.16, -23.08]), "{top:?} {off}");
+    assert!(at(&w, SEVEN).1 && at(&w, "Activator_Special_Block").1);
+    let me = w.run.hero().pivot;
+    let low = w.walked.low.unwrap_or(me.y);
+    println!("over the dam at {me}, lowest {low:.2}");
+    assert!(me.x > -96.0 && low > 13.0, "{me} lowest {low}");
+    assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
+}
+
 /// openspec AS.200: the life island's ambush. A hero on the island past
 /// the first vine bridge wakes its initializer, which defines a minion boss
 /// battle: the phase director's summon cutscene brings three evil Stealth
@@ -2201,10 +2269,12 @@ fn its_lobbers_volleys_fall_hurt_and_go() {
     let mut arrows: HashMap<Handle, Life> = HashMap::new();
     let mut fires: HashMap<Handle, (u32, Option<u32>)> = HashMap::new();
     let mut hurts: Vec<(u32, f32, Vec3)> = Vec::new();
+    let mut him: HashMap<u32, Vec3> = HashMap::new();
     let mut last = w.run.health();
     for _ in 0..1500u32 {
         w.step(Stick::new(0.0, 0.0), [false; 4]);
         let step = w.run.steps;
+        him.insert(step, w.run.hero().pivot);
         for h in w.run.world.clones() {
             let a = w.run.world.actor(h);
             let off = a.is_none_or(|a| a.removed);
@@ -2312,6 +2382,34 @@ fn its_lobbers_volleys_fall_hurt_and_go() {
         .filter(|l| hurts.iter().any(|h| h.0 == l.landed.unwrap().0))
         .count();
     assert!(hit >= 1, "{hurts:?}");
+    // Only an arrow landing by him hurts him, its 6 ft from his solid every
+    // way: each hurt on a step an arrow came down within 2.5 m of his pivot,
+    // none on a step when only arrows 3.5 m off and more did (read as the
+    // vertical gap, every arrow down at his height hurt him).
+    let off = |l: &&&Life| {
+        let (s, d) = l.landed.unwrap();
+        let p = him[&s];
+        (s, (d[0] - p.x).hypot(d[2] - p.z))
+    };
+    for (step, ..) in &hurts {
+        assert!(
+            landed.iter().map(off).any(|(s, m)| s == *step && m < 2.5),
+            "hurt at {step} with no arrow down by him: {hurts:?}"
+        );
+    }
+    let far: Vec<u32> = landed
+        .iter()
+        .map(off)
+        .filter(|&(s, m)| m > 3.5 && !landed.iter().map(off).any(|(t, n)| t == s && n <= 3.5))
+        .map(|(s, _)| s)
+        .collect();
+    assert!(!far.is_empty(), "no arrow came down off him");
+    for s in &far {
+        assert!(
+            !hurts.iter().any(|h| h.0 == *s),
+            "hurt at {s} by an arrow off him: {hurts:?}"
+        );
+    }
     assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
     println!("load at end: {}", load());
 }

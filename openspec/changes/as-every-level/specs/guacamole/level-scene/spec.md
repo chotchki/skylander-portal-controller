@@ -492,6 +492,10 @@ On level 201 a push SHALL move a block one width (15 ft) along its track and sto
 - **WHEN** a hero holds the stick into each block until it moves and a moment past, the top block east until it lands
 - **THEN** it lands in the channel beside block 7, the dam's two blocks wake, and he walks over them without dropping into the channel
 
+#### Scenario: Pushed out of order
+- **WHEN** a hero pushes the top block into its lane before block 7 is down
+- **THEN** neither goes east, a push north from the plateau south of the lane takes the top block back a span, and the pushes in order then make the dam
+
 ### Requirement: A lobber's volley falls, burns and goes
 An Elf Lobber's volley SHALL be three arrows, one at its target and two up to 20 ft off it. Each SHALL hang 80 ft over a reticle shrinking on the ground under it, drop after 0.2-0.8 s, land, burn the ground (a wall of fire gone half a second on), hurt each foe within 6 ft of it with fire and be gone 1.5 s after it lands; one aimed over nothing SHALL fall out of the level. None SHALL stay where it landed.
 

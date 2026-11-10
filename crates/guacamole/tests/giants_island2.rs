@@ -138,7 +138,8 @@ struct Fought {
 /// Under this a hero is topped up to [`TOP_UP`] where his scripts hold his
 /// health, as the Mac's runs do through `/api/_test/tv/health` (AU.35 keeps
 /// the starting difficulty at 1): since the lobbers' arrows hurt (openspec
-/// AS.217) a level 1 hero can't live through Setup_004B's lobbers alone.
+/// AS.217) a level 1 hero runs low on the second island, the helper's yard
+/// topping him up once (Setup_004B leaves him at 73 of 290).
 const LOW: f32 = 60.0;
 const TOP_UP: i32 = 200;
 
