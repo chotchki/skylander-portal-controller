@@ -100,8 +100,8 @@ A hat box SHALL shake open the same way and its hat SHALL be kept in the story s
 
 #### Scenario: A Giant swapped in after the box slept and woke
 
-- **WHEN** a hat box has been awake for half a minute with a hero near, left out of range until it sleeps and woken again, and that hero's figure is swapped for a Giant who walks up to it
-- **THEN** it shakes within a few seconds of his reaching it, not after the half minute it had run
+- **WHEN** a hat box has run half a minute with a hero near, is left out of range until it sleeps and wakes again, and that hero's figure is swapped for a Giant who walks up to it
+- **THEN** it picks him as it picks any hero and shakes within a second of his reaching it (46 steps headless; 3.2 s from his join on the Mac, its walk included), where kept from before its sleep its pick waited out the 26 s it had run
 
 ### Requirement: Every hero walks elemental ground
 

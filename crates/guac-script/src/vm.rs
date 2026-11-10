@@ -82,12 +82,6 @@ pub struct Config {
     /// by display name ([`crate::Host::answer`]; crate docs, Left to the
     /// host): none by default.
     pub answered: Vec<String>,
-    /// Scripts, by the end of their name, whose placements wake with their
-    /// locals made anew as their clock starts from 0 (openspec AS.224): the
-    /// embedder's answer for scripts that hold a deadline in a local
-    /// (`system.script timer` plus a quarter second) and would wait out the
-    /// seconds they ran before they slept. None by default.
-    pub anew_on_wake: Vec<String>,
 }
 
 impl Config {
@@ -100,7 +94,6 @@ impl Config {
             precision: Precision::Single,
             tick_seconds: TICK_SECONDS,
             answered: Vec::new(),
-            anew_on_wake: Vec::new(),
         }
     }
 }
@@ -260,8 +253,8 @@ struct Placement {
     /// The step's native runs in its place once, ahead of its first tick
     /// ([`Vm::native_first`]).
     native_first: bool,
-    /// Inactive (the embedder's activity rule): not ticked until it wakes,
-    /// its state kept.
+    /// Inactive (the embedder's activity rule): not ticked until it wakes;
+    /// once its shutdown has run, its locals gone (openspec AS.233).
     asleep: bool,
     /// An activator ([`Vm::set_activator`]): its group ticks ahead of every
     /// other placement (crate docs, The tick).
@@ -1247,18 +1240,11 @@ impl Vm {
     }
 
     /// `id` awake: off the asleep list and on its group's end, if it slept,
-    /// its `system.script timer` from 0 again. Woken before the queue its
+    /// its `system.script timer` from 0 again (its locals went with its
+    /// shutdown, [`Vm::let_go_of_locals`]). Woken before the queue its
     /// sleep joined has run (between two steps), it never slept: off the
-    /// queue, it carries on started, its timer kept.
+    /// queue, it carries on started, its timer and locals kept.
     fn wake(&mut self, id: PlacementId) {
-        let anew = {
-            let name = self
-                .program
-                .scripts
-                .get(self.placements[id as usize].script as usize)
-                .map_or("", |s| s.name.as_str());
-            self.config.anew_on_wake.iter().any(|n| name.ends_with(n))
-        };
         let p = &mut self.placements[id as usize];
         if p.asleep {
             p.asleep = false;
@@ -1269,10 +1255,6 @@ impl Vm {
                 }
             } else {
                 p.active = 0.0;
-                if anew {
-                    p.locals.clear();
-                    p.others.clear();
-                }
             }
             self.sleeping.retain(|&s| s != id);
             self.move_to_end(id);
@@ -1458,6 +1440,7 @@ impl Vm {
                 if !has_shutdown {
                     p.started = false;
                     p.behaviour = None;
+                    Self::let_go_of_locals(p);
                     continue;
                 }
                 p.shutdown = true;
@@ -1487,7 +1470,7 @@ impl Vm {
     /// SHUTDOWN, whose end ends it (crate docs, A script's frame), no
     /// seconds counted, its started flag and behaviour cleared after,
     /// however it went: a taken-off one is off for good, a sleeping one
-    /// runs STARTUP again when it wakes.
+    /// lets go of its locals and runs STARTUP again when it wakes.
     fn shutdown_tick(
         &mut self,
         id: PlacementId,
@@ -1502,7 +1485,20 @@ impl Vm {
         p.shutdown = false;
         p.started = false;
         p.behaviour = None;
+        if p.asleep && !p.removed {
+            Self::let_go_of_locals(p);
+        }
         out
+    }
+
+    /// A sleeper's locals gone once its shutdown has run (crate docs, The
+    /// tick; openspec AS.233): its variable list unmade, each local made
+    /// again at its declared value as it's next reached once it wakes, as
+    /// the original's sleepers hold no variable list until they wake.
+    fn let_go_of_locals(p: &mut Placement) {
+        p.locals.clear();
+        p.others.clear();
+        p.listed = false;
     }
 
     /// Whether the placement is asleep (inactive).

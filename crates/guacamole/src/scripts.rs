@@ -3772,19 +3772,6 @@ pub fn is_music_script(path: &str) -> bool {
             .any(|s| s.contains('/') && path.ends_with(s))
 }
 
-/// The scripts whose placements wake with their locals made anew (openspec
-/// AS.224; stand-in ledger: `wake-locals`): the hat box and the teleporter
-/// pick their player from `Minions` by a deadline held in a local (`player ref
-/// timer`: `system.script timer` plus a quarter second), against a clock that
-/// starts from 0 at a wake. Kept across a sleep the local sat ahead of the
-/// clock for as many seconds as the placement had run, and the player it named
-/// stayed whoever it had named: the Mac's hat box ignored the Giant swapped in
-/// at the wall for 26 s, naming the hero who had left. The other pickups of
-/// the idiom (the chest, the fairy, the legendary treasure and the rest, AS.232)
-/// keep theirs: the story run with all eight listed never reached level 214's
-/// completion screen on the Mac.
-pub const ANEW_ON_WAKE: [&str; 2] = ["/Hat_Pickup.ai", "/Teleporter.ai"];
-
 /// The VM's config for the TV's run (openspec AH.27): AH.17's with AH.20's
 /// pickups and AH.21's breakables and the members they reach (the
 /// creatures' and the loop's: the destructibles system makes a breakable a
@@ -3811,8 +3798,6 @@ pub fn smash_config(mode: Mode) -> Config {
     // registered for them (openspec AR.10), and what chapter 1's music
     // reaches past them (openspec AR.11), again after those tables.
     music_members(&mut c);
-    c.anew_on_wake
-        .extend(ANEW_ON_WAKE.iter().map(|s| (*s).to_owned()));
     if let Whitelist::Only {
         placements,
         scripts,
