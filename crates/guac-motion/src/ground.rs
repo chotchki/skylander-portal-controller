@@ -10,10 +10,13 @@
 //!   convex radius, square-edged ([`find_seeing`]). Its point is what the
 //!   script's 0.4 ft band and the snap measure from.
 //! - The support check: the contact planes within [`SUPPORT_GAP`] of his
-//!   shape, those facing up enough to be ground (n.y > 0.3, AS.229) summed into a surface normal;
-//!   supported when that's within 45° of up (AG.39: the cliff's faces held him
-//!   to 44.92° and not from 45.04°), or when they pin a probe straight down
-//!   (a crease of two steep faces, as read).
+//!   shape facing up at all (n.y > 0.08, as read) summed into a surface
+//!   normal, supported when that's within 45° of up (AG.39: the cliff's faces
+//!   held him to 44.92° and not from 45.04°), or when they pin a probe
+//!   straight down (a crease of two steep faces, as read); or when those
+//!   facing up past [`GROUND_FACING`] alone sum within 45° (AS.229: a railing
+//!   leaning back beside the hub's stairs no longer tips the stairs past 45°,
+//!   and takes no ground away).
 //! - The snap (AG.9, AG.70): on the ground, a pivot under the ground's
 //!   point is set 0.01 m over it, and one 0.01-0.375 m over it is too on a
 //!   frame his lean turns ([`crate::hero`]: the post-step runs it inside
@@ -41,14 +44,21 @@ pub const MAX_SLOPE_COS: f32 = core::f32::consts::FRAC_1_SQRT_2;
 /// How far a plane may be from his shape (past its skin) and still hold him
 /// up, metres (a hypothesis, the module's).
 pub const SUPPORT_GAP: f32 = 1.0 / 60.0;
-/// Planes facing up less than this don't count toward support. A hypothesis
-/// (openspec AS.229): 0.08 in the first reading, which the corpus never
-/// tests between there and 0.3 (it passes either way); a railing leaning
-/// 13° off upright (0.22) rubbed by a Giant's wide shape on the hub's
-/// stairs was summed with the stairs' 59° slope and tipped the sum past
-/// 45°, so a Giant lost the ground there and slid back down. A face this
-/// near upright is a wall, not ground.
-const SUPPORT_FACING: f32 = 0.3;
+/// Planes facing up less than this don't count toward support at all (as
+/// read: the original's check counts those past it).
+const SUPPORT_FACING: f32 = 0.08;
+/// Planes facing up past this (72.5° off up) sum into a second normal that
+/// holds him within 45° too, the sums standing in for the original's probe
+/// (stand-in ledger: `support-facing`), which solves a probe straight down
+/// against every plane and holds him unless it slides steeper than 45°. A
+/// hypothesis (openspec AS.229): a railing leaning 13° off upright (n.y
+/// 0.226) rubbed by Tree Rex's capsule on the hub's stairs (a 31° slope)
+/// tipped the sum of both to 47° and slid him back down. In AG.39's falls,
+/// walkable ground beside a face of 74-84° he touches held him on 14 of 16
+/// records, the ground's sum calling those 14 and the sum of both 2; more
+/// than 5 mm inside the face he was let go on all 8, which the sum of both
+/// calls on 7 and this rule on none.
+pub const GROUND_FACING: f32 = 0.3;
 /// Where the snap sets him, and how far it reaches.
 pub const SNAP_HEIGHT: f32 = 0.01;
 pub const SNAP_REACH: f32 = 0.375;
@@ -174,7 +184,8 @@ pub fn find_seeing(
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Support {
     pub supported: bool,
-    /// The summed normal of the planes facing up, when any is in reach.
+    /// The summed normal of the planes counted as ground (facing up past
+    /// [`GROUND_FACING`]), when any is in reach.
     pub surface: Option<Vec3>,
 }
 
@@ -183,9 +194,19 @@ pub fn support(planes: &[ContactPlane]) -> Support {
         .iter()
         .filter(|p| p.distance <= SUPPORT_GAP && p.normal.y > SUPPORT_FACING)
         .collect();
-    let sum: Vec3 = up.iter().map(|p| p.normal).sum();
-    let surface = (sum.length() > 1e-6).then(|| sum.normalize());
-    let steep_enough = surface.is_some_and(|n| n.y >= MAX_SLOPE_COS);
+    let summed = |ground: f32| {
+        let sum: Vec3 = up
+            .iter()
+            .filter(|p| p.normal.y > ground)
+            .map(|p| p.normal)
+            .sum();
+        (sum.length() > 1e-6).then(|| sum.normalize())
+    };
+    let holds = |n: Option<Vec3>| n.is_some_and(|n| n.y >= MAX_SLOPE_COS);
+    let surface = summed(GROUND_FACING);
+    // A face leaning back takes no ground away: every plane facing up holds
+    // him as before, or the ground's alone does.
+    let steep_enough = holds(surface) || holds(summed(SUPPORT_FACING));
     let pinned = up.len() > 1 && {
         let limits: Vec<Limit> = up
             .iter()
@@ -257,15 +278,25 @@ mod tests {
         // Out of reach, level ground holds nothing up.
         assert!(!support(&[plane(Vec3::Y, SUPPORT_GAP + 1e-3)]).supported);
         assert!(support(&[plane(Vec3::Y, SUPPORT_GAP)]).supported);
-        // AS.229: the hub's stairs (a 59° slope, the lean's) with a railing
-        // 13° off upright touching, as the Giant's step logged them: the
-        // railing is a wall, and the sum stays the stairs'.
+        // AS.229: the hub's stairs (a 31° slope) with a railing 13° off
+        // upright touching, as Tree Rex's step logged them: the railing is
+        // no ground, and the sum stays the stairs'.
         let stairs = Vec3::new(0.0002, 0.8585, -0.5128);
         let railing = Vec3::new(-0.9645, 0.2264, -0.1358);
         assert!(support(&[plane(stairs, 0.0), plane(railing, 0.0)]).supported);
         assert!(!support(&[plane(railing, 0.0)]).supported);
-        // A crease of two 60° faces pins him.
+        // A crease of two 60° faces pins him, and one of two faces leaning
+        // back 75° does too, though neither is ground; and two creatures'
+        // bodies against his sides by chapter 1's first fight, each touching
+        // him 75° off up, their crease falling away at 29° (as a walker's
+        // step logged them, the review's), hold him as before: a face
+        // leaning back takes no ground away.
         assert!(support(&[plane(face(60.0), 0.0), plane(face(-60.0), 0.0)]).supported);
+        assert!(support(&[plane(face(75.0), 0.0), plane(face(-75.0), 0.0)]).supported);
+        assert!(!support(&[plane(face(75.0), 0.0)]).supported);
+        let creature_a = Vec3::new(0.7066, 0.2538, -0.6606);
+        let creature_b = Vec3::new(-0.8670, 0.2540, 0.4288);
+        assert!(support(&[plane(creature_a, 0.0), plane(creature_b, 0.0)]).supported);
     }
 
     /// Snapped back down: from 189 mm, and from 11 mm, to 10; at 5 mm, left.

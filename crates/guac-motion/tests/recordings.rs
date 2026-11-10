@@ -225,6 +225,68 @@ fn ag39_cliff_faces_hold_him_to_44_92_and_not_from_45_04() {
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
+/// AS.229's review: a face leaning back past 72.5° off up (0.08 < n.y <=
+/// 0.3: AG.39's cliff faces at 74-84°) beside walkable ground in a record's
+/// manifold. Where he touches that face (within 5 mm of it) the original's
+/// support check held him on 14 of the 16 such records in AG.39's falls, and
+/// ours calls those 14 as it did (the sum with the face in it alone, 2).
+/// Where he's more than 5 mm inside it the original let him go on all 8 and
+/// ours holds him on all 8 (that sum alone let go of 7): the rule's cost, a
+/// hypothesis's, a fall into a cliff face held a frame or so longer. The manifold is the step's, not the
+/// support check's own (which isn't recorded: most records with such a face
+/// in reach hold no ground at all), so only records with ground and face
+/// both in it are counted.
+#[test]
+#[ignore]
+fn ag39_a_face_leaning_back_beside_his_ground_is_no_ground() {
+    let (mut touching, mut agree, mut inside, mut inside_agree) = (0, 0, 0, 0);
+    for frames in recordings("ag39-falls-1792502813").values() {
+        for f in frames {
+            let Some(c) = &f.contacts else {
+                continue;
+            };
+            let planes: Vec<ContactPlane> = c
+                .planes
+                .iter()
+                .map(|p| ContactPlane {
+                    body: BodyId(1),
+                    triangle: None,
+                    material: None,
+                    normal: Vec3::from(p.normal),
+                    point: Vec3::from(p.position),
+                    distance: p.distance,
+                })
+                .collect();
+            let reach = |p: &&ContactPlane| p.distance <= ground::SUPPORT_GAP;
+            let ground_in = planes
+                .iter()
+                .filter(reach)
+                .any(|p| p.normal.y >= ground::MAX_SLOPE_COS);
+            let face = planes
+                .iter()
+                .filter(reach)
+                .filter(|p| p.normal.y > 0.08 && p.normal.y <= 0.3)
+                .map(|p| p.distance)
+                .min_by(f32::total_cmp);
+            let Some(face) = face.filter(|_| ground_in) else {
+                continue;
+            };
+            let same = ground::support(&planes).supported == (c.support == 2);
+            if face >= -0.005 {
+                touching += 1;
+                agree += u32::from(same);
+            } else {
+                inside += 1;
+                inside_agree += u32::from(same);
+            }
+        }
+    }
+    eprintln!(
+        "touching the face: {agree} of {touching} as recorded; inside it: {inside_agree} of {inside}"
+    );
+    assert!(touching >= 16 && agree >= 14, "{agree} of {touching}");
+}
+
 /// AG.39's landings: with the stick held, the record after the proxy's
 /// landing record runs straight down the slope's fall line, and the one
 /// after it the stick's way. Which landings slide is AG.47's question: the

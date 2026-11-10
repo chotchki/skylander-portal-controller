@@ -1968,6 +1968,86 @@ fn its_side_blocks_pushed_out_of_order_are_pushed_back() {
     assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
 }
 
+/// openspec AS.229's review, on AS.219: the channel's side blocks pushed by
+/// a Giant, Tree Rex's capsule as the TV builds it (2.08 m round, 4.29 m
+/// tall) in place of Eruptor's sphere from the channel on. His shape meets
+/// block 7 some 1.2 m sooner than Eruptor's, so his walk to the hold's start
+/// may push it before the hold does (the review's Mac run did): wherever it
+/// was pushed, it comes to rest in the pit where Eruptor's push leaves it,
+/// the top block's pushes land it on the dam, and he walks over it without
+/// dropping into the channel.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn its_side_blocks_land_under_a_giants_held_pushes() {
+    use guac_motion::seam::{Quat, Shape, Vec3};
+    let mut w = Walker::on_the_way();
+    for (name, plan) in WAY {
+        if name.starts_with("the channel: the side") {
+            break;
+        }
+        assert!(w.stretch(plan), "{name}");
+    }
+    w.run.hero_mut().set_solid(guac_motion::solid::HavokSolid {
+        shape: Shape::Capsule {
+            radius: 2.0836,
+            half_segment: 1.1049,
+        },
+        centre: Vec3::new(0.0, 3.2385, 0.0),
+        rotation: Quat::IDENTITY,
+    });
+    let at = |w: &Walker, n: &str| {
+        let a = w.run.world.actor(w.run.placed(n).0).unwrap();
+        (a.position.to_array(), a.removed)
+    };
+    let near = |a: [f32; 3], b: [f32; 3]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 0.1);
+    const TOP: &str = "EPush_Block_Template_Stack_Top";
+    const SEVEN: &str = "Push_Block_Template(7)";
+    let pit = [-104.09, 10.22, -22.74];
+    w.walked.low = None;
+    assert!(w.stretch("w -113.2 -33; w -117.8 -31; w -117.8 -22.7"));
+    let to_start = w.stretch("w -112 -22.7; s 120");
+    let early = near(at(&w, SEVEN).0, pit) || at(&w, SEVEN).1;
+    println!(
+        "the walk to block 7's hold: reached {to_start}, block 7 down already {early}: {:?}",
+        at(&w, SEVEN)
+    );
+    if !early {
+        assert!(
+            w.stretch(&format!("k -80 -22.7 {SEVEN}")),
+            "{:?}",
+            at(&w, SEVEN)
+        );
+    }
+    let seven = w
+        .walked
+        .states
+        .iter()
+        .rfind(|s| s.name == SEVEN)
+        .map(|s| s.behaviour.clone());
+    println!(
+        "block 7 at {:?}, its last behaviour {seven:?}",
+        at(&w, SEVEN)
+    );
+    assert!(
+        near(at(&w, SEVEN).0, pit) || at(&w, SEVEN).1,
+        "{:?}",
+        at(&w, SEVEN)
+    );
+    assert!(w.stretch(&format!(
+        "w -117.8 -22.7; w -117.8 -31; w -113.2 -33; k -113.2 -10 {TOP}; w -117.8 -31; w -117.8 -22.7; k -80 -22.7 {TOP} 3; w -100 -22.7; w -94 -24; s 60"
+    )));
+    for p in &w.walked.pushes {
+        println!("{p:?}");
+    }
+    let (top, off) = at(&w, TOP);
+    assert!(off && near(top, [-99.48, 10.16, -23.08]), "{top:?} {off}");
+    let me = w.run.hero().pivot;
+    let low = w.walked.low.unwrap_or(me.y);
+    println!("over the dam at {me}, lowest {low:.2}");
+    assert!(me.x > -96.0 && low > 13.0, "{me} lowest {low}");
+    assert!(w.walked.stops.is_empty(), "{:#?}", w.walked.stops);
+}
+
 /// openspec AS.200: the life island's ambush. A hero on the island past
 /// the first vine bridge wakes its initializer, which defines a minion boss
 /// battle: the phase director's summon cutscene brings three evil Stealth
