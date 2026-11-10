@@ -89,10 +89,14 @@ fn stand(level: &str) -> (usize, usize, usize, u64) {
 fn levels_202_to_211_start_headless_and_stand() {
     let started = std::time::Instant::now();
     println!("load at start: {}", load());
+    let mut bad = Vec::new();
     for level in LEVELS {
         let ran = std::panic::catch_unwind(|| stand(level));
         let line = match ran {
             Ok((stops, run, asleep, digest)) => {
+                if stops > 0 {
+                    bad.push(format!("{level}: {stops} stops"));
+                }
                 format!(
                     "{level}\tstarted\tstops {stops}\truns {run}\tasleep {asleep}\tdigest {digest:016x}"
                 )
