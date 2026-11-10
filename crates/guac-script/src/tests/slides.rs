@@ -366,7 +366,9 @@ fn a_full_pool_or_no_time_lands_at_once_and_skips_the_block() {
 /// system's immunity reads through its `script timer local`.
 #[test]
 fn a_native_tick_counts_toward_a_placements_clock() {
-    let p = program(|w| idle(w, |_| {}, |_| {}));
+    let p = program(|w| {
+        idle(w, |_| {}, |_| {});
+    });
     let mut vm = Vm::new(p, Config::new(Mode::Strict));
     let id = vm.add(HANDLE, "Clock", 0);
     vm.step(&mut Bare).unwrap();

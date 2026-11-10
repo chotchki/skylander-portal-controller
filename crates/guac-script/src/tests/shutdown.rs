@@ -343,7 +343,9 @@ fn sleeper_noting(w: &mut Writer<'_>, name: &str, shutdown: bool, note: bool) ->
     behaviour(w, |w| {
         w.inc(&[El::Local(count)]);
     });
-    w.end(name)
+    let info = w.end(name);
+    w.declare(info, &[starts, count, shut, seen]);
+    info
 }
 
 /// openspec AR.22: a placement that started, put to sleep, joins the

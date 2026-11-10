@@ -16,7 +16,7 @@ fn counting() -> Arc<Program> {
         w.meta_word(f, 0x1C, INT);
         w.word(f, 0x20, 0);
         let seen = var(w, "seen");
-        idle(
+        let info = idle(
             w,
             |_| {},
             |w| {
@@ -24,7 +24,8 @@ fn counting() -> Arc<Program> {
                 w.set(&[El::Local(seen)], v);
                 w.inc(&[El::Local(f)]);
             },
-        )
+        );
+        w.declare(info, &[seen]);
     })
 }
 

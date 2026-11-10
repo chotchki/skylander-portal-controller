@@ -61,8 +61,8 @@ use guac_formats::level::Placements;
 use guac_formats::script::Class;
 use guac_script::members::{self, INIT_CHAIN};
 use guac_script::{
-    Access, Answer, Config, Generator, Halt, Handle, Host, HostFault, MemberId, Mode, Obj, OpCall,
-    PlacementId, Program, ScriptId, Value, Vm, Whitelist,
+    Access, AnewOnWake, Answer, Config, Generator, Halt, Handle, Host, HostFault, MemberId, Mode,
+    Obj, OpCall, PlacementId, Program, ScriptId, Value, Vm, Whitelist,
 };
 use tracing::{info, warn};
 
@@ -2627,10 +2627,28 @@ pub const EVERY_TICK: [&str; 8] = [
     "_EnemySystem_Functions.ai",
 ];
 
+/// The scripts whose sleepers wake with their declared locals made anew on
+/// the TV (openspec AS.224, AS.233; stand-in ledger: `wake-locals`): the hat
+/// box and the teleporter, which pick their player from `Minions` by a
+/// deadline held in a local (`player ref timer`: `system.script timer` plus a
+/// quarter second). The original makes every sleeper's anew (AS.233); kept,
+/// that deadline sat ahead of the woken clock for as many seconds as the
+/// placement had run, and the player it named stayed whoever it had named,
+/// so the Mac's hat box ignored the Giant swapped in at the wall for 26 s.
+/// Every script on the rule is AS.246's: on it the Mac story stopped on level
+/// 214's first island twice.
+pub const ANEW_ON_WAKE: [&str; 2] = ["/Hat_Pickup.ai", "/Teleporter.ai"];
+
+/// [`ANEW_ON_WAKE`] as the VM takes it.
+fn anew_on_wake() -> AnewOnWake {
+    AnewOnWake::Listed(ANEW_ON_WAKE.iter().map(|s| (*s).to_owned()).collect())
+}
+
 /// The VM's config for AH.16's run: the init chain's members and listing,
 /// with the sounds' and the music's ([`music_members`]).
 pub fn config(mode: Mode) -> Config {
     let mut c = Config::new(mode);
+    c.anew_on_wake = anew_on_wake();
     members::register(&mut c.members, INIT_CHAIN);
     music_members(&mut c);
     c.whitelist = Whitelist::with_first_ticks(&[], &EVERY_TICK, &GLOBAL_FIRST_TICKS);
@@ -2687,6 +2705,7 @@ pub const ERUPTOR_SCRIPTS: [&str; 5] = [
 /// Eruptor's scripts beside them.
 pub fn hero_config(mode: Mode) -> Config {
     let mut c = Config::new(mode);
+    c.anew_on_wake = anew_on_wake();
     members::register(&mut c.members, INIT_CHAIN);
     members::register(&mut c.members, members::HERO);
     // A slider's own members (AH.19): his attacks' and the HUD's slides.

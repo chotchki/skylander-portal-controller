@@ -91,7 +91,7 @@ fn tags_are_found_from_the_start_and_declared_locals_after_startup() {
 fn an_asleep_placement_waits_and_wakes_anew() {
     let p = program(|w| {
         let (starts, ticks) = (var(w, "starts"), var(w, "ticks"));
-        idle(
+        let info = idle(
             w,
             |w| {
                 w.inc(&[El::Local(starts)]);
@@ -100,6 +100,7 @@ fn an_asleep_placement_waits_and_wakes_anew() {
                 w.inc(&[El::Local(ticks)]);
             },
         );
+        w.declare(info, &[starts, ticks]);
     });
     let mut vm = Vm::new(p, Config::new(Mode::Strict));
     let id = vm.add(HANDLE, "Sleeper", 0);
@@ -144,7 +145,7 @@ fn a_woken_placements_deadline_is_made_anew_with_its_clock() {
     let p = program(|w| {
         let deadline = w.variable("deadline", "ValueInfo", Some(FLOAT));
         let picks = var(w, "picks");
-        idle(
+        let info = idle(
             w,
             |_| {},
             |w| {
@@ -158,6 +159,7 @@ fn a_woken_placements_deadline_is_made_anew_with_its_clock() {
                 w.end_block(due);
             },
         );
+        w.declare(info, &[deadline, picks]);
     });
     let mut vm = Vm::new(p, Config::new(Mode::Strict));
     let id = vm.add(HANDLE, "Box", 0);
@@ -195,6 +197,135 @@ fn a_woken_placements_deadline_is_made_anew_with_its_clock() {
     );
     let anew = number(&vm, "deadline").unwrap();
     assert!((anew - (TICK_SECONDS + 0.25)).abs() < 1e-5, "{anew}");
+}
+
+/// openspec AS.224, AS.233: an embedder that names the scripts it holds to
+/// the rule (`AnewOnWake::Listed`, the TV's stand-in) has those sleepers'
+/// declared locals made anew and every other one's kept across a sleep.
+#[test]
+fn only_a_listed_script_wakes_anew_when_the_embedder_lists() {
+    let build = || {
+        program(|w| {
+            let ticks = var(w, "ticks");
+            let info = idle(
+                w,
+                |_| {},
+                |w| {
+                    w.inc(&[El::Local(ticks)]);
+                },
+            );
+            w.declare(info, &[ticks]);
+        })
+    };
+    for (listed, after) in [(true, 1), (false, 5)] {
+        let p = build();
+        let name = p.scripts[0].name.clone();
+        let mut config = Config::new(Mode::Strict);
+        config.anew_on_wake = AnewOnWake::Listed(match listed {
+            true => vec![name],
+            false => vec!["/Other.ai".to_owned()],
+        });
+        let mut vm = Vm::new(p, config);
+        let id = vm.add(HANDLE, "Box", 0);
+        let mut host = Engine::default();
+        for _ in 0..3 {
+            vm.step(&mut host).unwrap();
+        }
+        vm.set_asleep(HANDLE, true);
+        vm.step(&mut host).unwrap();
+        vm.step(&mut host).unwrap();
+        vm.set_asleep(HANDLE, false);
+        vm.step(&mut host).unwrap();
+        assert_eq!(
+            vm.local(id, "ticks"),
+            Some(Value::Int(after)),
+            "listed {listed}"
+        );
+    }
+}
+
+/// openspec AS.233: a sleeper's shutdown lets go of the locals its script
+/// declares alone. Its tags and a variable another script made on it stay,
+/// as the original keeps those on the placement itself: level 207's magic
+/// wall, its `setup data` made by its surface's definition once at the
+/// level's start, lost it with every local and stood for its own element
+/// (the au-swap-beams review's probe). Here a definer makes `setup data` on
+/// the wall and writes its tag; woken, the wall's STARTUP finds both as they
+/// were left, its own local made anew.
+#[test]
+fn a_sleeper_keeps_its_tags_and_what_others_made_on_it() {
+    let mut wall = None;
+    let (p, obj) = program_and_objects(|w| {
+        let a = actor(w);
+        wall = Some(a);
+        let seven = w.int(7);
+        w.tags(a, &[("dirt tint", "ValueInfo", INT, seven)]);
+        let (own, seen, tint) = (var(w, "own"), var(w, "seen"), var(w, "tint"));
+        let info = script(
+            w,
+            "C:/tfb/Synthetic/Wall.ai",
+            |w| {
+                let (f, fop) = find(w, "setup data", "ValueInfo", INT, 1, &[my()]);
+                let found = w.rhs(INT, &[El::Local(fop)]);
+                w.set(&[El::Local(seen)], found);
+                let e = w.otherwise(f);
+                let none = w.int(-1);
+                w.set(&[El::Local(seen)], none);
+                w.close(e);
+                let (f, fop) = find(w, "dirt tint", "ValueInfo", INT, 1, &[my()]);
+                let found = w.rhs(INT, &[El::Local(fop)]);
+                w.set(&[El::Local(tint)], found);
+                w.end_block(f);
+            },
+            |_| {},
+            |w| {
+                behaviour(w, |w| {
+                    w.inc(&[El::Local(own)]);
+                })
+            },
+        );
+        w.declare(info, &[own, seen, tint]);
+        script(
+            w,
+            "C:/tfb/Synthetic/Definer.ai",
+            |w| {
+                let (f, fop) = find(w, "setup data", "ValueInfo", INT, 2, &[El::Local(a)]);
+                let five = w.int(5);
+                w.set(&[El::Local(fop)], five);
+                w.end_block(f);
+                let (f, fop) = find(w, "dirt tint", "ValueInfo", INT, 1, &[El::Local(a)]);
+                let nine = w.int(9);
+                w.set(&[El::Local(fop)], nine);
+                w.end_block(f);
+            },
+            |_| {},
+            |w| behaviour(w, |_| {}),
+        );
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    vm.add(0x30, "Definer", 1);
+    let id = vm.add_at(0x20, "ElementalWallController", 0, obj.at(wall.unwrap()));
+    let mut host = Engine::default();
+    for _ in 0..3 {
+        vm.step(&mut host).unwrap();
+    }
+    assert_eq!(vm.local(id, "seen"), Some(Value::Int(5)), "made on it");
+    assert_eq!(
+        vm.local(id, "tint"),
+        Some(Value::Int(9)),
+        "its tag, written"
+    );
+    assert_eq!(vm.local(id, "own"), Some(Value::Int(3)));
+    vm.set_asleep(0x20, true);
+    vm.step(&mut host).unwrap();
+    assert_eq!(vm.local(id, "own"), None, "its own let go");
+    assert_eq!(vm.local(id, "setup data"), Some(Value::Int(5)), "kept");
+    vm.step(&mut host).unwrap();
+    vm.set_asleep(0x20, false);
+    vm.step(&mut host).unwrap();
+    assert_eq!(vm.local(id, "seen"), Some(Value::Int(5)), "found again");
+    assert_eq!(vm.local(id, "tint"), Some(Value::Int(9)), "as written");
+    assert_eq!(vm.local(id, "own"), Some(Value::Int(1)), "made anew");
 }
 
 /// A structure's number set from outside is what scripts read next (the
@@ -246,7 +377,7 @@ fn a_placement_woken_ticks_after_those_already_awake() {
         w.meta_word(f, 0x1C, INT);
         w.word(f, 0x20, 0);
         let seen = var(w, "seen");
-        idle(
+        let info = idle(
             w,
             |_| {},
             |w| {
@@ -255,6 +386,7 @@ fn a_placement_woken_ticks_after_those_already_awake() {
                 w.inc(&[El::Local(f)]);
             },
         );
+        w.declare(info, &[seen]);
     });
     let mut vm = Vm::new(p, Config::new(Mode::Strict));
     let ids = [

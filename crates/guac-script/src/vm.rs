@@ -82,6 +82,32 @@ pub struct Config {
     /// by display name ([`crate::Host::answer`]; crate docs, Left to the
     /// host): none by default.
     pub answered: Vec<String>,
+    /// Whose sleepers let go of the locals their scripts declare once their
+    /// shutdown has run (crate docs, The tick; openspec AS.233): every
+    /// script's, as the original's, by default.
+    pub anew_on_wake: AnewOnWake,
+}
+
+/// Which sleepers wake with the locals their scripts declare made anew
+/// (crate docs, The tick; openspec AS.233).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AnewOnWake {
+    /// Every script's, as the original's.
+    Every,
+    /// Only the scripts named, by the end of their name; every other
+    /// sleeper keeps its locals: an embedder's stand-in while something of
+    /// its own leans on kept ones.
+    Listed(Vec<String>),
+}
+
+impl AnewOnWake {
+    /// Whether a sleeper running `script` lets go of its declared locals.
+    fn covers(&self, script: &str) -> bool {
+        match self {
+            AnewOnWake::Every => true,
+            AnewOnWake::Listed(names) => names.iter().any(|n| script.ends_with(n.as_str())),
+        }
+    }
 }
 
 impl Config {
@@ -94,6 +120,7 @@ impl Config {
             precision: Precision::Single,
             tick_seconds: TICK_SECONDS,
             answered: Vec::new(),
+            anew_on_wake: AnewOnWake::Every,
         }
     }
 }
@@ -254,7 +281,8 @@ struct Placement {
     /// ([`Vm::native_first`]).
     native_first: bool,
     /// Inactive (the embedder's activity rule): not ticked until it wakes;
-    /// once its shutdown has run, its locals gone (openspec AS.233).
+    /// once its shutdown has run, the locals its script declares gone
+    /// (openspec AS.233).
     asleep: bool,
     /// An activator ([`Vm::set_activator`]): its group ticks ahead of every
     /// other placement (crate docs, The tick).
@@ -1240,8 +1268,8 @@ impl Vm {
     }
 
     /// `id` awake: off the asleep list and on its group's end, if it slept,
-    /// its `system.script timer` from 0 again (its locals went with its
-    /// shutdown, [`Vm::let_go_of_locals`]). Woken before the queue its
+    /// its `system.script timer` from 0 again (its declared locals went
+    /// with its shutdown, [`Vm::let_go_of_locals`]). Woken before the queue its
     /// sleep joined has run (between two steps), it never slept: off the
     /// queue, it carries on started, its timer and locals kept.
     fn wake(&mut self, id: PlacementId) {
@@ -1440,7 +1468,11 @@ impl Vm {
                 if !has_shutdown {
                     p.started = false;
                     p.behaviour = None;
-                    Self::let_go_of_locals(p);
+                    if let Some(s) = program.scripts.get(p.script as usize)
+                        && self.config.anew_on_wake.covers(&s.name)
+                    {
+                        Self::let_go_of_locals(p, &s.declared);
+                    }
                     continue;
                 }
                 p.shutdown = true;
@@ -1470,7 +1502,7 @@ impl Vm {
     /// SHUTDOWN, whose end ends it (crate docs, A script's frame), no
     /// seconds counted, its started flag and behaviour cleared after,
     /// however it went: a taken-off one is off for good, a sleeping one
-    /// lets go of its locals and runs STARTUP again when it wakes.
+    /// lets go of its declared locals and runs STARTUP again when it wakes.
     fn shutdown_tick(
         &mut self,
         id: PlacementId,
@@ -1481,24 +1513,30 @@ impl Vm {
         self.begin(Some(id), script, Value::Entity(handle));
         let result = self.execute(host);
         let out = self.finish(result);
+        let program = Arc::clone(&self.program);
         let p = &mut self.placements[id as usize];
         p.shutdown = false;
         p.started = false;
         p.behaviour = None;
-        if p.asleep && !p.removed {
-            Self::let_go_of_locals(p);
+        if p.asleep
+            && !p.removed
+            && let Some(s) = program.scripts.get(script as usize)
+            && self.config.anew_on_wake.covers(&s.name)
+        {
+            Self::let_go_of_locals(p, &s.declared);
         }
         out
     }
 
     /// A sleeper's locals gone once its shutdown has run (crate docs, The
-    /// tick; openspec AS.233): its variable list unmade, each local made
-    /// again at its declared value as it's next reached once it wakes, as
-    /// the original's sleepers hold no variable list until they wake.
-    fn let_go_of_locals(p: &mut Placement) {
-        p.locals.clear();
-        p.others.clear();
-        p.listed = false;
+    /// tick; openspec AS.233): the ones its script declares, each made again
+    /// at its declared value as it's next reached once it wakes, as the
+    /// original's sleepers hold no list of those until they wake. Its tags
+    /// and what other scripts made on it stay, as the original keeps those
+    /// on the placement itself (a wall controller's `setup data`, made by
+    /// its surface's definition once at the level's start).
+    fn let_go_of_locals(p: &mut Placement, declared: &HashMap<Sym, Decl>) {
+        p.locals.retain(|name, _| !declared.contains_key(name));
     }
 
     /// Whether the placement is asleep (inactive).
