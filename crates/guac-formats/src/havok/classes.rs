@@ -385,8 +385,12 @@ impl SplineAnimation {
         // Blocks share their edge frames: block b holds frames b (mfpb - 1)
         // to b (mfpb - 1) + mfpb - 1, the last what's left.
         let stride = mfpb - 1;
-        let blocks_needed = ((frames - 1).max(1) + stride - 1) / stride;
-        int(Self::NUM_BLOCKS, "numBlocks", &|v| v == blocks_needed)?;
+        // In 64 bits: a frame count near `i32::MAX` overflows the sum in 32.
+        let blocks_needed =
+            ((i64::from(frames) - 1).max(1) + i64::from(stride) - 1) / i64::from(stride);
+        int(Self::NUM_BLOCKS, "numBlocks", &|v| {
+            i64::from(v) == blocks_needed
+        })?;
         int(
             Self::MASK_AND_QUANTIZATION_SIZE,
             "maskAndQuantizationSize",
