@@ -131,6 +131,59 @@ fn an_asleep_placement_waits_and_wakes_where_it_was() {
     assert_eq!(vm.behaviour(id), Some("idle"));
 }
 
+/// openspec AS.224: a script the embedder lists (`Config::anew_on_wake`)
+/// wakes from a real sleep with its locals made anew, as its clock starts
+/// from 0 and its STARTUP runs again; one it doesn't list keeps them, and a
+/// listed one put to sleep and woken between two steps (never slept) keeps
+/// them too.
+#[test]
+fn a_listed_script_wakes_with_its_locals_made_anew() {
+    let build = || {
+        program(|w| {
+            let (starts, ticks) = (var(w, "starts"), var(w, "ticks"));
+            idle(
+                w,
+                |w| {
+                    w.inc(&[El::Local(starts)]);
+                },
+                |w| {
+                    w.inc(&[El::Local(ticks)]);
+                },
+            );
+        })
+    };
+    for (listed, kept) in [(true, false), (false, true)] {
+        let p = build();
+        let mut config = Config::new(Mode::Strict);
+        if listed {
+            config.anew_on_wake.push(p.scripts[0].name.clone());
+        }
+        let mut vm = Vm::new(p, config);
+        let id = vm.add(HANDLE, "Box", 0);
+        let mut host = Engine::default();
+        for _ in 0..4 {
+            vm.step(&mut host).unwrap();
+        }
+        assert_eq!(vm.local(id, "ticks"), Some(Value::Int(4)));
+        // Between two steps: never slept.
+        vm.set_asleep(HANDLE, true);
+        vm.set_asleep(HANDLE, false);
+        vm.step(&mut host).unwrap();
+        assert_eq!(vm.local(id, "ticks"), Some(Value::Int(5)), "never slept");
+        // A real sleep: its last tick, its shutdown, then awake.
+        vm.set_asleep(HANDLE, true);
+        vm.step(&mut host).unwrap();
+        vm.step(&mut host).unwrap();
+        vm.set_asleep(HANDLE, false);
+        vm.step(&mut host).unwrap();
+        let ticks = vm.local(id, "ticks");
+        match kept {
+            true => assert_eq!(ticks, Some(Value::Int(7)), "kept: {listed}"),
+            false => assert_eq!(ticks, Some(Value::Int(1)), "made anew: {listed}"),
+        }
+    }
+}
+
 /// A structure's number set from outside is what scripts read next (the
 /// combat manager's next alert put where a recorded state has it); a field
 /// it doesn't have, or a value that isn't a structure, takes nothing.

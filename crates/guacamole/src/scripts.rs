@@ -3756,6 +3756,19 @@ pub fn is_music_script(path: &str) -> bool {
             .any(|s| s.contains('/') && path.ends_with(s))
 }
 
+/// The scripts whose placements wake with their locals made anew (openspec
+/// AS.224; stand-in ledger: `wake-locals`): the hat box and the teleporter
+/// pick their player from `Minions` by a deadline held in a local (`player ref
+/// timer`: `system.script timer` plus a quarter second), against a clock that
+/// starts from 0 at a wake. Kept across a sleep the local sat ahead of the
+/// clock for as many seconds as the placement had run, and the player it named
+/// stayed whoever it had named: the Mac's hat box ignored the Giant swapped in
+/// at the wall for 26 s, naming the hero who had left. The other pickups of
+/// the idiom (the chest, the fairy, the legendary treasure and the rest, AS.232)
+/// keep theirs: the story run with all eight listed never reached level 214's
+/// completion screen on the Mac.
+pub const ANEW_ON_WAKE: [&str; 2] = ["/Hat_Pickup.ai", "/Teleporter.ai"];
+
 /// The VM's config for the TV's run (openspec AH.27): AH.17's with AH.20's
 /// pickups and AH.21's breakables and the members they reach (the
 /// creatures' and the loop's: the destructibles system makes a breakable a
@@ -3782,6 +3795,8 @@ pub fn smash_config(mode: Mode) -> Config {
     // registered for them (openspec AR.10), and what chapter 1's music
     // reaches past them (openspec AR.11), again after those tables.
     music_members(&mut c);
+    c.anew_on_wake
+        .extend(ANEW_ON_WAKE.iter().map(|s| (*s).to_owned()));
     if let Whitelist::Only {
         placements,
         scripts,
@@ -4637,6 +4652,14 @@ fn joined(
             minion_placement = Some(id);
         }
     }
+    // A find in the activation (or in a call that adopts, [`entry_beams`])
+    // may have put his minion on the VM already: it is his, and the activator.
+    if minion_placement.is_none()
+        && let Some(id) = vm.placement_of(hero).filter(|id| !vm.removed(*id))
+    {
+        vm.set_activator(hero, true);
+        minion_placement = Some(id);
+    }
     minion_placement.ok_or_else(|| outside("the activation spawned no minion".to_owned()))
 }
 
@@ -4741,12 +4764,13 @@ pub fn entry_beams(
     let Some(pcd) = vm.global(g) else {
         return Ok(None);
     };
-    // With no hero's beam waiting, what the beams' on-spawn logic spawns
-    // joins the VM as a find asks for it, as in the walk (an enemy minion's
-    // controller, openspec AS.200). While one waits his join adds his own,
-    // since his activation's find on his fresh minion would adopt him ahead
-    // of it, and an enemy minion landing then gets no AI (AS.218).
-    vm.set_adopt_in_calls(waiting.is_none());
+    // What the beams' on-spawn logic spawns joins the VM as a find asks for
+    // it, as in the walk (an enemy minion's controller, openspec AS.200),
+    // whether or not a hero's beam waits: his activation's find on his fresh
+    // minion adopts him there, and [`joined`] takes him as he stands (AS.218:
+    // with the adoption off while his beam waited, an enemy minion landing
+    // in those steps was made with no AI).
+    vm.set_adopt_in_calls(true);
     let managed = vm.call_for(pm, ENTRY_MANAGE, &[(param.as_str(), pcd)], &[], host);
     vm.set_adopt_in_calls(false);
     managed?;

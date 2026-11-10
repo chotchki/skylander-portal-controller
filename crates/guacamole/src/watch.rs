@@ -86,6 +86,14 @@ pub(crate) struct WatchedShot {
     /// Its pivot, metres, and facing, degrees.
     pub at: Option<[f32; 3]>,
     pub facing: Option<f32>,
+    /// The actor its script's `player` local names, with its place: a
+    /// placement that picks a player (a hat box, a chest) shows whom
+    /// (openspec AS.224).
+    pub player: Option<String>,
+    /// Its script timer (`system.script timer`) and its `player ref timer`
+    /// local, seconds (openspec AS.224).
+    pub timer: Option<f32>,
+    pub player_ref_timer: Option<f32>,
 }
 
 /// The watch's part of `/api/_test/tv`.
@@ -97,6 +105,9 @@ pub(crate) struct WatchShot {
     pub equivalence: Equivalence,
     /// `Cutscene State` as the run holds it; none until something made it.
     pub cutscene_state: Option<i32>,
+    /// The members of the `Minions` set in its order, each as `name
+    /// (removed) at x,y,z` (openspec AS.224).
+    pub minions: Vec<String>,
 }
 
 /// Each name in `names` off `vm` and `world`, the level's file linked as
@@ -122,6 +133,9 @@ pub(crate) fn read(
                     behaviour: None,
                     at: None,
                     facing: None,
+                    player: None,
+                    timer: None,
+                    player_ref_timer: None,
                 };
             };
             WatchedShot {
@@ -139,6 +153,15 @@ pub(crate) fn read(
                     .map(str::to_ascii_lowercase),
                 at: Some(a.position.to_array()),
                 facing: Some(a.angles.facing.rem_euclid(360.0)),
+                player: vm
+                    .placement_of(h)
+                    .and_then(|id| vm.local(id, "player"))
+                    .map(|v| describe(vm, world, v)),
+                timer: vm.placement_of(h).and_then(|id| vm.active_seconds(id)),
+                player_ref_timer: vm
+                    .placement_of(h)
+                    .and_then(|id| vm.local(id, "player ref timer"))
+                    .and_then(|v| vm.value(v).as_f32()),
             }
         })
         .collect();
@@ -151,10 +174,36 @@ pub(crate) fn read(
             Value::Float(f) => Some(f as i32),
             _ => None,
         });
+    let minions = vm
+        .program()
+        .global_named("Minions")
+        .and_then(|g| vm.global_peek(g))
+        .and_then(|v| vm.set(v))
+        .map(|s| s.iter().map(|m| describe(vm, world, *m)).collect())
+        .unwrap_or_default();
     WatchShot {
         placements,
         equivalence: anchors::equivalence(vm, world, level, hero, figure),
         cutscene_state,
+        minions,
+    }
+}
+
+/// An actor a script holds as `name (removed) at x,y,z`.
+fn describe(vm: &Vm, world: &ScriptWorld, v: Value) -> String {
+    match vm.value(v) {
+        Value::Entity(h) => match world.actor(h) {
+            Some(a) => format!(
+                "{}{} at {:.1},{:.1},{:.1}",
+                world.name(h),
+                if a.removed { " (removed)" } else { "" },
+                a.position.x,
+                a.position.y,
+                a.position.z
+            ),
+            None => format!("{h:#x} (no actor)"),
+        },
+        other => format!("{other:?}"),
     }
 }
 
@@ -287,6 +336,9 @@ mod tests {
                 behaviour: None,
                 at: None,
                 facing: None,
+                player: None,
+                timer: None,
+                player_ref_timer: None,
             }
         );
         assert_eq!(shot.equivalence.hero, Some(([1.0, 2.0, 3.0], 10.0)));

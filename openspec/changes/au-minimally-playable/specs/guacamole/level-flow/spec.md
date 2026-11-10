@@ -98,6 +98,11 @@ A hat box SHALL shake open the same way and its hat SHALL be kept in the story s
 - **THEN** the hat's name shows, the box runs to its end and he walks on
 - **AND** that box isn't there on a restart
 
+#### Scenario: A Giant swapped in after the box slept and woke
+
+- **WHEN** a hat box has been awake for half a minute with a hero near, left out of range until it sleeps and woken again, and that hero's figure is swapped for a Giant who walks up to it
+- **THEN** it shakes within a few seconds of his reaching it, not after the half minute it had run
+
 ### Requirement: Every hero walks elemental ground
 
 A level's elemental ground SHALL carry any hero, whatever his element. A surface's type is the top six bits of its collision byte, elemental grounds 40 to 47, and only a type of 50 or over SHALL stop a walk.

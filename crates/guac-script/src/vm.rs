@@ -82,6 +82,12 @@ pub struct Config {
     /// by display name ([`crate::Host::answer`]; crate docs, Left to the
     /// host): none by default.
     pub answered: Vec<String>,
+    /// Scripts, by the end of their name, whose placements wake with their
+    /// locals made anew as their clock starts from 0 (openspec AS.224): the
+    /// embedder's answer for scripts that hold a deadline in a local
+    /// (`system.script timer` plus a quarter second) and would wait out the
+    /// seconds they ran before they slept. None by default.
+    pub anew_on_wake: Vec<String>,
 }
 
 impl Config {
@@ -94,6 +100,7 @@ impl Config {
             precision: Precision::Single,
             tick_seconds: TICK_SECONDS,
             answered: Vec::new(),
+            anew_on_wake: Vec::new(),
         }
     }
 }
@@ -1244,6 +1251,14 @@ impl Vm {
     /// sleep joined has run (between two steps), it never slept: off the
     /// queue, it carries on started, its timer kept.
     fn wake(&mut self, id: PlacementId) {
+        let anew = {
+            let name = self
+                .program
+                .scripts
+                .get(self.placements[id as usize].script as usize)
+                .map_or("", |s| s.name.as_str());
+            self.config.anew_on_wake.iter().any(|n| name.ends_with(n))
+        };
         let p = &mut self.placements[id as usize];
         if p.asleep {
             p.asleep = false;
@@ -1254,6 +1269,10 @@ impl Vm {
                 }
             } else {
                 p.active = 0.0;
+                if anew {
+                    p.locals.clear();
+                    p.others.clear();
+                }
             }
             self.sleeping.retain(|&s| s != id);
             self.move_to_end(id);
