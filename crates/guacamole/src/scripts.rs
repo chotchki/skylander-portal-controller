@@ -2627,22 +2627,22 @@ pub const EVERY_TICK: [&str; 8] = [
     "_EnemySystem_Functions.ai",
 ];
 
-/// The scripts whose sleepers wake with their declared locals made anew on
-/// the TV (openspec AS.224, AS.233; stand-in ledger: `wake-locals`): the hat
-/// box, which picks its player from `Minions` by a deadline held in a local
-/// (`player ref timer`: `system.script timer` plus a quarter second). The
-/// original makes every sleeper's anew (AS.233); kept, that deadline sat
-/// ahead of the woken clock for as many seconds as the box had run, and the
-/// player it named stayed whoever it had named, so the Mac's hat box ignored
-/// the Giant swapped in at the wall for 26 s. The teleporter's take doesn't
-/// wait on its own such pick (`giants_chests`: 65 steps on the list or off
-/// it). Every script on the rule is AS.246's: on it the Mac story stopped on
-/// level 214's first island twice.
-pub const ANEW_ON_WAKE: [&str; 1] = ["/Hat_Pickup.ai"];
+/// The scripts whose sleepers keep the locals they declare across a sleep on
+/// the TV, a stand-in on the rule the VM makes every sleeper's declared
+/// locals anew by (openspec AS.233, AS.246; stand-in ledger: `wake-locals`):
+/// level 201's vine bridges' activator (`Bridge_Activator.ai`). Its range is
+/// 300 ft with a buffer of 62, so a hero who goes some 110 m off the first
+/// bridge's end and comes back wakes it again, and made anew it starts at
+/// `0 - wait` where it stood at `4 - monitor bridge growth`, the bridge
+/// he crossed no longer carrying him back (`giants_level_201`'s Giant out
+/// over the first bridge stops at the platform's near end). What the original's
+/// activator keeps a grown bridge by is unread.
+pub const KEPT_ON_WAKE: [&str; 1] = ["/Bridge_Activator.ai"];
 
-/// [`ANEW_ON_WAKE`] as the VM takes it.
+/// [`KEPT_ON_WAKE`] as the VM takes it: every other sleeper's declared locals
+/// made anew.
 fn anew_on_wake() -> AnewOnWake {
-    AnewOnWake::Listed(ANEW_ON_WAKE.iter().map(|s| (*s).to_owned()).collect())
+    AnewOnWake::Except(KEPT_ON_WAKE.iter().map(|s| (*s).to_owned()).collect())
 }
 
 /// The VM's config for AH.16's run: the init chain's members and listing,

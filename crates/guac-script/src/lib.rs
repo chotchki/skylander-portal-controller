@@ -146,9 +146,9 @@
 //! the level's start). One never started, held, inert, taken off or
 //! stopped gets none of that, and one woken before the step's walk never
 //! slept: it ticks on started, its timer and locals kept. That's every
-//! script's, by default; an embedder can name the scripts it holds to it
-//! ([`Config::anew_on_wake`]), every other sleeper keeping its locals, as
-//! the TV does while something of its own leans on kept ones. The recordings settle it: the oracle's census
+//! script's, by default; an embedder can name the scripts it holds to it,
+//! or the ones it exempts ([`Config::anew_on_wake`]), the others keeping
+//! theirs, as the TV does for the one script it knows leans on kept ones. The recordings settle it: the oracle's census
 //! has the first combat watcher, whose own write of an activation range of
 //! 0 takes it to sleep, started and `Watching` at one read and neither 90
 //! flips on, its SHUTDOWN's stinger the music by the read after (AR.16); in
