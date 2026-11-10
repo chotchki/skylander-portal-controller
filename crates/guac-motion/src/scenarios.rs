@@ -479,7 +479,7 @@ pub fn a_giant_in_a_passage_too_narrow_is_set_where_he_fits() -> Scenario {
                 "not just past the open end: {} (from {from})",
                 hero.pivot
             );
-            let gap = hero.wall_gap(&*seam, &[], 0.1);
+            let gap = hero.wall_gap(seam, &[], 0.1);
             ensure!(gap.is_none_or(|g| g > -1e-4), "still in: {gap:?}");
             ensure!(hero.footing.supported, "unsupported: {:?}", hero.footing);
             Ok(())

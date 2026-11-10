@@ -214,12 +214,7 @@ fn layers(run: &Run, every: f32, small: &HavokSolid) -> Vec<Vec3> {
                 if hit.normal.y < 0.8 {
                     continue;
                 }
-                let mut hero = Hero::new(
-                    small.clone(),
-                    Tuning::ERUPTOR,
-                    hit.point + Vec3::Y * 0.005,
-                    0.0,
-                );
+                let mut hero = Hero::new(*small, Tuning::ERUPTOR, hit.point + Vec3::Y * 0.005, 0.0);
                 hero.stand(world, &[HERO_BODY]);
                 if hero.push_out(world, &[HERO_BODY]) == PushOut::Clear && hero.footing.supported {
                     out.push(hit.point);
@@ -260,7 +255,7 @@ fn hunt(level: &str) -> Tally {
         .and_then(|v| v.parse().ok())
         .unwrap_or(8000);
     let mut run = joined(level);
-    let small = run.hero().solid().clone();
+    let small = *run.hero().solid();
     let start = run.hero().pivot;
     let reached: std::collections::HashSet<(i32, i32, i32)> = flood(&run, start, cap)
         .iter()
@@ -284,7 +279,7 @@ fn hunt(level: &str) -> Tally {
     let mut t = Tally::default();
     for (n, at) in samples.iter().enumerate() {
         // The small hero stood here; the swap sets Tree Rex where he stood.
-        run.hero_mut().set_solid(small.clone());
+        run.hero_mut().set_solid(small);
         let mut hero = Hero::new(rex(), Tuning::ERUPTOR, *at + Vec3::Y * 0.005, 0.0);
         hero.stand(&run.bench.world, &[HERO_BODY]);
         let clock = std::time::Instant::now();
