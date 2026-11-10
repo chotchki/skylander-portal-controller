@@ -358,6 +358,10 @@ pub fn wall_scenarios() -> Vec<Scenario> {
         a_push_out_in_nothing_leaves_him_as_he_was(),
         wedged_between_two_walls_he_is_searched_out_along_them(),
         the_search_never_sets_him_through_a_wall(),
+        a_giant_in_a_passage_too_narrow_is_set_where_he_fits(),
+        a_prop_in_the_passage_is_set_past_only_when_nothing_else_fits(),
+        a_fit_on_his_side_of_a_prop_beats_a_nearer_one_past_it(),
+        a_flat_ceiling_too_low_for_him_sends_him_out_from_under_it(),
     ]
 }
 
@@ -447,6 +451,145 @@ pub fn the_search_never_sets_him_through_a_wall() -> Scenario {
             let out = hero.push_out(seam, &[]);
             ensure!(out == crate::hero::PushOut::Stuck, "{out:?}");
             ensure!(hero.pivot == from, "moved to {}", hero.pivot);
+            Ok(())
+        },
+    }
+}
+
+/// AS.251: a passage 1.6 m wide and 32 m long, open at its east end, which a
+/// Giant swapped in at its middle is far too wide for. The eight spots 10 ft
+/// out are all in its walls; the wider search finds the first ring past the
+/// open end along the passage, not through its walls.
+pub fn a_giant_in_a_passage_too_narrow_is_set_where_he_fits() -> Scenario {
+    Scenario {
+        name: "a_giant_in_a_passage_too_narrow_is_set_where_he_fits",
+        bodies: bodies(&slot([-20.0, 12.0], [true, false]), &[]),
+        check: |seam| {
+            let mut hero = warnado_at(seam, Vec3::new(0.0, 0.005, 0.8), 90.0);
+            let from = hero.pivot;
+            let crate::hero::PushOut::Searched(by) = hero.push_out(seam, &[]) else {
+                return Err(format!("not searched: {:?}", hero.footing));
+            };
+            ensure!(
+                by.length() > crate::hero::SEARCH_OUT * 2.0,
+                "found a fit within the eight spots: {by}"
+            );
+            ensure!(
+                (12.0..=16.0).contains(&hero.pivot.x),
+                "not just past the open end: {} (from {from})",
+                hero.pivot
+            );
+            let gap = hero.wall_gap(&*seam, &[], 0.1);
+            ensure!(gap.is_none_or(|g| g > -1e-4), "still in: {gap:?}");
+            ensure!(hero.footing.supported, "unsupported: {:?}", hero.footing);
+            Ok(())
+        },
+    }
+}
+
+/// AS.251: the same passage plugged by a convex prop 6 m along: the line to
+/// every spot past it meets the prop, so the search sets him past it only
+/// once nothing on his side fits.
+pub fn a_prop_in_the_passage_is_set_past_only_when_nothing_else_fits() -> Scenario {
+    let plug = SolidInfo {
+        kind: SolidKind::Box,
+        offset: [0.0; 3],
+        rotation: [0.0; 3],
+        width: 10.0,
+        height: 12.0,
+        length: 10.0,
+    }
+    .havok([100.0; 3])
+    .expect("a box has a shape");
+    let at = Pose::new(Vec3::new(6.0, 1.5, 0.8), Quat::IDENTITY);
+    Scenario {
+        name: "a_prop_in_the_passage_is_set_past_only_when_nothing_else_fits",
+        bodies: bodies(
+            &slot([-20.0, 12.0], [true, false]),
+            &[(BodyId(2), plug, at)],
+        ),
+        check: |seam| {
+            let mut hero = warnado_at(seam, Vec3::new(0.0, 0.005, 0.8), 90.0);
+            let crate::hero::PushOut::Searched(_) = hero.push_out(seam, &[]) else {
+                return Err(format!("not searched: {:?}", hero.pivot));
+            };
+            ensure!(
+                (12.0..=16.0).contains(&hero.pivot.x),
+                "not past the prop and the open end: {}",
+                hero.pivot
+            );
+            ensure!(hero.footing.supported, "unsupported: {:?}", hero.footing);
+            Ok(())
+        },
+    }
+}
+
+/// AS.251: the passage open at both ends, the east one 12 m off and plugged
+/// by a prop 6 m along, the west 18 m off and clear: the ring that fits past
+/// the prop is nearer, but the fit on his own side wins.
+pub fn a_fit_on_his_side_of_a_prop_beats_a_nearer_one_past_it() -> Scenario {
+    let plug = SolidInfo {
+        kind: SolidKind::Box,
+        offset: [0.0; 3],
+        rotation: [0.0; 3],
+        width: 10.0,
+        height: 12.0,
+        length: 10.0,
+    }
+    .havok([100.0; 3])
+    .expect("a box has a shape");
+    let at = Pose::new(Vec3::new(6.0, 1.5, 0.8), Quat::IDENTITY);
+    Scenario {
+        name: "a_fit_on_his_side_of_a_prop_beats_a_nearer_one_past_it",
+        bodies: bodies(
+            &slot([-18.0, 12.0], [false, false]),
+            &[(BodyId(2), plug, at)],
+        ),
+        check: |seam| {
+            let mut hero = warnado_at(seam, Vec3::new(0.0, 0.005, 0.8), 90.0);
+            let crate::hero::PushOut::Searched(_) = hero.push_out(seam, &[]) else {
+                return Err(format!("not searched: {:?}", hero.pivot));
+            };
+            ensure!(
+                hero.pivot.x < -18.0,
+                "set past the prop, not out of the west end: {}",
+                hero.pivot
+            );
+            Ok(())
+        },
+    }
+}
+
+/// AS.251: a flat ceiling 2.5 m up over 6 m square, Warnado's 3.2 m capsule
+/// set under its middle is 0.7 m into it, which no push across the ground
+/// moves; the search sets him just out from under its edge.
+pub fn a_flat_ceiling_too_low_for_him_sends_him_out_from_under_it() -> Scenario {
+    let mut soup = open_ground();
+    soup.quad(
+        [
+            Vec3::new(-3.0, 2.5, -3.0),
+            Vec3::new(3.0, 2.5, -3.0),
+            Vec3::new(3.0, 2.5, 3.0),
+            Vec3::new(-3.0, 2.5, 3.0),
+        ],
+        Vec3::NEG_Y,
+    );
+    Scenario {
+        name: "a_flat_ceiling_too_low_for_him_sends_him_out_from_under_it",
+        bodies: bodies(&soup, &[]),
+        check: |seam| {
+            let mut hero = warnado_at(seam, Vec3::new(0.0, 0.005, 0.0), 0.0);
+            let crate::hero::PushOut::Searched(by) = hero.push_out(seam, &[]) else {
+                return Err(format!("not searched: {:?}", hero.pivot));
+            };
+            let out = Vec3::new(by.x, 0.0, by.z).length();
+            ensure!((3.0..=6.0).contains(&out), "set {out} m out");
+            let again = hero.push_out(seam, &[]);
+            ensure!(
+                again == crate::hero::PushOut::Clear,
+                "still in something: {again:?}"
+            );
+            ensure!(hero.footing.supported, "unsupported: {:?}", hero.footing);
             Ok(())
         },
     }

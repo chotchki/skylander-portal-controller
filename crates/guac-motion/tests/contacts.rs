@@ -355,3 +355,23 @@ fn a_moving_solid_pushes_him_at_its_speed() {
     let centre = Pose::at(hero.pivot + Vec3::Y * 0.9144);
     assert!(world.overlaps(&shape, centre, &[]).is_empty());
 }
+
+#[test]
+fn a_giant_in_a_passage_too_narrow_is_set_where_he_fits() {
+    on_parry(scenarios::a_giant_in_a_passage_too_narrow_is_set_where_he_fits());
+}
+
+#[test]
+fn a_prop_in_the_passage_is_set_past_only_when_nothing_else_fits() {
+    on_parry(scenarios::a_prop_in_the_passage_is_set_past_only_when_nothing_else_fits());
+}
+
+#[test]
+fn a_flat_ceiling_too_low_for_him_sends_him_out_from_under_it() {
+    on_parry(scenarios::a_flat_ceiling_too_low_for_him_sends_him_out_from_under_it());
+}
+
+#[test]
+fn a_fit_on_his_side_of_a_prop_beats_a_nearer_one_past_it() {
+    on_parry(scenarios::a_fit_on_his_side_of_a_prop_beats_a_nearer_one_past_it());
+}

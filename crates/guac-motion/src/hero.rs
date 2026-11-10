@@ -97,9 +97,26 @@ pub const SEARCH_HEADINGS: usize = 8;
 pub const SEARCH_OUT: f32 = 10.0 * FOOT;
 pub const SEARCH_UP: f32 = 2.0 * FOOT;
 pub const SEARCH_DOWN: f32 = 3.0 * FOOT;
+/// The wider search (AS.251), when none of those eight is a fit: a ring
+/// every [`FAR_STEP`] out to [`FAR_OUT`], [`FAR_HEADINGS`] round, nearest
+/// first, each spot the ground found under a lift of [`SEARCH_UP`] plus
+/// [`FAR_SLOPE`] a metre out, standing within the same lift above and
+/// [`SEARCH_DOWN`] plus that below the place he was set down. A Giant
+/// swapped in where a smaller hero stood (a ledge route 4 m wide, his
+/// capsule 4.3 across) fits nowhere near it, and the nearest place that does
+/// is 9-10 m along.
+pub const FAR_OUT: f32 = 30.0;
+pub const FAR_STEP: f32 = 1.0;
+pub const FAR_HEADINGS: usize = 24;
+pub const FAR_SLOPE: f32 = 0.5;
+/// How far past a solid the line to a spot resumes.
+pub const FAR_THROUGH: f32 = 0.05;
 /// How far past [`KEEP`] into a wall [`Hero::push_out`] counts him in it: a
 /// pass leaves him on the keep, give or take the float's noise.
 pub const IN_A_WALL: f32 = 1e-4;
+/// How far into a flat ceiling (AS.251) counts him in it: a centimetre, since
+/// no push moves him off one and the search is for a hero that doesn't fit.
+pub const IN_A_CEILING: f32 = 0.01;
 
 /// How far below the last ground under him a fall ends, metres, with no
 /// script to end it: past the 225 ft the minion's own check reads, and past
@@ -351,42 +368,104 @@ impl Hero {
             }
         }
         if !self.in_a_wall(seam, exclude, self.pivot) {
+            let pushed = self.clone();
             self.stand(seam, exclude);
-            return PushOut::Pushed(self.pivot - from);
+            // Reading his footing snaps him to the ground and leans him on
+            // it, which on a slope beside a round prop sets him back in
+            // something (AS.251's hunt: 0.1-0.8 m in): then the search.
+            if !self.in_a_wall(seam, exclude, self.pivot) {
+                return PushOut::Pushed(self.pivot - from);
+            }
+            *self = pushed;
+            self.pivot = from;
         }
+        // The search reads him as he stands while `self` moves.
+        let probe = self.clone();
         let centre = |pivot: Vec3| {
-            self.proxy(seam, exclude, Surfaces::NONE)
-                .pose(pivot, self.up)
+            probe
+                .proxy(seam, exclude, Surfaces::NONE)
+                .pose(pivot, probe.up)
                 .position
+        };
+        // A spot fits when his shape is clear there with walkable ground
+        // under it and nothing lies between his centre and its: no
+        // triangle, and no convex solid unless `through_solids` lets the
+        // line pass them (a prop standing in the way he's set past).
+        let fits = |spot: Vec3, through_solids: bool| -> bool {
+            if probe.in_a_wall(seam, exclude, spot) || !probe.is_clear(seam, exclude, spot) {
+                return false;
+            }
+            let (start, end) = (centre(from), centre(spot));
+            let (way, mut at) = ((end - start).normalize(), 0.0f32);
+            let length = (end - start).length();
+            while let Some(hit) = seam.ray(start + way * at, way, length - at, exclude) {
+                if hit.triangle.is_some() || !through_solids {
+                    return false;
+                }
+                at += hit.distance + FAR_THROUGH;
+                if at >= length {
+                    break;
+                }
+            }
+            ground::find(seam, spot, exclude).is_some_and(|g| {
+                (0.0..=SEARCH_DOWN).contains(&(spot.y - g.point.y)) && g.normal.y > MAX_SLOPE_COS
+            })
         };
         for k in 0..SEARCH_HEADINGS {
             let heading = (self.facing + k as f32 * 360.0 / SEARCH_HEADINGS as f32).to_radians();
             let out = Vec3::new(heading.sin(), 0.0, heading.cos()) * SEARCH_OUT;
             let spot = from + out + Vec3::Y * SEARCH_UP;
-            if self.in_a_wall(seam, exclude, spot) || !self.is_clear(seam, exclude, spot) {
-                continue;
+            if fits(spot, false) && self.settled_at(seam, exclude, spot) {
+                return PushOut::Searched(self.pivot - from);
             }
-            let way = centre(spot) - centre(from);
-            if seam
-                .ray(centre(from), way.normalize(), way.length(), exclude)
-                .is_some()
-            {
-                continue;
+        }
+        for through_solids in [false, true] {
+            for ring in 1..=(FAR_OUT / FAR_STEP) as usize {
+                let out = ring as f32 * FAR_STEP;
+                let lift = SEARCH_UP + FAR_SLOPE * out;
+                for k in 0..FAR_HEADINGS {
+                    let heading =
+                        (self.facing + k as f32 * 360.0 / FAR_HEADINGS as f32).to_radians();
+                    let over =
+                        from + Vec3::new(heading.sin(), 0.0, heading.cos()) * out + Vec3::Y * lift;
+                    // The ground under a spot lifted to clear a slope, the
+                    // spot then set a lift over that.
+                    let Some(ground) = ground::find(seam, over, exclude) else {
+                        continue;
+                    };
+                    if ground.point.y > over.y
+                        || ground.point.y < from.y - SEARCH_DOWN - FAR_SLOPE * out
+                    {
+                        continue;
+                    }
+                    let spot = Vec3::new(over.x, ground.point.y + SEARCH_UP, over.z);
+                    if !fits(spot, through_solids) {
+                        continue;
+                    }
+                    if self.settled_at(seam, exclude, spot) {
+                        return PushOut::Searched(self.pivot - from);
+                    }
+                }
             }
-            let Some(ground) = ground::find(seam, spot, exclude) else {
-                continue;
-            };
-            let below = spot.y - ground.point.y;
-            if !(0.0..=SEARCH_DOWN).contains(&below) || ground.normal.y <= MAX_SLOPE_COS {
-                continue;
-            }
-            self.pivot = spot;
-            self.settle(seam, exclude);
-            return PushOut::Searched(self.pivot - from);
         }
         self.pivot = from;
         self.stand(seam, exclude);
         PushOut::Stuck
+    }
+
+    /// Sets him down at `spot` and settles him on the ground there, when
+    /// that leaves him supported and in no wall: a settle's cast starts a
+    /// metre up and can meet an overhang's edge on the way down, or end
+    /// against a round prop. Otherwise he's left as he was.
+    fn settled_at(&mut self, seam: &dyn PhysicsSeam, exclude: &[BodyId], spot: Vec3) -> bool {
+        let mut trial = self.clone();
+        trial.pivot = spot;
+        trial.settle(seam, exclude);
+        if !trial.footing.supported || trial.in_a_wall(seam, exclude, trial.pivot) {
+            return false;
+        }
+        *self = trial;
+        true
     }
 
     /// What takes his shape at `pivot` off every wall it's in, across the
@@ -415,9 +494,15 @@ impl Hero {
             .planes(pivot, self.up, 0.0)
             .iter()
             .any(|p| {
-                p.distance < -IN_A_WALL
-                    && p.normal.y < MAX_SLOPE_COS
-                    && p.normal.x * p.normal.x + p.normal.z * p.normal.z >= 1e-4
+                let across = p.normal.x * p.normal.x + p.normal.z * p.normal.z;
+                p.normal.y < MAX_SLOPE_COS
+                    && if across >= 1e-4 {
+                        p.distance < -IN_A_WALL
+                    } else {
+                        // A flat ceiling moves him by no push across the
+                        // ground: only the search can take him from it.
+                        p.normal.y < 0.0 && p.distance < -IN_A_CEILING
+                    }
             })
     }
 
