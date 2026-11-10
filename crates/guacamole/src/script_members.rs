@@ -33,7 +33,13 @@
 //!   neither on a supported frame);
 //!   from another actor with a solid, the gap between the two solids as
 //!   authored (AH.18: a Chompy nips at 10 ft from a hero, AH.10's middles
-//!   14.7-15.2 ft apart, both 3 ft spheres);
+//!   14.7-15.2 ft apart, both 3 ft spheres); between a solid and an actor
+//!   whose `CollisionInfo` has no shape, from the solid to that actor's
+//!   pivot every way (AS.217: a lobber's arrow hurts a foe within 6 ft of
+//!   it, where a vertical gap hurt one anywhere at its height; it reaches
+//!   Eruptor's lava ball's area of effect too, where a door or an elf
+//!   9-285 ft off it read the vertical gap, 0-136 ft, and a lobber's or an
+//!   enemy Tree Rex's check of a door or a turret base);
 //! - a sweep stops at a creature's body as at a wall, though the ball's solid
 //!   doesn't meet actors (`interacts with actors` 0): the touch is what the
 //!   projectile manager's Targets check reads as `collision`; contacts with
@@ -1160,6 +1166,8 @@ impl ScriptWorld {
                 }
                 a.launched |=
                     a.walker.is_none() && !self.scene_walks.contains_key(&h) && v != Vec3::ZERO;
+                // Set going by its script, it's no drop of ours (AS.217).
+                self.dropped.remove(&h);
                 Ok(())
             }
             None => Err(HostFault::Nothing),
@@ -1637,6 +1645,18 @@ impl ScriptWorld {
                         guac_motion::parry::gap(&sa, pa, &sb, pb) * FEET_PER_METRE,
                     ));
                 }
+                // From an actor whose `CollisionInfo` has no shape (openspec
+                // AS.217: a lobber's arrow, which hurts a foe within 6 ft of
+                // it), or to one: how far the other's solid is from its
+                // pivot, a point, every way; read as a vertical gap it hurt a
+                // hero anywhere at its height.
+                if let (Some(h), Some(o)) = (actor, at.other_point)
+                    && let Some(b) = self.actor_of(Some(o))
+                    && b != h
+                    && let Some(gap) = self.gap_to_shapeless(h, b, engine)
+                {
+                    return Ok(Value::Float(gap * FEET_PER_METRE));
+                }
                 let (a, b) = (me(self, engine)?, other(self, engine)?);
                 let low = actor.and_then(|h| self.bottom(h, engine)).unwrap_or(a.y);
                 Value::Float(((low - b.y) * FEET_PER_METRE).max(0.0))
@@ -2020,6 +2040,7 @@ impl ScriptWorld {
                     return Err(HostFault::Nothing);
                 };
                 let p = &mut self.actors.get_mut(&h).ok_or(HostFault::Nothing)?.physics;
+                let fell = p.gravity_acceleration;
                 use PhysicsField as P;
                 match f {
                     P::GroundMaxSpeed => p.ground_max_speed = float(v)?,
@@ -2040,6 +2061,9 @@ impl ScriptWorld {
                         p.tilts_with_ground = v.as_i32().ok_or(HostFault::Nothing)?
                     }
                     P::TimeScale => p.time_scale = float(v)?,
+                }
+                if matches!(f, P::GravityAcceleration) {
+                    self.drop_by_gravity(h, fell, engine);
                 }
             }
             Member::Solid(f) => {
@@ -3448,6 +3472,30 @@ impl ScriptWorld {
         ))
     }
 
+    /// The gap between actors `h` and `b` when one has a solid and the
+    /// other's `CollisionInfo` has no shape (openspec AS.217: a lobber's
+    /// arrow): metres from the solid to the shapeless one's pivot, every
+    /// way. None for any other pair (two solids, a mesh, two shapeless).
+    fn gap_to_shapeless(&self, h: Handle, b: Handle, engine: &mut dyn Engine) -> Option<f32> {
+        let shapeless = |w: &Self, x: Handle, e: &mut dyn Engine| {
+            e.hero(x).is_none()
+                && w.actors
+                    .get(&x)
+                    .is_some_and(|a| a.solid.kind() == guac_motion::solid::SolidKind::None)
+        };
+        let (solid, point) = if shapeless(self, b, engine) {
+            (h, b)
+        } else if shapeless(self, h, engine) {
+            (b, h)
+        } else {
+            return None;
+        };
+        let (s, p) = self.query(solid, engine)?;
+        let at = self.position(point, engine)?;
+        let dot = Shape::Sphere { radius: 1e-4 };
+        Some(guac_motion::parry::gap(&s, p, &dot, Pose::at(at)))
+    }
+
     /// `positionmeasurement.collision`: whether two actors' solids touch,
     /// one of them a body in the seam (a hero, a creature, a prop): the
     /// other's last move stopped on it, or its solid is within [`TOUCH`] of
@@ -3501,6 +3549,48 @@ impl ScriptWorld {
         Ok(!asked && near)
     }
 
+    /// A script's gravity on actor `h`, its gravity `was` before the write
+    /// (openspec AS.217: a lobber's arrow hangs 80 ft over its target on a
+    /// gravity of 0, then its script sets 500 to drop it): an actor at rest
+    /// off the ground, given a gravity where it had none, falls by it as a
+    /// launched one does, down to the level under it and no further (with
+    /// none under it, out of the level). Its fall passes through heroes'
+    /// and creatures' bodies, as its ground is the level's to the scripts,
+    /// so an arrow aimed at a hero standing still lands at his feet rather
+    /// than on his head; one with no solid (the arrow's) stops on the
+    /// level's ground under it. The engine's mover update moving any actor
+    /// with a gravity is unread, so this is our own reading of it
+    /// (stand-in ledger: `gravity-drop`). A hero, a creature, a scene's
+    /// walk, one hung or already moving keeps its own motion.
+    fn drop_by_gravity(&mut self, h: Handle, was: f32, engine: &mut dyn Engine) {
+        if was > 0.0 || engine.hero(h).is_some() || self.scene_walks.contains_key(&h) {
+            return;
+        }
+        let Some(a) = self.actors.get(&h) else {
+            return;
+        };
+        let still = !a.removed
+            && !a.launched
+            && a.walker.is_none()
+            && a.attach == Value::Null
+            && a.velocity == Vec3::ZERO;
+        if !still || a.physics.gravity_acceleration <= 0.0 {
+            return;
+        }
+        // Over nothing (an arrow aimed off a ledge) it falls with nothing to
+        // land on, out of the level.
+        let low = self.bottom(h, engine).unwrap_or(a.position.y);
+        let over = self
+            .ground(h, engine)
+            .is_none_or(|(g, ..)| low - g.y > DROP_GAP);
+        if over {
+            self.dropped.insert(h);
+            if let Some(a) = self.actors.get_mut(&h) {
+                a.launched = true;
+            }
+        }
+    }
+
     /// The engine's move for the actors the scripts set going, a frame of
     /// `dt` seconds: one hung from a node sits at it; one launched falls
     /// under its own gravity at its time scale and, with a solid that meets
@@ -3542,6 +3632,12 @@ impl ScriptWorld {
             .map(|(&h, _)| h)
             .collect();
         flying.sort_unstable();
+        // What a dropped one falls through (AS.217).
+        let bodies = if flying.iter().any(|h| self.dropped.contains(h)) {
+            self.actor_bodies(engine)
+        } else {
+            Vec::new()
+        };
         for h in flying {
             let Some(a) = self.actors.get(&h) else {
                 continue;
@@ -3564,7 +3660,10 @@ impl ScriptWorld {
             if let Some(solid) = solid {
                 let shape = solid.grown(0.0);
                 let from = solid.pose(placed);
-                let own: Vec<BodyId> = engine.body(h).into_iter().collect();
+                let mut own: Vec<BodyId> = engine.body(h).into_iter().collect();
+                if self.dropped.contains(&h) {
+                    own.extend(&bodies);
+                }
                 if let Some(cast) = engine.seam().cast(&shape, from, motion, CAST_SLOP, &own) {
                     at = a.position + motion * cast.fraction;
                     for p in &cast.planes {
@@ -3584,6 +3683,14 @@ impl ScriptWorld {
                         body: p.body,
                     });
                 }
+            } else if self.dropped.contains(&h)
+                && let Some((ground, ..)) = self.ground(h, engine)
+                && at.y < ground.y
+            {
+                // A dropped one with nothing to sweep stops on the level
+                // under it (AS.217).
+                at.y = ground.y;
+                v = Vec3::ZERO;
             }
             if let Some(a) = self.actors.get_mut(&h) {
                 a.position = at;
@@ -3998,6 +4105,11 @@ fn steer_physics(p: &crate::script_engine::Physics) -> SteerPhysics {
 /// leaves between a shape and what stopped it.
 const TOUCH: f32 = 2.0 * CAST_SLOP;
 
+/// How far off the level under it an actor at rest stands for a script's
+/// gravity to drop it, metres (openspec AS.217): one resting there stands
+/// within a cast's slop of it.
+const DROP_GAP: f32 = 0.1;
+
 /// How near two actors' solids touch, metres, what
 /// `positionmeasurement.collision` and `collisioninfo.contacts with me` read:
 /// a centimetre (AH.10's bites at most 0.003 m apart, a hypothesis past it).
@@ -4228,6 +4340,211 @@ mod tests {
         fly(&mut w, &mut e, 1);
         let after = w.actor(BALL).unwrap().velocity.y;
         assert!((before - after - 100.0 / 60.0).abs() < 1e-4);
+    }
+
+    /// openspec AS.217: a script's gravity on an actor at rest off the
+    /// ground drops it to the level under it, through a creature's body;
+    /// one with no solid (a lobber's arrow, 80 ft up) stops on the floor and
+    /// stays there; one resting on the floor stays still; one over nothing
+    /// falls on out of the level. A velocity its script writes is its own
+    /// launch again.
+    #[test]
+    fn a_scripts_gravity_drops_an_actor_at_rest_to_the_level() {
+        const ARROW: Handle = 0x6000_0010;
+        const RESTING: Handle = 0x6000_0011;
+        const OFF: Handle = 0x6000_0012;
+        let mut e = bench();
+        let mut w = world();
+        let arrow = |at: Vec3| Actor {
+            position: at,
+            physics: Physics {
+                gravity_max_speed: 100.0,
+                time_scale: 100.0,
+                ..Physics::default()
+            },
+            ..Actor::blank()
+        };
+        w.actors.insert(ARROW, arrow(Vec3::new(-5.0, 24.384, -5.0)));
+        w.actors.insert(RESTING, arrow(Vec3::new(5.0, 0.0, -5.0)));
+        w.actors.insert(OFF, arrow(Vec3::new(30.0, 24.384, 0.0)));
+        // Over the creature's capsule, with a solid meeting the level.
+        w.actors.insert(BALL, ball(Vec3::new(4.0, 6.0, 3.0), 0.0));
+        w.actors.insert(
+            CHOMPY,
+            super::fight_tests::chompy(Vec3::new(4.0, 1.0, 3.0), 0.0),
+        );
+        let gravity = |w: &mut ScriptWorld, e: &mut Bench, h: Handle, g: f32| {
+            let movement = w.objs.value(Object::Facet(h, Facet::Movement));
+            let access = at("actorphysics", "gravity acceleration", Some(movement), None);
+            w.set_member(
+                &access,
+                Member::Physics(PhysicsField::GravityAcceleration),
+                Value::Float(g),
+                e,
+            )
+            .unwrap();
+        };
+        for h in [ARROW, RESTING, OFF, BALL] {
+            gravity(&mut w, &mut e, h, 500.0);
+        }
+        fly(&mut w, &mut e, 1);
+        let arrow_y = w.actor(ARROW).unwrap().position.y;
+        assert!(arrow_y < 24.384, "it falls: {arrow_y}");
+        fly(&mut w, &mut e, 119);
+        let a = w.actor(ARROW).unwrap();
+        assert!(a.position.y.abs() < 1e-4, "on the floor: {}", a.position);
+        assert_eq!(a.velocity, Vec3::ZERO);
+        fly(&mut w, &mut e, 30);
+        assert!(w.actor(ARROW).unwrap().position.y.abs() < 1e-4, "stays");
+        let r = w.actor(RESTING).unwrap();
+        assert_eq!((r.position, r.launched), (Vec3::new(5.0, 0.0, -5.0), false));
+        let off = w.actor(OFF).unwrap().position.y;
+        assert!(off < -20.0, "out of the level: {off}");
+        // The ball's solid through the creature's capsule onto the floor.
+        let b = w.actor(BALL).unwrap();
+        let low = w.bottom(BALL, &mut e).unwrap();
+        assert!(low.abs() < 0.06, "{} bottom {low}", b.position);
+        assert!((b.position.x - 4.0).abs() < 1e-4 && (b.position.z - 3.0).abs() < 1e-4);
+        // A velocity its script writes takes it out of our drop.
+        w.set_velocity(ARROW, Vec3::new(0.0, 30.0, 0.0), &mut e)
+            .unwrap();
+        assert!(!w.dropped.contains(&ARROW));
+        // Already falling, a second gravity is no new drop.
+        let mut a = arrow(Vec3::new(-5.0, 10.0, 5.0));
+        a.physics.gravity_acceleration = 100.0;
+        w.actors.insert(0x6000_0013, a);
+        gravity(&mut w, &mut e, 0x6000_0013, 500.0);
+        assert!(!w.actor(0x6000_0013).unwrap().launched);
+    }
+
+    /// A lobber's arrow under the game's pause (openspec AS.217 beside
+    /// AS.205): one dropped and in flight when the level rests holds where
+    /// it is with its fall's speed, and falls on to the floor once the pause
+    /// lifts, so none is left hanging for good.
+    #[test]
+    fn a_dropped_actor_holds_under_the_pause_and_falls_on_after_it() {
+        const ARROW: Handle = 0x6000_0010;
+        let mut e = bench();
+        let mut w = world();
+        w.actors.insert(
+            ARROW,
+            Actor {
+                position: Vec3::new(-5.0, 24.384, -5.0),
+                physics: Physics {
+                    gravity_max_speed: 100.0,
+                    time_scale: 100.0,
+                    ..Physics::default()
+                },
+                ..Actor::blank()
+            },
+        );
+        let movement = w.objs.value(Object::Facet(ARROW, Facet::Movement));
+        let access = at("actorphysics", "gravity acceleration", Some(movement), None);
+        w.set_member(
+            &access,
+            Member::Physics(PhysicsField::GravityAcceleration),
+            Value::Float(500.0),
+            &mut e,
+        )
+        .unwrap();
+        fly(&mut w, &mut e, 20);
+        let a = w.actor(ARROW).unwrap();
+        let (at, v) = (a.position, a.velocity);
+        assert!(
+            at.y < 24.0 && at.y > 1.0 && v.y < 0.0,
+            "in flight: {at} {v}"
+        );
+        w.resting.insert(ARROW);
+        fly(&mut w, &mut e, 120);
+        let a = w.actor(ARROW).unwrap();
+        assert_eq!((a.position, a.velocity), (at, v), "moved while resting");
+        w.resting.clear();
+        fly(&mut w, &mut e, 120);
+        let a = w.actor(ARROW).unwrap();
+        assert!(a.position.y.abs() < 1e-4, "on the floor: {}", a.position);
+        assert_eq!(a.velocity, Vec3::ZERO);
+    }
+
+    /// A lobber's arrow over a tilted surface (openspec AS.217 beside
+    /// AS.183, whose vine bridges' platforms tilt as their actors do): it
+    /// comes to rest on the plank's top under its pivot, not on the floor
+    /// under the plank, where one past the plank's end lands. The plank's
+    /// body is a kinematic one, as a clone's surface is in the seam.
+    #[test]
+    fn a_dropped_actor_lands_on_a_tilted_surface() {
+        const ARROW: Handle = 0x6000_0010;
+        let tilt = 20f32.to_radians();
+        let centre = Vec3::new(10.0, 3.0, 0.0);
+        let half = Vec3::new(4.0, 0.25, 2.0);
+        let floor = Body {
+            id: BodyId(1),
+            kind: BodyKind::Static,
+            pose: Pose::at(Vec3::new(0.0, -0.5, 0.0)),
+            collider: Collider::Convex(Shape::Box {
+                half_extents: Vec3::new(30.0, 0.5, 30.0),
+                margin: 0.0,
+            }),
+        };
+        let plank = Body {
+            id: BodyId(4),
+            kind: BodyKind::Kinematic,
+            pose: Pose::new(centre, Quat::from_rotation_z(tilt)),
+            collider: Collider::Convex(Shape::Box {
+                half_extents: half,
+                margin: 0.0,
+            }),
+        };
+        let mut e = Bench {
+            world: ParryWorld::new(&[floor, plank]).unwrap(),
+            hero: None,
+        };
+        // The plank's top under x: its face's points are the centre plus
+        // the turned (u, 0.25, v).
+        let top = |x: f32| {
+            let u = (x - centre.x + half.y * tilt.sin()) / tilt.cos();
+            centre.y + u * tilt.sin() + half.y * tilt.cos()
+        };
+        let mut w = world();
+        w.actors.insert(
+            ARROW,
+            Actor {
+                position: Vec3::new(11.0, 24.384, 0.5),
+                physics: Physics {
+                    gravity_max_speed: 100.0,
+                    time_scale: 100.0,
+                    ..Physics::default()
+                },
+                ..Actor::blank()
+            },
+        );
+        const PAST: Handle = 0x6000_0011;
+        let past = Actor {
+            position: Vec3::new(16.0, 24.384, 0.5),
+            ..w.actor(ARROW).unwrap().clone()
+        };
+        w.actors.insert(PAST, past);
+        for h in [ARROW, PAST] {
+            let movement = w.objs.value(Object::Facet(h, Facet::Movement));
+            let access = at("actorphysics", "gravity acceleration", Some(movement), None);
+            w.set_member(
+                &access,
+                Member::Physics(PhysicsField::GravityAcceleration),
+                Value::Float(500.0),
+                &mut e,
+            )
+            .unwrap();
+        }
+        fly(&mut w, &mut e, 180);
+        let a = w.actor(ARROW).unwrap();
+        assert!(
+            (a.position.y - top(11.0)).abs() < 1e-3,
+            "on the plank at {:.3}: {}",
+            top(11.0),
+            a.position
+        );
+        assert_eq!(a.velocity, Vec3::ZERO);
+        let p = w.actor(PAST).unwrap();
+        assert!(p.position.y.abs() < 1e-4, "on the floor: {}", p.position);
     }
 
     #[test]
@@ -7391,6 +7708,58 @@ mod fight_tests {
             )
             .unwrap();
         assert_eq!(contacts, vec![Value::Entity(C2), Value::Entity(C1)]);
+    }
+
+    /// openspec AS.217: a hero's separation from an actor whose
+    /// `CollisionInfo` has no shape (a lobber's arrow, which hurts a foe
+    /// within 6 ft of it) runs from his solid to its pivot every way, either
+    /// way round: 5 m off across the ground it's well past 6 ft, where read
+    /// as the vertical gap it was nothing; 1 m off it's within them.
+    #[test]
+    fn separation_from_a_shapeless_actor_is_to_its_pivot() {
+        let mut e = pit();
+        let mut hero = Hero::new(eruptor_solid(), Tuning::ERUPTOR, Vec3::ZERO, 0.0);
+        hero.settle(&e.world, &[]);
+        e.hero = Some(hero);
+        e.bodies.insert(HERO, BodyId(9));
+        let mut w = world();
+        let pivot = e.hero.as_ref().unwrap().pivot;
+        let solid = *e.hero.as_ref().unwrap().solid();
+        let reach = |at: Vec3| {
+            let (shape, pose) = (
+                solid.grown(0.0),
+                solid.pose(Pose::new(pivot, Quat::IDENTITY)),
+            );
+            let dot = Shape::Sphere { radius: 1e-4 };
+            guac_motion::parry::gap(&shape, pose, &dot, Pose::at(at)) * FEET_PER_METRE
+        };
+        let mut arrow = Actor::blank();
+        arrow.solid = Solid {
+            width: 3.0,
+            height: 6.0,
+            length: 3.0,
+            interacts_with_actors: 1,
+            interacts_with_level_mesh: 1,
+            ..Solid::default()
+        };
+        for (off, within) in [(5.0, false), (1.0, true)] {
+            let at = pivot + Vec3::new(0.0, 0.0, off);
+            arrow.position = at;
+            w.actors.insert(C1, arrow.clone());
+            for (from, to) in [(HERO, C1), (C1, HERO)] {
+                let sep = get(
+                    &mut w,
+                    &mut e,
+                    "positionmeasurement",
+                    "separation",
+                    from,
+                    to,
+                );
+                let ft = sep.as_f32().unwrap();
+                assert!((ft - reach(at)).abs() < 0.01, "{off} m: {ft} ft");
+                assert_eq!(ft < 6.0, within, "{off} m: {ft} ft");
+            }
+        }
     }
 
     /// AG.90: a hero's separation from his ground is his pivot's height over

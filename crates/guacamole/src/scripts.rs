@@ -647,6 +647,10 @@ pub struct ScriptWorld {
     /// AS.168, [`Actor::stands_for_actors`]): one its script lets go of
     /// falls by its gravity.
     pub(crate) surfaces_stood: std::collections::HashSet<Handle>,
+    /// The actors at rest off the ground that a script's gravity set
+    /// falling (openspec AS.217, `ScriptWorld::drop_by_gravity`): each
+    /// falls to the level through heroes' and creatures' bodies.
+    pub(crate) dropped: std::collections::HashSet<Handle>,
     /// The actors the game's pause lets rest (openspec AS.205,
     /// [`pause_rest`]): the engine moves none of them and their clips hold.
     pub(crate) resting: std::collections::HashSet<Handle>,
@@ -986,6 +990,7 @@ impl ScriptWorld {
             music_silent: 0,
             walk_clones: Default::default(),
             surfaces_stood: Default::default(),
+            dropped: Default::default(),
             resting: Default::default(),
             pause_asked: None,
             pausers: Vec::new(),
@@ -3234,6 +3239,17 @@ pub const START_PROPS: [&str; 23] = [
 /// and turns its solid off, so a hero walks through it.
 pub const FOOD_SCRIPTS: [&str; 2] = ["/Healing_Food.ai", "/FoodInit.ai"];
 
+/// The Elf Lobbers' volleys (openspec AS.217), every tick, by script, so on
+/// every level that places a lobber (201's and 214's): each of a volley's
+/// three arrows (`Elf_Lobber_Arrow_FromTheSky`, cloned at its target and
+/// up to 20 ft off it) hangs 80 ft over a reticle that shrinks on the
+/// ground under it, drops after 0.2-0.8 s, and where it lands burns the
+/// ground (its wall of fire and inferno), hurts each foe within 6 ft of it
+/// with fire and fades out, gone 1.5 s after it landed. Off the listing
+/// each lay on the ground where it was aimed for the rest of the level,
+/// hurting no one.
+pub const LOBBER_SCRIPTS: [&str; 1] = ["/Elf_Lobber_arrow_onground.ai"];
+
 /// The Titan boulders' script, its first tick alone (openspec AG.60): its
 /// STARTUP makes each boulder's solid the original's cylinder and lays its
 /// pebbles, then it's held, so the feat it waits for (a Giant lifting it)
@@ -3807,6 +3823,8 @@ pub fn smash_config(mode: Mode) -> Config {
         placements.extend(BREAKABLES.iter().map(|s| (*s).to_owned()));
         scripts.extend(START_PROPS.iter().map(|s| (*s).to_owned()));
         scripts.extend(FOOD_SCRIPTS.iter().map(|s| (*s).to_owned()));
+        // The lobbers' volleys (openspec AS.217).
+        scripts.extend(LOBBER_SCRIPTS.iter().map(|s| (*s).to_owned()));
         // The chests and hat boxes off the way (openspec AU.39).
         scripts.extend(
             crate::treasure::CHEST_SCRIPTS
@@ -6860,6 +6878,34 @@ mod tests {
             }
             assert!(
                 !c.whitelist.lists("", "C:/x/018_Healing_Food.ai"),
+                "{level}"
+            );
+        }
+    }
+
+    /// openspec AS.217: the lobbers' volley arrows' script on every level's
+    /// listing, by file, every tick: where a level places lobbers (201's,
+    /// 214's) their arrows run, its own clones by its template.
+    #[test]
+    fn the_lobbers_arrows_are_listed_by_script_on_every_level() {
+        let files = Files::default();
+        let arrow =
+            "C:/tfb/Content/Levels/_Enemies/Elf_Lobber/scripts/Elf_Lobber_arrow_onground.ai";
+        for level in [
+            guac_extract::levels::FIRST_RUN[0],
+            "level_214_tutotial_2",
+            "level_201",
+            "level_hub_2_stage_1",
+        ] {
+            let c = level_config(Mode::Play, &files, 4, level);
+            assert_eq!(
+                c.whitelist.listing("Elf_Lobber_Arrow_FromTheSky", arrow),
+                guac_script::Listed::Every,
+                "{level}"
+            );
+            assert!(
+                !c.whitelist
+                    .lists("", "C:/x/Elf_Lobber_arrow_onground_old.ai"),
                 "{level}"
             );
         }

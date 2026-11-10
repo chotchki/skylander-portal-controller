@@ -3035,6 +3035,11 @@ impl Phone {
     /// (Phase-4 changed the placement model from one-tap-to-place
     /// to two-tap detail + confirm). For end-to-end "place this
     /// figure into a slot" use [`Phone::place_figure_named`].
+    ///
+    /// Waits for the card to hold still first: the lid's search opens over
+    /// 0.35 s (its `max-height` transition), pushing the grid down, and a
+    /// click whose point is read mid-move lands on what slid there (the
+    /// Vehicles chip at 390 px under Chrome 157, emptying the grid).
     pub async fn tap_figure_named(&self, name: &str) -> Result<()> {
         let cards = self.client.find_all(Locator::Css(".fig-card-p4")).await?;
         for card in cards {
@@ -3045,6 +3050,16 @@ impl Phone {
                 .await
                 .unwrap_or_default();
             if label == name {
+                let deadline = Instant::now() + Duration::from_secs(3);
+                let mut was = card.rectangle().await?;
+                loop {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    let now = card.rectangle().await?;
+                    if now == was || Instant::now() >= deadline {
+                        break;
+                    }
+                    was = now;
+                }
                 card.click().await?;
                 return Ok(());
             }

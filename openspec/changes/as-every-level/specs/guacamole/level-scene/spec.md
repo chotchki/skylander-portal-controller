@@ -484,3 +484,21 @@ On level 201's life island past its first vine bridge, three evil Stealth Elves 
 #### Scenario: The ambush
 - **WHEN** a hero walks onto the life island's arena
 - **THEN** three evil Stealth Elves come in through the beam within 10 s, rush and hurt him, are beaten one by one, the battle ends 3.8 s after the last, and the second bridge grows from its switch after
+
+### Requirement: Level 201's side blocks dam its channel
+On level 201 a push SHALL move a block one width (15 ft) along its track and stop; a hero holding on pushes again once it rests. Block 7, pushed east off the west plateau, SHALL drop into the channel's west half; the top block, pushed south into its lane, then east, SHALL go onto block 7 and over into the channel's east half, where its landing and the activator wake the two blocks there, the dam he crosses.
+
+#### Scenario: A kid's held pushes
+- **WHEN** a hero holds the stick into each block until it moves and a moment past, the top block east until it lands
+- **THEN** it lands in the channel beside block 7, the dam's two blocks wake, and he walks over them without dropping into the channel
+
+#### Scenario: Pushed out of order
+- **WHEN** a hero pushes the top block into its lane before block 7 is down
+- **THEN** neither goes east, a push north from the plateau south of the lane takes the top block back a span, and the pushes in order then make the dam
+
+### Requirement: A lobber's volley falls, burns and goes
+An Elf Lobber's volley SHALL be three arrows, one at its target and two up to 20 ft off it. Each SHALL hang 80 ft over a reticle shrinking on the ground under it, drop after 0.2-0.8 s, land, burn the ground (a wall of fire gone half a second on), hurt each foe within 6 ft of it with fire and be gone 1.5 s after it lands; one aimed over nothing SHALL fall out of the level. None SHALL stay where it landed.
+
+#### Scenario: A hero standing under a volley
+- **WHEN** an Elf Lobber looses volleys at a hero standing still
+- **THEN** each first arrow falls from 80 ft over his feet, lands there and hurts him, and every arrow is gone 1.5 s after it lands
