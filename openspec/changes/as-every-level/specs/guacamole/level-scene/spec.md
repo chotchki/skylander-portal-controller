@@ -445,6 +445,32 @@ When a scene walks one of a level's actors whose solid meets the level, the TV S
 - **WHEN** the hero takes level 214's first key and walks it up to the locked door
 - **THEN** it floats over him all the way, and once the door opens nothing of it is left
 
+### Requirement: Level 201's life area plays on past its ambush
+Past the life island's ambush a hero SHALL walk level 201's life area on foot as the original lays it out: its west island's two push blocks pushed into their ends side by side, a step up to the third bridge's switch; the plateau's bomb thrown at the eyeball across the gap drops the timed door below for 6 s; the valley's jump pad lifts him to the hat box's ground. Its wall SHALL stand to all but a Giant's attacks and a bomb; past it the teleporter carries him back by the first bridge.
+
+#### Scenario: A hero who isn't a Giant
+- **WHEN** a Life hero who isn't a Giant walks the life area on from its second bridge
+- **THEN** every bridge grows from its switch and carries him, the hat box's wall stops him, and he walks back out over the second and first bridges
+
+#### Scenario: A Giant
+- **WHEN** Tree Rex walks the life area on from its second bridge
+- **THEN** his attacks take the wall, he mashes the hat box open and the teleporter carries him to its end by the first bridge, which he walks back over
+
+### Requirement: The level rests while the game is paused
+While the original's pause holds the game with the portal's own pause unmarked (a level end's sequencing, a scene's movie, a legendary treasure's report, a question asking for a screen), every creature, clone and hero SHALL stand still, its scripts let rest and its animations held; the screens, the music where the pause asks for its sound, the game's own systems, whatever made the pause and what it takes control of SHALL run on, and once it's lifted each SHALL go on where it was.
+
+#### Scenario: Under a completion screen
+- **WHEN** level 214's completion screen shows with an Elf Lobber awake and his arrows in the air
+- **THEN** nothing in the level moves or plays on until the continue, and the sequencing goes on to the hub as before
+
+#### Scenario: Cali's yes
+- **WHEN** a kid answers yes to Cali's challenge question on the hub
+- **THEN** the level rests a step while she waits on her challenges' screen and goes on after it
+
+#### Scenario: A legendary treasure's report
+- **WHEN** a hero collects chapter 1's Eagle Paint
+- **THEN** the level rests the 2.7 s its report shows, the treasure and its report running on, and once the report is gone the stick walks him again
+
 ### Requirement: Level 201's arena's commander
 Level 201's arena SHALL have its commander, Brock as his own heavy elf in his hat, stand on his podium 12 m over the floor through every wave, out of their fight, and once the last wave's scene ends come down his own path to the floor within 3 s, where his reveal plays and he is fought until beaten; every other foe of the battle SHALL end its leap in on the floor.
 

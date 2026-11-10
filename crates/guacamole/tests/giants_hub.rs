@@ -516,6 +516,16 @@ fn calis_yes_leaves_the_portal_answering() {
     assert!(!rested.is_empty(), "her yes paused the game");
     assert!(!portal_suspended(&run.vm), "the portal answers again");
     assert!(rested.len() < 60, "rested {} steps", rested.len());
+    // The rest her pause made went with it (openspec AS.205).
+    let vm_resting = (0u32..)
+        .map_while(|id| run.vm.handle_of(id).map(|_| id))
+        .filter(|&id| run.vm.resting(id))
+        .count();
+    assert_eq!(
+        (run.world.resting_count(), vm_resting),
+        (0, 0),
+        "the hub still rests"
+    );
     assert!(
         stops.is_empty(),
         "{:#?}",

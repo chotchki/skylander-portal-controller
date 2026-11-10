@@ -2203,6 +2203,10 @@ pub(crate) struct RunShot {
     /// The level's interiors (AS.96): how dark they leave the screen, each
     /// controller's behaviour, and the warps landed, the last few.
     pub interiors: InteriorsShot,
+    /// How many actors the game's pause lets rest, and who made the pause
+    /// (AS.205).
+    pub resting: usize,
+    pub pausers: Vec<String>,
 }
 
 /// The interiors as [`RunShot`] reports them.
@@ -2291,6 +2295,8 @@ impl RunShots<'_> {
                     })
                     .collect(),
             },
+            resting: w.resting_count(),
+            pausers: w.pausers().into_iter().map(|h| w.name(h)).collect(),
         })
     }
 }

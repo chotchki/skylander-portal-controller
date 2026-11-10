@@ -79,6 +79,14 @@
 //! suspends a troll. A reading: a suspended placement taken off still runs
 //! its SHUTDOWN (whether the shutdown queue passes one isn't read).
 //!
+//! The embedder can let placements rest ([`Vm::rest`], openspec AS.205:
+//! the original's gameplay pause, which runs only what it names): the walk
+//! passes a resting placement as a suspended one, keeping its place, its
+//! state, its locals and its clock; the asleep among them aren't asked
+//! whether they wake, and the slides one began hold where they are until
+//! the rest ends. A rest runs no SHUTDOWN or STARTUP, as a sleep does: the
+//! pause lifted, each goes on where it was.
+//!
 //! One sent round its states by a `reset` ([`Vm::requeue`]: the mover
 //! update, which the music controller's tick resets every frame) leaves its
 //! list, its `system.script timer` back to 0, and goes back on the list's end

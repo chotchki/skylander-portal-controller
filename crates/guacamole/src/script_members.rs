@@ -54,7 +54,7 @@ use guac_formats::script::Class;
 use guac_motion::hero::Hero;
 use guac_motion::proxy::Surfaces;
 use guac_motion::seam::{BodyId, CAST_SLOP, PhysicsSeam, Pose, Quat, Shape, Vec3};
-use guac_motion::solid::HavokSolid;
+use guac_motion::solid::{HavokSolid, euler};
 use guac_motion::steer::{Aim, MoveType, Physics as SteerPhysics};
 use guac_motion::stick::Push;
 use guac_script::{Access, Answer, Handle, HostFault, MemberId, Obj, OpCall, Value};
@@ -2972,7 +2972,12 @@ impl ScriptWorld {
     /// it and stops there, the jump over (a write of nothing ends it too),
     /// to walk and stand as before.
     pub(crate) fn move_scene_walks(&mut self, dt: f32, engine: &mut dyn Engine) {
-        let mut walking: Vec<Handle> = self.scene_walks.keys().copied().collect();
+        let mut walking: Vec<Handle> = self
+            .scene_walks
+            .keys()
+            .copied()
+            .filter(|h| !self.resting.contains(h))
+            .collect();
         walking.sort_unstable();
         let walks = &self.scene_walks;
         self.scene_bodies.retain(|h, _| walks.contains_key(h));
@@ -3619,6 +3624,7 @@ impl ScriptWorld {
                     && a.attach == Value::Null
                     && a.launched
                     && !self.scene_walks.contains_key(h)
+                    && !self.resting.contains(h)
             })
             .map(|(&h, _)| h)
             .collect();
@@ -3752,10 +3758,11 @@ impl ScriptWorld {
     /// it: [`ScriptWorld::move_actors`]' last part, and what an embedder
     /// posing the nodes after that frame (openspec AH.50) runs again.
     pub(crate) fn place_hung_actors(&mut self, engine: &mut dyn Engine) {
+        // One the pause lets rest holds where it hangs (openspec AS.205).
         let mut hung: Vec<(Handle, Value)> = self
             .actors
             .iter()
-            .filter(|(_, a)| !a.removed && a.attach != Value::Null)
+            .filter(|(h, a)| !a.removed && a.attach != Value::Null && !self.resting.contains(h))
             .map(|(&h, a)| (h, a.attach))
             .collect();
         hung.sort_unstable_by_key(|k| k.0);
@@ -3883,7 +3890,16 @@ impl ScriptWorld {
             })
             .filter_map(|(&h, a)| {
                 let solid = a.havok()?;
-                let rotation = Quat::from_rotation_y(a.angles.facing.to_radians());
+                // A surface turns as its actor does, tilted and rolled too,
+                // as a prop's solid ([`crate::props::actor_body`]): level
+                // 201's fourth vine bridge rises 1° to the strip it reaches,
+                // a step its flat solid left too high to climb (openspec
+                // AS.183). A creature's controller body stands upright.
+                let rotation = if a.stands_for_actors() {
+                    euler([a.angles.tilt, a.angles.facing, a.angles.roll])
+                } else {
+                    Quat::from_rotation_y(a.angles.facing.to_radians())
+                };
                 Some((h, solid, solid.pose(Pose::new(a.position, rotation))))
             })
             .collect();
@@ -3903,8 +3919,12 @@ impl ScriptWorld {
         let mut walkers: Vec<Handle> = self
             .actors
             .iter()
-            .filter(|(_, a)| {
-                a.walker.is_some() && !a.removed && a.active && a.attach == Value::Null
+            .filter(|(h, a)| {
+                a.walker.is_some()
+                    && !a.removed
+                    && a.active
+                    && a.attach == Value::Null
+                    && !self.resting.contains(h)
             })
             .map(|(h, _)| *h)
             .collect();
@@ -6459,6 +6479,70 @@ mod fight_tests {
         assert_eq!(w.actor(not_solid).unwrap().position.y, 7.0);
     }
 
+    /// openspec AS.183: a surface's body turns as its actor does, its tilt
+    /// and roll too: level 201's fourth vine bridge, a box laid along its
+    /// facing from its activator and tilted 1° nose up, rises at its far end
+    /// to the ground it reaches. A creature's body stands upright whatever
+    /// its actor's tilt.
+    #[test]
+    fn a_surface_stands_tilted_as_its_actor_is() {
+        let template = Obj { unit: 5, index: 3 };
+        let mut solid = chompy(Vec3::ZERO, 0.0).solid;
+        (
+            solid.shape,
+            solid.interacts_with_actors,
+            solid.acts_as_actor_surface,
+        ) = (1, 1, 1);
+        (solid.width, solid.height, solid.length) = (15.0, 6.0, 64.0);
+        solid.offset = [0.0, 3.0, 30.0];
+        let files = Files {
+            placed: vec![crate::scripts::Placed {
+                solid: Some(solid),
+                ..crate::scripts::Placed::named(template, "it", Some("C:/x/It.ai"), 5)
+            }],
+            ..Files::default()
+        };
+        let handles = HashMap::new();
+        let mut w = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let angles = Angles {
+            facing: 270.0,
+            tilt: 1.0,
+            roll: 0.0,
+        };
+        w.actors.insert(
+            C3,
+            Actor {
+                template: Some(template),
+                position: Vec3::new(10.0, 7.0, 0.0),
+                angles,
+                solid,
+                ..Actor::blank()
+            },
+        );
+        let mut walking = chompy(Vec3::new(0.0, 7.0, 0.0), 270.0);
+        walking.angles.tilt = 20.0;
+        w.actors.insert(C1, walking);
+        let bodies = w.creature_bodies();
+        let pose = |h| bodies.iter().find(|b| b.0 == h).unwrap().2;
+        let (bridge, creature) = (pose(C3), pose(C1));
+        assert!(
+            bridge.rotation.angle_between(euler([1.0, 270.0, 0.0])) < 1e-3,
+            "{bridge:?}"
+        );
+        // Its far end (west, along its facing) rises over its near end.
+        let top = |along: f32| bridge.position + bridge.rotation * Vec3::new(0.0, 0.0, along);
+        let (near, far) = (top(-9.0), top(9.0));
+        assert!(far.x < near.x, "laid west: {near} {far}");
+        assert!(far.y - near.y > 0.3, "rises to the far side: {near} {far}");
+        assert!(
+            creature
+                .rotation
+                .angle_between(Quat::from_rotation_y(270f32.to_radians()))
+                < 1e-3,
+            "a creature stands upright: {creature:?}"
+        );
+    }
+
     /// openspec AU.53: a scene's jump (level 201's practice pit elves) takes
     /// its actor's shape off for the arc, so it falls by its gravity with no
     /// body to sweep; back within a foot of its waypoint's height the scene
@@ -6826,6 +6910,55 @@ mod fight_tests {
             (at - Vec3::new(8.0, at.y, 6.0)).length() <= 2.0 * FOOT,
             "{at}"
         );
+    }
+
+    /// openspec AS.205: what the game's pause lets rest the engine moves
+    /// none of, mid-motion as the pause finds them: a Chompy walking toward
+    /// a point, a scene's actor led there with no body and a clone flying
+    /// on its velocity each stand where they were for as long as the rest
+    /// holds, then go on from there.
+    #[test]
+    fn the_engine_holds_what_the_pause_lets_rest() {
+        let mut e = pit();
+        let mut w = world();
+        w.actors.insert(C1, chompy(Vec3::ZERO, 0.0));
+        let mut led = chompy(Vec3::new(0.0, 0.3, 4.0), 0.0);
+        led.walker = None;
+        led.solid.interacts_with_level_mesh = 0;
+        w.actors.insert(C2, led);
+        let mut flying = Actor::blank();
+        flying.position = Vec3::new(-5.0, 10.0, 0.0);
+        flying.launched = true;
+        flying.velocity = Vec3::new(10.0, 0.0, 0.0);
+        flying.physics.gravity_acceleration = 32.0;
+        w.actors.insert(C3, flying);
+        let go = |w: &mut ScriptWorld, e: &mut Pit| {
+            for walker in [C1, C2] {
+                let mut call = move_to(Value::Object(WP), 1);
+                (call.placement, call.receiver) = (walker, Value::Entity(walker));
+                ask(w, e, &call);
+            }
+            w.advance(STEP, e);
+        };
+        for _ in 0..10 {
+            go(&mut w, &mut e);
+        }
+        let at = |w: &ScriptWorld| [C1, C2, C3].map(|h| w.actor(h).unwrap().position);
+        let before = at(&w);
+        assert!(w.scene_walks.contains_key(&C2), "led as a scene leads it");
+        w.resting = [C1, C2, C3].into_iter().collect();
+        for _ in 0..30 {
+            w.advance(STEP, &mut e);
+        }
+        assert_eq!(at(&w), before, "moved while resting");
+        w.resting.clear();
+        for _ in 0..10 {
+            go(&mut w, &mut e);
+        }
+        let after = at(&w);
+        for k in 0..3 {
+            assert!(after[k].distance(before[k]) > 0.05, "{k}: {after:?}");
+        }
     }
 
     /// AS.166: one of the people the TV draws, its solid meeting the level,

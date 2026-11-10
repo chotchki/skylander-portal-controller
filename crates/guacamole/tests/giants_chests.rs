@@ -824,6 +824,7 @@ fn a_legendary_treasure_pays_out_and_stays_collected() {
     s.run.put(at + Vec3::new(0.0, 1.0, -7.0), 0.0);
     let (start, gold) = (s.run.steps, s.gold());
     let mut named = false;
+    let mut rested = 0;
     while !s.run.world.removed(treasure) {
         assert!(s.run.steps < start + 900, "{:?}", s.behaviour(treasure));
         let view = s.run.bench.view;
@@ -840,6 +841,7 @@ fn a_legendary_treasure_pays_out_and_stays_collected() {
         s.stops.extend(stops.iter().map(ToString::to_string));
         let lines = announcements::hat_reports(&s.run.vm, &s.run.world);
         named |= lines.iter().any(|l| l.text.is_some());
+        rested += usize::from(s.run.world.resting_count() > 0);
     }
     println!(
         "collected {} steps on, {} gold",
@@ -852,9 +854,40 @@ fn a_legendary_treasure_pays_out_and_stays_collected() {
     let cutscene = s.run.vm.program().global_named("Cutscene State").unwrap();
     for _ in 0..120 {
         s.step([false; 4]);
+        rested += usize::from(s.run.world.resting_count() > 0);
     }
     let held = s.run.vm.global_peek(cutscene).map(|v| s.run.vm.value(v));
     assert_eq!(held.and_then(|v| v.as_i32()), Some(0), "the hero left held");
+    // Its report pauses the game at 0 and the level rests under it (openspec
+    // AS.205); once it's gone nothing rests and the stick walks him again.
+    for _ in 0..600 {
+        if s.run.world.resting_count() == 0 {
+            break;
+        }
+        rested += 1;
+        s.step([false; 4]);
+    }
+    let vm_resting = (0u32..)
+        .map_while(|id| s.run.vm.handle_of(id).map(|_| id))
+        .filter(|&id| s.run.vm.resting(id))
+        .count();
+    println!("the report rested the level {rested} steps");
+    assert!(rested > 0, "its report's pause let nothing rest");
+    assert_eq!(
+        (s.run.world.resting_count(), vm_resting),
+        (0, 0),
+        "the rest outlived the report"
+    );
+    let from = s.run.hero().pivot;
+    for _ in 0..60 {
+        let view = s.run.bench.view;
+        s.act(stick_for(view, 180.0), [false; 4]);
+    }
+    let walked = s.run.hero().pivot.distance(from);
+    assert!(
+        walked > 1.0,
+        "the stick walked him {walked} m after the report"
+    );
 
     let mut again = Story::joined(CHAPTER_1, s.session.clone());
     assert_eq!(again.session.report.start.as_deref(), Some("carried"));
