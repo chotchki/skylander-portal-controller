@@ -2630,14 +2630,17 @@ pub const EVERY_TICK: [&str; 8] = [
 /// The scripts whose sleepers keep the locals they declare across a sleep on
 /// the TV, a stand-in on the rule the VM makes every sleeper's declared
 /// locals anew by (openspec AS.233, AS.246; stand-in ledger: `wake-locals`):
-/// level 201's vine bridges' activator (`Bridge_Activator.ai`). Its range is
+/// level 201's vine bridges' activator (`Bridge_Activator.ai`) and the hub's Persephone. Its range is
 /// 300 ft with a buffer of 62, so a hero who goes some 110 m off the first
 /// bridge's end and comes back wakes it again, and made anew it starts at
 /// `0 - wait` where it stood at `4 - monitor bridge growth`, the bridge
 /// he crossed no longer carrying him back (`giants_level_201`'s Giant out
 /// over the first bridge stops at the platform's near end). What the original's
-/// activator keeps a grown bridge by is unread.
-pub const KEPT_ON_WAKE: [&str; 1] = ["/Bridge_Activator.ai"];
+/// activator keeps a grown bridge by is unread (AS.254). And the hub's
+/// Persephone (`Persephone.ai`, in her room, an interior): made anew her talk
+/// never starts (`giants_hub`'s `every_hub_stages_people_stand_talk_and_stop_the_hero`
+/// on level_hub_2_stage_2: no cutscene), unread why (AS.255).
+pub const KEPT_ON_WAKE: [&str; 2] = ["/Bridge_Activator.ai", "/Persephone.ai"];
 
 /// [`KEPT_ON_WAKE`] as the VM takes it: every other sleeper's declared locals
 /// made anew.
