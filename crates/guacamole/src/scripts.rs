@@ -8733,8 +8733,9 @@ mod tests {
         let handles = headless_handles(&files);
         let mut c = Config::new(Mode::Strict);
         c.whitelist = Whitelist::All;
-        // The TV's wake rule (AS.233), so a sleeper's `seen` reads on.
-        c.anew_on_wake = anew_on_wake();
+        // The order test reads a sleeper's `seen` across its sleeps, which
+        // the TV's wake rule (AS.233, AS.246) would let go: no script held to it.
+        c.anew_on_wake = guac_script::AnewOnWake::Listed(Vec::new());
         let vm = init_chain(program, &files, &handles, &[0], c);
         let world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
         (files, handles, vm, world)
