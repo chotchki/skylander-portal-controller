@@ -2629,15 +2629,16 @@ pub const EVERY_TICK: [&str; 8] = [
 
 /// The scripts whose sleepers wake with their declared locals made anew on
 /// the TV (openspec AS.224, AS.233; stand-in ledger: `wake-locals`): the hat
-/// box and the teleporter, which pick their player from `Minions` by a
-/// deadline held in a local (`player ref timer`: `system.script timer` plus a
-/// quarter second). The original makes every sleeper's anew (AS.233); kept,
-/// that deadline sat ahead of the woken clock for as many seconds as the
-/// placement had run, and the player it named stayed whoever it had named,
-/// so the Mac's hat box ignored the Giant swapped in at the wall for 26 s.
-/// Every script on the rule is AS.246's: on it the Mac story stopped on level
-/// 214's first island twice.
-pub const ANEW_ON_WAKE: [&str; 2] = ["/Hat_Pickup.ai", "/Teleporter.ai"];
+/// box, which picks its player from `Minions` by a deadline held in a local
+/// (`player ref timer`: `system.script timer` plus a quarter second). The
+/// original makes every sleeper's anew (AS.233); kept, that deadline sat
+/// ahead of the woken clock for as many seconds as the box had run, and the
+/// player it named stayed whoever it had named, so the Mac's hat box ignored
+/// the Giant swapped in at the wall for 26 s. The teleporter's take doesn't
+/// wait on its own such pick (`giants_chests`: 65 steps on the list or off
+/// it). Every script on the rule is AS.246's: on it the Mac story stopped on
+/// level 214's first island twice.
+pub const ANEW_ON_WAKE: [&str; 1] = ["/Hat_Pickup.ai"];
 
 /// [`ANEW_ON_WAKE`] as the VM takes it.
 fn anew_on_wake() -> AnewOnWake {
