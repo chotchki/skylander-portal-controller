@@ -1245,3 +1245,166 @@ fn level_214s_rooms_give_their_treasure_and_food() {
     assert!(s.run.world.removed(food), "the south room's food");
     assert!(s.stops.is_empty(), "{:#?}", s.stops);
 }
+
+/// openspec AS.224: a hat box that slept and woke answers the Giant swapped
+/// in after. Level 201's life-area box behind the wall, awake with the hero
+/// 12 m off for 25 s (it picks its player every quarter second against its
+/// clock), left out of range until it sleeps, woken again with the hero at
+/// the wall, then his figure lifted and the same Giant put in through the
+/// TV's join and walked up to it: the box wakes with its clock at 0 and its
+/// locals made anew, so it picks him and shakes within 4 s; with its
+/// deadline held over from the 25 s it still named the hero who left and
+/// waited them out (the Mac, 26 s).
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_hat_box_woken_again_picks_the_giant_swapped_in_after() {
+    let setup = Setup {
+        character: Some(TREE_REX),
+        ..setup()
+    };
+    let (run, _) = run_on_level(Mode::Play, "level_201", setup);
+    let mut s = Story {
+        run,
+        session: Session::new(Some(HOST.into())),
+        rows: Vec::new(),
+        level: "level_201",
+        stops: Vec::new(),
+    };
+    for _ in 0..2 {
+        s.step([false; 4]);
+    }
+    s.run.join().unwrap_or_else(|h| panic!("{h}"));
+    for k in 0..600u32 {
+        s.step([false, false, false, k > 120 && k % 20 == 10]);
+    }
+    let near = Vec3::new(-11.6, 35.0, -28.08);
+    let p = s
+        .run
+        .files
+        .placed
+        .iter()
+        .filter(|p| {
+            p.obj.unit == LEVEL
+                && p.script
+                    .as_deref()
+                    .is_some_and(|x| x.ends_with("/Hat_Pickup.ai"))
+        })
+        .min_by(|a, b| {
+            let d = |p: &guacamole::scripts::Placed| Vec3::from_array(p.position).distance(near);
+            d(a).total_cmp(&d(b))
+        })
+        .expect("the life area's hat box");
+    let hat = s.run.handles[&p.obj];
+    let id = s.run.vm.placement_of(hat).expect("the box runs");
+    let wall = Vec3::new(1.85, 33.0, -26.2);
+    let away = Vec3::new(68.5, 29.1, -69.9);
+    let by = Vec3::new(-5.75, 33.0, -28.2);
+    s.run.put(wall, 0.0);
+    for _ in 0..1500 {
+        s.step([false; 4]);
+    }
+    assert_eq!(s.behaviour(hat).as_deref(), Some(WAITING_FOR_PLAYER));
+    let ahead = s.run.vm.active_seconds(id).unwrap_or(0.0);
+    s.run.put(away, 0.0);
+    for _ in 0..120 {
+        s.step([false; 4]);
+    }
+    assert!(!s.run.world.actor(hat).unwrap().active, "out of range");
+    s.run.put(wall, 0.0);
+    for _ in 0..60 {
+        s.step([false; 4]);
+    }
+    assert!(s.run.world.actor(hat).unwrap().active, "woken");
+    s.run.deactivate().unwrap_or_else(|h| panic!("{h}"));
+    assert!(s.run.enter().unwrap_or_else(|h| panic!("{h}")), "the beam");
+    for _ in 0..60 {
+        s.step([false; 4]);
+    }
+    assert!(s.run.minion.is_some(), "his join is done");
+    s.run.put(by, 0.0);
+    let start = s.run.steps;
+    while s.behaviour(hat).as_deref() != Some("shaking") && s.run.steps < start + 3000 {
+        s.step([false; 4]);
+    }
+    let waited = s.run.steps - start;
+    println!("awake {ahead:.1} s before; shaking {waited} steps after he's at the box");
+    assert!(
+        ahead > 20.0,
+        "awake long enough to hold a deadline: {ahead}"
+    );
+    assert!(waited < 240, "waited {waited} steps");
+    assert!(s.stops.is_empty(), "{:#?}", s.stops);
+}
+
+/// openspec AS.224's teleporter: level 201's life-area teleporter picks its
+/// player from `Minions` by the hat box's quarter-second deadline, but its
+/// take doesn't wait on that pick. Awake 25 s with Tree Rex 3 m off its
+/// start, left until it sleeps, woken, his figure lifted and put back in
+/// through the TV's join: walked onto its start, he is carried to its end
+/// within 4 s (65 steps), its locals kept across the sleep as made anew, so
+/// it's off the TV's list (`scripts::ANEW_ON_WAKE`).
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_teleporter_woken_again_takes_the_giant_swapped_in_after() {
+    let setup = Setup {
+        character: Some(TREE_REX),
+        ..setup()
+    };
+    let (run, _) = run_on_level(Mode::Play, "level_201", setup);
+    let mut s = Story {
+        run,
+        session: Session::new(Some(HOST.into())),
+        rows: Vec::new(),
+        level: "level_201",
+        stops: Vec::new(),
+    };
+    for _ in 0..2 {
+        s.step([false; 4]);
+    }
+    s.run.join().unwrap_or_else(|h| panic!("{h}"));
+    for k in 0..600u32 {
+        s.step([false, false, false, k > 120 && k % 20 == 10]);
+    }
+    let (start_h, start) = s.run.placed("TeleporterStart(1)");
+    let id = s.run.vm.placement_of(start_h).expect("its start runs");
+    let near = start + Vec3::new(0.0, 1.0, 3.0);
+    s.run.put(near, 0.0);
+    for _ in 0..1500 {
+        s.step([false; 4]);
+    }
+    let ahead = s.run.vm.active_seconds(id).unwrap_or(0.0);
+    s.run.put(Vec3::new(68.5, 29.1, -69.9), 0.0);
+    for _ in 0..120 {
+        s.step([false; 4]);
+    }
+    assert!(s.run.vm.asleep(id), "out of range");
+    s.run.put(near, 0.0);
+    for _ in 0..60 {
+        s.step([false; 4]);
+    }
+    assert!(!s.run.vm.asleep(id), "woken");
+    s.run.deactivate().unwrap_or_else(|h| panic!("{h}"));
+    assert!(s.run.enter().unwrap_or_else(|h| panic!("{h}")), "the beam");
+    for _ in 0..60 {
+        s.step([false; 4]);
+    }
+    assert!(s.run.minion.is_some(), "his join is done");
+    let from = s.run.steps;
+    let mut taken = None;
+    for _ in 0..3000 {
+        s.toward([start.x, start.z], [false; 4]);
+        if s.run.hero().pivot.distance(start) > 30.0 {
+            taken = Some(s.run.steps - from);
+            break;
+        }
+    }
+    println!("awake {ahead:.1} s before; carried off {taken:?} steps after he set out");
+    assert!(
+        ahead > 20.0,
+        "awake long enough to hold a deadline: {ahead}"
+    );
+    assert!(taken.is_some_and(|t| t < 240), "taken {taken:?}");
+    assert!(s.stops.is_empty(), "{:#?}", s.stops);
+}
+
+const WAITING_FOR_PLAYER: &str = "wait for player";

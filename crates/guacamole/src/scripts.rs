@@ -61,8 +61,8 @@ use guac_formats::level::Placements;
 use guac_formats::script::Class;
 use guac_script::members::{self, INIT_CHAIN};
 use guac_script::{
-    Access, Answer, Config, Generator, Halt, Handle, Host, HostFault, MemberId, Mode, Obj, OpCall,
-    PlacementId, Program, ScriptId, Value, Vm, Whitelist,
+    Access, AnewOnWake, Answer, Config, Generator, Halt, Handle, Host, HostFault, MemberId, Mode,
+    Obj, OpCall, PlacementId, Program, ScriptId, Value, Vm, Whitelist,
 };
 use tracing::{info, warn};
 
@@ -2627,10 +2627,29 @@ pub const EVERY_TICK: [&str; 8] = [
     "_EnemySystem_Functions.ai",
 ];
 
+/// The scripts whose sleepers wake with their declared locals made anew on
+/// the TV (openspec AS.224, AS.233; stand-in ledger: `wake-locals`): the hat
+/// box, which picks its player from `Minions` by a deadline held in a local
+/// (`player ref timer`: `system.script timer` plus a quarter second). The
+/// original makes every sleeper's anew (AS.233); kept, that deadline sat
+/// ahead of the woken clock for as many seconds as the box had run, and the
+/// player it named stayed whoever it had named, so the Mac's hat box ignored
+/// the Giant swapped in at the wall for 26 s. The teleporter's take doesn't
+/// wait on its own such pick (`giants_chests`: 65 steps on the list or off
+/// it). Every script on the rule is AS.246's: on it the Mac story stopped on
+/// level 214's first island twice.
+pub const ANEW_ON_WAKE: [&str; 1] = ["/Hat_Pickup.ai"];
+
+/// [`ANEW_ON_WAKE`] as the VM takes it.
+fn anew_on_wake() -> AnewOnWake {
+    AnewOnWake::Listed(ANEW_ON_WAKE.iter().map(|s| (*s).to_owned()).collect())
+}
+
 /// The VM's config for AH.16's run: the init chain's members and listing,
 /// with the sounds' and the music's ([`music_members`]).
 pub fn config(mode: Mode) -> Config {
     let mut c = Config::new(mode);
+    c.anew_on_wake = anew_on_wake();
     members::register(&mut c.members, INIT_CHAIN);
     music_members(&mut c);
     c.whitelist = Whitelist::with_first_ticks(&[], &EVERY_TICK, &GLOBAL_FIRST_TICKS);
@@ -2687,6 +2706,7 @@ pub const ERUPTOR_SCRIPTS: [&str; 5] = [
 /// Eruptor's scripts beside them.
 pub fn hero_config(mode: Mode) -> Config {
     let mut c = Config::new(mode);
+    c.anew_on_wake = anew_on_wake();
     members::register(&mut c.members, INIT_CHAIN);
     members::register(&mut c.members, members::HERO);
     // A slider's own members (AH.19): his attacks' and the HUD's slides.
@@ -4655,6 +4675,14 @@ fn joined(
             minion_placement = Some(id);
         }
     }
+    // A find in the activation (or in a call that adopts, [`entry_beams`])
+    // may have put his minion on the VM already: it is his, and the activator.
+    if minion_placement.is_none()
+        && let Some(id) = vm.placement_of(hero).filter(|id| !vm.removed(*id))
+    {
+        vm.set_activator(hero, true);
+        minion_placement = Some(id);
+    }
     minion_placement.ok_or_else(|| outside("the activation spawned no minion".to_owned()))
 }
 
@@ -4759,12 +4787,13 @@ pub fn entry_beams(
     let Some(pcd) = vm.global(g) else {
         return Ok(None);
     };
-    // With no hero's beam waiting, what the beams' on-spawn logic spawns
-    // joins the VM as a find asks for it, as in the walk (an enemy minion's
-    // controller, openspec AS.200). While one waits his join adds his own,
-    // since his activation's find on his fresh minion would adopt him ahead
-    // of it, and an enemy minion landing then gets no AI (AS.218).
-    vm.set_adopt_in_calls(waiting.is_none());
+    // What the beams' on-spawn logic spawns joins the VM as a find asks for
+    // it, as in the walk (an enemy minion's controller, openspec AS.200),
+    // whether or not a hero's beam waits: his activation's find on his fresh
+    // minion adopts him there, and [`joined`] takes him as he stands (AS.218:
+    // with the adoption off while his beam waited, an enemy minion landing
+    // in those steps was made with no AI).
+    vm.set_adopt_in_calls(true);
     let managed = vm.call_for(pm, ENTRY_MANAGE, &[(param.as_str(), pcd)], &[], host);
     vm.set_adopt_in_calls(false);
     managed?;
@@ -8704,6 +8733,8 @@ mod tests {
         let handles = headless_handles(&files);
         let mut c = Config::new(Mode::Strict);
         c.whitelist = Whitelist::All;
+        // The TV's wake rule (AS.233), so a sleeper's `seen` reads on.
+        c.anew_on_wake = anew_on_wake();
         let vm = init_chain(program, &files, &handles, &[0], c);
         let world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
         (files, handles, vm, world)

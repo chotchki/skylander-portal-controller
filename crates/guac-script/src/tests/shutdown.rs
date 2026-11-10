@@ -308,6 +308,14 @@ fn a_held_placement_taken_off_runs_no_shutdown() {
 /// `idle`, counts `count`; with no SHUTDOWN section when `shutdown` is
 /// false.
 fn sleeper(w: &mut Writer<'_>, name: &str, shutdown: bool) -> Location {
+    sleeper_noting(w, name, shutdown, false)
+}
+
+/// [`sleeper`], its SHUTDOWN also noting itself where its locals going
+/// with a sleep's shutdown can't take it (openspec AS.233) when `note`:
+/// `test.shut` counted and `test.noted` set to `test.seq`, cells the
+/// config registers.
+fn sleeper_noting(w: &mut Writer<'_>, name: &str, shutdown: bool, note: bool) -> Location {
     let (starts, count, shut, seen) = (
         var(w, "starts"),
         var(w, "count"),
@@ -322,6 +330,11 @@ fn sleeper(w: &mut Writer<'_>, name: &str, shutdown: bool) -> Location {
         let (s, _) = w.open(Class::ShutDown, "SHUTDOWN");
         w.inc(&[El::Local(shut)]);
         see_seq(w, seen);
+        if note {
+            w.inc(&[El::Member("test", "shut")]);
+            let seq = w.rhs(INT, &[El::Member("test", "seq")]);
+            w.set(&[El::Member("test", "noted")], seq);
+        }
         w.end_block(s);
     }
     let (section, _) = w.open(Class::MacroSection, "MACROS");
@@ -330,7 +343,9 @@ fn sleeper(w: &mut Writer<'_>, name: &str, shutdown: bool) -> Location {
     behaviour(w, |w| {
         w.inc(&[El::Local(count)]);
     });
-    w.end(name)
+    let info = w.end(name);
+    w.declare(info, &[starts, count, shut, seen]);
+    info
 }
 
 /// openspec AR.22: a placement that started, put to sleep, joins the
@@ -340,15 +355,16 @@ fn sleeper(w: &mut Writer<'_>, name: &str, shutdown: bool) -> Location {
 /// (AH.59's and AH.195's scheduler reads: each started sleeper has that
 /// frame's time added), then its SHUTDOWN runs once the walk is done (after
 /// the ticker's tick that step, `seen` 3), in a tick of its own that counts
-/// no seconds, its behaviour cleared; asleep it runs nothing more; woken,
-/// its timer starts from 0 (the 6 placements those reads see woken again)
-/// and it runs STARTUP again and its behaviour from there. One asleep from
+/// no seconds, its behaviour cleared and its locals gone with it (AS.233);
+/// asleep it runs nothing more; woken, its timer starts from 0 (the 6
+/// placements those reads see woken again) and it runs STARTUP again and
+/// its behaviour from there, its locals made anew. One asleep from
 /// its start runs no SHUTDOWN, nor one put to sleep and woken again between
 /// two steps, which ticks on with its timer kept.
 #[test]
 fn a_started_placement_put_to_sleep_runs_its_shutdown_and_starts_again_awake() {
     let p = program(|w| {
-        sleeper(w, "C:/tfb/Synthetic/Sleeper.ai", true);
+        sleeper_noting(w, "C:/tfb/Synthetic/Sleeper.ai", true, true);
         shutting(
             w,
             "C:/tfb/Synthetic/Ticker.ai",
@@ -359,7 +375,7 @@ fn a_started_placement_put_to_sleep_runs_its_shutdown_and_starts_again_awake() {
             },
         );
     });
-    let mut vm = Vm::new(p, config(Mode::Strict, &["seq"]));
+    let mut vm = Vm::new(p, config(Mode::Strict, &["seq", "shut", "noted"]));
     let tick = vm.config().tick_seconds;
     let sleeper = vm.add(0x10, "Sleeper", 0);
     vm.add(0x20, "Ticker", 1);
@@ -389,18 +405,14 @@ fn a_started_placement_put_to_sleep_runs_its_shutdown_and_starts_again_awake() {
         r.ticked, 3,
         "its last tick, the ticker, then the sleeper's shutdown"
     );
+    assert_eq!(cell(&vm, "shut"), Some(Value::Int(1)));
+    assert_eq!(cell(&vm, "noted"), Some(Value::Int(3)), "after the walk");
+    assert_eq!(vm.behaviour(sleeper), None);
     assert_eq!(
         local(&vm, sleeper, "count"),
-        Some(Value::Int(3)),
-        "a last tick"
+        None,
+        "its last tick ran (r.ticked), its locals gone with its shutdown"
     );
-    assert_eq!(local(&vm, sleeper, "shut"), Some(Value::Int(1)));
-    assert_eq!(
-        local(&vm, sleeper, "seen"),
-        Some(Value::Int(3)),
-        "after the walk"
-    );
-    assert_eq!(vm.behaviour(sleeper), None);
     let slept = vm.active_seconds(sleeper).unwrap();
     assert!(
         (slept - 3.0 * tick).abs() < 1e-6,
@@ -410,13 +422,13 @@ fn a_started_placement_put_to_sleep_runs_its_shutdown_and_starts_again_awake() {
     for _ in 0..3 {
         assert_eq!(vm.step(&mut host).unwrap().ticked, 1, "the ticker alone");
     }
-    assert_eq!(local(&vm, sleeper, "shut"), Some(Value::Int(1)), "once");
-    assert_eq!(local(&vm, sleeper, "count"), Some(Value::Int(3)));
+    assert_eq!(cell(&vm, "shut"), Some(Value::Int(1)), "once");
+    assert_eq!(local(&vm, sleeper, "count"), None);
     assert_eq!(vm.active_seconds(sleeper), Some(slept), "held asleep");
     vm.set_asleep(0x10, false);
     vm.step(&mut host).unwrap();
-    assert_eq!(local(&vm, sleeper, "starts"), Some(Value::Int(2)), "again");
-    assert_eq!(local(&vm, sleeper, "count"), Some(Value::Int(4)));
+    assert_eq!(local(&vm, sleeper, "starts"), Some(Value::Int(1)), "anew");
+    assert_eq!(local(&vm, sleeper, "count"), Some(Value::Int(1)));
     assert_eq!(vm.behaviour(sleeper), Some("idle"));
     let woken = vm.active_seconds(sleeper).unwrap();
     assert!((woken - tick).abs() < 1e-6, "its timer from 0: {woken}");
@@ -513,8 +525,8 @@ fn a_held_placement_put_to_sleep_runs_no_shutdown() {
 /// A placement whose script has no SHUTDOWN, put to sleep once started,
 /// ticks its last tick and runs nothing more as it sleeps, then starts
 /// again awake: the queue clears its started flag as it does a taken-off
-/// one's. Put to sleep and woken between two steps, it never slept and
-/// carries on started.
+/// one's, and its locals go as a sleeper's do (AS.233). Put to sleep and
+/// woken between two steps, it never slept and carries on started.
 #[test]
 fn a_placement_with_no_shutdown_put_to_sleep_starts_again_awake() {
     let p = program(|w| {
@@ -533,13 +545,13 @@ fn a_placement_with_no_shutdown_put_to_sleep_starts_again_awake() {
     vm.set_asleep(0x10, true);
     let r = vm.step(&mut host).unwrap();
     assert_eq!(r.ticked, 1, "its last tick, no shutdown tick");
-    assert_eq!(vm.local(id, "count"), Some(Value::Int(3)));
+    assert_eq!(vm.local(id, "count"), None, "its locals gone");
     assert_eq!(vm.behaviour(id), None);
     assert_eq!(vm.step(&mut host).unwrap().ticked, 0, "asleep");
     vm.set_asleep(0x10, false);
     vm.step(&mut host).unwrap();
-    assert_eq!(vm.local(id, "starts"), Some(Value::Int(2)));
-    assert_eq!(vm.local(id, "count"), Some(Value::Int(4)));
+    assert_eq!(vm.local(id, "starts"), Some(Value::Int(1)), "anew");
+    assert_eq!(vm.local(id, "count"), Some(Value::Int(1)));
 }
 
 /// A placement suspended from outside ([`Vm::set_suspended`]) isn't ticked

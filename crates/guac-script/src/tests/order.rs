@@ -16,7 +16,7 @@ fn counting() -> Arc<Program> {
         w.meta_word(f, 0x1C, INT);
         w.word(f, 0x20, 0);
         let seen = var(w, "seen");
-        idle(
+        let info = idle(
             w,
             |_| {},
             |w| {
@@ -24,12 +24,19 @@ fn counting() -> Arc<Program> {
                 w.set(&[El::Local(seen)], v);
                 w.inc(&[El::Local(f)]);
             },
-        )
+        );
+        w.declare(info, &[seen]);
     })
 }
 
 fn seen(vm: &Vm, ids: &[PlacementId]) -> Vec<Option<Value>> {
     ids.iter().map(|&id| vm.local(id, "seen")).collect()
+}
+
+/// Each a placement's `seen`, none where its locals are gone (a sleeper's
+/// once its shutdown has run: openspec AS.233).
+fn reads(v: &[Option<i32>]) -> Vec<Option<Value>> {
+    v.iter().map(|n| n.map(Value::Int)).collect()
 }
 
 fn ints(v: &[i32]) -> Vec<Option<Value>> {
@@ -352,7 +359,11 @@ fn an_asleep_placement_the_host_finds_awake_after_the_walk_ticks_that_step() {
     assert!(host.asked.is_empty(), "none asleep, none asked");
     vm.set_asleep(0x30, true);
     vm.step(&mut host).unwrap();
-    assert_eq!(seen(&vm, &ids), ints(&[4, 5, 6, 7]), "C's last tick");
+    assert_eq!(
+        seen(&vm, &ids),
+        reads(&[Some(4), Some(5), None, Some(7)]),
+        "C's last tick (D reads 7), its locals gone with its shutdown"
+    );
     assert!(
         host.asked.is_empty(),
         "C, put to sleep this step, not asked"
@@ -361,7 +372,7 @@ fn an_asleep_placement_the_host_finds_awake_after_the_walk_ticks_that_step() {
     host.wake = vec![0x20];
     vm.step(&mut host).unwrap();
     assert_eq!(host.asked, [vec![0x30]], "B's last tick this step");
-    assert_eq!(seen(&vm, &ids), ints(&[8, 9, 6, 10]));
+    assert_eq!(seen(&vm, &ids), reads(&[Some(8), None, None, Some(10)]));
     // B slept through a step's end: its SHUTDOWN queue ran, so it starts
     // again when it wakes. A is sent round as it does, so it ticks after
     // D, and B after both.
@@ -370,7 +381,7 @@ fn an_asleep_placement_the_host_finds_awake_after_the_walk_ticks_that_step() {
     assert_eq!(host.asked[1], [0x30, 0x20], "in the order they slept");
     assert_eq!(
         seen(&vm, &ids),
-        ints(&[12, 13, 6, 11]),
+        reads(&[Some(12), Some(13), None, Some(11)]),
         "B woken after the walk and the requeued A, this step"
     );
     assert!(!vm.asleep(ids[1]) && vm.asleep(ids[2]));
@@ -381,7 +392,11 @@ fn an_asleep_placement_the_host_finds_awake_after_the_walk_ticks_that_step() {
         "on the list's end"
     );
     vm.step(&mut host).unwrap();
-    assert_eq!(seen(&vm, &ids), ints(&[15, 16, 6, 14]), "at that place");
+    assert_eq!(
+        seen(&vm, &ids),
+        reads(&[Some(15), Some(16), None, Some(14)]),
+        "at that place"
+    );
     assert_eq!(host.asked[2], [0x30], "C, never named, still asked");
 }
 

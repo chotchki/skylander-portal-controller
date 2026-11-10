@@ -337,6 +337,10 @@ pub struct Run {
     /// from while he hangs, and each let-go: the step, what let him go and
     /// where, logged again 60 steps on.
     pub hangs: (Option<String>, Vec<(u32, String, Vec3)>),
+    /// The hero whose entry beam hasn't activated him yet (openspec AS.218):
+    /// the TV's step runs the beams with him waiting, so his join takes its
+    /// own minion and an enemy minion's beam landing then still gets its AI.
+    pub entering: Option<Handle>,
     /// His figure's toy id: Eruptor's 9, or [`Setup::character`]'s.
     pub toy: u16,
 }
@@ -433,7 +437,11 @@ impl Run {
         let slid = self.with_host(|vm, host| vm.slide(host))?;
         assert!(slid.stopped.is_empty(), "strict mode stops by halting");
         if scripts::entry_beam_count(&mut self.vm).unwrap_or(0) > 0 {
-            self.with_host(|vm, host| scripts::entry_beams(vm, host, None))?;
+            let waiting = self.entering;
+            if let Some(m) = self.with_host(|vm, host| scripts::entry_beams(vm, host, waiting))? {
+                self.minion = Some(m);
+                self.entering = None;
+            }
         }
         let r =
             self.with_host(|vm, host| player_loop.walk_with(vm, host, joined, &mut stopped, then));
@@ -496,10 +504,16 @@ impl Run {
             Ok(slid) => stopped.extend(slid.stopped),
             Err(h) => stopped.push(h),
         }
-        if scripts::entry_beam_count(&mut self.vm).unwrap_or(0) > 0
-            && let Err(h) = self.with_host(|vm, host| scripts::entry_beams(vm, host, None))
-        {
-            stopped.push(h);
+        if scripts::entry_beam_count(&mut self.vm).unwrap_or(0) > 0 {
+            let waiting = self.entering;
+            match self.with_host(|vm, host| scripts::entry_beams(vm, host, waiting)) {
+                Ok(Some(m)) => {
+                    self.minion = Some(m);
+                    self.entering = None;
+                }
+                Ok(None) => {}
+                Err(h) => stopped.push(h),
+            }
         }
         let r =
             self.with_host(|vm, host| player_loop.walk_with(vm, host, joined, &mut stopped, then));
@@ -688,6 +702,37 @@ impl Run {
         Ok(())
     }
 
+    /// The TV's join (openspec AH.224, AS.218): the tag and the request as
+    /// [`Run::join_tag`]'s, then his entry beam made after the definition's
+    /// first tick ([`scripts::join_enter`]); [`Run::step`] runs it with him
+    /// waiting until it activates him ([`Run::entering`]). Returns whether
+    /// the dump's part runs a beam.
+    pub fn enter(&mut self) -> Result<bool, Halt> {
+        let tag = Tag {
+            toy_id: u32::from(self.toy),
+            ..eruptor_tag(Values::default())
+        };
+        let files = self.files.clone();
+        let handles = self.handles.clone();
+        let layout = self.layout.clone();
+        let data = self.with_host(|vm, host| figure::put_on_portal(vm, host, &layout, &tag))?;
+        self.figure = Some(data);
+        self.with_host(|vm, host| scripts::join_request(vm, host, &files, ERUPTOR, &handles))?;
+        self.step()?;
+        let hero = self.hero;
+        let entry = self.with_host(|vm, host| scripts::join_enter(vm, host, hero, true))?;
+        Ok(match entry {
+            scripts::Entry::Beam => {
+                self.entering = Some(hero);
+                true
+            }
+            scripts::Entry::Activated(m) => {
+                self.minion = Some(m);
+                false
+            }
+        })
+    }
+
     /// His figure off the portal mid-level (openspec AH.105): the
     /// deactivate path, the run going on; [`Run::join_with`] puts the next
     /// one on, as an actor of his own (AH.191). Strict: a stop in it is the
@@ -702,6 +747,7 @@ impl Run {
         self.bench.rekey(hero, next);
         self.hero = next;
         self.minion = None;
+        self.entering = None;
         self.figure = None;
         match gone.halted {
             Some(h) => Err(h),
@@ -1447,6 +1493,7 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
             lean: None,
             surfaces: Default::default(),
             hangs: Default::default(),
+            entering: None,
             toy: setup.character.map_or(9, |c| c.toy),
         },
         found,

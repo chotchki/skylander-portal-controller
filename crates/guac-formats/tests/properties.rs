@@ -374,6 +374,30 @@ fn harness_passes_a_parser_within_budget() {
     run_mutated(&parser).unwrap();
 }
 
+/// A spline clip's frame count at `i32::MAX`, the mutated seed the property
+/// run above found (`character_model`'s seed 3, a word set to 2147483647
+/// big-endian): its block count is worked out without overflowing, so the
+/// clip is refused, not a panic.
+#[test]
+fn a_frame_count_at_i32_max_is_refused_not_a_panic() {
+    let parser = PARSERS
+        .iter()
+        .find(|p| p.name == "character_model")
+        .expect("registered");
+    let seeds = (parser.seeds)();
+    let input = apply(
+        &seeds[3],
+        &[Mutation::SetU32 {
+            at: 15_203_488_581_577_538_408,
+            value: 2_147_483_647,
+            big_endian: true,
+        }],
+    );
+    if let Err(e) = check(parser, &input) {
+        panic!("{e}");
+    }
+}
+
 #[test]
 fn mutations_stay_in_bounds_on_empty_and_short_inputs() {
     let all = [

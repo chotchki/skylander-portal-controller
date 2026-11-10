@@ -121,8 +121,9 @@
 //!
 //! The embedder puts placements to sleep and wakes them by its activity
 //! rule ([`Vm::set_activity`], a pass at a time, or [`Vm::set_asleep`]);
-//! one asleep isn't ticked and keeps its state, and waking puts it at its
-//! group's end: placements tick in the order they woke. AH.10's encounter
+//! one asleep isn't ticked, holds where its shutdown left it (below: its
+//! locals gone with it), and waking puts it at its group's end: placements
+//! tick in the order they woke. AH.10's encounter
 //! end shows it too (Norticus, woken last, takes his scene the frame the
 //! last Chompy goes, and `Setup_001_Controller`, woken first, sees it a
 //! frame later). The asleep wait on a list of their own, each joining its
@@ -137,19 +138,41 @@
 //! (openspec AR.22): the step's walk still ticks it once at its place, its
 //! seconds counted, then the queue, once the walk is done, clears its
 //! started flag and runs its SHUTDOWN as a taken-off placement's (below),
-//! if its script has one; woken, its `system.script timer` starts from 0
-//! and it runs STARTUP again. One never started, held, inert, taken off or
+//! if its script has one, and the locals its script declares go with it
+//! (openspec AS.233); woken, its `system.script timer` starts from 0, it
+//! runs STARTUP again and each of those is made again at its declared value
+//! as it's next reached. Its tags and what other scripts made on it stay (a
+//! wall controller's `setup data`, made by its surface's definition once at
+//! the level's start). One never started, held, inert, taken off or
 //! stopped gets none of that, and one woken before the step's walk never
-//! slept: it ticks on started, its timer kept. The recordings settle it:
-//! the oracle's census has the first combat watcher, whose own write of an
-//! activation range of 0 takes it to sleep, started and `Watching` at one
-//! read and neither 90 flips on, its SHUTDOWN's stinger the music by the
-//! read after (AR.16); in AH.59's and AH.195's scheduler reads no asleep
-//! placement is ever started, the 17 that went to sleep started each had
-//! that frame's time added and the 9 that went unstarted none, and the 6
-//! woken again each restarted its timer at one frame's. AH.59's decompile
-//! reads the same way (an aid): the state-change handler queues a started
-//! sleeper, and the tick runs a started placement whatever its state.
+//! slept: it ticks on started, its timer and locals kept. That's every
+//! script's, by default; an embedder can name the scripts it holds to it
+//! ([`Config::anew_on_wake`]), every other sleeper keeping its locals, as
+//! the TV does while something of its own leans on kept ones. The recordings settle it: the oracle's census
+//! has the first combat watcher, whose own write of an activation range of
+//! 0 takes it to sleep, started and `Watching` at one read and neither 90
+//! flips on, its SHUTDOWN's stinger the music by the read after (AR.16); in
+//! AH.59's and AH.195's scheduler reads no asleep placement is ever started,
+//! the 17 that went to sleep started each had that frame's time added and
+//! the 9 that went unstarted none, and the 6 woken again each restarted its
+//! timer at one frame's. AS.233 read the locals off two of the original's
+//! states a walk apart (AF.8's fresh state and AG.176's corridor walk 1,060
+//! records on): the four placements started at the first and asleep at the
+//! second hold no list of their declared locals there, each having held one
+//! at the first, and the six that slept and woke between hold new lists,
+//! their deadlines in their new clocks' terms (a bird's `Timer` 4.37 s
+//! against its clock's 3.72, where the first state had 14.17 against
+//! 13.09); chapter 1's three wall controllers, asleep and never started,
+//! hold no such list, and their `setup data` sits with their tags on the
+//! placement. Kept, a deadline a script held across a sleep sat ahead of
+//! its woken clock by the seconds it had run: a hat box named the hero who
+//! had left for 26 s (AS.224). Every local let go, a wall lost its `setup
+//! data` and stood for its own element. AH.59's decompile reads the same
+//! way (an aid): the state-change handler queues a started sleeper, the
+//! tick runs a started placement whatever its state, and the shutdown
+//! section's end clears the started flag, the placement then letting go of
+//! the list its declared locals are built into, which a wake or a STARTUP
+//! makes only where there's none.
 //!
 //! The asleep are checked again after the walk and those sent round
 //! (openspec AS.83, [`Host::wakes`]): the host's rule is asked which of
@@ -858,7 +881,7 @@ pub use value::{
     ArithFault, Value, arith, arith_in, compare, convert, random_colour, random_literal,
 };
 pub use vm::{
-    Config, DEFAULT_BUDGET, Halt, Handle, LogLine, Mode, Native, PlacementId, Precision, Reason,
-    SLIDERS, StepReport, TICK_SECONDS, Vm,
+    AnewOnWake, Config, DEFAULT_BUDGET, Halt, Handle, LogLine, Mode, Native, PlacementId,
+    Precision, Reason, SLIDERS, StepReport, TICK_SECONDS, Vm,
 };
 pub use whitelist::{Listed, Whitelist};

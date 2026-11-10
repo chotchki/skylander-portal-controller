@@ -52,7 +52,8 @@ fn read(w: &mut Writer<'_>, v: Location) -> Location {
 }
 
 /// A script: PRESCRIPT holding STARTUP, SHUTDOWN, MACROS and then its own
-/// ops, then the behaviours.
+/// ops, then the behaviours. Returns its info, which [`Writer::declare`]
+/// gives the locals its `_masterVarList` declares.
 fn frame(
     w: &mut Writer<'_>,
     startup: impl FnOnce(&mut Writer<'_>),
@@ -60,7 +61,7 @@ fn frame(
     macros: impl FnOnce(&mut Writer<'_>),
     prescript: impl FnOnce(&mut Writer<'_>),
     behaviours: impl FnOnce(&mut Writer<'_>),
-) {
+) -> Location {
     let (pre, _) = w.open(Class::PreScript, "PRESCRIPT");
     let (start, _) = w.open(Class::StartUp, "STARTUP");
     startup(w);
@@ -74,15 +75,16 @@ fn frame(
     prescript(w);
     w.end_block(pre);
     behaviours(w);
-    w.end("C:/tfb/Content/Levels/Synthetic/Test.ai");
+    w.end("C:/tfb/Content/Levels/Synthetic/Test.ai")
 }
 
-/// A script that is one behaviour, `idle`, after an empty frame.
+/// A script that is one behaviour, `idle`, after an empty frame. Returns its
+/// info ([`frame`]).
 fn idle(
     w: &mut Writer<'_>,
     startup: impl FnOnce(&mut Writer<'_>),
     body: impl FnOnce(&mut Writer<'_>),
-) {
+) -> Location {
     frame(
         w,
         startup,
@@ -94,7 +96,7 @@ fn idle(
             body(w);
             w.end_block(b);
         },
-    );
+    )
 }
 
 /// `if <var> <relation> <rhs>`, its block left open: position and op.
@@ -2074,13 +2076,14 @@ fn an_embedders_remove_stops_a_placements_script_for_good() {
 fn a_placement_added_again_under_a_handle_taken_off_runs_under_it() {
     let p = program(|w| {
         let count = var(w, "count");
-        idle(
+        let info = idle(
             w,
             |_| {},
             |w| {
                 w.inc(&[El::Local(count)]);
             },
         );
+        w.declare(info, &[count]);
     });
     let mut vm = Vm::new(p, Config::new(Mode::Strict));
     let first = vm.add(1, "009_Eruptor_Def", 0);
@@ -2105,13 +2108,15 @@ fn a_placement_added_again_under_a_handle_taken_off_runs_under_it() {
     assert!(vm.is_activator(again) && !vm.is_activator(first));
     assert!(vm.set_asleep(1, true));
     vm.step(&mut Bare).unwrap();
+    assert!(vm.asleep(again), "under its handle");
     assert_eq!(
         vm.local(again, "count"),
-        Some(Value::Int(2)),
-        "its last tick (openspec AR.22)"
+        None,
+        "its last tick (openspec AR.22), then its locals gone with its \
+         shutdown (AS.233)"
     );
     vm.step(&mut Bare).unwrap();
-    assert_eq!(vm.local(again, "count"), Some(Value::Int(2)), "asleep");
+    assert_eq!(vm.local(again, "count"), None, "asleep");
     assert!(vm.remove(1));
     assert!(vm.removed(again));
     // Under a live placement's handle the first keeps it.
