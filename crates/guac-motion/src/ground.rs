@@ -10,7 +10,7 @@
 //!   convex radius, square-edged ([`find_seeing`]). Its point is what the
 //!   script's 0.4 ft band and the snap measure from.
 //! - The support check: the contact planes within [`SUPPORT_GAP`] of his
-//!   shape, those facing up at all (n.y > 0.08) summed into a surface normal;
+//!   shape, those facing up enough to be ground (n.y > 0.3, AS.229) summed into a surface normal;
 //!   supported when that's within 45° of up (AG.39: the cliff's faces held him
 //!   to 44.92° and not from 45.04°), or when they pin a probe straight down
 //!   (a crease of two steep faces, as read).
@@ -41,8 +41,14 @@ pub const MAX_SLOPE_COS: f32 = core::f32::consts::FRAC_1_SQRT_2;
 /// How far a plane may be from his shape (past its skin) and still hold him
 /// up, metres (a hypothesis, the module's).
 pub const SUPPORT_GAP: f32 = 1.0 / 60.0;
-/// Planes facing up less than this don't count toward support (as read).
-const SUPPORT_FACING: f32 = 0.08;
+/// Planes facing up less than this don't count toward support. A hypothesis
+/// (openspec AS.229): 0.08 in the first reading, which the corpus never
+/// tests between there and 0.3 (it passes either way); a railing leaning
+/// 13° off upright (0.22) rubbed by a Giant's wide shape on the hub's
+/// stairs was summed with the stairs' 59° slope and tipped the sum past
+/// 45°, so a Giant lost the ground there and slid back down. A face this
+/// near upright is a wall, not ground.
+const SUPPORT_FACING: f32 = 0.3;
 /// Where the snap sets him, and how far it reaches.
 pub const SNAP_HEIGHT: f32 = 0.01;
 pub const SNAP_REACH: f32 = 0.375;
@@ -251,6 +257,13 @@ mod tests {
         // Out of reach, level ground holds nothing up.
         assert!(!support(&[plane(Vec3::Y, SUPPORT_GAP + 1e-3)]).supported);
         assert!(support(&[plane(Vec3::Y, SUPPORT_GAP)]).supported);
+        // AS.229: the hub's stairs (a 59° slope, the lean's) with a railing
+        // 13° off upright touching, as the Giant's step logged them: the
+        // railing is a wall, and the sum stays the stairs'.
+        let stairs = Vec3::new(0.0002, 0.8585, -0.5128);
+        let railing = Vec3::new(-0.9645, 0.2264, -0.1358);
+        assert!(support(&[plane(stairs, 0.0), plane(railing, 0.0)]).supported);
+        assert!(!support(&[plane(railing, 0.0)]).supported);
         // A crease of two 60° faces pins him.
         assert!(support(&[plane(face(60.0), 0.0), plane(face(-60.0), 0.0)]).supported);
     }
