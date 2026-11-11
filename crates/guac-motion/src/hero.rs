@@ -68,10 +68,12 @@
 //!   acceleration in his `ActorParameters`, which read 0 through every walk
 //!   (AG.8), so none are built.
 
+use std::collections::{BTreeMap, VecDeque};
+
 use crate::edge;
 use crate::ground::{self, LEAN_SETTLED, MAX_SLOPE_COS, SNAP_HEIGHT, SNAP_REACH, SUPPORT_GAP};
 use crate::proxy::{self, AIRBORNE_SHARE, KEEP, LEAVE_NORMAL, LEAVE_SPEED, Proxy, Surfaces};
-use crate::seam::{BodyId, PhysicsSeam, Quat, Vec3};
+use crate::seam::{BodyId, PhysicsSeam, Pose, Quat, Shape, Vec3};
 use crate::solid::HavokSolid;
 use crate::steer;
 use crate::stick::Stick;
@@ -101,16 +103,28 @@ pub const SEARCH_DOWN: f32 = 3.0 * FOOT;
 /// every [`FAR_STEP`] out to [`FAR_OUT`], [`FAR_HEADINGS`] round, nearest
 /// first, each spot the ground found under a lift of [`SEARCH_UP`] plus
 /// [`FAR_SLOPE`] a metre out, standing within the same lift above and
-/// [`SEARCH_DOWN`] plus that below the place he was set down. A Giant
-/// swapped in where a smaller hero stood (a ledge route 4 m wide, his
-/// capsule 4.3 across) fits nowhere near it, and the nearest place that does
-/// is 9-10 m along.
+/// [`SEARCH_DOWN`] plus that below the place he was set down, and only where
+/// a walk from there reaches ([`REACH_UP`], [`REACH_DOWN`]). A Giant swapped
+/// in where a smaller hero stood (a ledge route 4 m wide, his capsule 4.3
+/// across) fits nowhere near it, and the nearest place that does is 9-10 m
+/// along.
 pub const FAR_OUT: f32 = 30.0;
 pub const FAR_STEP: f32 = 1.0;
 pub const FAR_HEADINGS: usize = 24;
 pub const FAR_SLOPE: f32 = 0.5;
 /// How far past a solid the line to a spot resumes.
 pub const FAR_THROUGH: f32 = 0.05;
+/// The walk the wider search's spots must be reached by (AS.251's review):
+/// a step [`FAR_STEP`] across climbs at most this (the search's own lift)
+/// and drops at most [`REACH_DOWN`], on ground he can stand on, with
+/// nothing solid across it from [`REACH_KNEE`] to [`REACH_HEAD`] over the
+/// ground. A gap, a ledge over his step, a closed door, a gate or an
+/// elemental wall ends it, so a spot past one is never his, however clear
+/// the line to it.
+pub const REACH_UP: f32 = SEARCH_UP;
+pub const REACH_DOWN: f32 = 4.0;
+pub const REACH_KNEE: f32 = SEARCH_UP + 0.2;
+pub const REACH_HEAD: f32 = 1.5;
 /// How far past [`KEEP`] into a wall [`Hero::push_out`] counts him in it: a
 /// pass leaves him on the keep, give or take the float's noise.
 pub const IN_A_WALL: f32 = 1e-4;
@@ -145,7 +159,8 @@ pub enum PushOut {
     /// Pushed off the walls he was in, by this much across the ground.
     Pushed(Vec3),
     /// Still in after [`PUSH_PASSES`]: set down at the first of the search's
-    /// spots that's clear with ground under it, by this much.
+    /// spots that's clear with ground under it (past the eight, one a walk
+    /// from his place reaches), by this much.
     Searched(Vec3),
     /// In, and no spot the search tried was clear: left where he was.
     Stuck,
@@ -177,6 +192,126 @@ impl Input {
 /// A ground this far over his pivot (metres, negative) can only be the
 /// finder's upward ray's: its downward one starts [`ground::find`]'s 0.1 m up.
 const OVER_HIS_HEAD: f32 = -0.11;
+
+/// Two heights at one point of [`Reach`]'s grid this close are one ground.
+const REACH_LAYER: f32 = 1.5;
+/// How far past a step's far point [`Reach`] looks for a wall, metres.
+const REACH_PAST: f32 = 0.1;
+/// How wide a gap [`Reach`]'s step passes, metres: under any hero's width.
+const REACH_BALL: f32 = 0.2;
+
+/// Where a walk from a place goes (AS.251's review): a grid [`FAR_STEP`]
+/// apart from it out past [`FAR_OUT`], each point the ground a step from
+/// one already reached, by [`REACH_UP`], [`REACH_DOWN`] and [`REACH_KNEE`].
+/// A walk, not the hero's: a thin rule for "nothing the level holds shut
+/// lies between", so the wider search's spot is one he could have walked to
+/// had he been small enough.
+struct Reach {
+    from: Vec3,
+    /// The heights reached at each point, by its steps across from `from`.
+    at: BTreeMap<(i32, i32), Vec<f32>>,
+}
+
+impl Reach {
+    fn from(seam: &dyn PhysicsSeam, exclude: &[BodyId], from: Vec3) -> Reach {
+        let mut at = BTreeMap::from([((0, 0), vec![from.y])]);
+        let mut queue = VecDeque::from([(0i32, 0i32, from.y)]);
+        let most = (FAR_OUT / FAR_STEP).ceil() as i32 + 1;
+        let point = |i: i32, j: i32, y: f32| {
+            Vec3::new(
+                from.x + i as f32 * FAR_STEP,
+                y,
+                from.z + j as f32 * FAR_STEP,
+            )
+        };
+        while let Some((i, j, y)) = queue.pop_front() {
+            let p = point(i, j, y);
+            for (di, dj) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                let (ni, nj) = (i + di, j + dj);
+                if ni * ni + nj * nj > most * most {
+                    continue;
+                }
+                let over = point(ni, nj, y + REACH_UP);
+                let Some(hit) =
+                    ground::ray(seam, over, Vec3::NEG_Y, REACH_UP + REACH_DOWN, exclude)
+                else {
+                    continue;
+                };
+                if hit.normal.y <= MAX_SLOPE_COS {
+                    continue;
+                }
+                let q = hit.point;
+                if !Reach::open(seam, exclude, p, q) {
+                    continue;
+                }
+                let heights = at.entry((ni, nj)).or_insert_with(Vec::new);
+                if heights.iter().any(|h| (h - q.y).abs() < REACH_LAYER) {
+                    continue;
+                }
+                heights.push(q.y);
+                queue.push_back((ni, nj, q.y));
+            }
+        }
+        Reach { from, at }
+    }
+
+    /// Nothing solid across the step from `p` to `q`: a post
+    /// [`REACH_BALL`] across standing from [`REACH_KNEE`] to [`REACH_HEAD`]
+    /// over the ground, swept from over `p` to over the higher of the two
+    /// and [`REACH_PAST`] beyond, so a wall standing on `q` itself ends the
+    /// step, a barrier he couldn't walk under does, and the seam between two
+    /// of a wall's triangles lets nothing through, as a ray along it can.
+    fn open(seam: &dyn PhysicsSeam, exclude: &[BodyId], p: Vec3, q: Vec3) -> bool {
+        let mid = (REACH_KNEE + REACH_HEAD) / 2.0;
+        let a = p + Vec3::Y * mid;
+        let b = Vec3::new(q.x, q.y.max(p.y) + mid, q.z);
+        let d = b - a;
+        let Some(way) = d.try_normalize() else {
+            return true;
+        };
+        let post = Shape::Capsule {
+            radius: REACH_BALL / 2.0,
+            half_segment: (REACH_HEAD - REACH_KNEE) / 2.0,
+        };
+        seam.cast(
+            &post,
+            Pose::at(a),
+            way * (d.length() + REACH_PAST),
+            0.0,
+            exclude,
+        )
+        .is_none()
+    }
+
+    /// Whether the walk reaches the ground at `ground`: a grid point beside
+    /// it reached at its height, with nothing solid across to it.
+    fn reaches(&self, seam: &dyn PhysicsSeam, exclude: &[BodyId], ground: Vec3) -> bool {
+        let (x, z) = (
+            (ground.x - self.from.x) / FAR_STEP,
+            (ground.z - self.from.z) / FAR_STEP,
+        );
+        let (i0, j0) = (x.floor() as i32, z.floor() as i32);
+        [(i0, j0), (i0 + 1, j0), (i0, j0 + 1), (i0 + 1, j0 + 1)]
+            .into_iter()
+            .any(|(i, j)| {
+                self.at.get(&(i, j)).is_some_and(|heights| {
+                    heights.iter().any(|&h| {
+                        (h - ground.y).abs() <= REACH_UP
+                            && Reach::open(
+                                seam,
+                                exclude,
+                                Vec3::new(
+                                    self.from.x + i as f32 * FAR_STEP,
+                                    h,
+                                    self.from.z + j as f32 * FAR_STEP,
+                                ),
+                                ground,
+                            )
+                    })
+                })
+            })
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Hero {
@@ -349,9 +484,15 @@ impl Hero {
     /// is), the search tries eight headings round him from his facing,
     /// [`SEARCH_OUT`] out and [`SEARCH_UP`] up, for a spot that's clear with
     /// ground within [`SEARCH_DOWN`] under it and nothing between his centre
-    /// and its (never through a wall), and settles him there. His footing is
-    /// read wherever he's moved to. Our own rule, the original's unread
-    /// (stand-in ledger: `set-down`).
+    /// and its (never through a wall), and settles him there (the original's
+    /// `Portal - Minion Entry Find Safe Location`, which its portal manager
+    /// runs for a second minion coming in at once). None fitting (AS.251),
+    /// the wider search's rings out to [`FAR_OUT`], each spot one a walk from
+    /// his place reaches ([`Reach`]), so never past a gap, a ledge or
+    /// anything solid the level holds shut; none of those fitting, `Stuck`
+    /// where he was. His footing is read wherever he's moved to. Our own
+    /// rule past the eight, what the original does with a hero too big for
+    /// his place unread (stand-in ledger: `set-down`).
     pub fn push_out(&mut self, seam: &dyn PhysicsSeam, exclude: &[BodyId]) -> PushOut {
         let from = self.pivot;
         if !self.in_a_wall(seam, exclude, from) {
@@ -419,6 +560,8 @@ impl Hero {
                 return PushOut::Searched(self.pivot - from);
             }
         }
+        // Where a walk from his place goes, read once the eight have failed.
+        let reach = Reach::from(seam, exclude, from);
         for through_solids in [false, true] {
             for ring in 1..=(FAR_OUT / FAR_STEP) as usize {
                 let out = ring as f32 * FAR_STEP;
@@ -436,6 +579,9 @@ impl Hero {
                     if ground.point.y > over.y
                         || ground.point.y < from.y - SEARCH_DOWN - FAR_SLOPE * out
                     {
+                        continue;
+                    }
+                    if !reach.reaches(seam, exclude, ground.point) {
                         continue;
                     }
                     let spot = Vec3::new(over.x, ground.point.y + SEARCH_UP, over.z);

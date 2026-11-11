@@ -359,7 +359,9 @@ pub fn wall_scenarios() -> Vec<Scenario> {
         wedged_between_two_walls_he_is_searched_out_along_them(),
         the_search_never_sets_him_through_a_wall(),
         a_giant_in_a_passage_too_narrow_is_set_where_he_fits(),
-        a_prop_in_the_passage_is_set_past_only_when_nothing_else_fits(),
+        a_door_across_the_passage_is_never_passed(),
+        a_barrier_he_cant_walk_under_is_never_passed(),
+        a_gap_past_the_passage_is_never_crossed(),
         a_fit_on_his_side_of_a_prop_beats_a_nearer_one_past_it(),
         a_flat_ceiling_too_low_for_him_sends_him_out_from_under_it(),
     ]
@@ -487,11 +489,10 @@ pub fn a_giant_in_a_passage_too_narrow_is_set_where_he_fits() -> Scenario {
     }
 }
 
-/// AS.251: the same passage plugged by a convex prop 6 m along: the line to
-/// every spot past it meets the prop, so the search sets him past it only
-/// once nothing on his side fits.
-pub fn a_prop_in_the_passage_is_set_past_only_when_nothing_else_fits() -> Scenario {
-    let plug = SolidInfo {
+/// A door across [`slot`]'s passage `x` along: a convex box 10 x 12 x 10 ft
+/// standing on the floor, as a closed door or gate's solid does.
+fn door(x: f32) -> (BodyId, HavokSolid, Pose) {
+    let door = SolidInfo {
         kind: SolidKind::Box,
         offset: [0.0; 3],
         rotation: [0.0; 3],
@@ -501,50 +502,97 @@ pub fn a_prop_in_the_passage_is_set_past_only_when_nothing_else_fits() -> Scenar
     }
     .havok([100.0; 3])
     .expect("a box has a shape");
-    let at = Pose::new(Vec3::new(6.0, 1.5, 0.8), Quat::IDENTITY);
+    (
+        BodyId(2),
+        door,
+        Pose::new(Vec3::new(x, 0.0, 0.8), Quat::IDENTITY),
+    )
+}
+
+/// AS.251's review: the same passage shut by a door 6 m along. The only
+/// spots he fits are past it, on open ground the line from his centre
+/// reaches through the door and a walk doesn't, so he's left where he was
+/// (`Stuck`) rather than set past a door the level holds shut: the lane's
+/// search set him 12-16 m along, past it.
+pub fn a_door_across_the_passage_is_never_passed() -> Scenario {
     Scenario {
-        name: "a_prop_in_the_passage_is_set_past_only_when_nothing_else_fits",
-        bodies: bodies(
-            &slot([-20.0, 12.0], [true, false]),
-            &[(BodyId(2), plug, at)],
-        ),
+        name: "a_door_across_the_passage_is_never_passed",
+        bodies: bodies(&slot([-20.0, 12.0], [true, false]), &[door(6.0)]),
         check: |seam| {
             let mut hero = warnado_at(seam, Vec3::new(0.0, 0.005, 0.8), 90.0);
-            let crate::hero::PushOut::Searched(_) = hero.push_out(seam, &[]) else {
-                return Err(format!("not searched: {:?}", hero.pivot));
-            };
+            let from = hero.pivot;
+            let out = hero.push_out(seam, &[]);
             ensure!(
-                (12.0..=16.0).contains(&hero.pivot.x),
-                "not past the prop and the open end: {}",
+                out == crate::hero::PushOut::Stuck,
+                "{out:?} to {}",
                 hero.pivot
             );
-            ensure!(hero.footing.supported, "unsupported: {:?}", hero.footing);
+            ensure!(hero.pivot.distance(from) < 1e-4, "moved to {}", hero.pivot);
             Ok(())
         },
     }
 }
 
-/// AS.251: the passage open at both ends, the east one 12 m off and plugged
-/// by a prop 6 m along, the west 18 m off and clear: the ring that fits past
-/// the prop is nearer, but the fit on his own side wins.
-pub fn a_fit_on_his_side_of_a_prop_beats_a_nearer_one_past_it() -> Scenario {
-    let plug = SolidInfo {
-        kind: SolidKind::Box,
-        offset: [0.0; 3],
-        rotation: [0.0; 3],
-        width: 10.0,
-        height: 12.0,
-        length: 10.0,
+/// AS.251's review: the passage shut 6 m along by a barrier hanging from
+/// 1.5 m over the floor (the lane's own plug, set at its centre's height):
+/// a walk's knee passes under it, a hero doesn't, so he's left where he was.
+pub fn a_barrier_he_cant_walk_under_is_never_passed() -> Scenario {
+    let (id, solid, at) = door(6.0);
+    let hung = Pose::new(at.position + Vec3::Y * 1.5, at.rotation);
+    Scenario {
+        name: "a_barrier_he_cant_walk_under_is_never_passed",
+        bodies: bodies(&slot([-20.0, 12.0], [true, false]), &[(id, solid, hung)]),
+        check: |seam| {
+            let mut hero = warnado_at(seam, Vec3::new(0.0, 0.005, 0.8), 90.0);
+            let from = hero.pivot;
+            let out = hero.push_out(seam, &[]);
+            ensure!(
+                out == crate::hero::PushOut::Stuck,
+                "{out:?} to {}",
+                hero.pivot
+            );
+            ensure!(hero.pivot.distance(from) < 1e-4, "moved to {}", hero.pivot);
+            Ok(())
+        },
     }
-    .havok([100.0; 3])
-    .expect("a box has a shape");
-    let at = Pose::new(Vec3::new(6.0, 1.5, 0.8), Quat::IDENTITY);
+}
+
+/// AS.251's review: the passage's mouth opens on a gap 3.5 m across with
+/// ground past it. Nothing between his centre and the far side's spots
+/// stops the line, but no walk crosses the gap, so he's left where he was:
+/// the lane's search set him across it.
+pub fn a_gap_past_the_passage_is_never_crossed() -> Scenario {
+    let mut soup = Soup::default();
+    soup.floor(0.0, [-40.0, 2.5], [-40.0, 40.0], 2.0);
+    soup.floor(0.0, [6.0, 40.0], [-40.0, 40.0], 2.0);
+    soup.wall_z(0.0, [-20.0, 2.5], [-1.0, 3.4], Vec3::Z);
+    soup.wall_z(1.6, [-20.0, 2.5], [-1.0, 3.4], Vec3::NEG_Z);
+    soup.wall_x(-20.0, [0.0, 1.6], [-1.0, 3.4], Vec3::X);
+    Scenario {
+        name: "a_gap_past_the_passage_is_never_crossed",
+        bodies: bodies(&soup, &[]),
+        check: |seam| {
+            let mut hero = warnado_at(seam, Vec3::new(0.0, 0.005, 0.8), 90.0);
+            let from = hero.pivot;
+            let out = hero.push_out(seam, &[]);
+            ensure!(
+                out == crate::hero::PushOut::Stuck,
+                "{out:?} to {}",
+                hero.pivot
+            );
+            ensure!(hero.pivot.distance(from) < 1e-4, "moved to {}", hero.pivot);
+            Ok(())
+        },
+    }
+}
+
+/// AS.251: the passage open at both ends, the east one 12 m off and shut by
+/// a door 6 m along, the west 18 m off and clear: the ring that fits past
+/// the door is nearer, but the fit on his own side wins.
+pub fn a_fit_on_his_side_of_a_prop_beats_a_nearer_one_past_it() -> Scenario {
     Scenario {
         name: "a_fit_on_his_side_of_a_prop_beats_a_nearer_one_past_it",
-        bodies: bodies(
-            &slot([-18.0, 12.0], [false, false]),
-            &[(BodyId(2), plug, at)],
-        ),
+        bodies: bodies(&slot([-18.0, 12.0], [false, false]), &[door(6.0)]),
         check: |seam| {
             let mut hero = warnado_at(seam, Vec3::new(0.0, 0.005, 0.8), 90.0);
             let crate::hero::PushOut::Searched(_) = hero.push_out(seam, &[]) else {

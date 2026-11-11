@@ -5,9 +5,13 @@
 //! clear; those a flood from the start reaches are counted apart), through
 //! the controller's set-down
 //! (`Hero::push_out`) as the TV's replacement is, and each swap is read for
-//! a hero left inside the level (a wall or ceiling deeper than 2 cm) and,
-//! on the swaps the set-down moved and one in eight of the rest, for a hang
-//! (60 steps of the stick: not supported and not moving for 30). Ignored by
+//! a hero left inside the level (a wall or ceiling deeper than 2 cm) by a
+//! set-down that moved him, for one it set where this file's own walk from
+//! his place doesn't reach (past a gap, a ledge or a solid: AS.251's review,
+//! where the lane's search set him past an elemental wall, a breakable door
+//! and Flynn's blocker), for one it couldn't move (`Stuck`), and, on the
+//! swaps the set-down moved and one in eight of the rest, for a hang (60
+//! steps of the stick: not supported and not moving for 30). Ignored by
 //! default; they read `GUAC_GIANTS_DUMP` (process env, else `.env.dev`):
 //!
 //! `cargo test -p guacamole --profile disc --test giants_swap_fit -- --ignored --nocapture`
@@ -20,7 +24,7 @@ use std::collections::{HashMap, VecDeque};
 
 use guac_motion::ground;
 use guac_motion::hero::{Hero, PushOut};
-use guac_motion::seam::{Quat, Shape, Vec3};
+use guac_motion::seam::{BodyId, Quat, Shape, Vec3};
 use guac_motion::solid::HavokSolid;
 use guac_motion::stick::{DEAD_ZONE, Stick};
 use guac_motion::tuning::Tuning;
@@ -69,7 +73,7 @@ fn joined(level: &str) -> Run {
         let stops = skip_214s_intro(&mut run);
         assert!(stops.is_empty(), "{stops:#?}");
     }
-    if level.contains("hub") {
+    if level.contains("hub") || level == LEVEL_201 {
         let cutscene = run.vm.program().global_named("Cutscene State").unwrap();
         for _ in 0..200 {
             run.step_play().unwrap();
@@ -82,6 +86,18 @@ fn joined(level: &str) -> Run {
             run.step_play().unwrap();
         }
     }
+    // 201 opens with the hero coming down in his landing pod (AS.115), where
+    // a put doesn't hold: the hunt waits until the pod lets him go.
+    for _ in 0..3000 {
+        if !run.hero().hung && run.hero().pivot.length() > 1.0 {
+            break;
+        }
+        run.step_play().unwrap();
+    }
+    assert!(
+        !run.hero().hung && run.hero().pivot.length() > 1.0,
+        "{level}: still in the pod"
+    );
     for _ in 0..120 {
         run.step_play().unwrap();
     }
@@ -89,9 +105,11 @@ fn joined(level: &str) -> Run {
 }
 
 /// The ground a small hero walks to from `from`: cells a metre across, a
-/// step up to 0.6 m and down to 4 m, never through a wall at knee height.
-/// The ground point of each cell, in the order the flood reached it.
-fn flood(run: &Run, from: Vec3, cap: usize) -> Vec<Vec3> {
+/// step up to 0.6 m and down to 4 m, never through a wall at knee height,
+/// within `radius` of `from` across the ground, the bodies in `exclude`
+/// out of the way. The ground point of each cell, in the order the flood
+/// reached it.
+fn flood(run: &Run, from: Vec3, cap: usize, radius: f32, exclude: &[BodyId]) -> Vec<Vec3> {
     let world = &run.bench.world;
     let key = |p: Vec3| {
         (
@@ -111,7 +129,10 @@ fn flood(run: &Run, from: Vec3, cap: usize) -> Vec<Vec3> {
         }
         for (dx, dz) in [(1.0f32, 0.0f32), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
             let over = p + Vec3::new(dx, 0.7, dz);
-            let Some(hit) = ground::ray(world, over, Vec3::NEG_Y, 4.7, &[HERO_BODY]) else {
+            if Vec3::new(over.x - from.x, 0.0, over.z - from.z).length() > radius {
+                continue;
+            }
+            let Some(hit) = ground::ray(world, over, Vec3::NEG_Y, 4.7, exclude) else {
                 continue;
             };
             if hit.normal.y < 0.65 {
@@ -123,7 +144,7 @@ fn flood(run: &Run, from: Vec3, cap: usize) -> Vec<Vec3> {
                 Vec3::new(to.x, to.y.max(p.y) + 0.8, to.z),
             );
             let d = b - a;
-            if ground::ray(world, a, d, d.length(), &[HERO_BODY]).is_some() {
+            if ground::ray(world, a, d, d.length(), exclude).is_some() {
                 continue;
             }
             if let std::collections::hash_map::Entry::Vacant(v) = seen.entry(key(to)) {
@@ -172,6 +193,12 @@ struct Tally {
     searched: usize,
     stuck: usize,
     inside: Vec<String>,
+    stuck_at: Vec<String>,
+    /// Stuck swaps the stick moved more than half a metre in 60 steps.
+    stuck_walks: usize,
+    /// Clear swaps the stand after leaves more than 2 cm in something.
+    leaned: Vec<String>,
+    unwalked: Vec<String>,
     hung: Vec<String>,
     far: Vec<String>,
     walked: usize,
@@ -227,16 +254,48 @@ fn layers(run: &Run, every: f32, small: &HavokSolid) -> Vec<Vec3> {
     out
 }
 
-/// Swaps whose set-down leaves him standing clear but who hang once the stick
-/// is held: level 214's five wedged on a crease of two slopes (filed as
-/// AS.259), the rest 0.
-fn check(t: &Tally, known_hung: usize) {
+/// What a level's hunt is known to find: swaps no reachable spot fits
+/// (`Stuck`, left where they came in: AS.264), set-downs this file's walk
+/// doesn't reach (none: the lane's search made 3, 24, 10 and 4 on chapter
+/// 1, 214, the hub and 201), swaps read clear that the stand after leans
+/// into something (AS.265), and swaps whose set-down leaves him clear but
+/// who hang once the stick is held (AS.259: 214's eight, the same on the
+/// lane's set-down).
+struct Known {
+    stuck: usize,
+    unwalked: usize,
+    leaned: usize,
+    hung: usize,
+}
+
+fn check(t: &Tally, known: Known) {
     assert!(t.inside.is_empty(), "left inside: {:#?}", t.inside);
-    assert_eq!(t.stuck, 0, "swaps no spot fit");
     assert!(
-        t.hung.len() <= known_hung,
-        "hung: {} of {known_hung} known: {:#?}",
+        t.stuck <= known.stuck,
+        "stuck: {} of {} known: {:#?}",
+        t.stuck,
+        known.stuck,
+        t.stuck_at
+    );
+    assert!(
+        t.unwalked.len() <= known.unwalked,
+        "set where no walk reaches: {} of {} known: {:#?}",
+        t.unwalked.len(),
+        known.unwalked,
+        t.unwalked
+    );
+    assert!(
+        t.leaned.len() <= known.leaned,
+        "leaned in after a clear: {} of {} known: {:#?}",
+        t.leaned.len(),
+        known.leaned,
+        t.leaned
+    );
+    assert!(
+        t.hung.len() <= known.hung,
+        "hung: {} of {} known: {:#?}",
         t.hung.len(),
+        known.hung,
         t.hung
     );
 }
@@ -257,16 +316,17 @@ fn hunt(level: &str) -> Tally {
     let mut run = joined(level);
     let small = *run.hero().solid();
     let start = run.hero().pivot;
-    let reached: std::collections::HashSet<(i32, i32, i32)> = flood(&run, start, cap)
-        .iter()
-        .map(|p| {
-            (
-                p.x.floor() as i32,
-                (p.y / 1.5).floor() as i32,
-                p.z.floor() as i32,
-            )
-        })
-        .collect();
+    let reached: std::collections::HashSet<(i32, i32, i32)> =
+        flood(&run, start, cap, f32::MAX, &[HERO_BODY])
+            .iter()
+            .map(|p| {
+                (
+                    p.x.floor() as i32,
+                    (p.y / 1.5).floor() as i32,
+                    p.z.floor() as i32,
+                )
+            })
+            .collect();
     let all = layers(&run, every, &small);
     let stride = all.len().div_ceil(max).max(1);
     let samples: Vec<Vec3> = all.iter().copied().step_by(stride).collect();
@@ -278,25 +338,55 @@ fn hunt(level: &str) -> Tally {
     );
     let mut t = Tally::default();
     for (n, at) in samples.iter().enumerate() {
-        // The small hero stood here; the swap sets Tree Rex where he stood.
+        // The small hero stood here a step, the level's props standing and
+        // its placements awake round him as the TV's are when a kid swaps
+        // (AS.251's review: set down straight after the last sample's walk,
+        // the props by an earth area's rocks weren't standing, and the
+        // hunt's set-down parted from the TV's); the swap sets Tree Rex
+        // where he stands, facing as he faced, read where he comes in (no
+        // cast, as `play::enter`), and he stands there when it finds him in
+        // no wall.
         run.hero_mut().set_solid(small);
-        let mut hero = Hero::new(rex(), Tuning::ERUPTOR, *at + Vec3::Y * 0.005, 0.0);
-        hero.stand(&run.bench.world, &[HERO_BODY]);
+        let facing = (n as f32 * 47.0) % 360.0;
+        run.put(*at, facing);
+        pad(&mut run, Stick::new(0.0, 0.0));
+        run.step_play().unwrap();
+        let (from, facing) = (run.hero().pivot, run.hero().facing);
+        let mut hero = Hero::new(rex(), Tuning::ERUPTOR, from, facing);
         let clock = std::time::Instant::now();
         let out = hero.push_out(&run.bench.world, &[HERO_BODY]);
         t.worst_ms = t.worst_ms.max(clock.elapsed().as_millis());
         t.swaps += 1;
         match out {
-            PushOut::Clear => t.clear += 1,
+            PushOut::Clear => {
+                t.clear += 1;
+                hero.stand(&run.bench.world, &[HERO_BODY]);
+            }
             PushOut::Pushed(_) => t.pushed += 1,
             PushOut::Searched(by) => {
                 t.searched += 1;
                 if by.length() > 15.0 {
                     t.far
-                        .push(format!("{at} -> {} ({:.1} m)", hero.pivot, by.length()));
+                        .push(format!("{from} -> {} ({:.1} m)", hero.pivot, by.length()));
+                }
+                // A small hero's walk from where he stood, the creatures out
+                // of its way, reaches where the Giant was set.
+                let mut exclude: Vec<BodyId> = run.bench.bodies.values().copied().collect();
+                exclude.push(HERO_BODY);
+                let to = hero.pivot;
+                let walked = flood(&run, from, 20_000, 34.0, &exclude).iter().any(|p| {
+                    Vec3::new(p.x - to.x, 0.0, p.z - to.z).length() < 1.2
+                        && (p.y - to.y).abs() < 1.6
+                });
+                if !walked {
+                    t.unwalked
+                        .push(format!("{from} -> {to} ({:.1} m)", by.length()));
                 }
             }
-            PushOut::Stuck => t.stuck += 1,
+            PushOut::Stuck => {
+                t.stuck += 1;
+                t.stuck_at.push(format!("{from}"));
+            }
         }
         // The place he's left in.
         *run.hero_mut() = hero;
@@ -309,17 +399,29 @@ fn hunt(level: &str) -> Tally {
             ))
         });
         t.reachable += usize::from(near);
-        if inside < -0.02 {
-            t.reachable_bad += usize::from(near);
-            t.inside.push(format!("{at}: {out:?}, {inside:.3} m in"));
+        match out {
+            PushOut::Stuck => {}
+            // Read clear upright, then leaned on his ground by the stand
+            // `play::enter` gives a clear replacement (AS.265).
+            PushOut::Clear if inside < -0.02 => {
+                t.leaned.push(format!("{from}: {inside:.3} m in"));
+            }
+            _ if inside < -0.02 => {
+                t.reachable_bad += usize::from(near);
+                t.inside.push(format!("{at}: {out:?}, {inside:.3} m in"));
+            }
+            _ => {}
         }
         // Does he walk? The swaps the set-down moved, and one in eight of the rest.
         if matches!(out, PushOut::Clear) && n % 8 != 0 {
             continue;
         }
         t.walked += 1;
+        // He comes in over his place and drops onto it (AG.100), as the TV's.
+        run.hero_mut().pivot += Vec3::Y * guacamole::walkers::REPLACEMENT_DROP;
         let heading = (n as f32 * 47.0) % 360.0;
-        let (mut still, mut hung, mut last) = (0, 0, run.hero().pivot);
+        let start = run.hero().pivot;
+        let (mut still, mut hung, mut last) = (0, 0, start);
         for _ in 0..60 {
             let view = run.bench.view;
             pad(&mut run, stick_for(view, heading));
@@ -333,20 +435,25 @@ fn hunt(level: &str) -> Tally {
             hung = hung.max(still);
             last = h.pivot;
         }
-        if hung >= 30 {
+        if out == PushOut::Stuck {
+            t.stuck_walks += usize::from(last.distance(start) > 0.5);
+        } else if hung >= 30 {
             t.reachable_bad += usize::from(near);
             t.hung.push(format!("{at}: {out:?}, hung at {last}"));
         }
         pad(&mut run, Stick::new(0.0, 0.0));
     }
     println!(
-        "{level}: {} swaps: {} clear, {} pushed, {} searched ({} over 15 m), {} stuck; {} left inside, {} walked, {} hung; {} on the flood's cells ({} of them bad); set-down worst {} ms",
+        "{level}: {} swaps: {} clear ({} leaned in by the stand), {} pushed, {} searched ({} over 15 m, {} where no walk reaches), {} stuck ({} of them walking out); {} left inside, {} walked, {} hung; {} on the flood's cells ({} of them bad); set-down worst {} ms",
         t.swaps,
         t.clear,
+        t.leaned.len(),
         t.pushed,
         t.searched,
         t.far.len(),
+        t.unwalked.len(),
         t.stuck,
+        t.stuck_walks,
         t.inside.len(),
         t.walked,
         t.hung.len(),
@@ -354,7 +461,15 @@ fn hunt(level: &str) -> Tally {
         t.reachable_bad,
         t.worst_ms
     );
-    for line in t.inside.iter().chain(&t.hung).chain(&t.far) {
+    for line in t
+        .inside
+        .iter()
+        .chain(&t.stuck_at)
+        .chain(&t.unwalked)
+        .chain(&t.leaned)
+        .chain(&t.hung)
+        .chain(&t.far)
+    {
         println!("   {line}");
     }
     t
@@ -365,26 +480,58 @@ fn hunt(level: &str) -> Tally {
 #[ignore = "disc"]
 fn chapter_1() {
     let t = hunt(LEVEL_213);
-    check(&t, 0);
+    check(
+        &t,
+        Known {
+            stuck: 0,
+            unwalked: 0,
+            leaned: 3,
+            hung: 0,
+        },
+    );
 }
 
 #[test]
 #[ignore = "disc"]
 fn level_214() {
     let t = hunt(LEVEL_214);
-    check(&t, 5);
+    check(
+        &t,
+        Known {
+            stuck: 4,
+            unwalked: 0,
+            leaned: 5,
+            hung: 8,
+        },
+    );
 }
 
 #[test]
 #[ignore = "disc"]
 fn the_hub() {
     let t = hunt(HUB);
-    check(&t, 0);
+    check(
+        &t,
+        Known {
+            stuck: 9,
+            unwalked: 0,
+            leaned: 0,
+            hung: 0,
+        },
+    );
 }
 
 #[test]
 #[ignore = "disc"]
 fn level_201() {
     let t = hunt(LEVEL_201);
-    check(&t, 0);
+    check(
+        &t,
+        Known {
+            stuck: 1,
+            unwalked: 0,
+            leaned: 3,
+            hung: 0,
+        },
+    );
 }

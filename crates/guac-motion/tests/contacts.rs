@@ -362,8 +362,18 @@ fn a_giant_in_a_passage_too_narrow_is_set_where_he_fits() {
 }
 
 #[test]
-fn a_prop_in_the_passage_is_set_past_only_when_nothing_else_fits() {
-    on_parry(scenarios::a_prop_in_the_passage_is_set_past_only_when_nothing_else_fits());
+fn a_door_across_the_passage_is_never_passed() {
+    on_parry(scenarios::a_door_across_the_passage_is_never_passed());
+}
+
+#[test]
+fn a_barrier_he_cant_walk_under_is_never_passed() {
+    on_parry(scenarios::a_barrier_he_cant_walk_under_is_never_passed());
+}
+
+#[test]
+fn a_gap_past_the_passage_is_never_crossed() {
+    on_parry(scenarios::a_gap_past_the_passage_is_never_crossed());
 }
 
 #[test]

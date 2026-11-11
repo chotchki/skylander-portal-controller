@@ -12,3 +12,14 @@ A face leaning back past 72.5° off up that a hero touches (a railing, a cliff f
 #### Scenario: Ground beside a cliff face
 - **WHEN** a hero stands on walkable ground with a cliff face leaning back past 72.5° touching him
 - **THEN** the ground holds him, as the original's held him on 14 of the 16 such moments in its recorded falls by the ledge route's cliff
+
+### Requirement: A hero too big for his place comes in where a walk reaches
+A hero coming in where the last stood who doesn't fit there SHALL be set at the nearest place within 30 m where he fits and that a walk from there reaches, never past a gap, a ledge over a step or a closed door, gate or elemental wall; with none, he SHALL stay where he came in. Of 6,761 swaps of Tree Rex for a small hero over chapter 1, 214, the hub's first stage and 201, none SHALL set him where a walk from there doesn't reach.
+
+#### Scenario: A Giant swapped in behind a standing door
+- **WHEN** Eruptor stands in chapter 1's fairy alcove behind its breakable door, the door standing, and Tree Rex is placed in his stead
+- **THEN** Tree Rex comes in where Eruptor stood, on the alcove's side of the door
+
+#### Scenario: A Giant swapped in where he fits a few metres on
+- **WHEN** Eruptor stands between the pots and barrels at chapter 1's far end, where Tree Rex fits nowhere within 10 ft, and Tree Rex is placed in his stead
+- **THEN** Tree Rex comes in 8 m along on the same ground and walks off with the stick on every heading
