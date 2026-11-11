@@ -244,51 +244,6 @@ fn only_a_listed_script_wakes_anew_when_the_embedder_lists() {
     }
 }
 
-/// openspec AS.246: an embedder that names the scripts it keeps out of the
-/// rule (`AnewOnWake::Except`, the TV's stand-in) has those sleepers' declared
-/// locals kept across a sleep and every other one's made anew.
-#[test]
-fn only_a_named_script_keeps_its_locals_when_the_embedder_excepts_it() {
-    let build = || {
-        program(|w| {
-            let ticks = var(w, "ticks");
-            let info = idle(
-                w,
-                |_| {},
-                |w| {
-                    w.inc(&[El::Local(ticks)]);
-                },
-            );
-            w.declare(info, &[ticks]);
-        })
-    };
-    for (excepted, after) in [(true, 5), (false, 1)] {
-        let p = build();
-        let name = p.scripts[0].name.clone();
-        let mut config = Config::new(Mode::Strict);
-        config.anew_on_wake = AnewOnWake::Except(match excepted {
-            true => vec![name],
-            false => vec!["/Other.ai".to_owned()],
-        });
-        let mut vm = Vm::new(p, config);
-        let id = vm.add(HANDLE, "Box", 0);
-        let mut host = Engine::default();
-        for _ in 0..3 {
-            vm.step(&mut host).unwrap();
-        }
-        vm.set_asleep(HANDLE, true);
-        vm.step(&mut host).unwrap();
-        vm.step(&mut host).unwrap();
-        vm.set_asleep(HANDLE, false);
-        vm.step(&mut host).unwrap();
-        assert_eq!(
-            vm.local(id, "ticks"),
-            Some(Value::Int(after)),
-            "excepted {excepted}"
-        );
-    }
-}
-
 /// openspec AS.233: a sleeper's shutdown lets go of the locals its script
 /// declares alone. Its tags and a variable another script made on it stay,
 /// as the original keeps those on the placement itself: level 207's magic

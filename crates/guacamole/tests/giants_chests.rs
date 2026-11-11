@@ -1341,8 +1341,8 @@ fn a_hat_box_woken_again_picks_the_giant_swapped_in_after() {
 /// take doesn't wait on that pick. Awake 25 s with Tree Rex 3 m off its
 /// start, left until it sleeps, woken, his figure lifted and put back in
 /// through the TV's join: walked onto its start, he is carried to its end
-/// within 4 s (65 steps), its locals made anew across the sleep as the TV
-/// makes any script's but `scripts::KEPT_ON_WAKE`'s (65 steps kept, too).
+/// within 4 s (65 steps), its locals kept across the sleep as made anew, so
+/// it's off the TV's list (`scripts::ANEW_ON_WAKE`).
 #[test]
 #[ignore = "reads the Giants dump"]
 fn a_teleporter_woken_again_takes_the_giant_swapped_in_after() {

@@ -2627,25 +2627,27 @@ pub const EVERY_TICK: [&str; 8] = [
     "_EnemySystem_Functions.ai",
 ];
 
-/// The scripts whose sleepers keep the locals they declare across a sleep on
-/// the TV, a stand-in on the rule the VM makes every sleeper's declared
-/// locals anew by (openspec AS.233, AS.246; stand-in ledger: `wake-locals`):
-/// level 201's vine bridges' activator (`Bridge_Activator.ai`) and the hub's Persephone. Its range is
-/// 300 ft with a buffer of 62, so a hero who goes some 110 m off the first
-/// bridge's end and comes back wakes it again, and made anew it starts at
-/// `0 - wait` where it stood at `4 - monitor bridge growth`, the bridge
-/// he crossed no longer carrying him back (`giants_level_201`'s Giant out
-/// over the first bridge stops at the platform's near end). What the original's
-/// activator keeps a grown bridge by is unread (AS.254). And the hub's
-/// Persephone (`Persephone.ai`, in her room, an interior): made anew her talk
-/// never starts (`giants_hub`'s `every_hub_stages_people_stand_talk_and_stop_the_hero`
-/// on level_hub_2_stage_2: no cutscene), unread why (AS.255).
-pub const KEPT_ON_WAKE: [&str; 2] = ["/Bridge_Activator.ai", "/Persephone.ai"];
+/// The scripts whose sleepers wake with their declared locals made anew on
+/// the TV (openspec AS.224, AS.233; stand-in ledger: `wake-locals`): the hat
+/// box, which picks its player from `Minions` by a deadline held in a local
+/// (`player ref timer`: `system.script timer` plus a quarter second). The
+/// original makes every sleeper's anew (AS.233); kept, that deadline sat
+/// ahead of the woken clock for as many seconds as the box had run, and the
+/// player it named stayed whoever it had named, so the Mac's hat box ignored
+/// the Giant swapped in at the wall for 26 s. The teleporter's take doesn't
+/// wait on its own such pick (`giants_chests`: 65 steps on the list or off
+/// it). Every script on the rule is AS.246's, held back by two gaps of the
+/// TV's that the rule exposes and kept locals hide: a sleeper filing its
+/// state in a level set under its name checksum (the vine-bridge
+/// activators, the locked doors, the push blocks' switches) never finds it
+/// again, the checksum never reading as its name's here, so each wake files
+/// a new state of 0 (AS.268); and the hub's Persephone, woken anew, replays
+/// her first fly-in, which on one side never lands (AS.269).
+pub const ANEW_ON_WAKE: [&str; 1] = ["/Hat_Pickup.ai"];
 
-/// [`KEPT_ON_WAKE`] as the VM takes it: every other sleeper's declared locals
-/// made anew.
+/// [`ANEW_ON_WAKE`] as the VM takes it.
 fn anew_on_wake() -> AnewOnWake {
-    AnewOnWake::Except(KEPT_ON_WAKE.iter().map(|s| (*s).to_owned()).collect())
+    AnewOnWake::Listed(ANEW_ON_WAKE.iter().map(|s| (*s).to_owned()).collect())
 }
 
 /// The VM's config for AH.16's run: the init chain's members and listing,
@@ -8736,9 +8738,8 @@ mod tests {
         let handles = headless_handles(&files);
         let mut c = Config::new(Mode::Strict);
         c.whitelist = Whitelist::All;
-        // The order test reads a sleeper's `seen` across its sleeps, which
-        // the TV's wake rule (AS.233, AS.246) would let go: no script held to it.
-        c.anew_on_wake = guac_script::AnewOnWake::Listed(Vec::new());
+        // The TV's wake rule (AS.233), so a sleeper's `seen` reads on.
+        c.anew_on_wake = anew_on_wake();
         let vm = init_chain(program, &files, &handles, &[0], c);
         let world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
         (files, handles, vm, world)

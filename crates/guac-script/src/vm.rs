@@ -98,9 +98,6 @@ pub enum AnewOnWake {
     /// sleeper keeps its locals: an embedder's stand-in while something of
     /// its own leans on kept ones.
     Listed(Vec<String>),
-    /// Every script's but the ones named, by the end of their name, which
-    /// keep theirs: the same stand-in, narrowed to what leans on them.
-    Except(Vec<String>),
 }
 
 impl AnewOnWake {
@@ -109,7 +106,6 @@ impl AnewOnWake {
         match self {
             AnewOnWake::Every => true,
             AnewOnWake::Listed(names) => names.iter().any(|n| script.ends_with(n.as_str())),
-            AnewOnWake::Except(names) => !names.iter().any(|n| script.ends_with(n.as_str())),
         }
     }
 }

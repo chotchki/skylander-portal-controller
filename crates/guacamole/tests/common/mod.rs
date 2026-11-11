@@ -1096,6 +1096,22 @@ pub struct Setup {
     /// (`scripts::with_walkers`), his figure's toy on the portal. His body
     /// in the seam stays Eruptor's controller's.
     pub character: Option<Character>,
+    /// The wake rule in the TV's place (openspec AS.246: a probe's way to
+    /// run a level on the original's).
+    pub wake: Wake,
+}
+
+/// Which sleepers a run wakes with their declared locals made anew
+/// ([`Setup::wake`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Wake {
+    /// The TV's (`scripts::ANEW_ON_WAKE`).
+    #[default]
+    Tv,
+    /// The original's: every sleeper's (`AnewOnWake::Every`).
+    Every,
+    /// None's: every sleeper keeps them.
+    Kept,
 }
 
 /// A character a run joins in Eruptor's place ([`Setup::character`]).
@@ -1344,6 +1360,11 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     });
     if let Some(w) = &walker {
         config = scripts::with_walkers(config, std::slice::from_ref(w));
+    }
+    match setup.wake {
+        Wake::Tv => {}
+        Wake::Every => config.anew_on_wake = guac_script::AnewOnWake::Every,
+        Wake::Kept => config.anew_on_wake = guac_script::AnewOnWake::Listed(Vec::new()),
     }
     let found = discovery(&mut config);
     let mut vm = scripts::init_chain(program, &files, &handles, &ORDER, config);
