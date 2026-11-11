@@ -2636,8 +2636,13 @@ pub const EVERY_TICK: [&str; 8] = [
 /// player it named stayed whoever it had named, so the Mac's hat box ignored
 /// the Giant swapped in at the wall for 26 s. The teleporter's take doesn't
 /// wait on its own such pick (`giants_chests`: 65 steps on the list or off
-/// it). Every script on the rule is AS.246's: on it the Mac story stopped on
-/// level 214's first island twice.
+/// it). Every script on the rule is AS.246's, held back by two gaps of the
+/// TV's that the rule exposes and kept locals hide: a sleeper filing its
+/// state in a level set under its name checksum (the vine-bridge
+/// activators, the locked doors, the push blocks' switches) never finds it
+/// again, the checksum never reading as its name's here, so each wake files
+/// a new state of 0 (AS.268); and the hub's Persephone, woken anew, replays
+/// her first fly-in, which on one side never lands (AS.269).
 pub const ANEW_ON_WAKE: [&str; 1] = ["/Hat_Pickup.ai"];
 
 /// [`ANEW_ON_WAKE`] as the VM takes it.
