@@ -19,7 +19,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
 
 use guac_motion::stick::Stick;
-use guac_script::{Handle, Mode};
+use guac_script::{Handle, Mode, Value};
 use guacamole::script_engine::Pad;
 
 mod common;
@@ -951,6 +951,13 @@ fn fresh_as(character: Option<Character>) -> Walker {
         props: true,
         sounds: true,
         character,
+        // GUAC_TEST_WAKE=every runs the suite on the original's wake rule
+        // (openspec AS.246, AS.268).
+        wake: match std::env::var("GUAC_TEST_WAKE").as_deref() {
+            Ok("every") => Wake::Every,
+            Ok("kept") => Wake::Kept,
+            _ => Wake::Tv,
+        },
         ..Setup::default()
     };
     let (run, _) = run_on_level(Mode::Play, LEVEL_201, setup);
@@ -2762,4 +2769,33 @@ fn past_the_ambush(character: Option<Character>) -> Walker {
         "over the second bridge"
     );
     w
+}
+
+/// openspec AS.268: a placement's name checksum reads as the FNV-1a of its
+/// name through `[system.object namer]`. Each vine-bridge activator files
+/// its checksum in `Bridge_Checksums` at its first frame, so the four read
+/// their names' hashes, all distinct and none 0 (they read 0 when the
+/// namer's cell held nothing and the VM took the path for one through
+/// nothing).
+#[test]
+#[ignore = "reads the Giants dump"]
+fn each_bridge_activator_files_its_names_checksum() {
+    let mut w = fresh();
+    w.rest(60);
+    let mut seen = Vec::new();
+    for n in 1..=4 {
+        let name = format!("Activator_Template({n})");
+        let id = w.run.placement(&name);
+        let filed = w
+            .run
+            .vm
+            .local(id, "bridge checksum")
+            .map(|v| w.run.vm.value(v));
+        let want = guac_formats::fnv1a32(name.as_bytes()) as i32;
+        assert_eq!(filed, Some(Value::Int(want)), "{name}");
+        seen.push(want);
+    }
+    seen.sort_unstable();
+    seen.dedup();
+    assert_eq!(seen.len(), 4);
 }

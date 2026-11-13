@@ -3627,6 +3627,22 @@ pub const VIEWPORT_INTERFACE: &[Registered] = &[m(
     Interface,
 )];
 
+/// The global name extractor `system.object namer` names (AS.268), the
+/// interface's beside [`INTERFACE`] on a run whose host holds the model: a
+/// script tells it `nameextractor.object to name` and reads
+/// `nameextractor.name checksum`. As a cell it read nothing, which the VM
+/// takes for a path through nothing, so every write dropped and every
+/// checksum read 0.
+pub const NAMER_INTERFACE: &[Registered] = &[m(
+    "system",
+    "object namer",
+    "NameExtractor",
+    "",
+    0.0,
+    0.0,
+    Interface,
+)];
+
 /// `system.game language`'s and `console language`'s labels: English is 6.
 pub const LANGUAGES: &str = "Arabic|Bulgarian|Chinese|Czech|Danish|Dutch|English|Finnish|French|German|Greek|Hebrew|Hindi|Hungarian|Italian|Japanese|Korean|Norwegian|Polish|Portuguese|Russian|Spanish|Swedish";
 
@@ -3946,7 +3962,18 @@ mod tests {
         register(&mut members, INIT_CHAIN);
         register(&mut members, INTERFACE);
         register(&mut members, VIEWPORT_INTERFACE);
-        for r in INTERFACE.iter().chain(VIEWPORT_INTERFACE) {
+        register(&mut members, NAMER_INTERFACE);
+        let namer = NAMER_INTERFACE[0];
+        let cell = find(INIT_CHAIN, namer.namespace, namer.name).unwrap();
+        assert_eq!(
+            (cell.class, cell.units, cell.min, cell.max, cell.keeper),
+            (namer.class, namer.units, namer.min, namer.max, Keeper::Cell)
+        );
+        for r in INTERFACE
+            .iter()
+            .chain(VIEWPORT_INTERFACE)
+            .chain(NAMER_INTERFACE)
+        {
             let (spec, place) = members.get(MemberId::named(r.namespace, r.name)).unwrap();
             assert_eq!(place, Place::Host, "{}", r.path());
             assert_eq!(spec.kind, r.kind(), "{}", r.path());
