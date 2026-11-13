@@ -1247,7 +1247,8 @@ impl ScriptWorld {
     }
 
     /// A placement woken with its locals made anew starts as its file has
-    /// it (openspec AS.269): its place and turns put back, the pose a
+    /// it (openspec AS.269, stand-in ledger: `made-anew`): its place and
+    /// turns put back, the pose a
     /// first-time STARTUP reads (Persephone's fly-in sets her down about her
     /// landing by her facing, which her first landing leaves a few degrees
     /// off the file's). A hung or taken-off actor, a clone and what the
@@ -2661,7 +2662,7 @@ pub const EVERY_TICK: [&str; 8] = [
 /// The wake rule (openspec AS.224, AS.233, AS.246): every sleeper wakes with
 /// the locals its script declares made anew, as the original's do. A
 /// `test-hooks` build reads `GUAC_TEST_WAKE_RULE=listed` for the earlier
-/// stand-in, the hat box alone (`/Hat_Pickup.ai`), so a story run can be
+/// list, the hat box alone (`/Hat_Pickup.ai`), so a story run can be
 /// played on both rules by one binary.
 fn anew_on_wake() -> AnewOnWake {
     #[cfg(feature = "test-hooks")]

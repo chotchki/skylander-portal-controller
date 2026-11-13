@@ -981,7 +981,8 @@ impl Model {
                     return int(0);
                 }
                 // An object the world can't name (an attach node, a number)
-                // is a path through nothing, as before AS.268: reading 0
+                // is a path through nothing, as before AS.268 (stand-in
+                // ledger: `name-extractor`): reading 0
                 // would match every unset save field a script compares it
                 // against.
                 let name = world.name_of(self.name_object).ok_or(Refusal::Nothing)?;
