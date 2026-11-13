@@ -1208,7 +1208,7 @@ fn a_save_past_level_201_reaches_the_hubs_definition() {
 /// leaves her a few degrees off her file's facing (177 against 180), and
 /// from there her circle about its pivot passes 1.2 m inside her landing,
 /// where the 3 degree check toward it never passes. A placement made anew
-/// starts as its file has it (`ScriptWorld::made_anew`), so every flight
+/// takes its file's turns (`ScriptWorld::made_anew`), so every flight
 /// lands, from the pivot on either side (the draw takes each over ten
 /// wakes).
 #[test]

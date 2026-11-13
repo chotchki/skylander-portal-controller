@@ -441,7 +441,7 @@ pub trait Host {
 
     /// A placement woken with its declared locals made anew (the wake rule,
     /// openspec AS.233): it starts again from STARTUP at its next tick, so
-    /// the embedder puts what the placement's file holds back under it
+    /// the embedder gives it its file's turns where it stands
     /// (openspec AS.269). Called before anything of the placement runs.
     /// The default does nothing.
     fn made_anew(&mut self, handle: Handle) {

@@ -150,7 +150,7 @@
 //! ([`Config::anew_on_wake`]), every other sleeper keeping its locals, as
 //! the TV did while something of its own leaned on kept ones. A placement woken with
 //! its locals made anew is told to the host first ([`Host::made_anew`], before it
-//! ticks, once per wake), which puts back under it what its file holds (openspec
+//! ticks, once per wake), which gives it its file's turns where it stands (openspec
 //! AS.269). The recordings settle it: the oracle's census
 //! has the first combat watcher, whose own write of an activation range of
 //! 0 takes it to sleep, started and `Watching` at one read and neither 90

@@ -743,11 +743,13 @@ mod tests {
         );
     }
 
-    /// openspec AS.269: a placement told it is woken anew stands as its file
-    /// has it (place and turns); a hung one, a taken-off one and a clone
-    /// stay as they are.
+    /// openspec AS.269: a placement told it is woken anew takes its file's
+    /// turns where it stands, its place left where it slept (the
+    /// au-name-checksum review: put back too, a pushed block stood at its
+    /// file's place two steps before its STARTUP took it back); a hung one,
+    /// a taken-off one and a clone stay as they are.
     #[test]
-    fn a_placement_made_anew_stands_as_its_file_has_it() {
+    fn a_placement_made_anew_takes_its_files_turns_where_it_stands() {
         let (mut w, grunt) = world(false);
         let file = w.template(GRUNT).unwrap().clone();
         let moved = |w: &mut ScriptWorld| {
@@ -757,9 +759,10 @@ mod tests {
             a.angles.roll = 5.0;
         };
         moved(&mut w);
+        assert_ne!([9.0, 8.0, 7.0], file.position);
         w.made_anew(grunt);
         let a = w.actor(grunt).unwrap();
-        assert_eq!(a.position.to_array(), file.position);
+        assert_eq!(a.position.to_array(), [9.0, 8.0, 7.0], "where it slept");
         assert_eq!(
             [a.angles.tilt, a.angles.facing, a.angles.roll],
             file.rotation

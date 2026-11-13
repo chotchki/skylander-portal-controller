@@ -1246,13 +1246,17 @@ impl ScriptWorld {
         out
     }
 
-    /// A placement woken with its locals made anew starts as its file has
-    /// it (openspec AS.269, stand-in ledger: `made-anew`): its place and
-    /// turns put back, the pose a
-    /// first-time STARTUP reads (Persephone's fly-in sets her down about her
+    /// A placement woken with its locals made anew starts with its file's
+    /// turns (openspec AS.269, stand-in ledger: `made-anew`), the ones a
+    /// first-time STARTUP reads: Persephone's fly-in sets her down about her
     /// landing by her facing, which her first landing leaves a few degrees
-    /// off the file's). A hung or taken-off actor, a clone and what the
-    /// file doesn't hold stay as they are.
+    /// off the file's; the locked door takes its facing for its shut one,
+    /// the teleporter, push block and chest a tilt or roll they zero after.
+    /// Its place stays where it slept: no script reads its own place that
+    /// way (they read `abstractplacement.origin`), and put back, a pushed
+    /// block stood at its file's place two steps before its STARTUP took it
+    /// back to where it was pushed (the au-name-checksum review). A hung or
+    /// taken-off actor and a clone stay as they are.
     pub fn made_anew(&mut self, h: Handle) {
         let Some(a) = self.actors.get_mut(&h) else {
             return;
@@ -1263,7 +1267,6 @@ impl ScriptWorld {
         if a.removed || a.attach != Value::Null {
             return;
         }
-        a.position = Vec3::from_array(p.position);
         a.angles = Angles {
             tilt: p.rotation[0],
             facing: p.rotation[1],
