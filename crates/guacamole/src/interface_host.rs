@@ -680,10 +680,16 @@ mod tests {
             .unwrap();
         assert_eq!(
             namer,
-            w.interface().unwrap().model().singleton(guac_interface::model::singleton::NAME_EXTRACTOR)
+            w.interface()
+                .unwrap()
+                .model()
+                .singleton(guac_interface::model::singleton::NAME_EXTRACTOR)
         );
         let checksum = |w: &mut ScriptWorld| {
-            w.get(&at(Some(namer), "nameextractor", "name checksum"), &mut NoEngine)
+            w.get(
+                &at(Some(namer), "nameextractor", "name checksum"),
+                &mut NoEngine,
+            )
         };
         assert_eq!(checksum(&mut w), Ok(Value::Int(0)), "nothing told");
         w.set(
@@ -711,7 +717,11 @@ mod tests {
         .unwrap();
         assert_eq!(checksum(&mut w), Err(HostFault::Nothing), "an unnamed one");
         // A clone of the placement's template is named by it.
-        let clone = match w.op(&spawn_call(Value::Object(GRUNT)), &mut |_| 0x200, &mut NoEngine) {
+        let clone = match w.op(
+            &spawn_call(Value::Object(GRUNT)),
+            &mut |_| 0x200,
+            &mut NoEngine,
+        ) {
             Ok(Answer::Run {
                 result: Some(c), ..
             }) => c,
@@ -731,6 +741,54 @@ mod tests {
             bare.get(&at(None, "system", "object namer"), &mut NoEngine),
             Err(HostFault::Unmodelled)
         );
+    }
+
+    /// openspec AS.269: a placement told it is woken anew stands as its file
+    /// has it (place and turns); a hung one, a taken-off one and a clone
+    /// stay as they are.
+    #[test]
+    fn a_placement_made_anew_stands_as_its_file_has_it() {
+        let (mut w, grunt) = world(false);
+        let file = w.template(GRUNT).unwrap().clone();
+        let moved = |w: &mut ScriptWorld| {
+            let a = w.actors.get_mut(&grunt).unwrap();
+            a.position = bevy::math::Vec3::new(9.0, 8.0, 7.0);
+            a.angles.facing = 177.0;
+            a.angles.roll = 5.0;
+        };
+        moved(&mut w);
+        w.made_anew(grunt);
+        let a = w.actor(grunt).unwrap();
+        assert_eq!(a.position.to_array(), file.position);
+        assert_eq!(
+            [a.angles.tilt, a.angles.facing, a.angles.roll],
+            file.rotation
+        );
+        // Hung on a node: where the node carries it.
+        moved(&mut w);
+        w.actors.get_mut(&grunt).unwrap().attach = Value::Entity(0x99);
+        w.made_anew(grunt);
+        assert_eq!(w.actor(grunt).unwrap().angles.facing, 177.0);
+        // Taken off.
+        w.actors.get_mut(&grunt).unwrap().attach = Value::Null;
+        w.actors.get_mut(&grunt).unwrap().removed = true;
+        w.made_anew(grunt);
+        assert_eq!(w.actor(grunt).unwrap().angles.facing, 177.0);
+        // A clone: no file placement of its own.
+        let clone = match w.op(
+            &spawn_call(Value::Object(GRUNT)),
+            &mut |_| 0x200,
+            &mut NoEngine,
+        ) {
+            Ok(Answer::Run {
+                result: Some(Value::Entity(c)),
+                ..
+            }) => c,
+            other => panic!("{other:?}"),
+        };
+        w.actors.get_mut(&clone).unwrap().angles.facing = 33.0;
+        w.made_anew(clone);
+        assert_eq!(w.actor(clone).unwrap().angles.facing, 33.0);
     }
 
     /// Without a model the host is as before AT.9: a sprite template's clone

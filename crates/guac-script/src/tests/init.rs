@@ -146,11 +146,17 @@ pub(super) struct Engine {
     /// What each read of a set reference it copies finds changed, in turn.
     refs: std::collections::VecDeque<Option<Vec<Value>>>,
     resets: usize,
+    /// Each placement the VM told it was woken with its locals made anew
+    /// (openspec AS.269).
+    pub(super) anew: Vec<Handle>,
     /// What each static member's read was told it's read under.
     told: Vec<Value>,
 }
 
 impl Host for Engine {
+    fn made_anew(&mut self, handle: Handle) {
+        self.anew.push(handle);
+    }
     fn get(&mut self, at: &Access) -> Result<Value, HostFault> {
         Ok(*self
             .cells

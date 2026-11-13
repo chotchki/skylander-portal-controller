@@ -504,9 +504,9 @@ impl Keeper {
                 Ok(self.model.singleton(crate::model::singleton::TITLE_SAFE))
             }
             // The system's, not a sprite's: the one extractor.
-            (Some(Own::NameExtractor), _) => {
-                Ok(self.model.singleton(crate::model::singleton::NAME_EXTRACTOR))
-            }
+            (Some(Own::NameExtractor), _) => Ok(self
+                .model
+                .singleton(crate::model::singleton::NAME_EXTRACTOR)),
             _ => Err(self.not_known(at.member)),
         }
     }

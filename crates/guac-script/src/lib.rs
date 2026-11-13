@@ -148,7 +148,10 @@
 //! slept: it ticks on started, its timer and locals kept. That's every
 //! script's, by default; an embedder can name the scripts it holds to it
 //! ([`Config::anew_on_wake`]), every other sleeper keeping its locals, as
-//! the TV does while something of its own leans on kept ones. The recordings settle it: the oracle's census
+//! the TV did while something of its own leaned on kept ones. A placement woken with
+//! its locals made anew is told to the host first ([`Host::made_anew`], before it
+//! ticks, once per wake), which puts back under it what its file holds (openspec
+//! AS.269). The recordings settle it: the oracle's census
 //! has the first combat watcher, whose own write of an activation range of
 //! 0 takes it to sleep, started and `Watching` at one read and neither 90
 //! flips on, its SHUTDOWN's stinger the music by the read after (AR.16); in

@@ -2806,7 +2806,10 @@ fn each_bridge_activator_files_its_names_checksum() {
     seen.dedup();
     assert_eq!(seen.len(), n, "each its own");
     assert!(n >= 1, "one at least is awake");
-    if matches!(std::env::var("GUAC_TEST_WAKE").as_deref(), Ok("listed" | "kept")) {
+    if matches!(
+        std::env::var("GUAC_TEST_WAKE").as_deref(),
+        Ok("listed" | "kept")
+    ) {
         assert_eq!(n, 4, "all four filed at the level's start");
     }
 }
@@ -2877,10 +2880,18 @@ fn a_woken_grown_bridges_activator_sets_its_finished_platform_with_no_growth() {
             seen.push(b);
         }
     }
-    println!("the woken activator's behaviours: {seen:?}, platforms {}", standing(&w));
-    assert!(set_final.is_some(), "it sets the finished platform: {seen:?}");
+    println!(
+        "the woken activator's behaviours: {seen:?}, platforms {}",
+        standing(&w)
+    );
     assert!(
-        !seen.iter().any(|b| b.starts_with('1') && !b.starts_with("01") || b.starts_with('3')),
+        set_final.is_some(),
+        "it sets the finished platform: {seen:?}"
+    );
+    assert!(
+        !seen
+            .iter()
+            .any(|b| b.starts_with('1') && !b.starts_with("01") || b.starts_with('3')),
         "no growth again: {seen:?}"
     );
     assert_eq!(standing(&w), 1, "one finished platform stands: {seen:?}");

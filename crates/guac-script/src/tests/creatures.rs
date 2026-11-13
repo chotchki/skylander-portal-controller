@@ -244,6 +244,61 @@ fn only_a_listed_script_wakes_anew_when_the_embedder_lists() {
     }
 }
 
+/// openspec AS.269: a placement woken with its declared locals made anew is
+/// told to the host before it ticks, once per wake, so the embedder can put
+/// what its file holds back under it; one that keeps its locals, one woken
+/// before its sleep's shutdown ran and one that never started aren't.
+#[test]
+fn the_host_is_told_of_a_placement_woken_anew_once_before_it_ticks() {
+    let build = || {
+        program(|w| {
+            let ticks = var(w, "ticks");
+            let info = idle(
+                w,
+                |_| {},
+                |w| {
+                    w.inc(&[El::Local(ticks)]);
+                },
+            );
+            w.declare(info, &[ticks]);
+        })
+    };
+    for (rule, told) in [
+        (AnewOnWake::Every, true),
+        (AnewOnWake::Listed(vec!["/Other.ai".to_owned()]), false),
+    ] {
+        let mut config = Config::new(Mode::Strict);
+        config.anew_on_wake = rule;
+        let mut vm = Vm::new(build(), config);
+        vm.add(HANDLE, "Box", 0);
+        let mut host = Engine::default();
+        for _ in 0..3 {
+            vm.step(&mut host).unwrap();
+        }
+        // Woken before its shutdown ran: it never slept.
+        vm.set_asleep(HANDLE, true);
+        vm.set_asleep(HANDLE, false);
+        vm.step(&mut host).unwrap();
+        assert!(host.anew.is_empty(), "never slept");
+        // Slept through its shutdown, then woken between two steps.
+        vm.set_asleep(HANDLE, true);
+        vm.step(&mut host).unwrap();
+        vm.step(&mut host).unwrap();
+        assert!(host.anew.is_empty(), "asleep");
+        vm.set_asleep(HANDLE, false);
+        assert!(host.anew.is_empty(), "told as the next step begins");
+        vm.step(&mut host).unwrap();
+        assert_eq!(host.anew, if told { vec![HANDLE] } else { vec![] });
+        vm.step(&mut host).unwrap();
+        assert_eq!(host.anew.len(), usize::from(told), "once");
+        // A later wake before any shutdown ran lets go of nothing.
+        vm.set_asleep(HANDLE, true);
+        vm.set_asleep(HANDLE, false);
+        vm.step(&mut host).unwrap();
+        assert_eq!(host.anew.len(), usize::from(told), "not again");
+    }
+}
+
 /// openspec AS.233: a sleeper's shutdown lets go of the locals its script
 /// declares alone. Its tags and a variable another script made on it stay,
 /// as the original keeps those on the placement itself: level 207's magic
