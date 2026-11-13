@@ -220,8 +220,8 @@ pub const INTRO_PATH: &str = "p1 WP's";
 /// The places a story level's intro sets its cast down at as it ends or is
 /// skipped (level 205's `205_Intro_Player_Pos_WP`, openspec AS.282), by the
 /// placement's name's ending: one waypoint each, Cali's, Flynn's, then the
-/// players', the first player's at [`INTRO_P1_PLACE`]. No other level on
-/// the disc holds one.
+/// players', the first player's at [`INTRO_P1_PLACE`]. No other level AS.282's scan of
+/// the dump's levels read holds one.
 pub const INTRO_CAST_PLACES: &str = "_Intro_Player_Pos_WP";
 
 /// The first player's waypoint on [`INTRO_CAST_PLACES`] (openspec AS.282:
