@@ -8763,13 +8763,23 @@ mod tests {
         let handles = headless_handles(&files);
         let mut c = Config::new(Mode::Strict);
         c.whitelist = Whitelist::All;
-        // The TV's wake rule (AS.233), so a sleeper's `seen` reads on.
-        // The counters it reads the order off are locals the scripts keep
-        // across a sleep here: the wake rule (AS.233) isn't what it tests.
+        // Every sleeper keeps its locals here: the counters the order is read
+        // off (`seen`) are locals, and the wake rule (AS.233) isn't what this
+        // tests.
         c.anew_on_wake = AnewOnWake::Listed(Vec::new());
         let vm = init_chain(program, &files, &handles, &[0], c);
         let world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
         (files, handles, vm, world)
+    }
+
+    /// openspec AS.246: the TV holds every sleeper to the original's wake
+    /// rule (AS.233), not the hat box's list it held before: the level's run
+    /// and the hero's both let go of every script's declared locals at a
+    /// sleep.
+    #[test]
+    fn the_tvs_wake_rule_makes_every_scripts_locals_anew() {
+        assert_eq!(config(Mode::Play).anew_on_wake, AnewOnWake::Every);
+        assert_eq!(hero_config(Mode::Play).anew_on_wake, AnewOnWake::Every);
     }
 
     /// One step from where the activity rule is measured (metres).

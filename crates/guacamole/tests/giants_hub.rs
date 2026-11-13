@@ -1264,6 +1264,7 @@ fn a_persephone_woken_anew_lands_from_either_side() {
                 break;
             }
         }
+        println!("wake {cycle}: flies in at step {flew:?}, lands at {landed:?}");
         assert!(flew.is_some(), "wake {cycle}: she flies in again");
         assert!(landed.is_some(), "wake {cycle}: she lands");
     }
