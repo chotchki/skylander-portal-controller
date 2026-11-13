@@ -3964,7 +3964,12 @@ mod tests {
         register(&mut members, VIEWPORT_INTERFACE);
         register(&mut members, NAMER_INTERFACE);
         let namer = NAMER_INTERFACE[0];
-        let cell = find(INIT_CHAIN, namer.namespace, namer.name).unwrap();
+        let cell = [
+            INIT_CHAIN, HERO, CREATURES, COMBAT, LOOP, FIGURE, CAMERA, WALKERS, ROUTE,
+        ]
+        .iter()
+        .find_map(|t| find(t, namer.namespace, namer.name))
+        .expect("an earlier table's cell");
         assert_eq!(
             (cell.class, cell.units, cell.min, cell.max, cell.keeper),
             (namer.class, namer.units, namer.min, namer.max, Keeper::Cell)
