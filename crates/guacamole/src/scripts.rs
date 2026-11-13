@@ -2654,27 +2654,17 @@ pub const EVERY_TICK: [&str; 8] = [
     "_EnemySystem_Functions.ai",
 ];
 
-/// The scripts whose sleepers wake with their declared locals made anew on
-/// the TV (openspec AS.224, AS.233; stand-in ledger: `wake-locals`): the hat
-/// box, which picks its player from `Minions` by a deadline held in a local
-/// (`player ref timer`: `system.script timer` plus a quarter second). The
-/// original makes every sleeper's anew (AS.233); kept, that deadline sat
-/// ahead of the woken clock for as many seconds as the box had run, and the
-/// player it named stayed whoever it had named, so the Mac's hat box ignored
-/// the Giant swapped in at the wall for 26 s. The teleporter's take doesn't
-/// wait on its own such pick (`giants_chests`: 65 steps on the list or off
-/// it). Every script on the rule is AS.246's, held back by two gaps of the
-/// TV's that the rule exposes and kept locals hide: a sleeper filing its
-/// state in a level set under its name checksum (the vine-bridge
-/// activators, the locked doors, the push blocks' switches) never finds it
-/// again, the checksum never reading as its name's here, so each wake files
-/// a new state of 0 (AS.268); and the hub's Persephone, woken anew, replays
-/// her first fly-in, which on one side never lands (AS.269).
-pub const ANEW_ON_WAKE: [&str; 1] = ["/Hat_Pickup.ai"];
-
-/// [`ANEW_ON_WAKE`] as the VM takes it.
+/// The wake rule (openspec AS.224, AS.233, AS.246): every sleeper wakes with
+/// the locals its script declares made anew, as the original's do. A
+/// `test-hooks` build reads `GUAC_TEST_WAKE_RULE=listed` for the earlier
+/// stand-in, the hat box alone (`/Hat_Pickup.ai`), so a story run can be
+/// played on both rules by one binary.
 fn anew_on_wake() -> AnewOnWake {
-    AnewOnWake::Listed(ANEW_ON_WAKE.iter().map(|s| (*s).to_owned()).collect())
+    #[cfg(feature = "test-hooks")]
+    if std::env::var("GUAC_TEST_WAKE_RULE").as_deref() == Ok("listed") {
+        return AnewOnWake::Listed(vec!["/Hat_Pickup.ai".to_owned()]);
+    }
+    AnewOnWake::Every
 }
 
 /// The VM's config for AH.16's run: the init chain's members and listing,
