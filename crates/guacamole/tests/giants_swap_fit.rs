@@ -24,7 +24,7 @@ use std::collections::{HashMap, VecDeque};
 
 use guac_motion::ground;
 use guac_motion::hero::{Hero, PushOut, Trail};
-use guac_motion::seam::{BodyId, Quat, Shape, Vec3};
+use guac_motion::seam::{BodyId, PhysicsSeam, Quat, Shape, Vec3};
 use guac_motion::solid::HavokSolid;
 use guac_motion::stick::{DEAD_ZONE, Stick};
 use guac_motion::tuning::Tuning;
@@ -269,6 +269,36 @@ fn deepest(run: &Run) -> f32 {
         .min(0.0)
 }
 
+/// How far he's in the level's mesh or a prop (negative), the creatures and
+/// the actors the scripts move left out, and what he's deepest in by name.
+fn in_the_level(run: &Run) -> (f32, String) {
+    let h = run.hero();
+    let shape = h.solid().grown(0.0);
+    let pose = guac_motion::seam::Pose::at(h.pivot + h.solid().centre);
+    let mut exclude: Vec<BodyId> = run.bench.bodies.values().copied().collect();
+    exclude.push(HERO_BODY);
+    let planes = run.bench.world.contacts(&shape, pose, 0.0, &exclude);
+    let Some(p) = planes
+        .iter()
+        .min_by(|a, b| a.distance.total_cmp(&b.distance))
+    else {
+        return (0.0, "nothing".to_owned());
+    };
+    (p.distance.min(0.0), body_name(run, p))
+}
+
+fn body_name(run: &Run, p: &guac_motion::seam::ContactPlane) -> String {
+    if p.triangle.is_some() {
+        return "the level's mesh".to_owned();
+    }
+    let object = p.body.0.wrapping_sub(guacamole::props::PROP_BODIES);
+    run.files
+        .placed
+        .iter()
+        .find(|q| q.obj.unit == LEVEL && q.obj.index == object)
+        .map_or(format!("body {}", p.body.0), |q| q.name.clone())
+}
+
 #[derive(Default)]
 struct Tally {
     swaps: usize,
@@ -281,6 +311,8 @@ struct Tally {
     trailed_at: Vec<String>,
     /// Swaps no walk from the start reaches, given a walk in from nearby.
     local_trails: usize,
+    /// Samples the small hero stands inside a prop at once its props stand.
+    small_inside: Vec<String>,
     inside: Vec<String>,
     stuck_at: Vec<String>,
     /// Stuck swaps the stick moved more than half a metre in 60 steps.
@@ -435,6 +467,16 @@ fn hunt(level: &str) -> Tally {
         run.put(*at, facing);
         pad(&mut run, Stick::new(0.0, 0.0));
         run.step_play().unwrap();
+        // With the props by it standing (they wake by their range as he
+        // comes near), a spot can be inside one: among 214's earth area's
+        // super hard rocks, which no small hero breaks. No small hero stands
+        // there, so no Giant is swapped in for one (AS.264).
+        let (small_in, what) = in_the_level(&run);
+        if small_in < -0.25 {
+            t.small_inside
+                .push(format!("{at}: {small_in:.3} m in {what}"));
+            continue;
+        }
         let (from, facing) = (run.hero().pivot, run.hero().facing);
         let mut hero = Hero::new(rex(), Tuning::ERUPTOR, from, facing);
         // The way he walked there from the start, as the TV's replacement
@@ -598,9 +640,10 @@ fn hunt(level: &str) -> Tally {
         pad(&mut run, Stick::new(0.0, 0.0));
     }
     println!(
-        "{level}: {} swaps ({} with a walk in from nearby, none from the start): {} clear ({} leaned in by the stand), {} pushed, {} searched ({} over 15 m), {} set back on the trail, {} where no walk reaches, {} stuck ({} of them walking out); {} left inside, {} walked, {} hung; {} on the flood's cells ({} of them bad); set-down worst {} ms",
+        "{level}: {} swaps ({} with a walk in from nearby, none from the start; {} samples skipped, the small hero inside a prop there): {} clear ({} leaned in by the stand), {} pushed, {} searched ({} over 15 m), {} set back on the trail, {} where no walk reaches, {} stuck ({} of them walking out); {} left inside, {} walked, {} hung; {} on the flood's cells ({} of them bad); set-down worst {} ms",
         t.swaps,
         t.local_trails,
+        t.small_inside.len(),
         t.clear,
         t.leaned.len(),
         t.pushed,
@@ -630,6 +673,9 @@ fn hunt(level: &str) -> Tally {
     }
     for line in &t.trailed_at {
         println!("   TRAILED {line}");
+    }
+    for line in &t.small_inside {
+        println!("   SMALL INSIDE {line}");
     }
     t
 }
