@@ -2781,11 +2781,15 @@ fn past_the_ambush(character: Option<Character>) -> Walker {
 #[test]
 #[ignore = "reads the Giants dump"]
 fn each_bridge_activator_files_its_names_checksum() {
+    use guac_motion::seam::Vec3;
     let mut w = fresh();
-    w.rest(60);
     let mut seen = Vec::new();
     for n in 1..=4 {
         let name = format!("Activator_Template({n})");
+        // By each in turn, so it is awake and has run its first frame.
+        let (_, at) = w.run.placed(&name);
+        w.run.put(at + Vec3::new(0.0, 1.0, 5.0), 0.0);
+        w.rest(60);
         let id = w.run.placement(&name);
         let filed = w
             .run
@@ -2793,25 +2797,12 @@ fn each_bridge_activator_files_its_names_checksum() {
             .local(id, "bridge checksum")
             .map(|v| w.run.vm.value(v));
         let want = guac_formats::fnv1a32(name.as_bytes()) as i32;
-        // One asleep on the original's rule has let its locals go (it files
-        // again at its wake).
-        if filed.is_none() && w.run.vm.asleep(id) {
-            continue;
-        }
         assert_eq!(filed, Some(Value::Int(want)), "{name}");
         seen.push(want);
     }
-    let n = seen.len();
     seen.sort_unstable();
     seen.dedup();
-    assert_eq!(seen.len(), n, "each its own");
-    assert!(n >= 1, "one at least is awake");
-    if matches!(
-        std::env::var("GUAC_TEST_WAKE").as_deref(),
-        Ok("listed" | "kept")
-    ) {
-        assert_eq!(n, 4, "all four filed at the level's start");
-    }
+    assert_eq!(seen.len(), 4, "each its own");
 }
 
 /// openspec AS.268's verify: the first vine bridge, grown, then left far
