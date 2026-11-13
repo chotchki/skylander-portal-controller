@@ -389,7 +389,7 @@ impl ScriptWorld {
     /// An object's name as a script's name extractor reads it (openspec
     /// AS.268): a placement's own, a clone's its template's; none for
     /// anything the file doesn't name.
-    pub(crate) fn name_of_value(&self, v: Value) -> Option<String> {
+    pub fn name_of_value(&self, v: Value) -> Option<String> {
         let a = self.handle(v).and_then(|h| self.actors.get(&h));
         let obj = match (a, v) {
             (Some(a), _) => a.obj.or(a.template),

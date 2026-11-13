@@ -2887,3 +2887,29 @@ fn a_woken_grown_bridges_activator_sets_its_finished_platform_with_no_growth() {
     );
     assert_eq!(standing(&w), 1, "one finished platform stands: {seen:?}");
 }
+
+/// openspec AS.268: the name extractor names an object that isn't a
+/// placement by the linked files' names (a text key, an enemy's type), so the
+/// enemy intro's already-done marks and Combat's per-type tables key on the
+/// name's hash. A text key the intro shows, an
+/// enemy's definition and a placement each read their own name.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn the_name_extractor_names_a_text_key_and_a_placement_by_the_linked_files() {
+    let w = fresh();
+    let program = w.run.vm.program();
+    for name in ["S2_Enemy_Chompy_Name", "S2_Enemy_LifeMage_Name"] {
+        let obj = program
+            .object_named(name)
+            .unwrap_or_else(|| panic!("the files name {name}"));
+        assert_eq!(
+            w.run.world.name_of_value(Value::Object(obj)).as_deref(),
+            Some(name)
+        );
+    }
+    let (act, _) = w.run.placed("Activator_Template(1)");
+    assert_eq!(
+        w.run.world.name_of_value(Value::Entity(act)).as_deref(),
+        Some("Activator_Template(1)")
+    );
+}
