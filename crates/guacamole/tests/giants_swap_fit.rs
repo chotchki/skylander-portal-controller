@@ -386,10 +386,14 @@ fn layers(run: &Run, every: f32, small: &HavokSolid) -> Vec<Vec3> {
 
 /// What a level's hunt is known to find: swaps no reachable spot or point
 /// of the trail fits (`Stuck`, left where they came in: AS.264, the hub's
-/// eight in Flynn's cabin's hall, a room narrower than Tree Rex everywhere,
-/// and 201's one, a pocket he walks out of), set-downs this file's walk
-/// doesn't reach (none: the AS.251 lane's search made 3, 24, 10 and 4 on
-/// chapter 1, 214, the hub and 201), swaps read clear that the stand after
+/// eight in Flynn's cabin's hall, a room Tree Rex fits nowhere in, AS.277,
+/// and a perch on the hub's deck by its steam pipes and 201's one, each a
+/// spot 1-2 m over the floor no small hero walks onto, which he walks off),
+/// set-downs this file's walk doesn't reach (the hub's one: off that perch
+/// 1.1 m down onto the deck 2.3 m away, nothing placed within 4 m of the
+/// way but a steam emitter, where this file's knee-high ray meets the pipes
+/// and the set-down's walk doesn't; the AS.251 lane's search made 3, 24, 10
+/// and 4 on chapter 1, 214, the hub and 201), swaps read clear that the stand after
 /// leans into something (AS.265), and swaps whose set-down leaves him clear
 /// but who hang once the stick is held on a fresh run as well as the
 /// hunt's (none: AS.259's were the hunt's run, a scene a walk set off
@@ -781,8 +785,8 @@ fn the_hub() {
     check(
         &t,
         Known {
-            stuck: 8,
-            unwalked: 0,
+            stuck: 9,
+            unwalked: 1,
             leaned: 0,
             hung: 0,
         },
