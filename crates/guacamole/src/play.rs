@@ -643,6 +643,9 @@ struct Inside {
     /// Where the last hero stood and the way he faced as he came off: where
     /// the next one comes in (AG.6's replacements: within 0.15 m and 0.18°).
     left: Option<(Vec3, f32)>,
+    /// Where the last hero walked (openspec AS.264): the next one's, so a
+    /// Giant no spot near the last one's place fits is set back on it.
+    trail: guac_motion::hero::Trail,
 }
 
 /// The walk: who's placed in what order, who walks, the level shown and the
@@ -1248,6 +1251,7 @@ impl Play {
                 camera,
                 hero: None,
                 left: None,
+                trail: Default::default(),
             }),
             ..default()
         }
@@ -1609,6 +1613,7 @@ fn take_off(
     };
     if let Ok((body, run)) = bodies.get(gone.hero) {
         inside.left = Some((body.hero.pivot, body.hero.facing));
+        inside.trail = body.hero.trail.clone();
         if let Some(run) = run {
             commands.run_system_cached_with(
                 crate::swap::deactivate,
@@ -2207,6 +2212,9 @@ fn enter(
         return;
     };
     let mut hero = Hero::new(solid, walker.tuning, at, facing);
+    if let Some(inside) = play.inside.as_ref().filter(|_| replacing) {
+        hero.trail = inside.trail.clone();
+    }
     if replacing {
         // Where the last one stood is a spot a hero his size fits: a
         // settle's cast from a metre up could meet an overhang beside it
@@ -2341,6 +2349,7 @@ fn enter(
         camera,
         hero: Some(on_stage),
         left: None,
+        trail: Default::default(),
     });
 }
 

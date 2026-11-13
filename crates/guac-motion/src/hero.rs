@@ -140,6 +140,68 @@ pub const FALL_DEPTH: f32 = 1000.0 * FOOT;
 /// this long ago at least, not on the edge he went off.
 pub const FALL_SAFE_STEPS: u32 = 30;
 
+/// How far apart the points of a hero's [`Trail`] are, metres: under a
+/// small hero's width, so a hall he walked is a point every half his stride
+/// and the step between two points is short enough to sweep.
+pub const TRAIL_SPACING: f32 = 0.5;
+/// The most points a [`Trail`] keeps: the last 256 m of his walk.
+pub const TRAIL_POINTS: usize = 512;
+/// A move on the ground this far from the trail's last point (a teleport, a
+/// warp, a fall's landing) breaks it: the walk before is behind no step.
+pub const TRAIL_BREAK: f32 = 1.5;
+/// How far the ground under a trail's point may sit from it and still be the
+/// ground he walked: past it the floor's gone, or a block stands there.
+pub const TRAIL_GROUND: f32 = 0.3;
+
+/// Where a hero walked on the ground (openspec AS.264): a point every
+/// [`TRAIL_SPACING`], the last [`TRAIL_POINTS`] of them, broken at any move
+/// past [`TRAIL_BREAK`]. A Giant swapped in where a small hero stood, with no
+/// spot a walk reaches near enough to fit, is set back on it
+/// ([`Hero::push_out`]), as the minion's `safe point trail` keeps the places
+/// a fall sets him back on: its points were walked, so nothing the level
+/// held shut lay between them then.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Trail {
+    points: VecDeque<Vec3>,
+}
+
+impl Trail {
+    /// He stands on the ground at `at`.
+    pub fn record(&mut self, at: Vec3) {
+        if let Some(&last) = self.points.back() {
+            let d = last.distance(at);
+            if d > TRAIL_BREAK {
+                self.points.clear();
+            } else if d < TRAIL_SPACING {
+                return;
+            }
+        }
+        self.points.push_back(at);
+        if self.points.len() > TRAIL_POINTS {
+            self.points.pop_front();
+        }
+    }
+
+    /// Newest first.
+    pub fn points(&self) -> impl Iterator<Item = Vec3> + '_ {
+        self.points.iter().rev().copied()
+    }
+
+    pub fn len(&self) -> usize {
+        self.points.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.points.is_empty()
+    }
+
+    /// Drops the `newer` newest points: he stands where the next one is.
+    fn back_up(&mut self, newer: usize) {
+        let keep = self.points.len().saturating_sub(newer);
+        self.points.truncate(keep);
+    }
+}
+
 /// What [`Hero::catch_fall`] keeps between frames.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct FallCatch {
@@ -162,7 +224,12 @@ pub enum PushOut {
     /// spots that's clear with ground under it (past the eight, one a walk
     /// from his place reaches), by this much.
     Searched(Vec3),
-    /// In, and no spot the search tried was clear: left where he was.
+    /// No spot the search tried fitting, set back on the trail the last hero
+    /// walked (AS.264), at its newest point he fits that a walk back along
+    /// it still reaches, by this much.
+    Trailed(Vec3),
+    /// In, and no spot the search or the trail tried was clear: left where
+    /// he was.
     Stuck,
 }
 
@@ -328,6 +395,8 @@ pub struct Hero {
     pub last_ground: Option<f32>,
     /// Where [`Hero::catch_fall`] sets him back to.
     pub catch: FallCatch,
+    /// Where he walked (AS.264): a replacement takes the last hero's.
+    pub trail: Trail,
     /// His last step's move over its step, m/s.
     pub velocity: Vec3,
     /// His last step's walk as the move solved it against what it met, m/s
@@ -368,6 +437,7 @@ impl Hero {
             walk: Walk::STILL,
             last_ground: None,
             catch: FallCatch::default(),
+            trail: Trail::default(),
             footing: Footing {
                 supported: false,
                 height: None,
@@ -489,8 +559,10 @@ impl Hero {
     /// runs for a second minion coming in at once). None fitting (AS.251),
     /// the wider search's rings out to [`FAR_OUT`], each spot one a walk from
     /// his place reaches ([`Reach`]), so never past a gap, a ledge or
-    /// anything solid the level holds shut; none of those fitting, `Stuck`
-    /// where he was. His footing is read wherever he's moved to. Our own
+    /// anything solid the level holds shut; none of those fitting (AS.264),
+    /// the newest point of the trail the last hero walked he fits, of those
+    /// a walk back along it still reaches ([`Trail`]); none, `Stuck` where
+    /// he was. His footing is read wherever he's moved to. Our own
     /// rule past the eight, what the original does with a hero too big for
     /// his place unread (stand-in ledger: `set-down`).
     pub fn push_out(&mut self, seam: &dyn PhysicsSeam, exclude: &[BodyId]) -> PushOut {
@@ -594,9 +666,58 @@ impl Hero {
                 }
             }
         }
+        // None a walk reaches fitting near him (AS.264): back along the
+        // trail the last hero walked, to its newest point he fits.
+        let back = probe.trail_back(seam, exclude, from);
+        for (k, ground) in back.iter().enumerate() {
+            let spot = *ground + Vec3::Y * SEARCH_UP;
+            if probe.in_a_wall(seam, exclude, spot) || !probe.is_clear(seam, exclude, spot) {
+                continue;
+            }
+            let mut trial = self.clone();
+            if !trial.settled_at(seam, exclude, spot) || (trial.pivot.y - ground.y).abs() > SEARCH_UP
+            {
+                continue;
+            }
+            trial.trail.back_up(k);
+            *self = trial;
+            return PushOut::Trailed(self.pivot - from);
+        }
         self.pivot = from;
         self.stand(seam, exclude);
         PushOut::Stuck
+    }
+
+    /// The ground at each point of his trail a walk back along it from
+    /// `from` still reaches, newest first (AS.264): each point's ground
+    /// within [`TRAIL_GROUND`] of where he stood (no floor gone, no block
+    /// pushed onto it), and each step to it from the last up at most
+    /// [`REACH_UP`], down at most [`REACH_DOWN`] and open
+    /// ([`Reach::open`]: no door shut across it since). The first step it
+    /// can't take ends it, so no point past a door, a gate or a gap comes
+    /// back, however clear it stands.
+    fn trail_back(&self, seam: &dyn PhysicsSeam, exclude: &[BodyId], from: Vec3) -> Vec<Vec3> {
+        let mut at = from;
+        let mut back = Vec::new();
+        for point in self.trail.points() {
+            let over = point + Vec3::Y * REACH_UP;
+            let Some(hit) = ground::ray(seam, over, Vec3::NEG_Y, REACH_UP + TRAIL_GROUND, exclude)
+            else {
+                break;
+            };
+            let q = hit.point;
+            if hit.normal.y <= MAX_SLOPE_COS
+                || (q.y - point.y).abs() > TRAIL_GROUND
+                || q.y - at.y > REACH_UP
+                || at.y - q.y > REACH_DOWN
+                || !Reach::open(seam, exclude, at, q)
+            {
+                break;
+            }
+            back.push(q);
+            at = q;
+        }
+        back
     }
 
     /// Sets him down at `spot` and settles him on the ground there, when
@@ -883,7 +1004,8 @@ impl Hero {
     /// stood on the ground, walk gone. Only a hero no script ends a fall for
     /// gets this far (one fallen back on the controller). True when it set
     /// him back. A hung hero's place is his rig's, and one not falling is
-    /// where a scene or a hook holds him, however deep.
+    /// where a scene or a hook holds him, however deep. On the ground it
+    /// also keeps his [`Trail`] (AS.264).
     /// Stand-in ledger: `fall-reset`.
     pub fn catch_fall(&mut self) -> bool {
         if self.hung {
@@ -892,6 +1014,7 @@ impl Hero {
         let c = &mut self.catch;
         if self.footing.ground.is_some() {
             if self.footing.supported {
+                self.trail.record(self.pivot);
                 c.ground_steps += 1;
                 if c.next.is_none() || c.ground_steps >= FALL_SAFE_STEPS {
                     c.safe = c.next.or(Some(self.pivot));
@@ -1085,6 +1208,52 @@ mod catch {
         let moved_to = h.catch.next.unwrap();
         assert_ne!(moved_to, first);
         assert_eq!(h.catch.safe, Some(first), "a step behind");
+    }
+
+    /// AS.264: his trail keeps a point each half metre he moves on the
+    /// ground, none in the air, and starts again after a jump past
+    /// [`TRAIL_BREAK`] (a teleport, a warp, a fall's landing).
+    #[test]
+    fn the_trail_keeps_his_walk_on_the_ground_alone() {
+        let world = floor();
+        let mut h = walked(&world, 2);
+        let start = h.pivot;
+        h.trail = Trail::default();
+        for k in 0..40 {
+            h.pivot = start + Vec3::X * (k as f32 * 0.1);
+            h.catch_fall();
+        }
+        let points: Vec<Vec3> = h.trail.points().collect();
+        assert_eq!(points.len(), 8, "{points:?}");
+        assert!((points[0].x - (start.x + 3.5)).abs() < 1e-4, "newest first");
+        assert!(
+            points
+                .windows(2)
+                .all(|w| w[0].distance(w[1]) >= TRAIL_SPACING - 1e-4)
+        );
+        // Off the ground: nothing kept.
+        h.footing.supported = false;
+        h.pivot = start + Vec3::X * 5.0;
+        h.catch_fall();
+        assert_eq!(h.trail.len(), 8);
+        // A jump past the break: the walk before it is gone.
+        h.footing.supported = true;
+        h.pivot = start + Vec3::X * 9.0;
+        h.catch_fall();
+        assert_eq!(h.trail.points().collect::<Vec<_>>(), [h.pivot]);
+    }
+
+    /// AS.264: a trail keeps its newest [`TRAIL_POINTS`].
+    #[test]
+    fn the_trail_keeps_its_newest_points() {
+        let mut t = Trail::default();
+        for k in 0..TRAIL_POINTS + 10 {
+            t.record(Vec3::X * (k as f32 * TRAIL_SPACING));
+        }
+        assert_eq!(t.len(), TRAIL_POINTS);
+        let newest = (TRAIL_POINTS + 9) as f32 * TRAIL_SPACING;
+        assert_eq!(t.points().next(), Some(Vec3::X * newest));
+        assert_eq!(t.points().last(), Some(Vec3::X * (10.0 * TRAIL_SPACING)));
     }
 
     /// AS.146: his fall is measured from the last ground, none under him.

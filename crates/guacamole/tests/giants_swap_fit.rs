@@ -23,7 +23,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use guac_motion::ground;
-use guac_motion::hero::{Hero, PushOut};
+use guac_motion::hero::{Hero, PushOut, Trail};
 use guac_motion::seam::{BodyId, Quat, Shape, Vec3};
 use guac_motion::solid::HavokSolid;
 use guac_motion::stick::{DEAD_ZONE, Stick};
@@ -110,20 +110,35 @@ fn joined(level: &str) -> Run {
 /// out of the way. The ground point of each cell, in the order the flood
 /// reached it.
 fn flood(run: &Run, from: Vec3, cap: usize, radius: f32, exclude: &[BodyId]) -> Vec<Vec3> {
+    walk_from(run, from, cap, radius, exclude, 4.0).0
+}
+
+fn key(p: Vec3) -> (i32, i32, i32) {
+    (
+        p.x.floor() as i32,
+        (p.y / 1.5).floor() as i32,
+        p.z.floor() as i32,
+    )
+}
+
+/// [`flood`]'s cells and, for each, the cell it was reached from.
+fn walk_from(
+    run: &Run,
+    from: Vec3,
+    cap: usize,
+    radius: f32,
+    exclude: &[BodyId],
+    down: f32,
+) -> (Vec<Vec3>, Vec<usize>) {
     let world = &run.bench.world;
-    let key = |p: Vec3| {
-        (
-            p.x.floor() as i32,
-            (p.y / 1.5).floor() as i32,
-            p.z.floor() as i32,
-        )
-    };
     let mut seen: HashMap<(i32, i32, i32), Vec3> = HashMap::new();
     let mut order = Vec::new();
-    let mut queue = VecDeque::from([from]);
+    let mut parent = Vec::new();
+    let mut queue = VecDeque::from([(from, 0usize)]);
     seen.insert(key(from), from);
     order.push(from);
-    while let Some(p) = queue.pop_front() {
+    parent.push(0);
+    while let Some((p, at)) = queue.pop_front() {
         if seen.len() >= cap {
             break;
         }
@@ -139,6 +154,9 @@ fn flood(run: &Run, from: Vec3, cap: usize, radius: f32, exclude: &[BodyId]) -> 
                 continue;
             }
             let to = hit.point;
+            if p.y - to.y > down {
+                continue;
+            }
             let (a, b) = (
                 p + Vec3::Y * 0.8,
                 Vec3::new(to.x, to.y.max(p.y) + 0.8, to.z),
@@ -150,11 +168,70 @@ fn flood(run: &Run, from: Vec3, cap: usize, radius: f32, exclude: &[BodyId]) -> 
             if let std::collections::hash_map::Entry::Vacant(v) = seen.entry(key(to)) {
                 v.insert(to);
                 order.push(to);
-                queue.push_back(to);
+                parent.push(at);
+                queue.push_back((to, order.len() - 1));
             }
         }
     }
-    order
+    (order, parent)
+}
+
+/// The way a small hero walked from the level's start to `at` (AS.264): the
+/// flood's cells back from the one under `at` to the start, oldest first,
+/// as the step's [`Hero::catch_fall`] keeps his trail. Empty where no walk
+/// from the start reaches.
+fn trail_to(cells: &[Vec3], parent: &[usize], index: &HashMap<(i32, i32, i32), usize>, at: Vec3) -> Trail {
+    let mut trail = Trail::default();
+    let k = key(at);
+    let Some(&end) = (-1..=1)
+        .filter_map(|d| index.get(&(k.0, k.1 + d, k.2)))
+        .min_by(|a, b| cells[**a].distance(at).total_cmp(&cells[**b].distance(at)))
+    else {
+        return trail;
+    };
+    let mut way = vec![at];
+    let mut i = end;
+    loop {
+        way.push(cells[i]);
+        if i == 0 {
+            break;
+        }
+        i = parent[i];
+    }
+    for p in way.into_iter().rev() {
+        trail.record(p);
+    }
+    trail
+}
+
+/// The level's placements within `r` of the way from `a` back along `way`,
+/// by name: what a set-down back on the trail passed (AS.264).
+fn near_way(run: &Run, way: &[Vec3], r: f32) -> Vec<String> {
+    let mut out: Vec<(f32, String)> = Vec::new();
+    for p in &run.files.placed {
+        if p.obj.unit != LEVEL {
+            continue;
+        }
+        let q = Vec3::from_array(p.position);
+        let d = way
+            .windows(2)
+            .map(|w| {
+                let ab = w[1] - w[0];
+                let t = if ab.length_squared() < 1e-8 {
+                    0.0
+                } else {
+                    ((q - w[0]).dot(ab) / ab.length_squared()).clamp(0.0, 1.0)
+                };
+                (w[0] + ab * t).distance(q)
+            })
+            .fold(f32::MAX, f32::min);
+        if d < r {
+            out.push((d, p.name.clone()));
+        }
+    }
+    out.sort_by(|x, y| x.0.total_cmp(&y.0));
+    out.dedup_by(|a, b| a.1 == b.1);
+    out.into_iter().map(|(d, n)| format!("{n}@{d:.1}")).collect()
 }
 
 fn stick_for(view: f32, heading: f32) -> Stick {
@@ -192,6 +269,11 @@ struct Tally {
     pushed: usize,
     searched: usize,
     stuck: usize,
+    /// Set back on the small hero's trail (AS.264), and where.
+    trailed: usize,
+    trailed_at: Vec<String>,
+    /// Swaps no walk from the start reaches, given a walk in from nearby.
+    local_trails: usize,
     inside: Vec<String>,
     stuck_at: Vec<String>,
     /// Stuck swaps the stick moved more than half a metre in 60 steps.
@@ -316,17 +398,9 @@ fn hunt(level: &str) -> Tally {
     let mut run = joined(level);
     let small = *run.hero().solid();
     let start = run.hero().pivot;
-    let reached: std::collections::HashSet<(i32, i32, i32)> =
-        flood(&run, start, cap, f32::MAX, &[HERO_BODY])
-            .iter()
-            .map(|p| {
-                (
-                    p.x.floor() as i32,
-                    (p.y / 1.5).floor() as i32,
-                    p.z.floor() as i32,
-                )
-            })
-            .collect();
+    let (cells, parent) = walk_from(&run, start, cap, f32::MAX, &[HERO_BODY], 4.0);
+    let reached: HashMap<(i32, i32, i32), usize> =
+        cells.iter().enumerate().map(|(i, p)| (key(*p), i)).collect();
     let all = layers(&run, every, &small);
     let stride = all.len().div_ceil(max).max(1);
     let samples: Vec<Vec3> = all.iter().copied().step_by(stride).collect();
@@ -353,9 +427,38 @@ fn hunt(level: &str) -> Tally {
         run.step_play().unwrap();
         let (from, facing) = (run.hero().pivot, run.hero().facing);
         let mut hero = Hero::new(rex(), Tuning::ERUPTOR, from, facing);
+        // The way he walked there from the start, as the TV's replacement
+        // takes the last hero's (AS.264).
+        hero.trail = trail_to(&cells, &parent, &reached, from);
+        let trail = hero.trail.clone();
         let clock = std::time::Instant::now();
-        let out = hero.push_out(&run.bench.world, &[HERO_BODY]);
+        let mut out = hero.push_out(&run.bench.world, &[HERO_BODY]);
         t.worst_ms = t.worst_ms.max(clock.elapsed().as_millis());
+        let mut trail = trail;
+        if out == PushOut::Stuck && trail.is_empty() {
+            // No walk from the level's start reaches here (a door, a gate or
+            // an elemental wall the hunt's run holds shut): the walk in from
+            // the farthest of the ground within 40 m a small hero walks both
+            // ways (the flood's last cell), and the swap again with it.
+            let (near, back) = walk_from(&run, from, 20_000, 40.0, &[HERO_BODY], 0.6);
+            let mut way = Vec::new();
+            let mut i = near.len() - 1;
+            loop {
+                way.push(near[i]);
+                if i == 0 {
+                    break;
+                }
+                i = back[i];
+            }
+            trail = Trail::default();
+            for p in way {
+                trail.record(p);
+            }
+            hero = Hero::new(rex(), Tuning::ERUPTOR, from, facing);
+            hero.trail = trail.clone();
+            out = hero.push_out(&run.bench.world, &[HERO_BODY]);
+            t.local_trails += 1;
+        }
         t.swaps += 1;
         match out {
             PushOut::Clear => {
@@ -383,16 +486,53 @@ fn hunt(level: &str) -> Tally {
                         .push(format!("{from} -> {to} ({:.1} m)", by.length()));
                 }
             }
+            PushOut::Trailed(by) => {
+                t.trailed += 1;
+                let to = hero.pivot;
+                let mut exclude: Vec<BodyId> = run.bench.bodies.values().copied().collect();
+                exclude.push(HERO_BODY);
+                let across = Vec3::new(by.x, 0.0, by.z).length();
+                let walked = flood(&run, from, 200_000, across + 8.0, &exclude)
+                    .iter()
+                    .any(|p| {
+                        Vec3::new(p.x - to.x, 0.0, p.z - to.z).length() < 1.2
+                            && (p.y - to.y).abs() < 1.6
+                    });
+                // The way walked back, and the placements beside it by name.
+                let mut way = vec![from];
+                for p in trail.points() {
+                    way.push(p);
+                    if Vec3::new(p.x - to.x, 0.0, p.z - to.z).length() < 0.6 {
+                        break;
+                    }
+                }
+                let names = near_way(&run, &way, 2.5);
+                let line = format!(
+                    "{from} -> {to} ({:.1} m back, {} trail points of {}): {}",
+                    by.length(),
+                    way.len() - 1,
+                    trail.len(),
+                    names.join(", ")
+                );
+                if !walked {
+                    t.unwalked.push(format!("trailed {line}"));
+                }
+                t.trailed_at.push(line);
+            }
             PushOut::Stuck => {
                 t.stuck += 1;
-                t.stuck_at.push(format!("{from}"));
+                t.stuck_at.push(format!(
+                    "{from} (trail {} points{})",
+                    trail.len(),
+                    if trail.is_empty() { ", no walk from the start" } else { "" }
+                ));
             }
         }
         // The place he's left in.
         *run.hero_mut() = hero;
         let inside = deepest(&run);
         let near = (-1..=1).any(|d| {
-            reached.contains(&(
+            reached.contains_key(&(
                 at.x.floor() as i32,
                 (at.y / 1.5).floor() as i32 + d,
                 at.z.floor() as i32,
@@ -444,13 +584,15 @@ fn hunt(level: &str) -> Tally {
         pad(&mut run, Stick::new(0.0, 0.0));
     }
     println!(
-        "{level}: {} swaps: {} clear ({} leaned in by the stand), {} pushed, {} searched ({} over 15 m, {} where no walk reaches), {} stuck ({} of them walking out); {} left inside, {} walked, {} hung; {} on the flood's cells ({} of them bad); set-down worst {} ms",
+        "{level}: {} swaps ({} with a walk in from nearby, none from the start): {} clear ({} leaned in by the stand), {} pushed, {} searched ({} over 15 m), {} set back on the trail, {} where no walk reaches, {} stuck ({} of them walking out); {} left inside, {} walked, {} hung; {} on the flood's cells ({} of them bad); set-down worst {} ms",
         t.swaps,
+        t.local_trails,
         t.clear,
         t.leaned.len(),
         t.pushed,
         t.searched,
         t.far.len(),
+        t.trailed,
         t.unwalked.len(),
         t.stuck,
         t.stuck_walks,
@@ -471,6 +613,9 @@ fn hunt(level: &str) -> Tally {
         .chain(&t.far)
     {
         println!("   {line}");
+    }
+    for line in &t.trailed_at {
+        println!("   TRAILED {line}");
     }
     t
 }

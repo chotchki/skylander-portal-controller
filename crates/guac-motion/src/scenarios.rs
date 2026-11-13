@@ -364,6 +364,9 @@ pub fn wall_scenarios() -> Vec<Scenario> {
         a_gap_past_the_passage_is_never_crossed(),
         a_fit_on_his_side_of_a_prop_beats_a_nearer_one_past_it(),
         a_flat_ceiling_too_low_for_him_sends_him_out_from_under_it(),
+        a_giant_with_no_fit_near_him_is_set_back_on_the_trail(),
+        the_trail_is_never_followed_past_a_door_shut_since(),
+        the_trail_is_never_followed_over_ground_gone_since(),
     ]
 }
 
@@ -603,6 +606,110 @@ pub fn a_fit_on_his_side_of_a_prop_beats_a_nearer_one_past_it() -> Scenario {
                 "set past the prop, not out of the west end: {}",
                 hero.pivot
             );
+            Ok(())
+        },
+    }
+}
+
+/// AS.264: a hall 1.6 m wide from a shut west end at x -20 to an open east
+/// one at x 36, past the wider search's 30 m, on ground out to x 70, a gap
+/// across it from x 24 to 28 where `gap` says (a bridge that fell since).
+fn long_hall(gap: bool) -> Soup {
+    let mut soup = Soup::default();
+    if gap {
+        soup.floor(0.0, [-30.0, 24.0], [-40.0, 40.0], 2.0);
+        soup.floor(0.0, [28.0, 70.0], [-40.0, 40.0], 2.0);
+    } else {
+        soup.floor(0.0, [-30.0, 70.0], [-40.0, 40.0], 2.0);
+    }
+    soup.wall_z(0.0, [-20.0, 36.0], [-1.0, 3.4], Vec3::Z);
+    soup.wall_z(1.6, [-20.0, 36.0], [-1.0, 3.4], Vec3::NEG_Z);
+    soup.wall_x(-20.0, [0.0, 1.6], [-1.0, 3.4], Vec3::X);
+    soup
+}
+
+/// Warnado at the middle of [`long_hall`] with the trail of a small hero
+/// who walked in from x 60 along its middle: each point stood on as the
+/// step's [`Hero::catch_fall`] keeps it.
+fn warnado_after_a_walk_in(seam: &dyn PhysicsSeam) -> Hero {
+    let mut hero = warnado_at(seam, Vec3::new(0.0, 0.005, 0.8), 270.0);
+    for k in (0..=600).rev() {
+        hero.trail
+            .record(Vec3::new(k as f32 * 0.1, 0.0, 0.8));
+    }
+    hero
+}
+
+/// AS.264: a Giant swapped in at the middle of a hall far narrower than he
+/// is, its open end past the wider search's reach: no spot a walk reaches
+/// near him fits, so he's set back on the trail the small hero walked in
+/// by, at its newest point he fits, just out of the hall's mouth.
+pub fn a_giant_with_no_fit_near_him_is_set_back_on_the_trail() -> Scenario {
+    Scenario {
+        name: "a_giant_with_no_fit_near_him_is_set_back_on_the_trail",
+        bodies: bodies(&long_hall(false), &[]),
+        check: |seam| {
+            let mut hero = warnado_after_a_walk_in(seam);
+            let out = hero.push_out(seam, &[]);
+            let crate::hero::PushOut::Trailed(_) = out else {
+                return Err(format!("not set on the trail: {out:?} to {}", hero.pivot));
+            };
+            ensure!(
+                (36.0..=38.5).contains(&hero.pivot.x) && (hero.pivot.z - 0.8).abs() < 0.05,
+                "not at the trail's first fit past the mouth: {}",
+                hero.pivot
+            );
+            let gap = hero.wall_gap(seam, &[], 0.1);
+            ensure!(gap.is_none_or(|g| g > -1e-4), "still in: {gap:?}");
+            ensure!(hero.footing.supported, "unsupported: {:?}", hero.footing);
+            ensure!(
+                hero.trail.points().next().is_some_and(|p| p.x > 36.0),
+                "his trail still holds the hall"
+            );
+            Ok(())
+        },
+    }
+}
+
+/// AS.264: the same hall and trail with a door shut across it 20 m along
+/// since the small hero walked in: the walk back along the trail ends at
+/// the door, so he's left where he came in, never set past it.
+pub fn the_trail_is_never_followed_past_a_door_shut_since() -> Scenario {
+    Scenario {
+        name: "the_trail_is_never_followed_past_a_door_shut_since",
+        bodies: bodies(&long_hall(false), &[door(20.0)]),
+        check: |seam| {
+            let mut hero = warnado_after_a_walk_in(seam);
+            let from = hero.pivot;
+            let out = hero.push_out(seam, &[]);
+            ensure!(
+                out == crate::hero::PushOut::Stuck,
+                "{out:?} to {}",
+                hero.pivot
+            );
+            ensure!(hero.pivot.distance(from) < 1e-4, "moved to {}", hero.pivot);
+            Ok(())
+        },
+    }
+}
+
+/// AS.264: the same hall and trail with the floor gone from x 24 to 28
+/// since (a bridge that fell): no walk back crosses it, so he's left where
+/// he came in.
+pub fn the_trail_is_never_followed_over_ground_gone_since() -> Scenario {
+    Scenario {
+        name: "the_trail_is_never_followed_over_ground_gone_since",
+        bodies: bodies(&long_hall(true), &[]),
+        check: |seam| {
+            let mut hero = warnado_after_a_walk_in(seam);
+            let from = hero.pivot;
+            let out = hero.push_out(seam, &[]);
+            ensure!(
+                out == crate::hero::PushOut::Stuck,
+                "{out:?} to {}",
+                hero.pivot
+            );
+            ensure!(hero.pivot.distance(from) < 1e-4, "moved to {}", hero.pivot);
             Ok(())
         },
     }
