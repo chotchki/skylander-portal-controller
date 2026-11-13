@@ -2950,10 +2950,16 @@ pub const THIRD_ISLAND: Encounter = Encounter {
 /// holds alike ([`crate::level_scene::HUB_START_PLACEMENT`]). Level 201's
 /// (openspec AS.113) lands him by pod and walks him along his path, its
 /// five scenes held for the hero and skipped by △ alike
-/// ([`crate::level_scene::INTRO_PATH`]).
-pub const INTROS: [(&str, &str); 6] = [
+/// ([`crate::level_scene::INTRO_PATH`]). Level 205's (openspec AS.282), its
+/// eleven scenes held for the hero and skipped by △ alike, lands him by pod
+/// beside Flynn and Cali, walks him in along its path, plays the mechanic's
+/// scenes with them and sets the cast down at their places as it ends or is
+/// skipped, taking its own Flynn, Cali and mechanic off
+/// ([`crate::level_scene::INTRO_CAST_PLACES`]).
+pub const INTROS: [(&str, &str); 7] = [
     ("level_214_tutotial_2", "214_Intro_IGC"),
     ("level_201", "_Level_201_Intro_CS"),
+    ("level_205_piratecards", "205_Intro_IGC"),
     ("level_hub_2_stage_1", "CS_Intro_Controller"),
     ("level_hub_2_stage_2", "CS_Hub_Intro_Stage2"),
     ("level_hub_2_stage_3", "CS_Hub_Intro_Stage3"),
@@ -6929,6 +6935,16 @@ mod tests {
         let files = Files::default();
         let l201 = level_config(Mode::Play, &files, 4, "level_201");
         assert!(l201.whitelist.lists("_Level_201_Intro_CS", "C:/x/Any.ai"));
+    }
+
+    /// openspec AS.282: level 205's intro is on the TV's listing, held for
+    /// the hero as 201's is.
+    #[test]
+    fn level_205s_intro_is_run() {
+        assert_eq!(intro("level_205_piratecards"), Some("205_Intro_IGC"));
+        let files = Files::default();
+        let l205 = level_config(Mode::Play, &files, 4, "level_205_piratecards");
+        assert!(l205.whitelist.lists("205_Intro_IGC", "C:/x/Any.ai"));
     }
 
     /// openspec AS.96: the interiors' scripts on every level's listing,

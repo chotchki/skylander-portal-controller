@@ -217,12 +217,26 @@ pub const ARENA_START_PLACEMENT: &str = "StartLoc_P1";
 /// hands him over.
 pub const INTRO_PATH: &str = "p1 WP's";
 
+/// The places a story level's intro sets its cast down at as it ends or is
+/// skipped (level 205's `205_Intro_Player_Pos_WP`, openspec AS.282), by the
+/// placement's name's ending: one waypoint each, Cali's, Flynn's, then the
+/// players', the first player's at [`INTRO_P1_PLACE`]. No other level on
+/// the disc holds one.
+pub const INTRO_CAST_PLACES: &str = "_Intro_Player_Pos_WP";
+
+/// The first player's waypoint on [`INTRO_CAST_PLACES`] (openspec AS.282:
+/// 205's intro skipped sets him there to the centimetre, played to its end
+/// 0.9 m off it).
+pub const INTRO_P1_PLACE: usize = 2;
+
 /// Where the hero starts: [`START_PLACEMENT`]'s first waypoint, before he's
 /// settled onto the ground. A hub stage starts where its intro hands the
 /// first player over, [`HUB_START_PLACEMENT`]'s first waypoint, its
 /// intro's run setting him down there again ([`crate::scripts::INTROS`]).
 /// A story level whose intro walks him in starts at that path's end
-/// ([`INTRO_PATH`], AS.113), a PvP arena at [`ARENA_START_PLACEMENT`]
+/// ([`INTRO_PATH`], AS.113), one whose intro sets its cast down at the
+/// first player's place there ([`INTRO_CAST_PLACES`], AS.282), a PvP arena
+/// at [`ARENA_START_PLACEMENT`]
 /// (AS.126). Any other level starts at its first placement running
 /// [`INIT_SCRIPT`]: its first waypoint, or its own place when it has no
 /// path (on chapter 1 the two are one point), a reading until that level's
@@ -246,6 +260,23 @@ pub fn start_point(placements: &Placements) -> Result<Vec3, LevelError> {
     // A story level whose intro walks him in hands him over at its path's
     // end (openspec AS.113, AS.126).
     if let Some(p) = named(INTRO_PATH).and_then(last_waypoint)
+        && p.is_finite()
+    {
+        return Ok(p);
+    }
+    // A story level whose intro sets its cast down hands him over at the
+    // first player's place (openspec AS.282).
+    if let Some(p) = placements
+        .actors
+        .iter()
+        .find(|a| a.name.ends_with(INTRO_CAST_PLACES))
+        .and_then(|a| {
+            placements
+                .waypoints
+                .get(usize::try_from(a.waypoints?).ok()?)
+        })
+        .and_then(|w| w.get(INTRO_P1_PLACE))
+        .map(|w| Vec3::from_array(w.position))
         && p.is_finite()
     {
         return Ok(p);
@@ -2629,6 +2660,42 @@ mod tests {
         arena.position = [2.0, 3.0, 4.0];
         p.actors.push(arena);
         assert_eq!(start_point(&p), Ok(Vec3::new(2.0, 3.0, 4.0)));
+    }
+
+    /// openspec AS.282: level 205's start is where its intro sets the first
+    /// player down, its cast's places' third waypoint (Cali's and Flynn's
+    /// before it, the second player's after), not its `InitializeLevel.ai`
+    /// marker nor the end of the first player's path through the intro.
+    #[test]
+    fn level_205s_start_is_read_off_its_intros_hand_over() {
+        let mut marker = placement("_init(6)", None);
+        marker.script = Some("C:/tfb/InitializeLevel.ai".into());
+        marker.position = [149.5, 14.4, 257.9];
+        let mut p = Placements {
+            identity: identity(),
+            level: "level_205_piratecards".into(),
+            actors: vec![
+                marker,
+                placement("205_Intro_P1_WP", Some(0)),
+                placement("205_Intro_Player_Pos_WP", Some(1)),
+            ],
+            waypoints: vec![
+                vec![
+                    waypoint([169.5, 9.6, 261.3]),
+                    waypoint([145.6, 14.5, 249.4]),
+                ],
+                vec![
+                    waypoint([143.5, 14.4, 268.1]),
+                    waypoint([145.0, 14.4, 263.4]),
+                    waypoint([146.8, 14.6, 252.0]),
+                    waypoint([138.5, 14.4, 249.8]),
+                ],
+            ],
+        };
+        assert_eq!(start_point(&p), Ok(Vec3::new(146.8, 14.6, 252.0)));
+        // Short of the first player's place: the old rule.
+        p.waypoints[1].truncate(INTRO_P1_PLACE);
+        assert_eq!(start_point(&p), Ok(Vec3::new(149.5, 14.4, 257.9)));
     }
 
     /// AS.13: a level without chapter 1's start placement starts at its
