@@ -433,6 +433,9 @@ pub struct ScriptWorld {
     pub(crate) objects: HashMap<Obj, Handle>,
     /// Every file placement's data, to make a clone of it from.
     pub(crate) templates: HashMap<Obj, Placed>,
+    /// The linked program, whose objects' names the name extractor reads
+    /// beyond the placements' (openspec AS.268): a text key, a definition.
+    pub(crate) program: Option<Arc<Program>>,
     /// The attach nodes each model holds on its own origin, by its path
     /// ([`ScriptWorld::set_origin_nodes`]).
     pub(crate) origin_nodes: HashMap<String, Vec<NodePose>>,
@@ -912,6 +915,7 @@ impl ScriptWorld {
             actors,
             objects: handles.iter().map(|(o, h)| (*o, *h)).collect(),
             templates,
+            program: None,
             origin_nodes: HashMap::new(),
             light_templates: files.lights.clone(),
             emitters: files.emitters.clone(),
@@ -5862,6 +5866,9 @@ pub fn install_with(
     // What a listed script wakes off the whitelist is logged and listed
     // (decision 6), as the headless runs list it.
     script_world.set_inert(vm.inert());
+    // The names objects carry in the linked files, for the name extractor
+    // (openspec AS.268).
+    script_world.set_program(vm.program_arc());
     // The asks read as gating play, answered off the camera's view
     // (openspec AH.150).
     script_world.answer_from_view(crate::on_screen::answered(

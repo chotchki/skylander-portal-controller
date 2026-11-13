@@ -956,6 +956,7 @@ fn fresh_as(character: Option<Character>) -> Walker {
         wake: match std::env::var("GUAC_TEST_WAKE").as_deref() {
             Ok("every") => Wake::Every,
             Ok("kept") => Wake::Kept,
+            Ok("listed") => Wake::Listed,
             _ => Wake::Tv,
         },
         ..Setup::default()

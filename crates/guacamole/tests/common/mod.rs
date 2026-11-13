@@ -1105,9 +1105,11 @@ pub struct Setup {
 /// ([`Setup::wake`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Wake {
-    /// The TV's (`scripts::ANEW_ON_WAKE`).
+    /// The TV's (`scripts::anew_on_wake`): the original's since AS.246.
     #[default]
     Tv,
+    /// The earlier stand-in, the hat box's list alone (`/Hat_Pickup.ai`).
+    Listed,
     /// The original's: every sleeper's (`AnewOnWake::Every`).
     Every,
     /// None's: every sleeper keeps them.
@@ -1363,6 +1365,9 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     }
     match setup.wake {
         Wake::Tv => {}
+        Wake::Listed => {
+            config.anew_on_wake = guac_script::AnewOnWake::Listed(vec!["/Hat_Pickup.ai".to_owned()])
+        }
         Wake::Every => config.anew_on_wake = guac_script::AnewOnWake::Every,
         Wake::Kept => config.anew_on_wake = guac_script::AnewOnWake::Listed(Vec::new()),
     }
@@ -1405,6 +1410,7 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
             false => interface_records_of(&archives[..ARCHIVES.len()]),
         };
         world.set_interface(interface_part_with(&igzs, records).keeper);
+        world.set_program(vm.program_arc());
     }
     world.set_levels(Arc::new(on_disc.into_iter().collect()));
     world.set_level(level);

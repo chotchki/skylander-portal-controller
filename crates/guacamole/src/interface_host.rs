@@ -396,7 +396,17 @@ impl ScriptWorld {
             (None, Value::Object(o)) => Some(o),
             _ => None,
         }?;
-        self.templates.get(&obj).map(|p| p.name.clone())
+        // A placement by its file's name, else any object by the linked
+        // files' (a text key, a definition, an enemy type).
+        self.templates
+            .get(&obj)
+            .map(|p| p.name.clone())
+            .or_else(|| self.program.as_ref()?.name_of(obj).map(str::to_owned))
+    }
+
+    /// Hands the world the linked program, whose names the extractor reads.
+    pub fn set_program(&mut self, program: std::sync::Arc<guac_script::Program>) {
+        self.program = Some(program);
     }
 
     /// Runs `f` on the model with a world that names the objects the run
