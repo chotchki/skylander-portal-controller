@@ -642,6 +642,8 @@ fn the_name_checksum_is_the_names_fnv1a_and_the_margins_read_zero() {
         m.get_global(sum, &Names),
         Ok(Answer::Value(Value::Int(0xE40C_292Cu32 as i32)))
     );
+    // An object the world can't name is a path through nothing.
+    assert_eq!(m.get_global(sum, &NoWorld), Err(Refusal::Nothing));
     assert_eq!(fnv1a(b""), 0x811C_9DC5);
     let left = member("viewporttitlesafeinfo", "left margin");
     assert_eq!(

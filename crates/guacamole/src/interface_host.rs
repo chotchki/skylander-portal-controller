@@ -709,7 +709,7 @@ mod tests {
             &mut NoEngine,
         )
         .unwrap();
-        assert_eq!(checksum(&mut w), Ok(Value::Int(0)));
+        assert_eq!(checksum(&mut w), Err(HostFault::Nothing), "an unnamed one");
         // A clone of the placement's template is named by it.
         let clone = match w.op(&spawn_call(Value::Object(GRUNT)), &mut |_| 0x200, &mut NoEngine) {
             Ok(Answer::Run {

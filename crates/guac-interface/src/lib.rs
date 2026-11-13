@@ -425,7 +425,8 @@
 //! - `Object to name` (reference; get 0x9DBE8 through 0x5E524, set 0x9DC04):
 //!   the object.
 //! - `Name checksum` (int; get 0x9DC50): the 32-bit FNV-1a of the object's
-//!   name (offset basis 0x811C9DC5), 0 when it has none or there's no object.
+//!   name (offset basis 0x811C9DC5), 0 with no object. **Stand-in** (AS.268):
+//!   an object the host can't name is a path through nothing, not 0.
 //! - `Instantiation size`, `type count` (int; get 0x9DCD0, 0x9DD40, read for
 //!   AT.25): what the held object answers at its virtual slots 24 and 25, 0
 //!   with no object; no interface script reads either (AT.25's census).
