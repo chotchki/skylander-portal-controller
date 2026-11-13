@@ -2819,7 +2819,7 @@ fn a_woken_grown_bridges_activator_sets_its_finished_platform_with_no_growth() {
     use guac_motion::seam::Vec3;
     let mut w = fresh();
     let (_, pan) = w.run.placed("Pan_Activate");
-    let (act, at) = w.run.placed("Activator_Template(1)");
+    let (_, at) = w.run.placed("Activator_Template(1)");
     let id = w.run.placement("Activator_Template(1)");
     let behaviour = |w: &Walker| w.run.vm.behaviour(id).map(str::to_owned);
     w.run.put(pan + Vec3::new(0.0, 1.0, 0.0), 0.0);
