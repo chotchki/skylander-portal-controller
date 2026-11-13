@@ -149,8 +149,8 @@ pub const TRAIL_POINTS: usize = 512;
 /// A move on the ground this far from the trail's last point (a teleport, a
 /// warp, a fall's landing) breaks it: the walk before is behind no step.
 pub const TRAIL_BREAK: f32 = 1.5;
-/// How far the ground under a trail's point may sit from it and still be the
-/// ground he walked: past it the floor's gone, or a block stands there.
+/// How far under a trail's point its ground may have gone and still be the
+/// ground he walked: past it the floor's gone (a bridge fallen since).
 pub const TRAIL_GROUND: f32 = 0.3;
 
 /// Where a hero walked on the ground (openspec AS.264): a point every
@@ -675,7 +675,8 @@ impl Hero {
                 continue;
             }
             let mut trial = self.clone();
-            if !trial.settled_at(seam, exclude, spot) || (trial.pivot.y - ground.y).abs() > SEARCH_UP
+            if !trial.settled_at(seam, exclude, spot)
+                || (trial.pivot.y - ground.y).abs() > SEARCH_UP
             {
                 continue;
             }
@@ -690,8 +691,8 @@ impl Hero {
 
     /// The ground at each point of his trail a walk back along it from
     /// `from` still reaches, newest first (AS.264): each point's ground
-    /// within [`TRAIL_GROUND`] of where he stood (no floor gone, no block
-    /// pushed onto it), and each step to it from the last up at most
+    /// from [`REACH_UP`] over where he stood to [`TRAIL_GROUND`] under it
+    /// (no floor gone), and each step to it from the last up at most
     /// [`REACH_UP`], down at most [`REACH_DOWN`] and open
     /// ([`Reach::open`]: no door shut across it since). The first step it
     /// can't take ends it, so no point past a door, a gate or a gap comes
@@ -707,7 +708,6 @@ impl Hero {
             };
             let q = hit.point;
             if hit.normal.y <= MAX_SLOPE_COS
-                || (q.y - point.y).abs() > TRAIL_GROUND
                 || q.y - at.y > REACH_UP
                 || at.y - q.y > REACH_DOWN
                 || !Reach::open(seam, exclude, at, q)

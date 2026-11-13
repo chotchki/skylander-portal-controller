@@ -180,7 +180,12 @@ fn walk_from(
 /// flood's cells back from the one under `at` to the start, oldest first,
 /// as the step's [`Hero::catch_fall`] keeps his trail. Empty where no walk
 /// from the start reaches.
-fn trail_to(cells: &[Vec3], parent: &[usize], index: &HashMap<(i32, i32, i32), usize>, at: Vec3) -> Trail {
+fn trail_to(
+    cells: &[Vec3],
+    parent: &[usize],
+    index: &HashMap<(i32, i32, i32), usize>,
+    at: Vec3,
+) -> Trail {
     let mut trail = Trail::default();
     let k = key(at);
     let Some(&end) = (-1..=1)
@@ -231,7 +236,9 @@ fn near_way(run: &Run, way: &[Vec3], r: f32) -> Vec<String> {
     }
     out.sort_by(|x, y| x.0.total_cmp(&y.0));
     out.dedup_by(|a, b| a.1 == b.1);
-    out.into_iter().map(|(d, n)| format!("{n}@{d:.1}")).collect()
+    out.into_iter()
+        .map(|(d, n)| format!("{n}@{d:.1}"))
+        .collect()
 }
 
 fn stick_for(view: f32, heading: f32) -> Stick {
@@ -399,8 +406,11 @@ fn hunt(level: &str) -> Tally {
     let small = *run.hero().solid();
     let start = run.hero().pivot;
     let (cells, parent) = walk_from(&run, start, cap, f32::MAX, &[HERO_BODY], 4.0);
-    let reached: HashMap<(i32, i32, i32), usize> =
-        cells.iter().enumerate().map(|(i, p)| (key(*p), i)).collect();
+    let reached: HashMap<(i32, i32, i32), usize> = cells
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (key(*p), i))
+        .collect();
     let all = layers(&run, every, &small);
     let stride = all.len().div_ceil(max).max(1);
     let samples: Vec<Vec3> = all.iter().copied().step_by(stride).collect();
@@ -524,7 +534,11 @@ fn hunt(level: &str) -> Tally {
                 t.stuck_at.push(format!(
                     "{from} (trail {} points{})",
                     trail.len(),
-                    if trail.is_empty() { ", no walk from the start" } else { "" }
+                    if trail.is_empty() {
+                        ", no walk from the start"
+                    } else {
+                        ""
+                    }
                 ));
             }
         }

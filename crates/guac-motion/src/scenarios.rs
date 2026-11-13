@@ -367,6 +367,7 @@ pub fn wall_scenarios() -> Vec<Scenario> {
         a_giant_with_no_fit_near_him_is_set_back_on_the_trail(),
         the_trail_is_never_followed_past_a_door_shut_since(),
         the_trail_is_never_followed_over_ground_gone_since(),
+        the_trail_is_never_climbed_back_up_a_ledge(),
     ]
 }
 
@@ -634,8 +635,7 @@ fn long_hall(gap: bool) -> Soup {
 fn warnado_after_a_walk_in(seam: &dyn PhysicsSeam) -> Hero {
     let mut hero = warnado_at(seam, Vec3::new(0.0, 0.005, 0.8), 270.0);
     for k in (0..=600).rev() {
-        hero.trail
-            .record(Vec3::new(k as f32 * 0.1, 0.0, 0.8));
+        hero.trail.record(Vec3::new(k as f32 * 0.1, 0.0, 0.8));
     }
     hero
 }
@@ -702,6 +702,42 @@ pub fn the_trail_is_never_followed_over_ground_gone_since() -> Scenario {
         bodies: bodies(&long_hall(true), &[]),
         check: |seam| {
             let mut hero = warnado_after_a_walk_in(seam);
+            let from = hero.pivot;
+            let out = hero.push_out(seam, &[]);
+            ensure!(
+                out == crate::hero::PushOut::Stuck,
+                "{out:?} to {}",
+                hero.pivot
+            );
+            ensure!(hero.pivot.distance(from) < 1e-4, "moved to {}", hero.pivot);
+            Ok(())
+        },
+    }
+}
+
+/// AS.264: the same hall and trail with its floor 0.7 m higher from x 34
+/// on, so the small hero walked in off a step down over the 2 ft a walk
+/// climbs: no walk back along the trail goes up it (a post at knee height
+/// passes over its riser, so the climb alone stops it), so he's left where
+/// he came in.
+pub fn the_trail_is_never_climbed_back_up_a_ledge() -> Scenario {
+    let mut soup = Soup::default();
+    soup.floor(0.0, [-30.0, 34.0], [-40.0, 40.0], 2.0);
+    soup.floor(0.7, [34.0, 70.0], [-40.0, 40.0], 2.0);
+    soup.wall_x(34.0, [-40.0, 40.0], [-0.5, 0.7], Vec3::NEG_X);
+    soup.wall_z(0.0, [-20.0, 36.0], [-1.0, 4.4], Vec3::Z);
+    soup.wall_z(1.6, [-20.0, 36.0], [-1.0, 4.4], Vec3::NEG_Z);
+    soup.wall_x(-20.0, [0.0, 1.6], [-1.0, 4.4], Vec3::X);
+    Scenario {
+        name: "the_trail_is_never_climbed_back_up_a_ledge",
+        bodies: bodies(&soup, &[]),
+        check: |seam| {
+            let mut hero = warnado_at(seam, Vec3::new(0.0, 0.005, 0.8), 270.0);
+            for k in (0..=600).rev() {
+                let x = k as f32 * 0.1;
+                hero.trail
+                    .record(Vec3::new(x, if x >= 34.0 { 0.7 } else { 0.0 }, 0.8));
+            }
             let from = hero.pivot;
             let out = hero.push_out(seam, &[]);
             ensure!(
