@@ -11,7 +11,14 @@
 //! where the lane's search set him past an elemental wall, a breakable door
 //! and Flynn's blocker), for one it couldn't move (`Stuck`), and, on the
 //! swaps the set-down moved and one in eight of the rest, for a hang (60
-//! steps of the stick: not supported and not moving for 30). Ignored by
+//! steps of the stick: not supported and not moving for 30, and again so on
+//! a fresh run, since the hunt's one run carries a walk's state into the
+//! next: AS.259). Each swap carries the trail a small hero walked there
+//! (AS.264): the flood's way from the level's start, or, for a swap stuck
+//! with none, a walk in from the farthest ground within 40 m he walks both
+//! ways. A sample the small hero stands inside a prop at once its props
+//! stand round him (214's super hard rocks, which no small hero breaks) is
+//! no place he stands, and is skipped by name. Ignored by
 //! default; they read `GUAC_GIANTS_DUMP` (process env, else `.env.dev`):
 //!
 //! `cargo test -p guacamole --profile disc --test giants_swap_fit -- --ignored --nocapture`
@@ -313,6 +320,8 @@ struct Tally {
     local_trails: usize,
     /// Samples the small hero stands inside a prop at once its props stand.
     small_inside: Vec<String>,
+    /// Hangs in the hunt's run that the same swap on a fresh run doesn't make.
+    carried: Vec<String>,
     inside: Vec<String>,
     stuck_at: Vec<String>,
     /// Stuck swaps the stick moved more than half a metre in 60 steps.
@@ -375,13 +384,16 @@ fn layers(run: &Run, every: f32, small: &HavokSolid) -> Vec<Vec3> {
     out
 }
 
-/// What a level's hunt is known to find: swaps no reachable spot fits
-/// (`Stuck`, left where they came in: AS.264), set-downs this file's walk
-/// doesn't reach (none: the lane's search made 3, 24, 10 and 4 on chapter
-/// 1, 214, the hub and 201), swaps read clear that the stand after leans
-/// into something (AS.265), and swaps whose set-down leaves him clear but
-/// who hang once the stick is held (AS.259: 214's eight, the same on the
-/// lane's set-down).
+/// What a level's hunt is known to find: swaps no reachable spot or point
+/// of the trail fits (`Stuck`, left where they came in: AS.264, the hub's
+/// eight in Flynn's cabin's hall, a room narrower than Tree Rex everywhere,
+/// and 201's one, a pocket he walks out of), set-downs this file's walk
+/// doesn't reach (none: the AS.251 lane's search made 3, 24, 10 and 4 on
+/// chapter 1, 214, the hub and 201), swaps read clear that the stand after
+/// leans into something (AS.265), and swaps whose set-down leaves him clear
+/// but who hang once the stick is held on a fresh run as well as the
+/// hunt's (none: AS.259's were the hunt's run, a scene a walk set off
+/// holding him).
 struct Known {
     stuck: usize,
     unwalked: usize,
@@ -419,6 +431,39 @@ fn check(t: &Tally, known: Known) {
         known.hung,
         t.hung
     );
+}
+
+/// The swap of sample `n` at `at` on a fresh run of `level`, set up and
+/// walked as [`hunt`] does it: whether he hangs there alone (AS.259).
+fn hangs_alone(level: &str, at: Vec3, n: usize, small: HavokSolid) -> bool {
+    let mut run = joined(level);
+    run.hero_mut().set_solid(small);
+    let facing = (n as f32 * 47.0) % 360.0;
+    run.put(at, facing);
+    pad(&mut run, Stick::new(0.0, 0.0));
+    run.step_play().unwrap();
+    let (from, facing) = (run.hero().pivot, run.hero().facing);
+    let mut hero = Hero::new(rex(), Tuning::ERUPTOR, from, facing);
+    if hero.push_out(&run.bench.world, &[HERO_BODY]) == PushOut::Clear {
+        hero.stand(&run.bench.world, &[HERO_BODY]);
+    }
+    *run.hero_mut() = hero;
+    run.hero_mut().pivot += Vec3::Y * guacamole::walkers::REPLACEMENT_DROP;
+    let (mut still, mut hung, mut last) = (0, 0, run.hero().pivot);
+    for _ in 0..60 {
+        let view = run.bench.view;
+        pad(&mut run, stick_for(view, (n as f32 * 47.0) % 360.0));
+        run.step_play().unwrap();
+        let h = run.hero();
+        still = if !h.footing.supported && h.pivot.distance(last) < 1.0e-4 {
+            still + 1
+        } else {
+            0
+        };
+        hung = hung.max(still);
+        last = h.pivot;
+    }
+    hung >= 30
 }
 
 fn hunt(level: &str) -> Tally {
@@ -633,14 +678,28 @@ fn hunt(level: &str) -> Tally {
         }
         if out == PushOut::Stuck {
             t.stuck_walks += usize::from(last.distance(start) > 0.5);
+        } else if hung >= 30 && !hangs_alone(level, *at, n, small) {
+            // The hunt's one run carries each walk's state into the next (a
+            // scene a walk set off holding the hero, AS.259's reading): a
+            // hang the same swap doesn't make on a fresh run is the hunt's.
+            t.carried
+                .push(format!("{at}: hung at {last} in the hunt's run alone"));
         } else if hung >= 30 {
             t.reachable_bad += usize::from(near);
-            t.hung.push(format!("{at}: {out:?}, hung at {last}"));
+            // What held him: a script's hang (a scene's rig) or a scene.
+            let cutscene = run.vm.program().global_named("Cutscene State");
+            let scene = cutscene
+                .and_then(|g| run.vm.global_peek(g))
+                .and_then(|v| run.vm.value(v).as_i32());
+            t.hung.push(format!(
+                "{at}: {out:?}, hung at {last}, hung by a script {}, cutscene state {scene:?}",
+                run.hero().hung
+            ));
         }
         pad(&mut run, Stick::new(0.0, 0.0));
     }
     println!(
-        "{level}: {} swaps ({} with a walk in from nearby, none from the start; {} samples skipped, the small hero inside a prop there): {} clear ({} leaned in by the stand), {} pushed, {} searched ({} over 15 m), {} set back on the trail, {} where no walk reaches, {} stuck ({} of them walking out); {} left inside, {} walked, {} hung; {} on the flood's cells ({} of them bad); set-down worst {} ms",
+        "{level}: {} swaps ({} with a walk in from nearby, none from the start; {} samples skipped, the small hero inside a prop there): {} clear ({} leaned in by the stand), {} pushed, {} searched ({} over 15 m), {} set back on the trail, {} where no walk reaches, {} stuck ({} of them walking out); {} left inside, {} walked, {} hung ({} more the hunt's run alone); {} on the flood's cells ({} of them bad); set-down worst {} ms",
         t.swaps,
         t.local_trails,
         t.small_inside.len(),
@@ -656,6 +715,7 @@ fn hunt(level: &str) -> Tally {
         t.inside.len(),
         t.walked,
         t.hung.len(),
+        t.carried.len(),
         t.reachable,
         t.reachable_bad,
         t.worst_ms
@@ -676,6 +736,9 @@ fn hunt(level: &str) -> Tally {
     }
     for line in &t.small_inside {
         println!("   SMALL INSIDE {line}");
+    }
+    for line in &t.carried {
+        println!("   CARRIED {line}");
     }
     t
 }
@@ -703,10 +766,10 @@ fn level_214() {
     check(
         &t,
         Known {
-            stuck: 4,
+            stuck: 0,
             unwalked: 0,
-            leaned: 5,
-            hung: 8,
+            leaned: 4,
+            hung: 0,
         },
     );
 }
@@ -718,7 +781,7 @@ fn the_hub() {
     check(
         &t,
         Known {
-            stuck: 9,
+            stuck: 8,
             unwalked: 0,
             leaned: 0,
             hung: 0,
