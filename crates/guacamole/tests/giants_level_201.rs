@@ -2786,6 +2786,11 @@ fn each_bridge_activator_files_its_names_checksum() {
     for n in 1..=4 {
         let name = format!("Activator_Template({n})");
         let id = w.run.placement(&name);
+        // One asleep on the original's rule (GUAC_TEST_WAKE) has let its
+        // locals go; it files again at its wake.
+        if w.run.vm.asleep(id) {
+            continue;
+        }
         let filed = w
             .run
             .vm
@@ -2795,7 +2800,12 @@ fn each_bridge_activator_files_its_names_checksum() {
         assert_eq!(filed, Some(Value::Int(want)), "{name}");
         seen.push(want);
     }
+    let n = seen.len();
     seen.sort_unstable();
     seen.dedup();
-    assert_eq!(seen.len(), 4);
+    assert_eq!(seen.len(), n, "each its own");
+    assert!(n >= 1, "one at least is awake");
+    if std::env::var_os("GUAC_TEST_WAKE").is_none() {
+        assert_eq!(n, 4, "all four are awake at the level's start");
+    }
 }

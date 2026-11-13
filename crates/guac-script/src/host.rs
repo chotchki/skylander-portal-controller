@@ -439,6 +439,15 @@ pub trait Host {
         Vec::new()
     }
 
+    /// A placement woken with its declared locals made anew (the wake rule,
+    /// openspec AS.233): it starts again from STARTUP at its next tick, so
+    /// the embedder puts what the placement's file holds back under it
+    /// (openspec AS.269). Called before anything of the placement runs.
+    /// The default does nothing.
+    fn made_anew(&mut self, handle: Handle) {
+        let _ = handle;
+    }
+
     /// A call of a macro the embedder answers ([`crate::Config::answered`],
     /// crate docs, Left to the host): its display name and its parameters as
     /// the call bound them, by the names its INTERFACE declares, each read as

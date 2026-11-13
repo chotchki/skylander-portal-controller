@@ -1242,6 +1242,30 @@ impl ScriptWorld {
         out
     }
 
+    /// A placement woken with its locals made anew starts as its file has
+    /// it (openspec AS.269): its place and turns put back, the pose a
+    /// first-time STARTUP reads (Persephone's fly-in sets her down about her
+    /// landing by her facing, which her first landing leaves a few degrees
+    /// off the file's). A hung or taken-off actor, a clone and what the
+    /// file doesn't hold stay as they are.
+    pub fn made_anew(&mut self, h: Handle) {
+        let Some(a) = self.actors.get_mut(&h) else {
+            return;
+        };
+        let Some(p) = a.obj.and_then(|o| self.templates.get(&o)) else {
+            return;
+        };
+        if a.removed || a.attach != Value::Null {
+            return;
+        }
+        a.position = Vec3::from_array(p.position);
+        a.angles = Angles {
+            tilt: p.rotation[0],
+            facing: p.rotation[1],
+            roll: p.rotation[2],
+        };
+    }
+
     /// The asleep placements' checks after the walk (openspec AS.83,
     /// `guac_script`'s crate docs, The tick): of `asleep`, those the
     /// activity rule finds awake now, measured from where this step's pass
@@ -2585,6 +2609,9 @@ impl Host for WorldHost<'_, '_> {
     }
     fn wakes(&mut self, asleep: &[Handle]) -> Vec<Handle> {
         self.world.wakes(asleep)
+    }
+    fn made_anew(&mut self, handle: Handle) {
+        self.world.made_anew(handle);
     }
     fn answer(&mut self, name: &str, args: &[(&str, Value)]) -> bool {
         note_pause(self.world, name, args);
