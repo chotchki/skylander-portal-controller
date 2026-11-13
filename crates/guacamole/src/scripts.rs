@@ -8763,7 +8763,9 @@ mod tests {
         let mut c = Config::new(Mode::Strict);
         c.whitelist = Whitelist::All;
         // The TV's wake rule (AS.233), so a sleeper's `seen` reads on.
-        c.anew_on_wake = anew_on_wake();
+        // The counters it reads the order off are locals the scripts keep
+        // across a sleep here: the wake rule (AS.233) isn't what it tests.
+        c.anew_on_wake = AnewOnWake::Listed(Vec::new());
         let vm = init_chain(program, &files, &handles, &[0], c);
         let world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
         (files, handles, vm, world)
