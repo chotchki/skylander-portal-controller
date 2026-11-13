@@ -643,6 +643,9 @@ struct Inside {
     /// Where the last hero stood and the way he faced as he came off: where
     /// the next one comes in (AG.6's replacements: within 0.15 m and 0.18°).
     left: Option<(Vec3, f32)>,
+    /// Where the last hero walked (openspec AS.264): the next one's, so a
+    /// Giant no spot near the last one's place fits is set back on it.
+    trail: guac_motion::hero::Trail,
 }
 
 /// The walk: who's placed in what order, who walks, the level shown and the
@@ -1248,6 +1251,7 @@ impl Play {
                 camera,
                 hero: None,
                 left: None,
+                trail: Default::default(),
             }),
             ..default()
         }
@@ -1609,6 +1613,7 @@ fn take_off(
     };
     if let Ok((body, run)) = bodies.get(gone.hero) {
         inside.left = Some((body.hero.pivot, body.hero.facing));
+        inside.trail = body.hero.trail.clone();
         if let Some(run) = run {
             commands.run_system_cached_with(
                 crate::swap::deactivate,
@@ -2207,6 +2212,9 @@ fn enter(
         return;
     };
     let mut hero = Hero::new(solid, walker.tuning, at, facing);
+    if let Some(inside) = play.inside.as_ref().filter(|_| replacing) {
+        hero.trail = inside.trail.clone();
+    }
     if replacing {
         // Where the last one stood is a spot a hero his size fits: a
         // settle's cast from a metre up could meet an overhang beside it
@@ -2341,6 +2349,7 @@ fn enter(
         camera,
         hero: Some(on_stage),
         left: None,
+        trail: Default::default(),
     });
 }
 
@@ -7902,6 +7911,48 @@ mod tests {
         let gaits = app.world().entity(next).get::<HeroGaits>().unwrap();
         assert_eq!(gaits.locomotion.air().name(), "ground");
         assert!((6..=10).contains(&landed), "{landed}");
+    }
+
+    /// AS.264: the trail Eruptor walked is kept with his place when he comes
+    /// off, and the one placed next comes in carrying it, so a Giant no spot
+    /// near his place fits can be set back along it.
+    #[test]
+    fn a_replacement_comes_in_with_the_last_heros_trail() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = walking(tmp.path());
+        test_pad::stick(&mut app, pad, 0.0, 1.0);
+        for _ in 0..60 {
+            app.update();
+        }
+        test_pad::stick(&mut app, pad, 0.0, 0.0);
+        app.update();
+        let walked = hero(&app).trail.clone();
+        assert!(walked.len() >= 4, "a trail of {} points", walked.len());
+        clear(&mut app, 0);
+        until(&mut app, "the call", |a| {
+            alert(a) == Some(Alert::PlaceSkylander)
+        });
+        let kept = app
+            .world()
+            .resource::<Play>()
+            .inside
+            .as_ref()
+            .unwrap()
+            .trail
+            .clone();
+        assert_eq!(kept, walked, "kept as he came off");
+        place(&mut app, 2, ERUPTOR, "Eruptor");
+        until(&mut app, "the next one in", |a| {
+            a.world().resource::<Play>().hero().is_some()
+        });
+        let carried: Vec<Vec3> = hero(&app).trail.points().collect();
+        let before: Vec<Vec3> = walked.points().collect();
+        assert!(
+            carried.ends_with(&before),
+            "the next one in carries it: {} points of {}",
+            carried.len(),
+            before.len()
+        );
     }
 
     /// AG.72 with AG.29's too-many alert mid-card (the arrival review): a

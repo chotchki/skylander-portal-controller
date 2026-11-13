@@ -385,3 +385,28 @@ fn a_flat_ceiling_too_low_for_him_sends_him_out_from_under_it() {
 fn a_fit_on_his_side_of_a_prop_beats_a_nearer_one_past_it() {
     on_parry(scenarios::a_fit_on_his_side_of_a_prop_beats_a_nearer_one_past_it());
 }
+
+#[test]
+fn a_giant_with_no_fit_near_him_is_set_back_on_the_trail() {
+    on_parry(scenarios::a_giant_with_no_fit_near_him_is_set_back_on_the_trail());
+}
+
+#[test]
+fn the_trail_is_never_followed_past_a_door_shut_since() {
+    on_parry(scenarios::the_trail_is_never_followed_past_a_door_shut_since());
+}
+
+#[test]
+fn the_trail_is_never_followed_over_ground_gone_since() {
+    on_parry(scenarios::the_trail_is_never_followed_over_ground_gone_since());
+}
+
+#[test]
+fn the_trail_is_never_climbed_back_up_a_ledge() {
+    on_parry(scenarios::the_trail_is_never_climbed_back_up_a_ledge());
+}
+
+#[test]
+fn the_trail_is_never_joined_across_a_warp() {
+    on_parry(scenarios::the_trail_is_never_joined_across_a_warp());
+}
