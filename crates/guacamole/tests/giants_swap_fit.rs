@@ -114,8 +114,11 @@ fn joined(level: &str) -> Run {
 /// The ground a small hero walks to from `from`: cells a metre across, a
 /// step up to 0.6 m and down to 4 m, never through a wall at knee height,
 /// within `radius` of `from` across the ground, the bodies in `exclude`
-/// out of the way. The ground point of each cell, in the order the flood
-/// reached it.
+/// out of the way of the knee-high ray but still ground under him, as the
+/// set-down's walk has them (the hub's hatch by its steam pipes, a clone
+/// the scripts made, is the deck a small hero walks onto off the perch
+/// there: AS.264's review). The ground point of each cell, in the order the
+/// flood reached it.
 fn flood(run: &Run, from: Vec3, cap: usize, radius: f32, exclude: &[BodyId]) -> Vec<Vec3> {
     walk_from(run, from, cap, radius, exclude, 4.0).0
 }
@@ -154,7 +157,7 @@ fn walk_from(
             if Vec3::new(over.x - from.x, 0.0, over.z - from.z).length() > radius {
                 continue;
             }
-            let Some(hit) = ground::ray(world, over, Vec3::NEG_Y, 4.7, exclude) else {
+            let Some(hit) = ground::ray(world, over, Vec3::NEG_Y, 4.7, &[HERO_BODY]) else {
                 continue;
             };
             if hit.normal.y < 0.65 {
@@ -389,12 +392,12 @@ fn layers(run: &Run, every: f32, small: &HavokSolid) -> Vec<Vec3> {
 /// eight in Flynn's cabin's hall, a room Tree Rex fits nowhere in, AS.277,
 /// and a perch on the hub's deck by its steam pipes and 201's one, each a
 /// spot 1-2 m over the floor no small hero walks onto, which he walks off),
-/// set-downs this file's walk doesn't reach (the hub's one: off that perch
-/// 1.1 m down onto the deck 2.3 m away, nothing placed within 4 m of the
-/// way but a steam emitter, where this file's knee-high ray meets the pipes
-/// and the set-down's walk doesn't; the AS.251 lane's search made 3, 24, 10
-/// and 4 on chapter 1, 214, the hub and 201), swaps read clear that the stand after
-/// leans into something (AS.265), and swaps whose set-down leaves him clear
+/// set-downs this file's walk doesn't reach (none: the AS.251 lane's search
+/// made 3, 24, 10 and 4 on chapter 1, 214, the hub and 201, and the hub's
+/// one off that perch onto a hatch 1.1 m down, which a small hero walks
+/// onto, was this file's walk leaving the hatch out: AS.264's review), swaps
+/// read clear that the stand after leans into something (AS.265), and
+/// swaps whose set-down leaves him clear
 /// but who hang once the stick is held on a fresh run as well as the
 /// hunt's (none: AS.259's were the hunt's run, a scene a walk set off
 /// holding him).
@@ -786,7 +789,7 @@ fn the_hub() {
         &t,
         Known {
             stuck: 9,
-            unwalked: 1,
+            unwalked: 0,
             leaned: 0,
             hung: 0,
         },

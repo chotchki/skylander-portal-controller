@@ -696,8 +696,20 @@ impl Hero {
     /// [`REACH_UP`], down at most [`REACH_DOWN`] and open
     /// ([`Reach::open`]: no door shut across it since). The first step it
     /// can't take ends it, so no point past a door, a gate or a gap comes
-    /// back, however clear it stands.
+    /// back, however clear it stands. A trail whose newest point is over
+    /// [`TRAIL_BREAK`] from `from` is none, as a move that far breaks one
+    /// (AS.264's review): a hero lifted on the frame a warp landed him hands
+    /// over the walk before it, which the post's sweep alone would join to
+    /// his place across a gap.
     fn trail_back(&self, seam: &dyn PhysicsSeam, exclude: &[BodyId], from: Vec3) -> Vec<Vec3> {
+        if self
+            .trail
+            .points()
+            .next()
+            .is_none_or(|p| p.distance(from) > TRAIL_BREAK)
+        {
+            return Vec::new();
+        }
         let mut at = from;
         let mut back = Vec::new();
         for point in self.trail.points() {

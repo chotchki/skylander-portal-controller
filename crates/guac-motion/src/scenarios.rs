@@ -368,6 +368,7 @@ pub fn wall_scenarios() -> Vec<Scenario> {
         the_trail_is_never_followed_past_a_door_shut_since(),
         the_trail_is_never_followed_over_ground_gone_since(),
         the_trail_is_never_climbed_back_up_a_ledge(),
+        the_trail_is_never_joined_across_a_warp(),
     ]
 }
 
@@ -737,6 +738,33 @@ pub fn the_trail_is_never_climbed_back_up_a_ledge() -> Scenario {
                 let x = k as f32 * 0.1;
                 hero.trail
                     .record(Vec3::new(x, if x >= 34.0 { 0.7 } else { 0.0 }, 0.8));
+            }
+            let from = hero.pivot;
+            let out = hero.push_out(seam, &[]);
+            ensure!(
+                out == crate::hero::PushOut::Stuck,
+                "{out:?} to {}",
+                hero.pivot
+            );
+            ensure!(hero.pivot.distance(from) < 1e-4, "moved to {}", hero.pivot);
+            Ok(())
+        },
+    }
+}
+
+/// AS.264 (its review): [`long_hall`] with its gap, the small hero's trail
+/// from x 60 in to x 30, past the gap, and then a warp to the hall's middle
+/// with no step after it (lifted on the frame it landed him): the trail's
+/// newest point is 30 m off, over a break, so it's none, and he's left where
+/// he came in, never set back across the gap the post's sweep alone passes.
+pub fn the_trail_is_never_joined_across_a_warp() -> Scenario {
+    Scenario {
+        name: "the_trail_is_never_joined_across_a_warp",
+        bodies: bodies(&long_hall(true), &[]),
+        check: |seam| {
+            let mut hero = warnado_at(seam, Vec3::new(0.0, 0.005, 0.8), 270.0);
+            for k in (300..=600).rev() {
+                hero.trail.record(Vec3::new(k as f32 * 0.1, 0.0, 0.8));
             }
             let from = hero.pivot;
             let out = hero.push_out(seam, &[]);

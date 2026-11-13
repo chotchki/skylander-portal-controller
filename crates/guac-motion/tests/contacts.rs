@@ -405,3 +405,8 @@ fn the_trail_is_never_followed_over_ground_gone_since() {
 fn the_trail_is_never_climbed_back_up_a_ledge() {
     on_parry(scenarios::the_trail_is_never_climbed_back_up_a_ledge());
 }
+
+#[test]
+fn the_trail_is_never_joined_across_a_warp() {
+    on_parry(scenarios::the_trail_is_never_joined_across_a_warp());
+}
