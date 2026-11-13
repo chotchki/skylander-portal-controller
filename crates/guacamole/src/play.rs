@@ -7913,6 +7913,48 @@ mod tests {
         assert!((6..=10).contains(&landed), "{landed}");
     }
 
+    /// AS.264: the trail Eruptor walked is kept with his place when he comes
+    /// off, and the one placed next comes in carrying it, so a Giant no spot
+    /// near his place fits can be set back along it.
+    #[test]
+    fn a_replacement_comes_in_with_the_last_heros_trail() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = walking(tmp.path());
+        test_pad::stick(&mut app, pad, 0.0, 1.0);
+        for _ in 0..60 {
+            app.update();
+        }
+        test_pad::stick(&mut app, pad, 0.0, 0.0);
+        app.update();
+        let walked = hero(&app).trail.clone();
+        assert!(walked.len() >= 4, "a trail of {} points", walked.len());
+        clear(&mut app, 0);
+        until(&mut app, "the call", |a| {
+            alert(a) == Some(Alert::PlaceSkylander)
+        });
+        let kept = app
+            .world()
+            .resource::<Play>()
+            .inside
+            .as_ref()
+            .unwrap()
+            .trail
+            .clone();
+        assert_eq!(kept, walked, "kept as he came off");
+        place(&mut app, 2, ERUPTOR, "Eruptor");
+        until(&mut app, "the next one in", |a| {
+            a.world().resource::<Play>().hero().is_some()
+        });
+        let carried: Vec<Vec3> = hero(&app).trail.points().collect();
+        let before: Vec<Vec3> = walked.points().collect();
+        assert!(
+            carried.ends_with(&before),
+            "the next one in carries it: {} points of {}",
+            carried.len(),
+            before.len()
+        );
+    }
+
     /// AG.72 with AG.29's too-many alert mid-card (the arrival review): a
     /// second character placed while the replacement's card shows hides the
     /// card under the alert and holds its clock, the level held all along
