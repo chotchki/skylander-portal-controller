@@ -277,6 +277,13 @@ Level 201 SHALL start where its intro hands the first player over: the intro hel
 - **WHEN** Flynn's ready question is answered yes on hub stage 1
 - **THEN** level 201 reads on its first entry, its intro plays, and he walks from where it hands him over with nothing stopped
 
+### Requirement: Level 205's start
+Level 205 SHALL start where its intro sets the first player down: the intro held for his join, then played (the landing pod, Flynn, Cali and the mechanic in its eleven scenes) or skipped by △, him then on the ground about (146.8, 14.6, 252.0) with the HUD back, walking on the stick, the intro's Flynn, Cali and mechanic gone.
+
+#### Scenario: From the hub
+- **WHEN** Flynn's ready question is answered yes on hub stage 1 on a save past level 201
+- **THEN** level 205's intro plays, and he walks from where it sets him down with nothing stopped
+
 ### Requirement: A level's sky stays about the eye
 A level's sky SHALL draw through the view with its translation taken out, its coordinates metres from the eye wherever the camera stands: in the first capture chapter 1's 14 sky draws hold 0, 0, -0.2, 0 in the matrix's last column where every other static draw holds the eye's 37.58, -14.97, 114.07, 114.17.
 
