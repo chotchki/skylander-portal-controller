@@ -83,11 +83,16 @@ pub fn shadow_light(travel: Vec3) -> (DirectionalLight, Transform, CascadeShadow
     } else {
         Dir3::Y
     };
+    let mut light = DirectionalLight {
+        shadow_maps_enabled: true,
+        ..Default::default()
+    };
+    if let Some((depth, normal)) = super::isolate::shadow_bias() {
+        light.shadow_depth_bias = depth;
+        light.shadow_normal_bias = normal;
+    }
     (
-        DirectionalLight {
-            shadow_maps_enabled: true,
-            ..Default::default()
-        },
+        light,
         Transform::default().looking_to(travel, up),
         cascades(),
     )

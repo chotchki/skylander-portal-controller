@@ -18,7 +18,9 @@
 // the level's (AS.164).
 //
 // WESL flattens a block an `@if` holds into the block around it, so each
-// such block's names are its own.
+// such block's names are its own. The `CHAR_OFF_*` defs are AS.300's
+// isolation switches (`character::isolate`), set only in a test-hooks build
+// that asks for them.
 
 import bevy_pbr::render::mesh_view_bindings::{view, lights};
 import bevy_pbr::render::mesh_view_bindings as view_bindings;
@@ -212,7 +214,9 @@ fn lerp3(a: vec3<f32>, b: vec3<f32>, t: f32) -> vec3<f32> {
 fn mapped_normal(texel: vec4<f32>, normal: vec3<f32>, tangent: vec3<f32>, bitangent: vec3<f32>) -> vec3<f32> {
     let x = 2.0 * texel.a - 1.0;
     let y = 2.0 * texel.g - 1.0;
-    let z = sqrt(abs(1.0 - x * x - y * y));
+    var z = sqrt(abs(1.0 - x * x - y * y));
+@if(CHAR_OFF_ABS)
+    z = sqrt(max(1.0 - x * x - y * y, 0.0));
     return normalize(y * bitangent - x * tangent + z * normal);
 }
 
@@ -427,25 +431,35 @@ fn shade(in: Interpolants) -> vec4<f32> {
 
     // The first layer.
     let uv0 = in.uv01.xy;
-    let c1 = textureSample(colour_map, colour_sampler, uv0);
+    var c1 = textureSample(colour_map, colour_sampler, uv0);
+@if(CHAR_OFF_COLOUR)
+    c1 = vec4<f32>(vec3<f32>(0.6), c1.a);
     var mapped1 = vec3<f32>(0.0);
 @if(CHAR_NORMAL_MAP)
     mapped1 = mapped_normal(textureSample(normal_map, normal_sampler, uv0), g, in.tangent, in.bitangent);
+@if(CHAR_NORMAL_MAP && CHAR_OFF_NORMALS)
+    mapped1 = g;
     var spec1 = vec3<f32>(0.0);
 @if(CHAR_SPEC_MAP)
     spec1 = textureSample(spec_map, spec_sampler, uv0).rgb;
+@if(CHAR_SPEC_MAP && CHAR_OFF_SPEC)
+    spec1 = vec3<f32>(0.0);
     var lit = lit_layer(c1, mapped1, spec1, character.layer1, g, vertex_colour, eye);
 
     // A second layer, lit as the first, blended by its coverage.
-@if(CHAR_LAYER2) {
+@if(CHAR_LAYER2 && !CHAR_OFF_LAYER2) {
     let uv1 = in.uv01.zw;
     let c2 = textureSample(second_colour_map, second_colour_sampler, uv1);
     var mapped2 = vec3<f32>(0.0);
 @if(CHAR_NORMAL_MAP)
     mapped2 = mapped_normal(textureSample(second_normal_map, second_normal_sampler, uv1), g, in.tangent, in.bitangent);
+@if(CHAR_NORMAL_MAP && (CHAR_OFF_NORMALS || CHAR_OFF_LAYER2_NORMAL))
+    mapped2 = g;
     var spec2 = vec3<f32>(0.0);
 @if(CHAR_SPEC_MAP)
     spec2 = textureSample(second_spec_map, second_spec_sampler, uv1).rgb;
+@if(CHAR_SPEC_MAP && CHAR_OFF_SPEC)
+    spec2 = vec3<f32>(0.0);
     let lit2 = lit_layer(c2, mapped2, spec2, character.layer2, g, vertex_colour, eye);
     let coverage = vertex_colour.a * layer_alpha(c2.a, character.fixed_alpha.y) * character.material_tint.a;
     let covered = lit2 * coverage;
@@ -461,7 +475,7 @@ fn shade(in: Interpolants) -> vec4<f32> {
 
     // A third layer, after the tints; alpha stays. It reads the second set
     // when there's no second layer.
-@if(CHAR_LAYER3) {
+@if(CHAR_LAYER3 && !CHAR_OFF_LAYER3) {
     var uv3 = in.uv01.zw;
 @if(CHAR_UV2)
     uv3 = in.uv2;
@@ -471,7 +485,7 @@ fn shade(in: Interpolants) -> vec4<f32> {
     colour = w3.x * (third + colour * (1.0 - strength3)) + w3.y * (colour + third) + w3.z * (colour * third);
 }
 
-@if(CHAR_SHADOWS) {
+@if(CHAR_SHADOWS && !CHAR_OFF_SHADOWS) {
     let shadow = shadow_sample(shadow_visibility(in.position, g, in.clip_position.xy));
     let mode = character.misc.x;
     colour = colour * 2.0 * (vec3<f32>(shadow.a) + (2.0 - mode) * (shadow.rgb - vec3<f32>(shadow.a)));

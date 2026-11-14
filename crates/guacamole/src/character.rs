@@ -18,6 +18,7 @@
 pub mod attach;
 pub mod effect;
 pub mod glow;
+pub mod isolate;
 pub mod key;
 pub mod material;
 pub mod mesh;

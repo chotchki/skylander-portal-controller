@@ -743,7 +743,8 @@ pub fn specialize_for(
     if is_prepass(descriptor) {
         return Ok(());
     }
-    let defs = key.shader_defs();
+    let mut defs = key.shader_defs();
+    defs.extend(super::isolate::asked().iter().map(|d| (*d).into()));
     descriptor.vertex.shader_defs.extend(defs.iter().cloned());
     if let Some(fragment) = descriptor.fragment.as_mut() {
         fragment.shader_defs.extend(defs);
