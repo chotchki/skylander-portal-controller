@@ -44,6 +44,64 @@ pub fn passage(level: &str) -> &'static [&'static str] {
     }
 }
 
+/// Level 205's people (openspec AS.286), by placement name, drawn awake on
+/// their own models as the hub's are and never walked. Bowers the mechanic
+/// stands by the start (his talk on his own trigger, the talk button within
+/// his range); the rest stand past the first fight: Cali at the galleon and
+/// in the town, T-Bone, the two Mabu at their hammers, Blobbers at his
+/// crane, and the card pirates, whose game a yes is told is quit
+/// ([`crate::prompt`]), the gate's pirate among them.
+pub const PEOPLE: [&str; 12] = [
+    "Bowers",
+    "Cali",
+    "Cali_Town",
+    "T-Bone",
+    "Slave_1_hammer(5)",
+    "Slave_Carry(5)",
+    "Blobbers",
+    "CardGame_Template(1)_Bandit",
+    "CardGame_Template(4)_Dreadbeard",
+    "CardGame_Template(2)",
+    "CardGame_Chance",
+    "Card_Pirate_04_Gate_Woof",
+];
+
+/// Level 205's scenes (openspec AS.286), by placement name, listed with
+/// [`PEOPLE`]: the galleon's encounter, the card pirates' six, the hints'
+/// pans and the camera pops.
+pub const SCENES: [&str; 15] = [
+    "205_Encounter_At_Galleon_IGC",
+    "CardPirate_Bandit_Cine",
+    "Card_Pirate_05_Cine",
+    "CardPirate_Boathouse_Cine",
+    "CardPirate_Boathouse_Cine_B",
+    "CardPirate_Casino_Cine",
+    "CardPirate_Casino_Cine_B",
+    "Hint_Pan_Show_Island",
+    "Hint_Pan_Show_Wheel(1)",
+    "Hint_Pan_Show_Turntable",
+    "SpecialPan",
+    "Switch_To_Cam(6.1)",
+    "Switch_To_Cam(6.3)",
+    "Switch_To_Cam(6)",
+    "SwitchToCam7",
+];
+
+/// The placements [`PEOPLE`] lists for the level whose archive is `level`.
+pub fn people(level: &str) -> &'static [&'static str] {
+    match level {
+        LEVEL => &PEOPLE,
+        _ => &[],
+    }
+}
+
+/// The placements [`PEOPLE`] and [`SCENES`] list for the level whose
+/// archive is `level`, people first.
+pub fn listed(level: &str) -> impl Iterator<Item = &'static str> {
+    let scenes: &[&str] = if level == LEVEL { &SCENES } else { &[] };
+    people(level).iter().chain(scenes).copied()
+}
+
 #[cfg(test)]
 mod tests {
     use guac_script::Mode;
@@ -71,5 +129,27 @@ mod tests {
         let arch = "C:/tfb/Content/Levels/Level_205/Scripts/GiantPirateHead.ai";
         assert!(!on.whitelist.lists("GiantPirateHead", arch));
         assert!(passage("level_201").is_empty());
+    }
+
+    /// openspec AS.286: its people are on 205's listing and among the TV's
+    /// people there, on no other level's.
+    #[test]
+    fn level_205s_people_are_listed_and_drawn_on_it_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        let off = level_config(Mode::Play, &files, 5, "level_201");
+        for name in PEOPLE {
+            assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+            assert!(
+                !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
+                "{name} on 201"
+            );
+            assert!(crate::scripts::is_level_person(LEVEL, name), "{name}");
+            assert!(
+                !crate::scripts::is_level_person("level_201", name),
+                "{name}"
+            );
+        }
+        assert!(people("level_201").is_empty());
     }
 }

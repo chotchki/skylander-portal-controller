@@ -3137,6 +3137,7 @@ pub fn is_hub_person(script: &str) -> bool {
 /// one of its own people ([`LEVEL_PEOPLE`]).
 pub fn is_level_person(level: &str, name: &str) -> bool {
     LEVEL_PEOPLE.iter().any(|(l, n)| *l == level && *n == name)
+        || crate::level_205::people(level).contains(&name)
 }
 
 /// Whether the level whose archive is `level` is a hub stage.
@@ -4241,6 +4242,8 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
                 .iter()
                 .map(|s| (*s).to_owned()),
         );
+        // Level 205's people and scenes (openspec AS.286).
+        placements.extend(crate::level_205::listed(name).map(str::to_owned));
     }
     // Level 201's own scripts, by their path under its folder (openspec
     // AU.53).
