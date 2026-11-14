@@ -602,6 +602,9 @@ pub struct ScriptWorld {
     /// placements' checks after the walk measure from again (openspec
     /// AS.83, [`ScriptWorld::wakes`]).
     pub(crate) activity_from: Vec<Vec3>,
+    /// Each hero's pivot as he last stood on his own, by his handle: where a
+    /// hung hero wakes the level from ([`ScriptWorld::measured_from`]).
+    stood: HashMap<Handle, Vec3>,
     /// The bodies the embedder keeps in its seam for actors (openspec
     /// AH.25: the TV's heroes and awake creatures in Avian's world, as the
     /// headless runs keep theirs in parry's), each actor's handle and body:
@@ -977,6 +980,7 @@ impl ScriptWorld {
             woken: Vec::new(),
             fired: Vec::new(),
             activity_from: Vec::new(),
+            stood: HashMap::new(),
             embodied: Vec::new(),
             walking_alone: Default::default(),
             written: Default::default(),
@@ -1213,9 +1217,31 @@ impl ScriptWorld {
         let heroes: Vec<Vec3> = engine
             .heroes()
             .into_iter()
-            .filter_map(|h| engine.hero(h).map(|x| x.pivot))
+            .filter_map(|h| engine.hero(h).map(|x| (h, x.pivot, x.hung)))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|(h, pivot, hung)| self.measured_from(h, pivot, hung))
             .collect();
         self.activity_at(&heroes)
+    }
+
+    /// Where hero `h` wakes the level from this step (openspec AS.284,
+    /// stand-in ledger: `carried-wake`): his pivot while he stands on his
+    /// own, and while something a script hangs him on carries him (a
+    /// scene's rig or ship, a turret: [`guac_motion::hero::Hero::hung`])
+    /// where he last stood. Level 205's intro flies him on its landing
+    /// pod over the whole level (headless the pod's unposed rig holds him
+    /// at the world's origin), and measured from where he's carried
+    /// Setup_004's controller woke 137 ft off and played its Biclops' intro
+    /// over the level's with him still at the start.
+    pub fn measured_from(&mut self, h: Handle, pivot: Vec3, hung: bool) -> Vec3 {
+        match (hung, self.stood.get(&h)) {
+            (true, Some(at)) => *at,
+            _ => {
+                self.stood.insert(h, pivot);
+                pivot
+            }
+        }
     }
 
     /// [`ScriptWorld::activity`] with the heroes' pivots given: the TV's,
@@ -3212,6 +3238,7 @@ pub fn encounters(level: &str) -> impl Iterator<Item = &'static Encounter> {
         .chain(std::iter::once(&THIRD_ISLAND))
         .chain(std::iter::once(&crate::chapter_1::WAY))
         .chain(std::iter::once(&crate::level_201::WAY))
+        .chain(std::iter::once(&crate::level_205::WAY))
         .filter(move |e| e.level == level)
 }
 
@@ -8566,6 +8593,36 @@ mod tests {
         assert!(w.taken_off(obj));
         assert!(w.activity_at(&[start]).is_empty(), "left out for good");
         assert!(!w.take_off(Obj { unit: 9, index: 9 }));
+    }
+
+    /// openspec AS.284 (stand-in ledger: `carried-wake`): a hero hung on
+    /// what a script hangs him from wakes the level from where he last
+    /// stood, not where he's carried. Standing 9 m off the Grunt's 30 ft he
+    /// wakes him; hung and carried off past it the Grunt stays awake, and
+    /// hung and carried within range of a sleeper (205's intro pod over
+    /// Setup_004's yard) wakes nothing; let go where he's carried, he
+    /// measures from there.
+    #[test]
+    fn a_hung_hero_wakes_the_level_from_where_he_last_stood() {
+        let (mut w, grunt, _) = world();
+        let g = w.actors.get_mut(&grunt).unwrap();
+        (g.range, g.buffer, g.managed) = (30.0, 1.0, true);
+        let mut hero = him(Vec3::new(9.0, 0.0, 0.0));
+        assert_eq!(w.activity(&mut hero), vec![(grunt, true)]);
+        hero.0.hung = true;
+        hero.0.pivot = Vec3::new(500.0, 80.0, 0.0);
+        assert_eq!(w.activity(&mut hero), vec![(grunt, true)], "carried off");
+        assert_eq!(w.activity_from, [Vec3::new(9.0, 0.0, 0.0)]);
+        hero.0.hung = false;
+        assert_eq!(w.activity(&mut hero), vec![(grunt, false)], "let go there");
+        hero.0.hung = true;
+        hero.0.pivot = Vec3::new(1.0, 0.0, 0.0);
+        assert_eq!(w.activity(&mut hero), vec![(grunt, false)], "carried by it");
+        // The TV's call, by his handle.
+        let from = w.measured_from(7, Vec3::new(1.0, 0.0, 0.0), true);
+        assert_eq!(from, Vec3::new(1.0, 0.0, 0.0), "hung from the start");
+        let from = w.measured_from(7, Vec3::new(40.0, 0.0, 0.0), true);
+        assert_eq!(from, Vec3::new(1.0, 0.0, 0.0));
     }
 
     /// openspec AS.83: the asleep placements' checks after the walk measure

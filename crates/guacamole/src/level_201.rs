@@ -387,7 +387,8 @@ mod tests {
 
     /// Its way is level 201's alone: its enemies, passage and own scripts on
     /// its listing and on no level's that lists nothing of its own (level
-    /// 214 lists an `Enemy_Chompy(4)` of its own), and a script of the same
+    /// 214 lists an `Enemy_Chompy(4)` of its own, 205 its own Chompies and
+    /// lobbers), and a script of the same
     /// name under another level's folder never.
     #[test]
     fn level_201s_way_is_on_its_listing_alone() {
@@ -397,6 +398,13 @@ mod tests {
         for name in WAY.placements.iter().chain(WAY.clones).chain(&PASSAGE) {
             assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
             for level in others {
+                // 205 names Chompies and lobbers of its own so (openspec
+                // AS.284).
+                if level == crate::level_205::LEVEL
+                    && crate::level_205::WAY.placements.contains(name)
+                {
+                    continue;
+                }
                 let off = level_config(Mode::Play, &files, 5, level);
                 assert!(
                     !off.whitelist.lists(name, "C:/l/Unlisted.ai"),

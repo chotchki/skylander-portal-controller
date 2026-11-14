@@ -41,6 +41,32 @@ fn step(run: &mut Run, stops: &mut Vec<String>, stick: Stick, actions: [bool; 4]
         connected: true,
     };
     stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+    note_card(run);
+}
+
+/// An enemy intro's card as it stood: its first and last step, its
+/// string's object by name and the scene it stood in.
+type Card = (u32, u32, Option<String>, Option<String>);
+
+thread_local! {
+    /// The cards this test's run has put up, in order ([`note_card`]).
+    static CARDS: std::cell::RefCell<Vec<Card>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The enemy card up this step, if any, onto [`CARDS`]: a step with the
+/// same card up as the last extends it.
+fn note_card(run: &Run) {
+    let up = guacamole::announcements::enemy_card(&run.vm, &run.world);
+    let Some(string) = up.and_then(|c| match c.string {
+        guac_script::Value::Object(o) => run.vm.program().name_of(o).map(str::to_owned),
+        _ => None,
+    }) else {
+        return;
+    };
+    CARDS.with_borrow_mut(|cards| match cards.last_mut() {
+        Some(c) if c.2.as_deref() == Some(&string) && c.1 + 1 == run.steps => c.1 = run.steps,
+        _ => cards.push((run.steps, run.steps, Some(string), cutscene_name(run))),
+    });
 }
 
 fn still(run: &mut Run, stops: &mut Vec<String>, actions: [bool; 4]) {
@@ -310,30 +336,44 @@ fn level_205s_way_off_its_island_turns_the_crane() {
     println!("load at start: {}", load());
     let mut stops = Vec::new();
     let mut run = joined_205(&mut stops);
+    let scenes = over_the_crane(&mut run, &mut stops);
+    // The yard's own Cyclops' intro may start as he comes in (openspec
+    // AS.284): nothing else on the way.
+    assert!(
+        scenes[1..].iter().all(|(_, n)| n == CYCLOPS_INTRO),
+        "no other cutscene on the way: {scenes:?}"
+    );
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
+}
+
+/// The yard's first enemy intro, the Cyclops Near's, as its controller
+/// names the scene.
+const CYCLOPS_INTRO: &str = "ICG_Cyclops_Near";
+
+/// AS.283's way from the hand-over to Setup_001's controller, asserted as
+/// it goes; each cutscene on the way and its first step.
+fn over_the_crane(run: &mut Run, stops: &mut Vec<String>) -> Vec<(u32, String)> {
     for k in 0..400u32 {
-        still(
-            &mut run,
-            &mut stops,
-            [false, false, false, k > 120 && k % 20 == 10],
-        );
+        still(run, stops, [false, false, false, k > 120 && k % 20 == 10]);
     }
     for _ in 0..120 {
-        still(&mut run, &mut stops, [false; 4]);
+        still(run, stops, [false; 4]);
     }
     let start = run.hero().pivot;
     assert!(start.distance(HAND_OVER) < 0.5, "handed over: {start}");
     let (_, controller) = run.placed("Setup_001_Controller");
-    let (_, yard_first) = way_to(&run, start, controller);
+    let (_, yard_first) = way_to(run, start, controller);
     println!("before the turn the yard is {yard_first:.1} m off any walk");
     assert!(yard_first > 10.0, "{yard_first}");
-    assert_eq!(facing(&run, "Crane(1)"), 90.0, "the boat lies east");
+    assert_eq!(facing(run, "Crane(1)"), 90.0, "the boat lies east");
 
     // Over the boat, past the crane's deck and down the pier to its south
     // end, where the hint (its own place, within its 20 ft range) pans to the
     // wheel: the pier stops short of the yard.
     let mut scenes = Vec::new();
     let (_, hint) = run.placed("Hint_Pan_Show_Wheel");
-    let (way, off) = way_to(&run, start, hint);
+    let (way, off) = way_to(run, start, hint);
     println!(
         "to the pier's end {hint}: {} cells, {off:.1} m off",
         way.len()
@@ -348,12 +388,12 @@ fn level_205s_way_off_its_island_turns_the_crane() {
         way.iter().any(|c| c.x < 118.0 && c.x > 107.0),
         "over the boat"
     );
-    let reached = walk(&mut run, &mut stops, &mut scenes, &way, 3000);
+    let reached = walk(run, stops, &mut scenes, &way, 3000);
     for _ in 0..240 {
-        if cutscene_name(&run).is_none() && !guacamole::anchors::scene_holds(&run.vm) {
+        if cutscene_name(run).is_none() && !guacamole::anchors::scene_holds(&run.vm) {
             break;
         }
-        still(&mut run, &mut stops, [false; 4]);
+        still(run, stops, [false; 4]);
     }
     println!(
         "at the pier's end {reached} at {}: scenes {scenes:?}",
@@ -369,30 +409,30 @@ fn level_205s_way_off_its_island_turns_the_crane() {
 
     // Up to the wheel and △ until the crane turns.
     let (_, crank) = run.placed("SpinCrank");
-    let (way, off) = way_to(&run, run.hero().pivot, crank);
+    let (way, off) = way_to(run, run.hero().pivot, crank);
     println!("to the wheel {crank}: {} cells, {off:.1} m off", way.len());
     assert!(off < 3.0, "{off}");
     assert!(
-        walk(&mut run, &mut stops, &mut scenes, &way, 3000),
+        walk(run, stops, &mut scenes, &way, 3000),
         "at the wheel: {}",
         run.hero().pivot
     );
     let mut presses = 0;
     for k in 0..600u32 {
-        let press = facing(&run, "Crane(1)") == 90.0 && k % 20 == 10;
+        let press = facing(run, "Crane(1)") == 90.0 && k % 20 == 10;
         presses += u32::from(press);
-        still(&mut run, &mut stops, [false, false, false, press]);
-        if facing(&run, "Crane(1)") == 180.0 {
+        still(run, stops, [false, false, false, press]);
+        if facing(run, "Crane(1)") == 180.0 {
             break;
         }
     }
     println!(
         "turned to {} after {presses} presses, step {}",
-        facing(&run, "Crane(1)"),
+        facing(run, "Crane(1)"),
         run.steps
     );
-    assert_eq!(facing(&run, "Crane(1)"), 180.0, "the boat lies south");
-    assert_eq!(facing(&run, "Crane_Head"), 180.0, "its mast with it");
+    assert_eq!(facing(run, "Crane(1)"), 180.0, "the boat lies south");
+    assert_eq!(facing(run, "Crane_Head"), 180.0, "its mast with it");
     let hint_off = run
         .world
         .actor(run.placed("Hint_Pan_Show_Wheel").0)
@@ -400,22 +440,21 @@ fn level_205s_way_off_its_island_turns_the_crane() {
         .removed;
     assert!(hint_off, "the hint off once he's by the wheel");
     for _ in 0..60 {
-        still(&mut run, &mut stops, [false; 4]);
+        still(run, stops, [false; 4]);
     }
 
     // Over the boat to the yard.
-    let (way, off) = way_to(&run, run.hero().pivot, controller);
+    let (way, off) = way_to(run, run.hero().pivot, controller);
     println!(
         "to Setup_001's controller {controller}: {} cells, {off:.1} m off",
         way.len()
     );
     assert!(
-        walk(&mut run, &mut stops, &mut scenes, &way, 4000),
+        walk(run, stops, &mut scenes, &way, 4000),
         "in the yard: {}",
         run.hero().pivot
     );
     println!("scenes on the way {scenes:?}");
-    assert_eq!(scenes.len(), 1, "no other cutscene on the way: {scenes:?}");
     let at = run.hero().pivot;
     println!(
         "at {at}: {:.2} m from the controller, {:.2} m across the ground",
@@ -423,6 +462,246 @@ fn level_205s_way_off_its_island_turns_the_crane() {
         Vec3::new(at.x - controller.x, 0.0, at.z - controller.z).length()
     );
     assert!(at.distance(controller) < 3.5, "{at}");
+    scenes
+}
+
+/// Setup_001's five, as its set names them (`Setup_001_Enemies`).
+const YARD_FOES: [&str; 5] = [
+    "Enemy_Cyclops_Near(70)",
+    "Enemy_Cyclops_Near(20)",
+    "Enemy_Cyclops_Near(21)",
+    "Enemy_Elf_Lobber(1)",
+    "Enemy_Elf_Lobber(2)",
+];
+
+/// A placement's behaviour now: `removed` once taken off, `asleep`, `-`
+/// with no script.
+fn behaviour(run: &Run, name: &str) -> String {
+    let h = run.placed(name).0;
+    match run.vm.placement_of(h) {
+        None => "-".to_owned(),
+        Some(id) if run.vm.removed(id) => "removed".to_owned(),
+        Some(id) if run.vm.asleep(id) => "asleep".to_owned(),
+        Some(id) => run.vm.behaviour(id).unwrap_or("?").to_ascii_lowercase(),
+    }
+}
+
+/// openspec AS.284: Setup_001, the first yard past the crane, on its own
+/// triggers. Walked over the crane (AS.283's way), the hero comes on its
+/// controller's trigger: the yard's gate goes up, the first Cyclops Near
+/// steps out of the house by the water and its intro plays with the
+/// Cyclops' card; then he fights what's awake within 40 m on his storey
+/// until the controller has taken itself off, its five beaten and the
+/// gate gone. A hero under 60 health is topped up to 200 (counted), as on
+/// 201. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_205s_first_yard_fights_by_its_own_triggers() {
+    println!("load at start: {}", load());
+    let mut stops = Vec::new();
+    let mut run = joined_205(&mut stops);
+    let scenes_before = over_the_crane(&mut run, &mut stops);
+    println!("over the crane, scenes {scenes_before:?}");
+    let gate = run.placed("Setup_001_Enemy_Gate_Actor").0;
+    let gate_range = |run: &Run| run.world.actor(gate).map(|a| (a.range, a.removed));
+    let mut log: Vec<(u32, String, String)> = Vec::new();
+    let mut last: HashMap<String, String> = HashMap::new();
+    let mut note = |run: &Run, log: &mut Vec<(u32, String, String)>| {
+        for n in YARD_FOES.iter().chain(&["Setup_001_Controller"]) {
+            let b = behaviour(run, n);
+            if last.get(*n) != Some(&b) {
+                log.push((run.steps, (*n).to_owned(), b.clone()));
+                last.insert((*n).to_owned(), b);
+            }
+        }
+    };
+    let (mut scenes, mut topups) = (scenes_before.clone(), Vec::new());
+    let mut gate_seen = vec![gate_range(&run)];
+    let mut pressed = 0u32;
+    let start = run.steps;
+    let (_, trigger) = run.placed("Setup_001_Trigger(2)");
+    let (mut route, mut routed, mut next): (Vec<Vec3>, u32, usize) = (Vec::new(), 0, 0);
+    while behaviour(&run, "Setup_001_Controller") != "removed" {
+        if run.steps >= start + 8_000 {
+            let foes: Vec<String> = YARD_FOES
+                .iter()
+                .map(|n| {
+                    let a = run.world.actor(run.placed(n).0).unwrap();
+                    format!("{n} {} at {} {}", behaviour(&run, n), a.position, a.removed)
+                })
+                .collect();
+            for n in [
+                "Enemy_Elf_Lobber(1)",
+                "Enemy_Elf_Lobber(2)",
+                "Setup_001_Trigger(2)",
+            ] {
+                let h = run.placed(n).0;
+                let p = run.world.actor(h).map_or(run.placed(n).1, |a| a.position);
+                let (w, off) = way_to(&run, run.hero().pivot, p);
+                println!(
+                    "  to {n} {p}: {} cells, {off:.1} m off, ends {}",
+                    w.len(),
+                    w.last().unwrap()
+                );
+            }
+            panic!(
+                "the fight never ended: hero at {}, {foes:#?}, {log:?}",
+                run.hero().pivot
+            );
+        }
+        note(&run, &mut log);
+        let g = gate_range(&run);
+        if gate_seen.last() != Some(&g) {
+            gate_seen.push(g);
+        }
+        if let Some(cs) = cutscene_name(&run) {
+            if scenes.last().is_none_or(|(_, n)| *n != cs) {
+                scenes.push((run.steps, cs));
+            }
+            still(&mut run, &mut stops, [false; 4]);
+            continue;
+        }
+        if guacamole::anchors::scene_holds(&run.vm) {
+            still(&mut run, &mut stops, [false; 4]);
+            continue;
+        }
+        if let (Some(hp), Some(m)) = (run.health(), run.minion)
+            && hp < 60.0
+        {
+            guacamole::scripts::set_health(&mut run.vm, m, 200);
+            topups.push((run.steps, hp));
+        }
+        let me = run.hero().pivot;
+        let near = YARD_FOES
+            .iter()
+            .map(|n| run.placed(n).0)
+            .filter(|h| {
+                run.vm
+                    .placement_of(*h)
+                    .is_some_and(|i| !run.vm.removed(i) && !run.vm.asleep(i))
+            })
+            .filter_map(|h| {
+                run.world
+                    .actor(h)
+                    .filter(|a| !a.removed)
+                    .map(|a| a.position)
+            })
+            .filter(|p| (p.y - me.y).abs() < 12.0 && (p.x - me.x).hypot(p.z - me.z) < 40.0)
+            .min_by(|a, b| a.distance(me).total_cmp(&b.distance(me)));
+        // None left awake near: on to the yard's far trigger, which its
+        // controller waits for before it counts them.
+        let target = near.unwrap_or(trigger);
+        let far = (target.x - me.x).hypot(target.z - me.z);
+        if near.is_none() && far < 1.0 {
+            still(&mut run, &mut stops, [false; 4]);
+            continue;
+        }
+        // Over the flood's cells to it, the route made again each 1.5 s or
+        // as it moves off its end.
+        let stale = route.last().is_none_or(|e: &Vec3| e.distance(target) > 3.0);
+        if routed + 90 <= run.steps || stale {
+            route = way_to(&run, me, target).0;
+            (routed, next) = (run.steps, 0);
+        }
+        let flat = |a: Vec3, b: Vec3| Vec3::new(a.x - b.x, 0.0, a.z - b.z).length();
+        let aim = if far <= 4.0 || route.is_empty() {
+            target
+        } else {
+            next = (next..(next + 6).min(route.len()))
+                .min_by(|a, b| flat(me, route[*a]).total_cmp(&flat(me, route[*b])))
+                .unwrap_or(next);
+            route[next..]
+                .iter()
+                .find(|c| flat(me, **c) > 1.5)
+                .copied()
+                .unwrap_or(target)
+        };
+        pressed = if near.is_some() && far <= 2.5 {
+            pressed + 1
+        } else {
+            0
+        };
+        let to = if pressed > 240 {
+            // Pressed into him 4 s: stepped back out.
+            if pressed > 270 {
+                pressed = 0;
+            }
+            Vec3::new(me.x * 2.0 - aim.x, me.y, me.z * 2.0 - aim.z)
+        } else {
+            aim
+        };
+        run.bench.view = (to.x - me.x).atan2(to.z - me.z).to_degrees();
+        run.bench.hold_view = true;
+        let push = if far > 2.5 || pressed > 240 {
+            1.0
+        } else {
+            0.35
+        };
+        let swing = near.is_some() && far <= 5.0 && run.steps % 20 == 0;
+        step(
+            &mut run,
+            &mut stops,
+            Stick::new(0.0, push),
+            [swing, false, false, false],
+        );
+    }
+    note(&run, &mut log);
+    let cards = CARDS.with_borrow(Clone::clone);
+    for (step, n, b) in &log {
+        println!("  {step} {n} {b}");
+    }
+    println!("scenes {scenes:?}");
+    println!("cards {cards:?}");
+    println!("the gate {gate_seen:?}; top-ups {topups:?}");
+    println!(
+        "over at step {} ({} steps from the yard)",
+        run.steps,
+        run.steps - start
+    );
+    // Its trigger woke it, its intro played the Cyclops' card in its own
+    // scene, once.
+    assert!(
+        scenes.iter().any(|(_, n)| n == CYCLOPS_INTRO),
+        "the Cyclops' intro: {scenes:?}"
+    );
+    assert_eq!(cards.len(), 1, "{cards:?}");
+    let (from, to, string, scene) = &cards[0];
+    assert_eq!(string.as_deref(), Some("S2_Enemy_CyclopsNear_Name"));
+    assert_eq!(scene.as_deref(), Some(CYCLOPS_INTRO));
+    let secs = (to - from) as f32 / 60.0;
+    assert!((secs - 3.5).abs() < 0.2, "the card stood {secs} s");
+    // Each of the five came out of its sleep and went, the controller after.
+    let off: Vec<(String, Option<u32>)> = YARD_FOES
+        .iter()
+        .map(|n| {
+            let at = log
+                .iter()
+                .find(|(_, m, b)| m == n && b == "removed")
+                .map(|e| e.0);
+            ((*n).to_owned(), at)
+        })
+        .collect();
+    assert!(off.iter().all(|o| o.1.is_some()), "{off:?}");
+    let controller_off = log
+        .iter()
+        .find(|(_, m, b)| m == "Setup_001_Controller" && b == "removed")
+        .map(|e| e.0)
+        .unwrap();
+    assert!(
+        off.iter().all(|o| o.1.unwrap() <= controller_off),
+        "{off:?}"
+    );
+    // The gate went up at the trigger and is gone at the end.
+    assert!(
+        gate_seen
+            .iter()
+            .any(|g| g.is_some_and(|g| g.0 == 250.0 && !g.1)),
+        "the gate up: {gate_seen:?}"
+    );
+    assert!(
+        gate_seen.last().unwrap().is_some_and(|g| g.1),
+        "the gate gone: {gate_seen:?}"
+    );
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
 }

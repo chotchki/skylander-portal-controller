@@ -1306,7 +1306,12 @@ pub(crate) fn step_scripts(
     ),
 ) {
     let began = std::time::Instant::now();
-    let pivots: Vec<Vec3> = heroes.iter().map(|(_, b)| b.hero.pivot).collect();
+    // A hung hero wakes the level from where he last stood (openspec
+    // AS.284).
+    let pivots: Vec<Vec3> = heroes
+        .iter()
+        .map(|(e, b)| world.measured_from(e.to_bits(), b.hero.pivot, b.hero.hung))
+        .collect();
     let from = activity_from(
         pivots,
         play.as_deref().and_then(crate::play::Play::last_place),
