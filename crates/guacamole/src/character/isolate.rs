@@ -66,15 +66,16 @@ pub fn read(test_hooks: bool, value: Option<&str>) -> Vec<&'static str> {
     }
 }
 
-/// The defs this process's [`KEY`] asks for, read once ([`read`]).
+/// What this build reads off [`KEY`]'s `value`: [`read`] behind the
+/// `test-hooks` feature, so a kid's build reads nothing.
+pub fn this_build(value: Option<&str>) -> Vec<&'static str> {
+    read(cfg!(feature = "test-hooks"), value)
+}
+
+/// The defs this process's [`KEY`] asks for, read once ([`this_build`]).
 pub fn asked() -> &'static [&'static str] {
     static ASKED: OnceLock<Vec<&'static str>> = OnceLock::new();
-    ASKED.get_or_init(|| {
-        read(
-            cfg!(feature = "test-hooks"),
-            std::env::var(KEY).ok().as_deref(),
-        )
-    })
+    ASKED.get_or_init(|| this_build(std::env::var(KEY).ok().as_deref()))
 }
 
 #[cfg(test)]
@@ -102,5 +103,17 @@ mod tests {
         assert!(read(false, Some("layer3")).is_empty());
         assert!(read(true, None).is_empty());
         assert!(read(true, Some("layer3,bogus")).is_empty());
+    }
+
+    /// The build's own gate, in whichever build runs the test: without the
+    /// feature the key is ignored even when set.
+    #[test]
+    fn this_build_reads_the_key_only_with_test_hooks() {
+        let got = this_build(Some("layer3"));
+        if cfg!(feature = "test-hooks") {
+            assert_eq!(got, vec!["CHAR_OFF_LAYER3"]);
+        } else {
+            assert!(got.is_empty(), "{got:?}");
+        }
     }
 }
