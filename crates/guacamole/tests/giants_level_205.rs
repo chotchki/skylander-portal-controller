@@ -1834,15 +1834,21 @@ fn hub_talk(run: &mut Run, stops: &mut Vec<String>, at: Vec3, yes: bool) -> Vec<
 }
 
 /// Where the hero has stood every quarter second over AS.325's stretch, for
-/// the Mac's driver to follow: the legs' trail.
+/// the Mac's driver to follow, and where each of its legs ended (the
+/// trail's length then, the leg's name).
 #[derive(Default)]
-struct Trail(Vec<Vec3>);
+struct Trail(Vec<Vec3>, Vec<(usize, &'static str)>);
 
 impl Trail {
     fn note(&mut self, run: &Run) {
         if run.steps.is_multiple_of(15) {
             self.0.push(run.hero().pivot);
         }
+    }
+
+    fn mark(&mut self, run: &Run, leg: &'static str) {
+        self.0.push(run.hero().pivot);
+        self.1.push((self.0.len(), leg));
     }
 }
 
@@ -2116,6 +2122,7 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
     println!("the first yard over at step {}", run.steps);
     let mut trail = Trail::default();
     let mut topups = yard.topups.clone();
+    trail.mark(&run, "yard-end");
 
     // The jump pad, laid once the five are gone, throws him up onto the
     // key ledge.
@@ -2148,6 +2155,7 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
         "the pad's activator done"
     );
     assert_eq!(pad_range(&run), Some(230.0), "the pad laid");
+    trail.mark(&run, "pad");
     let below = run.hero().pivot.y;
     run.bench.view = 180.0;
     run.bench.hold_view = true;
@@ -2158,6 +2166,7 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
     let ledge = run.hero().pivot;
     println!("thrown from {below:.2} up to {ledge} at step {}", run.steps);
     assert!(ledge.y > below + 3.0, "up on the ledge: {ledge}");
+    trail.mark(&run, "ledge");
     let key_held = |run: &Run| {
         run.world.clones().into_iter().any(|h| {
             run.world.name(h) == "Key Pickup"
@@ -2186,6 +2195,7 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
         Vec3::new(71.2, 17.85, 173.5),
         1.5,
     );
+    trail.mark(&run, "door");
     assert!(
         tap_until(&mut run, &mut stops, 900, &|r| behaviour(
             r,
@@ -2197,6 +2207,7 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
     assert!(!key_held(&run), "the key in its lock");
     println!("the key door open at step {}", run.steps);
 
+    trail.mark(&run, "door-open");
     // The market: the armored Chompy's intro, then its Chompies fought on
     // the way to the crane.
     walk_to(
@@ -2208,6 +2219,7 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
         1.5,
     );
     let west_of_crane = Vec3::new(47.2, 21.12, 133.06);
+    trail.mark(&run, "market");
     let market = fight_to(
         &mut run,
         &mut stops,
@@ -2233,6 +2245,7 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
     );
     println!("by the crane at step {}", run.steps);
 
+    trail.mark(&run, "crane-west");
     // Blobbers' crane: south, the block aboard, west, the block off into
     // the channel, south again, the far block into the channel there.
     assert_eq!(crane(&run), 270.0, "the boat lies west");
@@ -2244,6 +2257,14 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
         assert!(
             go_by(run, stops, scenes, trail, &UP_TO_THE_WHEEL, 900),
             "at the wheel"
+        );
+        trail.mark(
+            run,
+            if to == 180.0 {
+                "wheel-south"
+            } else {
+                "wheel-west"
+            },
         );
         assert!(
             tap_until(run, stops, 900, &|r| crane(r) == to
@@ -2260,6 +2281,7 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
             go_by(run, stops, scenes, trail, &DOWN_FROM_THE_WHEEL, 900),
             "down from the wheel"
         );
+        trail.mark(run, "down");
     };
     turn(&mut run, &mut stops, &mut scenes, &mut trail, 180.0);
     assert!(go_by(
@@ -2270,6 +2292,7 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
         &[(49.7, 117.0)],
         900
     ));
+    trail.mark(&run, "block-1");
     let aboard = shove(
         &mut run,
         &mut stops,
@@ -2281,6 +2304,7 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
                 && behaviour(r, "Push_Block_Template(1)").starts_with("1.")
         },
     );
+    trail.mark(&run, "pushed-1");
     let on_boat = run.at("Push_Block_Template(1)");
     println!("the block aboard at {on_boat} in {aboard} moves");
     assert!(on_boat.z < 108.5, "aboard: {on_boat}");
@@ -2311,6 +2335,7 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
         &[(40.0, 131.0), (31.5, 130.7)],
         900
     ));
+    trail.mark(&run, "block-2");
     let off_west = shove(
         &mut run,
         &mut stops,
@@ -2319,6 +2344,7 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
         270.0,
         &|r| r.at("Push_Block_Template(2)").y < 18.5,
     );
+    trail.mark(&run, "pushed-2");
     let west = run.at("Push_Block_Template(2)");
     println!("the block in the west channel at {west} in {off_west} moves");
     assert!(west.y < 18.5, "in the channel: {west}");
@@ -2339,6 +2365,7 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
         &[(49.7, 116.0), (49.7, 111.0), (49.7, 102.5)],
         900
     ));
+    trail.mark(&run, "block-7");
     let into = shove(
         &mut run,
         &mut stops,
@@ -2347,6 +2374,7 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
         180.0,
         &|r| behaviour(r, "Push_Block_Template(7)") == "special - push block inactive",
     );
+    trail.mark(&run, "pushed-7");
     let south = run.at("Push_Block_Template(7)");
     println!(
         "the far block in the channel at {south} in {into} moves, step {}",
@@ -2389,6 +2417,7 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
     );
     assert!(woke.is_some(), "Setup_002 woke: {:?}", yard_2.log);
 
+    trail.mark(&run, "card-house");
     // Into the card house: Fangs' intro, his game (stood in won), his
     // outro, the gate before the key down.
     let mut stood_in = 0;
@@ -2525,6 +2554,8 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
         .map(|p| format!("{:.2},{:.2},{:.2}", p.x, p.y, p.z))
         .collect();
     println!("TRAIL {}", t.join(";"));
+    let m: Vec<String> = trail.1.iter().map(|(i, n)| format!("{i}:{n}")).collect();
+    println!("MARKS {}", m.join(";"));
     assert!(
         fight_2.ended,
         "Setup_002's fight never ended: {:?}",
