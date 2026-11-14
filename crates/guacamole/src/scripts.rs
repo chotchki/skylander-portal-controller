@@ -4235,6 +4235,12 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
                 .iter()
                 .map(|s| (*s).to_owned()),
         );
+        // Level 205's way off its start island (openspec AS.283).
+        placements.extend(
+            crate::level_205::passage(name)
+                .iter()
+                .map(|s| (*s).to_owned()),
+        );
     }
     // Level 201's own scripts, by their path under its folder (openspec
     // AU.53).

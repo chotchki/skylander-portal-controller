@@ -22,6 +22,7 @@ pub mod hud_messages;
 pub mod interface_host;
 pub mod interiors;
 pub mod level_201;
+pub mod level_205;
 pub mod level_end;
 pub mod level_scene;
 pub mod level_scripts;
