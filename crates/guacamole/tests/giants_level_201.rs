@@ -2514,8 +2514,10 @@ const LIFE_WEST_ISLAND: &str = "w 24 -58.5; w 14 -59; w 12 -57; w 12 -53.6; h 12
 /// Over the third bridge onto the plateau, the bomb its spawner lays taken
 /// and thrown at the long-range eyeball across the gap, which drops the
 /// timed door below; off the plateau's edge, through the door and onto the
-/// fourth bridge's switch.
-const LIFE_PLATEAU: &str = "w 27.5 -43.0; w 54.4 -43.3; w 60 -42; w 58 -40; m 12; w 62 -40; w 69 -39; w 70.6 -32; w 70.6 -25; w 68.76 -22.5";
+/// fourth bridge's switch. He waits 2 s by the spawner, which wakes only as
+/// he comes (openspec AS.284: before it, headless 201's intro held him at
+/// the world's origin and woke the plateau from there), for its bomb.
+const LIFE_PLATEAU: &str = "w 27.5 -43.0; w 54.4 -43.3; w 60 -42; s 120; w 58 -40; m 12; w 62 -40; w 69 -39; w 70.6 -32; w 70.6 -25; w 68.76 -22.5";
 
 /// Over the fourth bridge onto the strip, off its west edge into the valley
 /// below, onto its jump pad and up to the ground before the wall.
