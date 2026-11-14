@@ -545,7 +545,7 @@ fn fight(
         if let Some(hp) = run.health() {
             fought.lowest = Some(fought.lowest.map_or(hp, |l| l.min(hp)));
         }
-        if (run.steps - start) % 15 == 0 {
+        if (run.steps - start).is_multiple_of(15) {
             fought.trail.push(run.hero().pivot);
         }
         if behaviour(run, controller) == "removed" {
@@ -635,7 +635,7 @@ fn fight(
         } else {
             0.35
         };
-        let swing = near.is_some() && far <= 5.0 && run.steps % 20 == 0;
+        let swing = near.is_some() && far <= 5.0 && run.steps.is_multiple_of(20);
         step(
             run,
             stops,
