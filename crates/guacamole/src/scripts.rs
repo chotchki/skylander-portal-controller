@@ -3134,7 +3134,8 @@ pub fn is_hub_person(script: &str) -> bool {
 }
 
 /// Whether the placement `name` of the level whose archive is `level` is
-/// one of its own people ([`LEVEL_PEOPLE`]).
+/// one of its own people ([`LEVEL_PEOPLE`], and level 205's
+/// [`crate::level_205::PEOPLE`]).
 pub fn is_level_person(level: &str, name: &str) -> bool {
     LEVEL_PEOPLE.iter().any(|(l, n)| *l == level && *n == name)
         || crate::level_205::people(level).contains(&name)
