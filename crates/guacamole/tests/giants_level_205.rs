@@ -360,7 +360,12 @@ fn level_205s_way_off_its_island_turns_the_crane() {
         run.hero().pivot
     );
     assert!(reached, "at the pier's end: {}", run.hero().pivot);
-    assert!(!scenes.is_empty(), "the hint panned to the wheel");
+    // The hint's own pan and nothing else: any cutscene alone would let
+    // another placement's stand in for it.
+    assert!(
+        scenes.len() == 1 && scenes[0].1.contains("Pan"),
+        "the hint panned to the wheel: {scenes:?}"
+    );
 
     // Up to the wheel and △ until the crane turns.
     let (_, crank) = run.placed("SpinCrank");
@@ -410,6 +415,7 @@ fn level_205s_way_off_its_island_turns_the_crane() {
         run.hero().pivot
     );
     println!("scenes on the way {scenes:?}");
+    assert_eq!(scenes.len(), 1, "no other cutscene on the way: {scenes:?}");
     let at = run.hero().pivot;
     println!(
         "at {at}: {:.2} m from the controller, {:.2} m across the ground",
