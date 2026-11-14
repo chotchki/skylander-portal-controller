@@ -602,3 +602,199 @@ fn level_205s_mechanic_stands_by_the_start_and_talks() {
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
 }
+
+/// What one of 205's people or scenes past the first yard does with a hero
+/// put beside it (openspec AS.286), as far as today's level goes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Met {
+    /// △ starts its talk, a cutscene that plays to its end.
+    Talks,
+    /// A hero coming near (or touching the placement named) starts its
+    /// scene, which plays to its end.
+    Scene(Option<&'static str>),
+    /// Awake on its model, the talk prompt by it, its talk waiting on a
+    /// fight no listing runs yet (openspec AS.284).
+    Waits,
+    /// Awake on its model, turning to him; no talk.
+    Turns,
+    /// Runs to its end and lets the camera go.
+    Pops,
+    /// Awake, waiting for an approach that a hero beside it doesn't make:
+    /// nothing plays.
+    Quiet,
+    /// Asleep: woken by a script past what runs today.
+    Asleep,
+}
+
+/// 205's people and scenes past the first yard, by placement, and what each
+/// does with a hero put beside it.
+const PAST_THE_YARD: [(&str, Met); 26] = [
+    ("T-Bone", Met::Talks),
+    ("CardGame_Template(1)_Bandit", Met::Talks),
+    ("Blobbers", Met::Scene(Some("SignalFace_CraneMabu_Intro"))),
+    ("Card_Pirate_05_Cine", Met::Scene(None)),
+    ("Hint_Pan_Show_Island", Met::Scene(None)),
+    ("Hint_Pan_Show_Wheel(1)", Met::Scene(None)),
+    ("Cali", Met::Waits),
+    ("Cali_Town", Met::Waits),
+    ("Slave_1_hammer(5)", Met::Turns),
+    ("Slave_Carry(5)", Met::Turns),
+    ("Switch_To_Cam(6.1)", Met::Pops),
+    ("Switch_To_Cam(6)", Met::Pops),
+    ("SwitchToCam7", Met::Pops),
+    ("CardGame_Template(4)_Dreadbeard", Met::Scene(None)),
+    ("CardPirate_Bandit_Cine", Met::Talks),
+    ("Card_Pirate_04_Gate_Woof", Met::Asleep),
+    ("CardGame_Template(2)", Met::Asleep),
+    ("CardGame_Chance", Met::Asleep),
+    ("205_Encounter_At_Galleon_IGC", Met::Asleep),
+    ("CardPirate_Boathouse_Cine", Met::Asleep),
+    ("CardPirate_Boathouse_Cine_B", Met::Asleep),
+    ("CardPirate_Casino_Cine", Met::Asleep),
+    ("CardPirate_Casino_Cine_B", Met::Asleep),
+    ("Hint_Pan_Show_Turntable", Met::Asleep),
+    ("Switch_To_Cam(6.3)", Met::Asleep),
+    ("SpecialPan", Met::Quiet),
+];
+
+/// openspec AS.286: each of 205's people and scenes past the first yard,
+/// on 205's listing, with the hero put beside it (a test-only placement:
+/// no walk reaches past the first yard yet), each in a run of its own after
+/// the intro's skip: its scene or talk played to its end and the hero
+/// handed back, or awake on its model with the prompt by it, or turning to
+/// him, or asleep where a script past today's wakes it. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_205s_people_and_scenes_past_the_yard_as_far_as_put() {
+    println!("load at start: {}", load());
+    let skinned: Vec<String> = skinned_models_of(LEVEL_205)
+        .into_iter()
+        .map(|(p, _)| p)
+        .collect();
+    let lists = guacamole::level_205::PEOPLE
+        .iter()
+        .chain(&guacamole::level_205::SCENES)
+        .count();
+    assert_eq!(lists, PAST_THE_YARD.len() + 1, "all listed, Bowers aside");
+    for (name, met) in PAST_THE_YARD {
+        assert!(
+            guacamole::level_205::listed(LEVEL_205).any(|n| n == name),
+            "{name} listed"
+        );
+        let mut stops = Vec::new();
+        let mut run = joined_205(&mut stops);
+        for k in 0..400u32 {
+            still(
+                &mut run,
+                &mut stops,
+                [false, false, false, k > 120 && k % 20 == 10],
+            );
+        }
+        let (h, placed) = run.placed(name);
+        let model = run
+            .files
+            .placed
+            .iter()
+            .find(|p| p.obj.unit == LEVEL && p.name == name)
+            .and_then(|p| p.model.clone());
+        let mut scenes: Vec<String> = Vec::new();
+        let mut watch = |run: &mut Run, stops: &mut Vec<String>, n: u32| {
+            for _ in 0..n {
+                still(run, stops, [false; 4]);
+                if let Some(cs) = cutscene_name(run)
+                    && scenes.last() != Some(&cs)
+                {
+                    scenes.push(cs);
+                }
+            }
+        };
+        if let Met::Scene(Some(first)) = met {
+            let (_, at) = run.placed(first);
+            run.put(at, 0.0);
+            watch(&mut run, &mut stops, 200);
+        }
+        run.put(placed + Vec3::new(1.5, 0.5, 1.5), 0.0);
+        watch(&mut run, &mut stops, 300);
+        let ended = |run: &mut Run, stops: &mut Vec<String>| {
+            for _ in 0..4000 {
+                if cutscene_name(run).is_none() && !guacamole::anchors::scene_holds(&run.vm) {
+                    return true;
+                }
+                still(run, stops, [false; 4]);
+            }
+            false
+        };
+        let behaviour = run
+            .vm
+            .placement_of(h)
+            .and_then(|id| run.vm.behaviour(id))
+            .map(str::to_owned);
+        let near = clones_near(&run, placed, 5.0);
+        println!("{name}: {met:?}: {behaviour:?}, scenes {scenes:?}, by it {near:?}");
+        let drawn = |run: &Run| {
+            let model = model.as_ref().expect("a model");
+            assert!(run.world.people().contains(&h), "{name} one of the people");
+            assert!(skinned.contains(model), "{name} drawn on its {model}");
+        };
+        match met {
+            Met::Talks => {
+                assert!(awake(&run, h), "{name} awake");
+                if !name.ends_with("_Cine") {
+                    drawn(&run);
+                }
+                assert!(near.iter().any(|c| c == TALK_PROMPT), "{name}: {near:?}");
+                let t = talk(&mut run, &mut stops, 4000);
+                println!("  its talk {t:?}");
+                let (_, began, end) = t.unwrap_or_else(|| panic!("{name} talks to its end"));
+                assert!(end - began > 60, "{name}: {began} to {end}");
+            }
+            Met::Scene(_) => {
+                if guacamole::level_205::PEOPLE.contains(&name) {
+                    assert!(awake(&run, h), "{name} awake");
+                    drawn(&run);
+                }
+                assert!(!scenes.is_empty(), "{name}'s scene");
+                assert!(ended(&mut run, &mut stops), "{name}'s scene ends");
+            }
+            Met::Waits => {
+                assert!(awake(&run, h), "{name} awake");
+                drawn(&run);
+                assert!(near.iter().any(|c| c == TALK_PROMPT), "{name}: {near:?}");
+                assert!(scenes.is_empty(), "{name}: {scenes:?}");
+            }
+            Met::Turns => {
+                assert!(awake(&run, h), "{name} awake");
+                drawn(&run);
+                assert_eq!(behaviour.as_deref(), Some("turn to player"), "{name}");
+            }
+            Met::Pops => {
+                assert!(awake(&run, h), "{name} awake");
+                assert!(
+                    matches!(behaviour.as_deref(), Some("end" | "done")),
+                    "{name}: {behaviour:?}"
+                );
+            }
+            Met::Quiet => {
+                assert!(awake(&run, h), "{name} awake");
+                assert!(scenes.is_empty(), "{name}: {scenes:?}");
+            }
+            Met::Asleep => {
+                assert!(!awake(&run, h), "{name} asleep");
+                assert!(scenes.is_empty(), "{name}: {scenes:?}");
+            }
+        }
+        for _ in 0..120 {
+            still(&mut run, &mut stops, [false; 4]);
+        }
+        assert!(
+            !guacamole::anchors::scene_holds(&run.vm) && cutscene_name(&run).is_none(),
+            "{name}: nothing holds him"
+        );
+        assert!(
+            !guacamole::scripts::player_hud_hidden(&run.vm),
+            "{name}: the HUD back"
+        );
+        assert!(stops.is_empty(), "{name}: {stops:#?}");
+    }
+    println!("load at end: {}", load());
+}
