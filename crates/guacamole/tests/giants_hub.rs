@@ -1201,3 +1201,72 @@ fn a_save_past_level_201_reaches_the_hubs_definition() {
     assert_eq!(global(&run, "Levels_Completed"), Some(Value::Int(2)));
     println!("load at end: {}", load());
 }
+
+/// openspec AS.269: hub stage 2's Persephone, made anew at every wake on the
+/// original's rule (AS.233), flies in again from where her STARTUP sets her
+/// down about her landing, by the facing she wakes with. Her first landing
+/// leaves her a few degrees off her file's facing (177 against 180), and
+/// from there her circle about its pivot passes 1.2 m inside her landing,
+/// where the 3 degree check toward it never passes. A placement made anew
+/// takes its file's turns (`ScriptWorld::made_anew`), so every flight
+/// lands, from the pivot on either side (the draw takes each over ten
+/// wakes).
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_persephone_woken_anew_lands_from_either_side() {
+    let stage = "level_hub_2_stage_2";
+    let (mut run, _) = run_on_level(
+        Mode::Play,
+        stage,
+        Setup {
+            wake: Wake::Every,
+            ..setup(&[])
+        },
+    );
+    for _ in 0..2 {
+        run.step_play().unwrap();
+    }
+    run.join().unwrap_or_else(|h| panic!("{stage}: {h}"));
+    let intro = run.placement("CS_Hub_Intro_Stage2");
+    while !run.vm.removed(intro) {
+        run.step_play().unwrap();
+    }
+    let id = run.placement("Persephone");
+    let (me, home) = run.placed("Persephone");
+    let far = run
+        .files
+        .placed
+        .iter()
+        .filter(|p| p.obj.unit == LEVEL)
+        .map(|p| guac_motion::seam::Vec3::from_array(p.position))
+        .max_by(|a, b| a.distance(home).total_cmp(&b.distance(home)))
+        .unwrap();
+    let mut sides = std::collections::BTreeSet::new();
+    for cycle in 0..10 {
+        // Away until she sleeps, back until she flies.
+        run.put(far + guac_motion::seam::Vec3::new(0.0, 0.5, 0.0), 0.0);
+        for _ in 0..30 {
+            run.step_play().unwrap();
+        }
+        run.put(home + guac_motion::seam::Vec3::new(1.5, 0.5, 1.5), 0.0);
+        let mut flew = None;
+        let mut landed = None;
+        for k in 0..3000u32 {
+            run.step_play().unwrap();
+            let flying = run.vm.behaviour(id) == Some("flyin");
+            if flew.is_none() && flying {
+                flew = Some(k);
+                // The pivot is east or west of her: the facing it sets.
+                sides.insert(run.world.actor(me).unwrap().angles.facing > 180.0);
+            }
+            if flew.is_some() && !flying {
+                landed = Some(k);
+                break;
+            }
+        }
+        println!("wake {cycle}: flies in at step {flew:?}, lands at {landed:?}");
+        assert!(flew.is_some(), "wake {cycle}: she flies in again");
+        assert!(landed.is_some(), "wake {cycle}: she lands");
+    }
+    assert_eq!(sides.len(), 2, "both sides were flown: {sides:?}");
+}

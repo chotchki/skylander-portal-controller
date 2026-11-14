@@ -977,10 +977,16 @@ impl Model {
                 int(n[usize::from(m.name == "type count")])
             }
             ("nameextractor", "Name checksum") => {
-                let name = (self.name_object != Value::Null)
-                    .then(|| world.name_of(self.name_object))
-                    .flatten();
-                int(name.map_or(0, |n| fnv1a(n.as_bytes()) as i32))
+                if self.name_object == Value::Null {
+                    return int(0);
+                }
+                // An object the world can't name (an attach node, a number)
+                // is a path through nothing, as before AS.268 (stand-in
+                // ledger: `name-extractor`): reading 0
+                // would match every unset save field a script compares it
+                // against.
+                let name = world.name_of(self.name_object).ok_or(Refusal::Nothing)?;
+                int(fnv1a(name.as_bytes()) as i32)
             }
             ("viewporttitlesafeinfo", "left margin") => int(self.title_safe[0]),
             ("viewporttitlesafeinfo", "right margin") => int(self.title_safe[1]),

@@ -19,7 +19,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
 
 use guac_motion::stick::Stick;
-use guac_script::{Handle, Mode};
+use guac_script::{Handle, Mode, Value};
 use guacamole::script_engine::Pad;
 
 mod common;
@@ -951,6 +951,14 @@ fn fresh_as(character: Option<Character>) -> Walker {
         props: true,
         sounds: true,
         character,
+        // GUAC_TEST_WAKE=every runs the suite on the original's wake rule
+        // (openspec AS.246, AS.268).
+        wake: match std::env::var("GUAC_TEST_WAKE").as_deref() {
+            Ok("every") => Wake::Every,
+            Ok("kept") => Wake::Kept,
+            Ok("listed") => Wake::Listed,
+            _ => Wake::Tv,
+        },
         ..Setup::default()
     };
     let (run, _) = run_on_level(Mode::Play, LEVEL_201, setup);
@@ -2762,4 +2770,146 @@ fn past_the_ambush(character: Option<Character>) -> Walker {
         "over the second bridge"
     );
     w
+}
+
+/// openspec AS.268: a placement's name checksum reads as the FNV-1a of its
+/// name through `[system.object namer]`. Each vine-bridge activator files
+/// its checksum in `Bridge_Checksums` at its first frame, so the four read
+/// their names' hashes, all distinct and none 0 (they read 0 when the
+/// namer's cell held nothing and the VM took the path for one through
+/// nothing).
+#[test]
+#[ignore = "reads the Giants dump"]
+fn each_bridge_activator_files_its_names_checksum() {
+    use guac_motion::seam::Vec3;
+    let mut w = fresh();
+    let mut seen = Vec::new();
+    for n in 1..=4 {
+        let name = format!("Activator_Template({n})");
+        // By each in turn, so it is awake and has run its first frame.
+        let (_, at) = w.run.placed(&name);
+        w.run.put(at + Vec3::new(0.0, 1.0, 5.0), 0.0);
+        w.rest(60);
+        let id = w.run.placement(&name);
+        let filed = w
+            .run
+            .vm
+            .local(id, "bridge checksum")
+            .map(|v| w.run.vm.value(v));
+        let want = guac_formats::fnv1a32(name.as_bytes()) as i32;
+        assert_eq!(filed, Some(Value::Int(want)), "{name}");
+        seen.push(want);
+    }
+    seen.sort_unstable();
+    seen.dedup();
+    assert_eq!(seen.len(), 4, "each its own");
+}
+
+/// openspec AS.268's verify: the first vine bridge, grown, then left far
+/// enough to put its activator to sleep and come back to: the activator
+/// wakes at its start, finds its level-set entry by its name's checksum
+/// (`Bridge_Checksums`, `Bridge_States`) and goes straight to the finished
+/// platform (`6 - set final mesh`), never through `1 - activated` or `3 -
+/// grow` again, with the platform standing. Before the checksum read as the
+/// name's every wake filed a new entry of 0 and the bridge was gone (the
+/// au-214-wake review's `bridge2-names0.log`). On the TV's rule and kept.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_woken_grown_bridges_activator_sets_its_finished_platform_with_no_growth() {
+    use guac_motion::seam::Vec3;
+    let mut w = fresh();
+    let (_, pan) = w.run.placed("Pan_Activate");
+    let (_, at) = w.run.placed("Activator_Template(1)");
+    let id = w.run.placement("Activator_Template(1)");
+    let behaviour = |w: &Walker| w.run.vm.behaviour(id).map(str::to_owned);
+    w.run.put(pan + Vec3::new(0.0, 1.0, 0.0), 0.0);
+    let start = w.run.steps;
+    while !behaviour(&w).is_some_and(|b| b.starts_with('5')) {
+        assert!(w.run.steps < start + 2400, "grown in {:?}", behaviour(&w));
+        w.rest(1);
+    }
+    w.rest(120);
+    let standing = |w: &Walker| {
+        w.run
+            .world
+            .creature_bodies()
+            .into_iter()
+            .filter(|(h, _, _)| {
+                w.run
+                    .world
+                    .actor(*h)
+                    .and_then(|a| a.template)
+                    .and_then(|t| w.run.world.template(t))
+                    .is_some_and(|p| p.name == "NatureBridgePlatformCompleted")
+            })
+            .count()
+    };
+    assert_eq!(standing(&w), 1, "the grown bridge stands");
+    let far = w
+        .run
+        .files
+        .placed
+        .iter()
+        .filter(|p| p.obj.unit == LEVEL)
+        .map(|p| Vec3::from_array(p.position))
+        .max_by(|a, b| a.distance(at).total_cmp(&b.distance(at)))
+        .unwrap();
+    w.run.put(far + Vec3::new(0.0, 0.5, 0.0), 0.0);
+    w.rest(200);
+    assert!(w.run.vm.asleep(id), "left behind it sleeps");
+    w.run.put(at + Vec3::new(0.0, 1.0, 5.0), 0.0);
+    let mut seen: Vec<String> = Vec::new();
+    let mut set_final = None;
+    for k in 0..900u32 {
+        w.rest(1);
+        if let Some(b) = behaviour(&w)
+            && seen.last() != Some(&b)
+        {
+            if b.starts_with('6') && set_final.is_none() {
+                set_final = Some(k);
+            }
+            seen.push(b);
+        }
+    }
+    println!(
+        "the woken activator's behaviours: {seen:?}, platforms {}",
+        standing(&w)
+    );
+    assert!(
+        set_final.is_some(),
+        "it sets the finished platform: {seen:?}"
+    );
+    assert!(
+        !seen
+            .iter()
+            .any(|b| b.starts_with('1') && !b.starts_with("01") || b.starts_with('3')),
+        "no growth again: {seen:?}"
+    );
+    assert_eq!(standing(&w), 1, "one finished platform stands: {seen:?}");
+}
+
+/// openspec AS.268: the name extractor names an object that isn't a
+/// placement by the linked files' names (a text key, an enemy's type), so the
+/// enemy intro's already-done marks and Combat's per-type tables key on the
+/// name's hash. A text key the intro shows, an
+/// enemy's definition and a placement each read their own name.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn the_name_extractor_names_a_text_key_and_a_placement_by_the_linked_files() {
+    let w = fresh();
+    let program = w.run.vm.program();
+    for name in ["S2_Enemy_Chompy_Name", "S2_Enemy_LifeMage_Name"] {
+        let obj = program
+            .object_named(name)
+            .unwrap_or_else(|| panic!("the files name {name}"));
+        assert_eq!(
+            w.run.world.name_of_value(Value::Object(obj)).as_deref(),
+            Some(name)
+        );
+    }
+    let (act, _) = w.run.placed("Activator_Template(1)");
+    assert_eq!(
+        w.run.world.name_of_value(Value::Entity(act)).as_deref(),
+        Some("Activator_Template(1)")
+    );
 }

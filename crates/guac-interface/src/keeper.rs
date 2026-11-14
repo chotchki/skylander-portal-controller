@@ -56,6 +56,8 @@ enum Own {
     /// `viewportinfo.title safe zone` on the gameplay viewport: the
     /// title-safe info whose margins `viewporttitlesafeinfo` reads.
     TitleSafe,
+    /// `system.object namer`: the global name extractor (AS.268).
+    NameExtractor,
 }
 
 fn own_members() -> HashMap<MemberId, Own> {
@@ -87,6 +89,10 @@ fn own_members() -> HashMap<MemberId, Own> {
     t.insert(
         MemberId::named("viewportinfo", "title safe zone"),
         Own::TitleSafe,
+    );
+    t.insert(
+        MemberId::named("system", "object namer"),
+        Own::NameExtractor,
     );
     t
 }
@@ -497,6 +503,10 @@ impl Keeper {
             (Some(Own::TitleSafe), _) => {
                 Ok(self.model.singleton(crate::model::singleton::TITLE_SAFE))
             }
+            // The system's, not a sprite's: the one extractor.
+            (Some(Own::NameExtractor), _) => Ok(self
+                .model
+                .singleton(crate::model::singleton::NAME_EXTRACTOR)),
             _ => Err(self.not_known(at.member)),
         }
     }

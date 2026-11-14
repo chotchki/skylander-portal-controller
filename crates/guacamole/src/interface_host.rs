@@ -48,6 +48,20 @@ use crate::scripts::ScriptWorld;
 static TITLE_SAFE_ZONE: LazyLock<MemberId> =
     LazyLock::new(|| MemberId::named("viewportinfo", "title safe zone"));
 
+/// `system.object namer`, hashed once for the same reason (openspec AS.268).
+static OBJECT_NAMER: LazyLock<MemberId> =
+    LazyLock::new(|| MemberId::named("system", "object namer"));
+
+/// The model's view of the objects the run holds: their names, for
+/// `nameextractor.name checksum` (openspec AS.268).
+struct Names<'a>(&'a ScriptWorld);
+
+impl guac_interface::World for Names<'_> {
+    fn name_of(&self, value: Value) -> Option<String> {
+        self.0.name_of_value(value)
+    }
+}
+
 /// The sprite templates whose clones the TV draws over a level (openspec
 /// AS.99), by name: a carried bomb's countdown numbers.
 pub const DRAWN_SPRITES: [&str; 1] = ["Bomb_Counter"];
@@ -77,6 +91,7 @@ pub struct SpriteQuad {
 pub fn with_interface(mut config: Config) -> Config {
     members::register(&mut config.members, members::INTERFACE);
     members::register(&mut config.members, members::VIEWPORT_INTERFACE);
+    members::register(&mut config.members, members::NAMER_INTERFACE);
     config
 }
 
@@ -343,6 +358,10 @@ impl ScriptWorld {
             return false;
         };
         let held = at.receiver.is_some_and(|r| k.holds(r));
+        // The one global name extractor, whoever asks.
+        if at.member == *OBJECT_NAMER {
+            return true;
+        }
         // The viewport's container (`RT Viewport 0`) and title-safe info
         // are the model's.
         if self.members.get(&at.member) == Some(&Member::Container) || at.member == *TITLE_SAFE_ZONE
@@ -367,28 +386,61 @@ impl ScriptWorld {
         }
     }
 
+    /// An object's name as a script's name extractor reads it (openspec
+    /// AS.268): a placement's own, a clone's its template's; none for
+    /// anything the file doesn't name.
+    pub fn name_of_value(&self, v: Value) -> Option<String> {
+        let a = self.handle(v).and_then(|h| self.actors.get(&h));
+        let obj = match (a, v) {
+            (Some(a), _) => a.obj.or(a.template),
+            (None, Value::Object(o)) => Some(o),
+            _ => None,
+        }?;
+        // A placement by its file's name, else any object by the linked
+        // files' (a text key, a definition, an enemy type).
+        self.templates
+            .get(&obj)
+            .map(|p| p.name.clone())
+            .or_else(|| self.program.as_ref()?.name_of(obj).map(str::to_owned))
+    }
+
+    /// Hands the world the linked program, whose names the extractor reads.
+    pub fn set_program(&mut self, program: std::sync::Arc<guac_script::Program>) {
+        self.program = Some(program);
+    }
+
+    /// Runs `f` on the model with a world that names the objects the run
+    /// holds. The keeper is out of `self` for the call, so the world can
+    /// read the rest of it.
+    fn with_names<T>(
+        &mut self,
+        f: impl FnOnce(&mut Keeper, &dyn guac_interface::World) -> Result<T, HostFault>,
+    ) -> Result<T, HostFault> {
+        let mut k = self.interface.take().ok_or(HostFault::Unmodelled)?;
+        let r = f(&mut k, &Names(self));
+        self.interface = Some(k);
+        r
+    }
+
     pub(crate) fn interface_get(&mut self, at: &Access) -> Result<Value, HostFault> {
         let container = self.members.get(&at.member) == Some(&Member::Container);
-        let k = self.interface.as_mut().ok_or(HostFault::Unmodelled)?;
         if container {
+            let k = self.interface.as_mut().ok_or(HostFault::Unmodelled)?;
             return Ok(k.container());
         }
-        k.get(at, &guac_interface::NoWorld)
+        self.with_names(|k, w| k.get(at, w))
     }
 
     pub(crate) fn interface_set(&mut self, at: &Access, v: Value) -> Result<(), HostFault> {
-        let k = self.interface.as_mut().ok_or(HostFault::Unmodelled)?;
-        k.set(at, v, &guac_interface::NoWorld)
+        self.with_names(|k, w| k.set(at, v, w))
     }
 
     pub(crate) fn interface_reset(&mut self, at: &Access) -> Result<(), HostFault> {
-        let k = self.interface.as_mut().ok_or(HostFault::Unmodelled)?;
-        k.reset(at, &guac_interface::NoWorld)
+        self.with_names(|k, w| k.reset(at, w))
     }
 
     pub(crate) fn interface_elements(&mut self, at: &Access) -> Result<Vec<Value>, HostFault> {
-        let k = self.interface.as_mut().ok_or(HostFault::Unmodelled)?;
-        k.elements(at, &guac_interface::NoWorld)
+        self.with_names(|k, w| k.elements(at, w))
     }
 
     /// A set reference written: the model's copy when it's the
@@ -613,6 +665,133 @@ mod tests {
             ..spawn_call(clone)
         };
         assert_eq!(w.op(&tell, &mut spawner, &mut NoEngine), Ok(Answer::Skip));
+    }
+
+    /// openspec AS.268: `[system.object namer]` is the model's one name
+    /// extractor, the placement a script tells it is named by what the run's
+    /// file calls it, and `name checksum` reads that name's FNV-1a (a clone
+    /// by its template's); with nothing told, or an object the file doesn't
+    /// name, it reads 0.
+    #[test]
+    fn the_object_namer_reads_a_placements_name_checksum() {
+        let (mut w, grunt) = world(true);
+        let namer = w
+            .get(&at(None, "system", "object namer"), &mut NoEngine)
+            .unwrap();
+        assert_eq!(
+            namer,
+            w.interface()
+                .unwrap()
+                .model()
+                .singleton(guac_interface::model::singleton::NAME_EXTRACTOR)
+        );
+        let checksum = |w: &mut ScriptWorld| {
+            w.get(
+                &at(Some(namer), "nameextractor", "name checksum"),
+                &mut NoEngine,
+            )
+        };
+        assert_eq!(checksum(&mut w), Ok(Value::Int(0)), "nothing told");
+        w.set(
+            &at(Some(namer), "nameextractor", "object to name"),
+            Value::Entity(grunt),
+            &mut NoEngine,
+        )
+        .unwrap();
+        let want = guac_formats::fnv1a32(b"Grunt") as i32;
+        assert_ne!(want, 0);
+        assert_eq!(checksum(&mut w), Ok(Value::Int(want)));
+        // By its file object too, and a stranger by nothing.
+        w.set(
+            &at(Some(namer), "nameextractor", "object to name"),
+            Value::Object(GRUNT),
+            &mut NoEngine,
+        )
+        .unwrap();
+        assert_eq!(checksum(&mut w), Ok(Value::Int(want)));
+        w.set(
+            &at(Some(namer), "nameextractor", "object to name"),
+            Value::Entity(0x999),
+            &mut NoEngine,
+        )
+        .unwrap();
+        assert_eq!(checksum(&mut w), Err(HostFault::Nothing), "an unnamed one");
+        // A clone of the placement's template is named by it.
+        let clone = match w.op(
+            &spawn_call(Value::Object(GRUNT)),
+            &mut |_| 0x200,
+            &mut NoEngine,
+        ) {
+            Ok(Answer::Run {
+                result: Some(c), ..
+            }) => c,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(clone, Value::Entity(0x200));
+        w.set(
+            &at(Some(namer), "nameextractor", "object to name"),
+            clone,
+            &mut NoEngine,
+        )
+        .unwrap();
+        assert_eq!(checksum(&mut w), Ok(Value::Int(want)), "a clone");
+        // Without the model the namer stays a cell, as before.
+        let (mut bare, _) = world(false);
+        assert_eq!(
+            bare.get(&at(None, "system", "object namer"), &mut NoEngine),
+            Err(HostFault::Unmodelled)
+        );
+    }
+
+    /// openspec AS.269: a placement told it is woken anew takes its file's
+    /// turns where it stands, its place left where it slept (the
+    /// au-name-checksum review: put back too, a pushed block stood at its
+    /// file's place two steps before its STARTUP took it back); a hung one,
+    /// a taken-off one and a clone stay as they are.
+    #[test]
+    fn a_placement_made_anew_takes_its_files_turns_where_it_stands() {
+        let (mut w, grunt) = world(false);
+        let file = w.template(GRUNT).unwrap().clone();
+        let moved = |w: &mut ScriptWorld| {
+            let a = w.actors.get_mut(&grunt).unwrap();
+            a.position = bevy::math::Vec3::new(9.0, 8.0, 7.0);
+            a.angles.facing = 177.0;
+            a.angles.roll = 5.0;
+        };
+        moved(&mut w);
+        assert_ne!([9.0, 8.0, 7.0], file.position);
+        w.made_anew(grunt);
+        let a = w.actor(grunt).unwrap();
+        assert_eq!(a.position.to_array(), [9.0, 8.0, 7.0], "where it slept");
+        assert_eq!(
+            [a.angles.tilt, a.angles.facing, a.angles.roll],
+            file.rotation
+        );
+        // Hung on a node: where the node carries it.
+        moved(&mut w);
+        w.actors.get_mut(&grunt).unwrap().attach = Value::Entity(0x99);
+        w.made_anew(grunt);
+        assert_eq!(w.actor(grunt).unwrap().angles.facing, 177.0);
+        // Taken off.
+        w.actors.get_mut(&grunt).unwrap().attach = Value::Null;
+        w.actors.get_mut(&grunt).unwrap().removed = true;
+        w.made_anew(grunt);
+        assert_eq!(w.actor(grunt).unwrap().angles.facing, 177.0);
+        // A clone: no file placement of its own.
+        let clone = match w.op(
+            &spawn_call(Value::Object(GRUNT)),
+            &mut |_| 0x200,
+            &mut NoEngine,
+        ) {
+            Ok(Answer::Run {
+                result: Some(Value::Entity(c)),
+                ..
+            }) => c,
+            other => panic!("{other:?}"),
+        };
+        w.actors.get_mut(&clone).unwrap().angles.facing = 33.0;
+        w.made_anew(clone);
+        assert_eq!(w.actor(clone).unwrap().angles.facing, 33.0);
     }
 
     /// Without a model the host is as before AT.9: a sprite template's clone

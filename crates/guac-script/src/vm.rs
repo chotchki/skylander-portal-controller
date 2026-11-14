@@ -296,6 +296,9 @@ struct Placement {
     /// last tick still to come at its place in the walk, then its started
     /// flag cleared and its SHUTDOWN run.
     last_tick: bool,
+    /// Its declared locals went with its sleep, so it starts again at its
+    /// wake (openspec AS.269): [`Host::made_anew`] tells the embedder.
+    anew: bool,
     /// Its reset of itself pending (openspec AS.67): round from its
     /// STARTUP once its tick, and its SHUTDOWN with it, is done.
     restart: bool,
@@ -764,6 +767,8 @@ pub struct Vm {
     /// once the step's walk is done, or by the embedder after its own
     /// removals ([`Vm::shut_down`]).
     shutting: Vec<PlacementId>,
+    /// Woken placements whose locals were let go, not yet told to the host.
+    made_anew: Vec<Handle>,
     /// The walk's place during a step: the group (true the activators') and
     /// the index of the next placement in it, stepped back when a placement
     /// at or before it leaves the list, so the walk skips nothing.
@@ -904,6 +909,7 @@ impl Vm {
             sleeping: Vec::new(),
             rejoin: Vec::new(),
             shutting: Vec::new(),
+            made_anew: Vec::new(),
             cursor: None,
             walking: false,
             adopt_in_calls: false,
@@ -1022,6 +1028,7 @@ impl Vm {
             active: 0.0,
             suspended: false,
             last_tick: false,
+            anew: false,
             restart: false,
         });
         let id = (self.placements.len() - 1) as PlacementId;
@@ -1276,6 +1283,10 @@ impl Vm {
         let p = &mut self.placements[id as usize];
         if p.asleep {
             p.asleep = false;
+            if p.anew {
+                p.anew = false;
+                self.made_anew.push(p.handle);
+            }
             if p.last_tick {
                 p.last_tick = false;
                 if !p.removed {
@@ -1537,6 +1548,15 @@ impl Vm {
     /// its surface's definition once at the level's start).
     fn let_go_of_locals(p: &mut Placement, declared: &HashMap<Sym, Decl>) {
         p.locals.retain(|name, _| !declared.contains_key(name));
+        p.anew = true;
+    }
+
+    /// Tells the host of each placement woken with its locals made anew
+    /// since the last call, before anything of its runs.
+    fn tell_made_anew(&mut self, host: &mut dyn Host) {
+        for h in std::mem::take(&mut self.made_anew) {
+            host.made_anew(h);
+        }
     }
 
     /// Whether the placement is asleep (inactive).
@@ -1969,6 +1989,7 @@ impl Vm {
     ) -> Result<(), Halt> {
         let program = self.program.clone();
         self.adopt(&program, host);
+        self.tell_made_anew(host);
         for group in [true, false] {
             self.cursor = Some((group, 0));
             while let Some((g, at)) = self.cursor {
@@ -2035,6 +2056,7 @@ impl Vm {
                 continue;
             }
             self.wake(id);
+            self.tell_made_anew(host);
             self.tick_in_place(id, program, report, host, native)?;
         }
         Ok(())

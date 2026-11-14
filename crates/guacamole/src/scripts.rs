@@ -433,6 +433,9 @@ pub struct ScriptWorld {
     pub(crate) objects: HashMap<Obj, Handle>,
     /// Every file placement's data, to make a clone of it from.
     pub(crate) templates: HashMap<Obj, Placed>,
+    /// The linked program, whose objects' names the name extractor reads
+    /// beyond the placements' (openspec AS.268): a text key, a definition.
+    pub(crate) program: Option<Arc<Program>>,
     /// The attach nodes each model holds on its own origin, by its path
     /// ([`ScriptWorld::set_origin_nodes`]).
     pub(crate) origin_nodes: HashMap<String, Vec<NodePose>>,
@@ -912,6 +915,7 @@ impl ScriptWorld {
             actors,
             objects: handles.iter().map(|(o, h)| (*o, *h)).collect(),
             templates,
+            program: None,
             origin_nodes: HashMap::new(),
             light_templates: files.lights.clone(),
             emitters: files.emitters.clone(),
@@ -1240,6 +1244,34 @@ impl ScriptWorld {
             }
         }
         out
+    }
+
+    /// A placement woken with its locals made anew starts with its file's
+    /// turns (openspec AS.269, stand-in ledger: `made-anew`), the ones a
+    /// first-time STARTUP reads: Persephone's fly-in sets her down about her
+    /// landing by her facing, which her first landing leaves a few degrees
+    /// off the file's; the locked door takes its facing for its shut one,
+    /// the teleporter, push block and chest a tilt or roll they zero after.
+    /// Its place stays where it slept: no script reads its own place that
+    /// way (they read `abstractplacement.origin`), and put back, a pushed
+    /// block stood at its file's place two steps before its STARTUP took it
+    /// back to where it was pushed (the au-name-checksum review). A hung or
+    /// taken-off actor and a clone stay as they are.
+    pub fn made_anew(&mut self, h: Handle) {
+        let Some(a) = self.actors.get_mut(&h) else {
+            return;
+        };
+        let Some(p) = a.obj.and_then(|o| self.templates.get(&o)) else {
+            return;
+        };
+        if a.removed || a.attach != Value::Null {
+            return;
+        }
+        a.angles = Angles {
+            tilt: p.rotation[0],
+            facing: p.rotation[1],
+            roll: p.rotation[2],
+        };
     }
 
     /// The asleep placements' checks after the walk (openspec AS.83,
@@ -2586,6 +2618,9 @@ impl Host for WorldHost<'_, '_> {
     fn wakes(&mut self, asleep: &[Handle]) -> Vec<Handle> {
         self.world.wakes(asleep)
     }
+    fn made_anew(&mut self, handle: Handle) {
+        self.world.made_anew(handle);
+    }
     fn answer(&mut self, name: &str, args: &[(&str, Value)]) -> bool {
         note_pause(self.world, name, args);
         crate::prompt::answer_screen(self.world, name)
@@ -2627,27 +2662,17 @@ pub const EVERY_TICK: [&str; 8] = [
     "_EnemySystem_Functions.ai",
 ];
 
-/// The scripts whose sleepers wake with their declared locals made anew on
-/// the TV (openspec AS.224, AS.233; stand-in ledger: `wake-locals`): the hat
-/// box, which picks its player from `Minions` by a deadline held in a local
-/// (`player ref timer`: `system.script timer` plus a quarter second). The
-/// original makes every sleeper's anew (AS.233); kept, that deadline sat
-/// ahead of the woken clock for as many seconds as the box had run, and the
-/// player it named stayed whoever it had named, so the Mac's hat box ignored
-/// the Giant swapped in at the wall for 26 s. The teleporter's take doesn't
-/// wait on its own such pick (`giants_chests`: 65 steps on the list or off
-/// it). Every script on the rule is AS.246's, held back by two gaps of the
-/// TV's that the rule exposes and kept locals hide: a sleeper filing its
-/// state in a level set under its name checksum (the vine-bridge
-/// activators, the locked doors, the push blocks' switches) never finds it
-/// again, the checksum never reading as its name's here, so each wake files
-/// a new state of 0 (AS.268); and the hub's Persephone, woken anew, replays
-/// her first fly-in, which on one side never lands (AS.269).
-pub const ANEW_ON_WAKE: [&str; 1] = ["/Hat_Pickup.ai"];
-
-/// [`ANEW_ON_WAKE`] as the VM takes it.
+/// The wake rule (openspec AS.224, AS.233, AS.246): every sleeper wakes with
+/// the locals its script declares made anew, as the original's do. A
+/// `test-hooks` build reads `GUAC_TEST_WAKE_RULE=listed` for the earlier
+/// list, the hat box alone (`/Hat_Pickup.ai`), so a story run can be
+/// played on both rules by one binary.
 fn anew_on_wake() -> AnewOnWake {
-    AnewOnWake::Listed(ANEW_ON_WAKE.iter().map(|s| (*s).to_owned()).collect())
+    #[cfg(feature = "test-hooks")]
+    if std::env::var("GUAC_TEST_WAKE_RULE").as_deref() == Ok("listed") {
+        return AnewOnWake::Listed(vec!["/Hat_Pickup.ai".to_owned()]);
+    }
+    AnewOnWake::Every
 }
 
 /// The VM's config for AH.16's run: the init chain's members and listing,
@@ -5851,6 +5876,9 @@ pub fn install_with(
     // What a listed script wakes off the whitelist is logged and listed
     // (decision 6), as the headless runs list it.
     script_world.set_inert(vm.inert());
+    // The names objects carry in the linked files, for the name extractor
+    // (openspec AS.268).
+    script_world.set_program(vm.program_arc());
     // The asks read as gating play, answered off the camera's view
     // (openspec AH.150).
     script_world.answer_from_view(crate::on_screen::answered(
@@ -8754,11 +8782,23 @@ mod tests {
         let handles = headless_handles(&files);
         let mut c = Config::new(Mode::Strict);
         c.whitelist = Whitelist::All;
-        // The TV's wake rule (AS.233), so a sleeper's `seen` reads on.
-        c.anew_on_wake = anew_on_wake();
+        // Every sleeper keeps its locals here: the counters the order is read
+        // off (`seen`) are locals, and the wake rule (AS.233) isn't what this
+        // tests.
+        c.anew_on_wake = AnewOnWake::Listed(Vec::new());
         let vm = init_chain(program, &files, &handles, &[0], c);
         let world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
         (files, handles, vm, world)
+    }
+
+    /// openspec AS.246: the TV holds every sleeper to the original's wake
+    /// rule (AS.233), not the hat box's list it held before: the level's run
+    /// and the hero's both let go of every script's declared locals at a
+    /// sleep.
+    #[test]
+    fn the_tvs_wake_rule_makes_every_scripts_locals_anew() {
+        assert_eq!(config(Mode::Play).anew_on_wake, AnewOnWake::Every);
+        assert_eq!(hero_config(Mode::Play).anew_on_wake, AnewOnWake::Every);
     }
 
     /// One step from where the activity rule is measured (metres).
