@@ -1260,13 +1260,21 @@ pub(crate) fn view_heading(cameras: &Query<&FollowCamera>) -> f32 {
 /// deactivation's clean-up ticks in: AH.224's beam, AH.105's helper);
 /// measured from the start, it put everything past its range from there to
 /// sleep, and a coin asleep for a step left the loot for good.
+/// Each hero is measured from where [`ScriptWorld::measured_from`] has
+/// him (openspec AS.284: where he is, but held where he was last measured
+/// while an unposed camera's rig carries him), given as his handle, his
+/// pivot and whether he's hung.
 pub(crate) fn activity_from(
-    pivots: Vec<Vec3>,
+    world: &mut ScriptWorld,
+    heroes: &[(Handle, Vec3, bool)],
     last_place: Option<Vec3>,
     start: Option<Vec3>,
 ) -> Vec<Vec3> {
-    if !pivots.is_empty() {
-        return pivots;
+    if !heroes.is_empty() {
+        return heroes
+            .iter()
+            .map(|&(h, pivot, hung)| world.measured_from(h, pivot, hung))
+            .collect();
     }
     last_place.or(start).into_iter().collect()
 }
@@ -1306,9 +1314,13 @@ pub(crate) fn step_scripts(
     ),
 ) {
     let began = std::time::Instant::now();
-    let pivots: Vec<Vec3> = heroes.iter().map(|(_, b)| b.hero.pivot).collect();
+    let standing: Vec<(Handle, Vec3, bool)> = heroes
+        .iter()
+        .map(|(e, b)| (e.to_bits(), b.hero.pivot, b.hero.hung))
+        .collect();
     let from = activity_from(
-        pivots,
+        &mut world,
+        &standing,
         play.as_deref().and_then(crate::play::Play::last_place),
         level.start(),
     );
@@ -2470,10 +2482,36 @@ mod tests {
             Vec3::new(30.0, 0.0, -6.0),
             Vec3::new(10.0, 43.0, -93.0),
         );
-        assert_eq!(activity_from(vec![him], Some(left), Some(start)), [him]);
-        assert_eq!(activity_from(Vec::new(), Some(left), Some(start)), [left]);
-        assert_eq!(activity_from(Vec::new(), None, Some(start)), [start]);
-        assert!(activity_from(Vec::new(), None, None).is_empty());
+        let mut w = ScriptWorld::new(&Files::default(), &HashMap::new(), [0; 7]);
+        let hero = [(7, him, false)];
+        assert_eq!(activity_from(&mut w, &hero, Some(left), Some(start)), [him]);
+        assert_eq!(activity_from(&mut w, &[], Some(left), Some(start)), [left]);
+        assert_eq!(activity_from(&mut w, &[], None, Some(start)), [start]);
+        assert!(activity_from(&mut w, &[], None, None).is_empty());
+    }
+
+    /// openspec AS.284: the TV's step measures each hero through
+    /// [`ScriptWorld::measured_from`]: standing, from where he is, and
+    /// carried by what the TV poses (a scene's rig, a sail's ship, a
+    /// turret), from where it carries him, as before AS.284; only an
+    /// unposed rig under him (the world's own test) holds him where he was
+    /// last measured.
+    #[test]
+    fn the_tvs_activity_measures_a_carried_hero_where_hes_carried() {
+        let mut w = ScriptWorld::new(&Files::default(), &HashMap::new(), [0; 7]);
+        let (stood, carried) = (Vec3::new(146.8, 14.6, 252.0), Vec3::new(-14.7, 59.3, 35.7));
+        assert_eq!(
+            activity_from(&mut w, &[(7, stood, false)], None, None),
+            [stood]
+        );
+        assert_eq!(
+            activity_from(&mut w, &[(7, carried, true)], None, None),
+            [carried]
+        );
+        assert_eq!(
+            activity_from(&mut w, &[(7, carried, false)], None, None),
+            [carried]
+        );
     }
 
     /// A headless engine: heroes on the parry twin's open ground.

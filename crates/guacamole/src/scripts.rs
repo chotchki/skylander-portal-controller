@@ -602,6 +602,9 @@ pub struct ScriptWorld {
     /// placements' checks after the walk measure from again (openspec
     /// AS.83, [`ScriptWorld::wakes`]).
     pub(crate) activity_from: Vec<Vec3>,
+    /// Where each hero was last measured from, by his handle: where one
+    /// hung on an unposed rig is held ([`ScriptWorld::measured_from`]).
+    measured: HashMap<Handle, Vec3>,
     /// The bodies the embedder keeps in its seam for actors (openspec
     /// AH.25: the TV's heroes and awake creatures in Avian's world, as the
     /// headless runs keep theirs in parry's), each actor's handle and body:
@@ -977,6 +980,7 @@ impl ScriptWorld {
             woken: Vec::new(),
             fired: Vec::new(),
             activity_from: Vec::new(),
+            measured: HashMap::new(),
             embodied: Vec::new(),
             walking_alone: Default::default(),
             written: Default::default(),
@@ -1213,9 +1217,35 @@ impl ScriptWorld {
         let heroes: Vec<Vec3> = engine
             .heroes()
             .into_iter()
-            .filter_map(|h| engine.hero(h).map(|x| x.pivot))
+            .filter_map(|h| engine.hero(h).map(|x| (h, x.pivot, x.hung)))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|(h, pivot, hung)| self.measured_from(h, pivot, hung))
             .collect();
         self.activity_at(&heroes)
+    }
+
+    /// Where hero `h` wakes the level from this step (openspec AS.284,
+    /// stand-in ledger: `carried-wake`): his pivot, carried or not, but
+    /// while what he's hung on rides a camera's rig no pose has reached
+    /// ([`ScriptWorld::carried_unposed`]) where he was last measured from.
+    /// Headless no rig is posed: level 205's intro hangs him on its landing
+    /// pod and the pod on its rig, both at the world's origin, and measured
+    /// from there Setup_004's controller woke 137 ft off and played its
+    /// Biclops' intro over the level's with him still at the start; held,
+    /// he's measured where he stood. On the TV a new shot's rig is unposed
+    /// for its first frame, held there he isn't measured at the rig's
+    /// held nodes, and posed the flyover passes 195 ft from that controller
+    /// at its nearest, outside its intro's 160 ft.
+    pub fn measured_from(&mut self, h: Handle, pivot: Vec3, hung: bool) -> Vec3 {
+        if hung
+            && self.carried_unposed(h)
+            && let Some(at) = self.measured.get(&h)
+        {
+            return *at;
+        }
+        self.measured.insert(h, pivot);
+        pivot
     }
 
     /// [`ScriptWorld::activity`] with the heroes' pivots given: the TV's,
@@ -3214,6 +3244,7 @@ pub fn encounters(level: &str) -> impl Iterator<Item = &'static Encounter> {
         .chain(std::iter::once(&THIRD_ISLAND))
         .chain(std::iter::once(&crate::chapter_1::WAY))
         .chain(std::iter::once(&crate::level_201::WAY))
+        .chain(std::iter::once(&crate::level_205::WAY))
         .filter(move |e| e.level == level)
 }
 
@@ -8572,6 +8603,100 @@ mod tests {
         assert!(w.taken_off(obj));
         assert!(w.activity_at(&[start]).is_empty(), "left out for good");
         assert!(!w.take_off(Obj { unit: 9, index: 9 }));
+    }
+
+    /// openspec AS.284 (stand-in ledger: `carried-wake`): a hero hung on a
+    /// pod that rides a camera's rig no pose has reached (headless, 205's
+    /// intro pod at the world's origin; on the TV a new shot's rig for its
+    /// first frame) wakes the level from where he was last measured;
+    /// carried by anything posed (the TV's rigs, a sail's ship, a turret)
+    /// from where he is, as before AS.284. Standing 9 m off the Grunt's 30
+    /// ft he wakes him; on the unposed rig, carried off, the Grunt stays
+    /// awake; the rig posed, he sleeps; let go out there and hung again on
+    /// an unposed rig set down by the Grunt, nothing wakes; on a turret
+    /// there, the Grunt wakes; carried off on it and onto an unposed
+    /// camera set down by the Grunt, he's held where the turret left him.
+    #[test]
+    fn a_hero_on_an_unposed_rig_wakes_the_level_from_where_he_was_measured() {
+        const RIG_T: Obj = Obj { unit: 4, index: 60 };
+        const RIG: Handle = 0x6100_0001;
+        const RIG2: Handle = 0x6100_0002;
+        const POD: Handle = 0x6100_0003;
+        const TURRET: Handle = 0x6100_0004;
+        let (mut w, grunt, _) = world();
+        let g = w.actors.get_mut(&grunt).unwrap();
+        (g.range, g.buffer, g.managed) = (30.0, 1.0, true);
+        w.set_rig(RIG_T);
+        for h in [RIG, RIG2] {
+            let mut rig = Actor::blank();
+            rig.template = Some(RIG_T);
+            w.actors.insert(h, rig);
+        }
+        let mut pod = Actor::blank();
+        pod.attach = w.objs.value(Object::Node(RIG, 0));
+        w.actors.insert(POD, pod);
+        w.actors.insert(TURRET, Actor::blank());
+        let mut me = Actor::blank();
+        me.attach = w.objs.value(Object::Node(POD, 4));
+        w.actors.insert(HIM, me);
+        let hang = |w: &mut ScriptWorld, owner: Handle, node: u32| {
+            w.actors.get_mut(&HIM).unwrap().attach = w.objs.value(Object::Node(owner, node));
+        };
+        let mut hero = him(Vec3::new(9.0, 0.0, 0.0));
+        assert_eq!(w.activity(&mut hero), vec![(grunt, true)]);
+        hero.0.hung = true;
+        hero.0.pivot = Vec3::new(500.0, 80.0, 0.0);
+        assert!(w.carried_unposed(HIM));
+        assert_eq!(w.activity(&mut hero), vec![(grunt, true)], "carried off");
+        assert_eq!(w.activity_from, [Vec3::new(9.0, 0.0, 0.0)]);
+        let pose = NodePose {
+            at: Vec3::new(500.0, 80.0, 0.0),
+            turn: Quat::IDENTITY,
+        };
+        w.set_nodes(RIG, vec![pose]);
+        assert!(!w.carried_unposed(HIM));
+        assert_eq!(
+            w.activity(&mut hero),
+            vec![(grunt, false)],
+            "posed, flown off"
+        );
+        hero.0.hung = false;
+        assert_eq!(w.activity(&mut hero), vec![(grunt, false)], "let go there");
+        hang(&mut w, RIG2, 0);
+        hero.0.hung = true;
+        hero.0.pivot = Vec3::new(1.0, 0.0, 0.0);
+        assert_eq!(
+            w.activity(&mut hero),
+            vec![(grunt, false)],
+            "the unposed rig"
+        );
+        hang(&mut w, TURRET, 0);
+        assert!(!w.carried_unposed(HIM));
+        assert_eq!(w.activity(&mut hero), vec![(grunt, true)], "the turret");
+        hero.0.pivot = Vec3::new(-400.0, 0.0, 0.0);
+        assert_eq!(
+            w.activity(&mut hero),
+            vec![(grunt, false)],
+            "the turret off"
+        );
+        hero.0.pivot = Vec3::new(1.0, 0.0, 0.0);
+        // Made from a camera's model and never registered as a rig (a
+        // headless run's), unposed all the same.
+        const CAM_T: Obj = Obj { unit: 4, index: 61 };
+        const CAM: Handle = 0x6100_0005;
+        let mut cam = Placed::named(CAM_T, "205_Intro_Anim_Cam", None, RUNNING);
+        cam.model = Some("C:/tfb/Content/Models/Cameras/Intro_Cam.igz".to_owned());
+        w.templates.insert(CAM_T, cam);
+        let mut a = Actor::blank();
+        a.template = Some(CAM_T);
+        w.actors.insert(CAM, a);
+        hang(&mut w, CAM, 1);
+        assert!(w.carried_unposed(HIM));
+        assert_eq!(w.activity(&mut hero), vec![(grunt, false)], "the camera");
+        assert_eq!(w.activity_from, [Vec3::new(-400.0, 0.0, 0.0)]);
+        // The TV's call, by his handle: no actor, nothing unposed.
+        let from = w.measured_from(7, Vec3::new(40.0, 0.0, 0.0), true);
+        assert_eq!(from, Vec3::new(40.0, 0.0, 0.0));
     }
 
     /// openspec AS.83: the asleep placements' checks after the walk measure

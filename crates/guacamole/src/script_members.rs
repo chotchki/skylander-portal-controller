@@ -2552,6 +2552,47 @@ impl ScriptWorld {
         !self.nodes.contains_key(&h) && self.is_rig(h)
     }
 
+    /// Whether what actor `h` hangs on, or what that hangs on up the chain,
+    /// is a camera's rig (its model under `Models/Cameras`, as the TV picks
+    /// them for [`ScriptWorld::set_rig`]) no pose has reached (openspec
+    /// AS.284): what rides it reads the rig's pivot, where it was made, not
+    /// where the scene flies it. A headless run registers and poses no rig,
+    /// so level 205's landing pod and the hero hung on it sit at the
+    /// world's origin with its intro's camera through the intro; the TV
+    /// poses its rigs from their first drawn frame.
+    pub(crate) fn carried_unposed(&self, h: Handle) -> bool {
+        let mut at = h;
+        for _ in 0..HUNG_DEPTH {
+            let Some(a) = self.actors.get(&at) else {
+                return false;
+            };
+            let owner = match self.object(Some(a.attach)) {
+                Some(Object::Node(owner, _)) => Some(owner),
+                None => self.actor_of(Some(a.attach)),
+                _ => None,
+            };
+            let Some(owner) = owner.filter(|&o| o != at) else {
+                return false;
+            };
+            if !self.nodes.contains_key(&owner) && self.camera_rig(owner) {
+                return true;
+            }
+            at = owner;
+        }
+        false
+    }
+
+    /// Whether `h` is made from a camera's rig model, registered as a rig
+    /// or not.
+    fn camera_rig(&self, h: Handle) -> bool {
+        self.is_rig(h)
+            || self
+                .template_of(h)
+                .and_then(|t| self.templates.get(&t))
+                .and_then(|p| p.model.as_deref())
+                .is_some_and(crate::hands::camera_rig_model)
+    }
+
     /// A clip's length, seconds at 100 %: 0 for an empty slot or anything
     /// that isn't a clip (a sound plays nothing here).
     /// Slot `slot` of `template`'s palette: its file's animation info and
