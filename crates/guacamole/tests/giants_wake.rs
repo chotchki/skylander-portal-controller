@@ -6,7 +6,10 @@
 //! ([`Wake::Kept`]). Each level starts and nothing stops on either; on the
 //! original's every placement of the file asleep at the end holds none of
 //! the locals its script declares, kept some do (the walk puts sleepers
-//! through the rule), and every placement's behaviour and sleep at the end
+//! through the rule), unless it was seen holding none in the sleep it's in
+//! and another script's `find variable` (filter 0) made its list again since
+//! (level 205's two undead sound watchers, each one's SHUTDOWN reading the
+//! other's `alive`, openspec AS.289), and every placement's behaviour and sleep at the end
 //! are the same on both: the rule changes nothing these walks end on, so a
 //! difference is AS.246's to read before the TV turns it on. Ignored by
 //! default; it reads `GUAC_GIANTS_DUMP` (process env, else `.env.dev`):
@@ -40,8 +43,37 @@ struct Stood {
     states: Vec<(u64, String, bool)>,
     asleep: usize,
     /// The file's placements asleep holding a local their script declares,
-    /// with the first such local.
+    /// with the first such local, not seen holding none in this sleep.
     holding: Vec<(String, String)>,
+    /// Those asleep holding one that were seen holding none in this sleep:
+    /// their list made again since by another script's find.
+    found_again: Vec<(String, String)>,
+}
+
+/// The first local its script declares that placement `id` holds asleep,
+/// one never set up, held after its first tick, taken off or stopped
+/// excepted: those never have their locals let go (crate docs, The tick).
+fn holds_declared(run: &Run, id: guac_script::PlacementId, script: Option<&str>) -> Option<String> {
+    if !run.vm.asleep(id)
+        || run.vm.removed(id)
+        || !run.vm.set_up(id)
+        || run.vm.is_held(id)
+        || run.vm.stopped(id).is_some()
+    {
+        return None;
+    }
+    let program = run.vm.program();
+    let script = script.and_then(|s| program.script_named(s))?;
+    let mut declared: Vec<&str> = program.scripts[script as usize]
+        .declared
+        .keys()
+        .map(|k| program.sym(*k))
+        .collect();
+    declared.sort_unstable();
+    declared
+        .iter()
+        .find(|l| run.vm.local(id, l).is_some())
+        .map(|l| (*l).to_owned())
 }
 
 fn stand(level: &str, wake: Wake) -> Stood {
@@ -54,9 +86,28 @@ fn stand(level: &str, wake: Wake) -> Stood {
     };
     let (mut run, _found) = run_on_level(Mode::Play, level, setup);
     let mut stops = Vec::new();
-    let step = |run: &mut Run, stops: &mut Vec<String>| {
+    // The sleepers seen holding none of their declared locals in the sleep
+    // they're in, by placement: the rule let go of them.
+    let mut let_go = std::collections::HashSet::new();
+    let mut step = |run: &mut Run, stops: &mut Vec<String>| {
         let halts = run.step_play().unwrap_or_else(|h| panic!("{level}: {h}"));
         stops.extend(halts.iter().map(|h| format!("step {}: {h}", run.steps)));
+        for p in &run.files.placed {
+            let Some(id) = run
+                .handles
+                .get(&p.obj)
+                .and_then(|h| run.vm.placement_of(*h))
+            else {
+                continue;
+            };
+            if !run.vm.asleep(id) {
+                let_go.remove(&id);
+            } else if !let_go.contains(&id)
+                && holds_declared(run, id, p.script.as_deref()).is_none()
+            {
+                let_go.insert(id);
+            }
+        }
     };
     for _ in 0..2 {
         step(&mut run, &mut stops);
@@ -85,9 +136,9 @@ fn stand(level: &str, wake: Wake) -> Stood {
     for _ in 0..2 {
         step(&mut run, &mut stops);
     }
-    let program = run.vm.program();
     let mut states = Vec::new();
     let mut holding = Vec::new();
+    let mut found_again = Vec::new();
     for p in &run.files.placed {
         let Some(h) = run.handles.get(&p.obj).copied() else {
             continue;
@@ -95,33 +146,17 @@ fn stand(level: &str, wake: Wake) -> Stood {
         let Some(id) = run.vm.placement_of(h) else {
             continue;
         };
-        let asleep = run.vm.asleep(id);
         states.push((
             u64::from(p.obj.unit) << 32 | u64::from(p.obj.index),
             run.vm.behaviour(id).unwrap_or("").to_owned(),
-            asleep,
+            run.vm.asleep(id),
         ));
-        // One asleep since the level's start, held after its first tick or
-        // stopped never has its locals let go (crate docs, The tick).
-        if !asleep
-            || run.vm.removed(id)
-            || !run.vm.set_up(id)
-            || run.vm.is_held(id)
-            || run.vm.stopped(id).is_some()
-        {
-            continue;
-        }
-        let Some(script) = p.script.as_deref().and_then(|s| program.script_named(s)) else {
-            continue;
-        };
-        let mut declared: Vec<&str> = program.scripts[script as usize]
-            .declared
-            .keys()
-            .map(|k| program.sym(*k))
-            .collect();
-        declared.sort_unstable();
-        if let Some(l) = declared.iter().find(|l| run.vm.local(id, l).is_some()) {
-            holding.push((p.name.clone(), (*l).to_owned()));
+        if let Some(l) = holds_declared(&run, id, p.script.as_deref()) {
+            if let_go.contains(&id) {
+                found_again.push((p.name.clone(), l));
+            } else {
+                holding.push((p.name.clone(), l));
+            }
         }
     }
     let asleep = states.iter().filter(|s| s.2).count();
@@ -130,6 +165,7 @@ fn stand(level: &str, wake: Wake) -> Stood {
         states,
         asleep,
         holding,
+        found_again,
     }
 }
 
@@ -143,10 +179,12 @@ fn levels_202_to_211_stand_the_same_on_the_rule_and_off_it() {
         let every = stand(level, Wake::Every);
         let kept = stand(level, Wake::Kept);
         println!(
-            "{level}: {} placements, {} asleep; on the rule {} asleep holding a declared local, kept {} ({:?})",
+            "{level}: {} placements, {} asleep; on the rule {} asleep holding a declared local ({} made again by a find: {:?}), kept {} ({:?})",
             every.states.len(),
             every.asleep,
             every.holding.len(),
+            every.found_again.len(),
+            every.found_again,
             kept.holding.len(),
             kept.holding.iter().take(3).collect::<Vec<_>>()
         );
