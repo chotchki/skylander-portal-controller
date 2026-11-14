@@ -78,6 +78,14 @@
 //!   settled, set down [`BY_DISTANCE`] off it along its own facing, or
 //!   `"distance": <metres>` along `"heading": <degrees>` where that's off
 //!   its ledge, facing it. Nothing else is set.
+//! - Finale (openspec AS.287): level 205's end before its way runs: once
+//!   he's settled, set down by its legendary treasure in the boathouse and
+//!   the treasure woken (his ship part collected), then
+//!   [`FINALE_TREASURE`] steps on by Dreadbeard, from where each step
+//!   [`guacamole::level_205::finale_stand_in`] makes true what Dreadbeard's
+//!   scene waits on that the TV doesn't run (Setup_005's fight, his card
+//!   game won); a yes to his question is the driver's. From there the
+//!   level's end is its own.
 //! - Norticus' scene, once the four are beaten, ends from his own script as
 //!   the original's does (openspec AH.56: the cutscene system's update in
 //!   the game systems' tick), freeing the hero: the entry sets nothing
@@ -140,6 +148,9 @@ pub(crate) enum Anchor {
     /// Any placement of the level, by name (openspec AU.39): set down off
     /// it ([`by_placement`]).
     By,
+    /// Level 205's end (openspec AS.287): its treasure taken, then set
+    /// down by Dreadbeard with the way to his end stood in.
+    Finale,
 }
 
 impl Anchor {
@@ -161,6 +172,7 @@ impl Anchor {
             "door2" => Some(Anchor::Door2),
             "interior" => Some(Anchor::Interior),
             "by" => Some(Anchor::By),
+            "finale" => Some(Anchor::Finale),
             _ => None,
         }
     }
@@ -214,6 +226,10 @@ pub(crate) const END_POSE: ([f32; 3], f32) = ([-10.282436, -153.01357, 318.01202
 /// What the end anchor wakes: what `Rope_around_Post(2)`'s last behaviour
 /// wakes.
 pub(crate) const END_WAKES: [&str; 1] = ["Temp_Level_Ender"];
+/// Steps from the finale's set-down by level 205's treasure to its
+/// set-down by Dreadbeard: the treasure taken (356 steps headless) and
+/// paid out.
+pub(crate) const FINALE_TREASURE: u32 = 600;
 /// Level 214's Setup_001 trigger as its file places it (metres): set down
 /// here, the controller plays the pods' scene and wakes the spawners.
 pub(crate) const POD_TRIGGER: [f32; 3] = [17.934004, -13.715616, 20.65423];
@@ -318,6 +334,20 @@ impl Plan {
                 creatures_at: u32::MAX,
                 creatures: Vec::new(),
                 f0: 1,
+                first_alert: None,
+                loot: None,
+                view: None,
+                wake: Vec::new(),
+            },
+            // Its treasure's and Dreadbeard's places are the level's, read
+            // once he's settled.
+            Anchor::Finale => Plan {
+                anchor,
+                settle: SETTLE,
+                set_downs: vec![(0, Vec3::ZERO, 0.0), (FINALE_TREASURE, Vec3::ZERO, 0.0)],
+                creatures_at: u32::MAX,
+                creatures: Vec::new(),
+                f0: FINALE_TREASURE,
                 first_alert: None,
                 loot: None,
                 view: None,
@@ -652,6 +682,14 @@ pub(crate) fn drive(
     // the intro's hand-over rather than under it.
     world.skip_cutscenes = skips_intro(has_intro, entry.refused.is_none(), entry.phase);
     if entry.phase == Phase::Anchored {
+        // Level 205's end: what Dreadbeard's scene waits on, each step it
+        // waits (openspec AS.287).
+        if plan.anchor == Anchor::Finale {
+            let made = guacamole::level_205::finale_stand_in(&mut runtime.vm, &mut world, level);
+            if made != guacamole::level_205::FinaleStep::default() {
+                info!(?made, "the dev entry stands in for 205's way to its end");
+            }
+        }
         return;
     }
     let joined = heroes
@@ -730,6 +768,31 @@ pub(crate) fn drive(
                         world.skip_cutscenes = false;
                         return;
                     }
+                }
+            }
+            // Level 205's treasure, then Dreadbeard (openspec AS.287).
+            (Anchor::Finale, _) => {
+                let first = k == 0;
+                let name = if first {
+                    guacamole::level_205::TREASURE
+                } else {
+                    guacamole::level_205::BY_DREADBEARD
+                };
+                let Some(h) = world.placed_in(level, name) else {
+                    let why = format!("{name} is no placement of this level");
+                    warn!(reason = %why, "the dev entry refused");
+                    entry.refused = Some(why);
+                    entry.asked = None;
+                    entry.phase = Phase::None;
+                    world.skip_cutscenes = false;
+                    return;
+                };
+                let at = world.actor(h).map_or(Vec3::ZERO, |a| a.position);
+                if first {
+                    world.wake(h);
+                    (at + Vec3::new(2.0, 1.0, 0.0), 0.0)
+                } else {
+                    (at, 180.0)
                 }
             }
             _ => (at, facing),
@@ -1045,6 +1108,16 @@ mod tests {
         );
         assert_eq!((part2.settle, part2.f0), (SETTLE, 1));
         assert_eq!(part2.wake, ["Ship_part_2(1)"]);
+        // Level 205's end (openspec AS.287): two set-downs read off the
+        // level, the second F0, from where the stand-in runs each step.
+        assert_eq!(anchor("finale"), Some(Anchor::Finale));
+        let finale = Plan::of(Anchor::Finale);
+        assert_eq!(
+            finale.set_downs.iter().map(|s| s.0).collect::<Vec<_>>(),
+            [0, FINALE_TREASURE]
+        );
+        assert_eq!((finale.settle, finale.f0), (SETTLE, FINALE_TREASURE));
+        assert!(!Anchor::Finale.names_a_place());
         // Level 214's first ship part (openspec AS.84): by it on its ledge.
         assert_eq!(anchor("part"), Some(Anchor::Part));
         let part = Plan::of(Anchor::Part);

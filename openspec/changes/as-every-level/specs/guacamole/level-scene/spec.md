@@ -312,6 +312,13 @@ Level 205's people SHALL stand where their scripts stand them, drawn awake on th
 - **WHEN** a hero handed over by 205's intro walks to Bowers and presses △
 - **THEN** the prompt hangs by him, his talk plays to its end, and the hero walks on with nothing stopped
 
+### Requirement: Level 205's end
+Level 205 SHALL end as its scripts end it: once all 17 of Setup_005's foes are off and Dreadbeard's card game is won, his scene plays his last lines and starts the outro, which sets the cast down on the start island and ends the level into the hub's stage the village opens, with the completion screen of 205's objectives and finds, FMV04, the story save carried with 205 done and its ship part, once collected, hung at the hub.
+
+#### Scenario: From the last fight to the hub
+- **WHEN** a hero on a save past 201 beats Setup_005 and wins Dreadbeard's game
+- **THEN** the outro plays, the completion screen shows 205's counts, and the hub stands at count 4 with 205's masthead hung and Flynn offering 208
+
 ### Requirement: A level's sky stays about the eye
 A level's sky SHALL draw through the view with its translation taken out, its coordinates metres from the eye wherever the camera stands: in the first capture chapter 1's 14 sky draws hold 0, 0, -0.2, 0 in the matrix's last column where every other static draw holds the eye's 37.58, -14.97, 114.07, 114.17.
 

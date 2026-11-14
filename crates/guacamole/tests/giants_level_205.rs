@@ -1294,3 +1294,525 @@ fn level_205s_people_and_scenes_past_the_yard_as_far_as_put() {
     }
     println!("load at end: {}", load());
 }
+
+/// A host profile's id for the save system's session.
+const HOST: &str = "01LEVEL205HOST";
+const HUB_1: &str = "level_hub_2_stage_1";
+
+fn global(run: &Run, name: &str) -> Option<guac_script::Value> {
+    let g = run.vm.program().global_named(name)?;
+    run.vm.global_peek(g).map(|v| run.vm.value(v))
+}
+
+/// One step with `pad`, then the save system's requests answered as the
+/// TV's system answers them for `level`, each write handed back done at
+/// once and kept.
+fn saved(
+    run: &mut Run,
+    session: &mut guacamole::story_save::Session,
+    level: &str,
+    stops: &mut Vec<String>,
+    rows: &mut Vec<guac_server::saves::SaveValues>,
+    actions: [bool; 4],
+) {
+    step(run, stops, Stick::new(0.0, 0.0), actions);
+    {
+        let mut spawn = guacamole::scripts::headless_spawner(1 << 50);
+        let mut engine = guacamole::script_engine::NoEngine;
+        let mut host = guacamole::scripts::WorldHost {
+            world: &mut run.world,
+            engine: &mut engine,
+            generator: &mut run.generator,
+            spawn: &mut spawn,
+        };
+        guacamole::story_save::serve(&mut run.vm, &mut host, session, level)
+            .unwrap_or_else(|h| panic!("{h}"));
+    }
+    if let Some((_, _, values)) = session.take_write() {
+        rows.push(values);
+        session.written(&mut run.world.save, Ok(()));
+    }
+}
+
+/// A stored save past level 201: the first three adventures of the save's
+/// list (213, 214 and 201) done, off a fresh run's own definitions.
+fn save_past_201() -> (String, guac_server::saves::SaveValues) {
+    use guacamole::story_save::{File, Layout};
+    let (mut run, _) = run_on_level(Mode::Play, LEVEL_205, setup());
+    for _ in 0..2 {
+        run.step_play().unwrap();
+    }
+    let layout = Layout::read(&run.vm).expect("the save's layout");
+    let slot = guacamole::story_save::words_of(&run.vm, File::Slot).unwrap();
+    let header = guacamole::story_save::words_of(&run.vm, File::Header).unwrap();
+    let mut params = layout.decode(File::Slot, &slot);
+    params.extend(layout.decode(File::Header, &header));
+    for flag in params.get_mut("level flags").unwrap().iter_mut().take(3) {
+        *flag |= 1;
+    }
+    assert_eq!(
+        &layout.adventures[..4],
+        [
+            "Level_213_Tutorial",
+            "Level_214_Tutorial_2",
+            "Level_201_Rescue_the_Hermit",
+            "Level_205_Pirate_Cards"
+        ]
+    );
+    (
+        layout.id(),
+        guac_server::saves::SaveValues {
+            params,
+            adventures: layout.adventures.clone(),
+        },
+    )
+}
+
+/// openspec AS.287: level 205's end, from its last fight's end through its
+/// outro and completion screen to the hub. The way there isn't run yet, so
+/// the run stands in for it: the hero put by Dreadbeard (whose scene's
+/// intro plays on his approach), his part of the ship collected first
+/// where the level places it (in the boathouse, AS.285's), and
+/// `level_205::finale_stand_in` each step making true what Dreadbeard's
+/// scene waits on that the TV doesn't run: Setup_005's first waves and its
+/// 17 foes beaten (AS.284), and his card game won (AS.315). From there
+/// it's the level's own: his last lines, the outro (its scenes, Dreadbeard
+/// taken off), the completion screen with 205's objectives and finds, its
+/// continue, the level end's movie, the change to the hub's first stage,
+/// the words carried with 205 just done; at the hub on them, four
+/// adventures done, a first visit, 205's part hung on the ship, the start's
+/// save holding 205 done, and Flynn's offer the level after 205. Nothing
+/// stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_205s_end_plays_from_its_last_fight_to_the_hub() {
+    use guacamole::level_205::{self, DREADBEARD, FINALE_SCENE};
+    use guacamole::level_end::{COMPLETION, Status, seq};
+    use guacamole::scripts::MovieEnd;
+    use guacamole::ship_parts::{self, Equipped};
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (layout, past_201) = save_past_201();
+    let mut session = guacamole::story_save::Session::new(Some(HOST.into()));
+    session.stored = Some((layout.clone(), past_201));
+    let (mut run, _) = run_on_level(Mode::Play, LEVEL_205, setup());
+    run.world.plays_movies = true;
+    run.world.sequence.shows_completion = true;
+    let (mut stops, mut rows) = (Vec::new(), Vec::new());
+    for _ in 0..2 {
+        saved(
+            &mut run,
+            &mut session,
+            LEVEL_205,
+            &mut stops,
+            &mut rows,
+            [false; 4],
+        );
+    }
+    assert_eq!(session.report.start.as_deref(), Some("stored"));
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    // Its intro skipped as a player skips it, then settled.
+    for k in 0..300u32 {
+        let skip = k > 20 && k % 20 == 10;
+        saved(
+            &mut run,
+            &mut session,
+            LEVEL_205,
+            &mut stops,
+            &mut rows,
+            [false, false, false, skip],
+        );
+    }
+    // The ship part: 205's legendary treasure, in the boathouse.
+    let treasures: Vec<(guac_script::Handle, Vec3, String)> = run
+        .files
+        .placed
+        .iter()
+        .filter(|p| p.obj.unit == LEVEL && p.activity_state == 4)
+        .filter(|p| {
+            p.script
+                .as_deref()
+                .is_some_and(|s| s.ends_with("/Loot_Specials.ai"))
+        })
+        .map(|p| {
+            (
+                run.handles[&p.obj],
+                Vec3::from_array(p.position),
+                p.name.clone(),
+            )
+        })
+        .collect();
+    let [(treasure, at, name)] = &treasures[..] else {
+        panic!("205's treasures: {treasures:?}");
+    };
+    println!("205's treasure {name} at {at}");
+    assert_eq!(name, level_205::TREASURE);
+    run.put(*at + Vec3::new(2.0, 1.0, 0.0), 0.0);
+    run.world.wake(*treasure);
+    let from = run.steps;
+    while !run.world.removed(*treasure) {
+        assert!(run.steps < from + 1500, "205's treasure stayed");
+        saved(
+            &mut run,
+            &mut session,
+            LEVEL_205,
+            &mut stops,
+            &mut rows,
+            [false; 4],
+        );
+    }
+    let part = ship_parts::report(&run.vm, &run.world);
+    println!(
+        "collected {} steps on: {:?}",
+        run.steps - from,
+        part.stand_in
+    );
+    let [(part_id, Equipped::Collected)] = part.stand_in[..] else {
+        panic!("205's part: {:?}", part.stand_in);
+    };
+    // By Dreadbeard, where his scene's intro plays on his approach.
+    let (_, by) = run.placed(level_205::BY_DREADBEARD);
+    run.put(by, 180.0);
+    let scene_state = |run: &Run| {
+        let (h, _) = run.placed(FINALE_SCENE);
+        run.vm
+            .placement_of(h)
+            .and_then(|id| run.vm.local(id, level_205::SCENE_STATE))
+            .and_then(|v| run.vm.value(v).as_f32())
+    };
+    let mut scenes: Vec<(u32, String)> = Vec::new();
+    let mut made = level_205::FinaleStep::default();
+    let mut asked = Vec::new();
+    let mut foes_off_at = None;
+    let from = run.steps;
+    while run.world.sequence.completion.is_none() {
+        assert!(
+            run.steps < from + 9000,
+            "no completion screen by step {}: the scene at {:?}, {scenes:?}",
+            run.steps,
+            scene_state(&run)
+        );
+        saved(
+            &mut run,
+            &mut session,
+            LEVEL_205,
+            &mut stops,
+            &mut rows,
+            [false; 4],
+        );
+        if let Some(p) = guacamole::prompt::up(&run.vm, &run.world) {
+            let id = match p.question {
+                guac_script::Value::Object(o) => run.vm.program().name_of(o).map(str::to_owned),
+                _ => None,
+            };
+            assert!(
+                run.with_host(|vm, host| guacamole::prompt::answer(vm, host, &p, true))
+                    .unwrap_or_else(|h| panic!("the answer: {h}"))
+            );
+            asked.push(id);
+        }
+        let step = level_205::finale_stand_in(&mut run.vm, &mut run.world, LEVEL);
+        made.fight |= step.fight;
+        made.game |= step.game;
+        if step.foes > 0 {
+            made.foes = step.foes;
+            foes_off_at.get_or_insert(run.steps);
+        }
+        if let Some(cs) = cutscene_name(&run)
+            && scenes.last().is_none_or(|(_, n)| *n != cs)
+        {
+            scenes.push((run.steps, cs));
+        }
+    }
+    let screen_at = run.steps;
+    println!(
+        "the stand-ins {made:?}, the foes off at {foes_off_at:?}; asked {asked:?}; scenes {scenes:?}; the completion screen at {screen_at}"
+    );
+    assert!(made.fight && made.game, "{made:?}");
+    assert_eq!(made.foes, 17, "Setup_005's foes");
+    assert_eq!(asked, [Some("Generic_Skystones_WantToPlay?".to_owned())]);
+    let names: Vec<&str> = scenes.iter().map(|(_, n)| n.as_str()).collect();
+    for scene in [
+        "Dreadbeard Pirate Intro",
+        "Dreadbeard Pirate Part 2",
+        "Dreadbeard Pirate Part 3",
+        "IGC - Intro - CardGame",
+        "Dreadbeard Pirate Outro",
+        "205 outro igc",
+    ] {
+        assert!(names.contains(&scene), "{scene}: {names:?}");
+    }
+    assert!(
+        !names.iter().any(|n| n.contains("Quit")),
+        "no quit: {names:?}"
+    );
+    assert!(
+        run.world.removed(run.placed(DREADBEARD).0),
+        "Dreadbeard off"
+    );
+    // The outro played to its end, the hero where it leaves him.
+    let outro_at = scenes.iter().find(|(_, n)| n == "205 outro igc").unwrap().0;
+    println!(
+        "the outro {} steps; him at {}",
+        screen_at - outro_at,
+        run.hero().pivot
+    );
+    assert!(screen_at - outro_at > 1800, "the outro cut short");
+    assert_eq!(seq(&run.vm), Some(COMPLETION));
+    let c = run.world.sequence.completion.clone().unwrap();
+    let r = c.results.clone().expect("the objectives screen's results");
+    println!("{r:#?}");
+    assert_eq!(r.level.as_deref(), Some("Cutthroat Carnival"));
+    assert_eq!(r.tabs.len(), 3);
+    assert!(r.tabs.iter().all(Option::is_some), "{:?}", r.tabs);
+    assert!(r.objectives.iter().all(|o| o.description.is_some()));
+    let in_tab = |t: i32| r.objectives.iter().filter(|o| o.category == t).count();
+    assert_eq!((in_tab(0), in_tab(1), in_tab(2)), (1, 4, 7));
+    assert_eq!(
+        r.objectives
+            .iter()
+            .find(|o| o.category == 0)
+            .map(|o| o.status),
+        Some(Status::NewlyDone),
+        "the story goal"
+    );
+    // The finds, each its count of what 205 places: the legendary treasure
+    // taken, its two hat boxes, four chests and one story tablet (with the
+    // soul gem, the winged sapphire and the wheel) untouched.
+    assert_eq!(
+        r.objectives
+            .iter()
+            .filter(|o| o.category == 2)
+            .map(|o| (o.count, o.total))
+            .collect::<Vec<_>>(),
+        [
+            (0.0, 1.0),
+            (1.0, 1.0),
+            (0.0, 2.0),
+            (0.0, 4.0),
+            (0.0, 1.0),
+            (0.0, 1.0),
+            (0.0, 1.0)
+        ]
+    );
+    assert_eq!(r.stars, [true, false, false], "only the level clear star");
+    run.world
+        .sequence
+        .completion
+        .as_mut()
+        .unwrap()
+        .continue_asked = true;
+    let continued_at = run.steps;
+    while run.world.level_end_movie().is_none() {
+        assert!(run.steps < continued_at + 30, "no movie by {}", run.steps);
+        saved(
+            &mut run,
+            &mut session,
+            LEVEL_205,
+            &mut stops,
+            &mut rows,
+            [false; 4],
+        );
+    }
+    let movie = run.world.level_end_movie().cloned().unwrap();
+    println!("the movie {movie:?}");
+    assert_eq!(movie.name, "fmv04");
+    run.world.movie_playing();
+    for _ in 0..30 {
+        saved(
+            &mut run,
+            &mut session,
+            LEVEL_205,
+            &mut stops,
+            &mut rows,
+            [false; 4],
+        );
+    }
+    run.world.movie_over(MovieEnd::Skipped);
+    let over_at = run.steps;
+    while run.world.level_change().is_none() {
+        assert!(run.steps < over_at + 30, "no level change by {}", run.steps);
+        saved(
+            &mut run,
+            &mut session,
+            LEVEL_205,
+            &mut stops,
+            &mut rows,
+            [false; 4],
+        );
+    }
+    let change = run.world.level_change().cloned().unwrap();
+    println!("the change at {}: {change:?}", run.steps);
+    assert_eq!(change.name, HUB_1);
+    assert_eq!(
+        session.live.as_ref().map(|l| l.just_done.as_slice()),
+        Some(&[3][..]),
+        "205 just done"
+    );
+    assert!(stops.is_empty(), "{stops:#?}");
+    let steps_205 = run.steps;
+    drop(run);
+
+    // The hub on the words carried.
+    let hub_setup = Setup {
+        streams: true,
+        ..setup()
+    };
+    let (mut hub, _) = run_on_level(Mode::Play, HUB_1, hub_setup);
+    let definition = guacamole::story_save::definition(&hub.vm, &hub.world).expect("a definition");
+    hub.vm.native_first(definition);
+    let id = hub.world.run();
+    let mut start_rows = Vec::new();
+    {
+        let session = &mut session;
+        hub.step_play_with(&mut |vm, at, host| {
+            if at == definition {
+                assert!(
+                    guacamole::story_save::title(vm, host, session, id)?,
+                    "the save read"
+                );
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+    assert_eq!(session.report.start.as_deref(), Some("carried"));
+    assert_eq!(
+        global(&hub, "Levels_Completed"),
+        Some(guac_script::Value::Int(4))
+    );
+    assert_eq!(
+        global(&hub, "First_Time_Here"),
+        Some(guac_script::Value::Int(1))
+    );
+    let mut hub_stops = Vec::new();
+    for _ in 0..2 {
+        saved(
+            &mut hub,
+            &mut session,
+            HUB_1,
+            &mut hub_stops,
+            &mut start_rows,
+            [false; 4],
+        );
+    }
+    hub.join().unwrap_or_else(|h| panic!("{h}"));
+    let utilities = hub.placed("_Utilities_Controller").0;
+    let from = hub.steps;
+    while hub
+        .vm
+        .placement_of(utilities)
+        .and_then(|p| hub.vm.behaviour(p))
+        != Some("main")
+    {
+        assert!(hub.steps < from + 600, "the parts never hung");
+        saved(
+            &mut hub,
+            &mut session,
+            HUB_1,
+            &mut hub_stops,
+            &mut start_rows,
+            [false; 4],
+        );
+    }
+    for _ in 0..10 {
+        saved(
+            &mut hub,
+            &mut session,
+            HUB_1,
+            &mut hub_stops,
+            &mut start_rows,
+            [false; 4],
+        );
+    }
+    let ship = ship_parts::report(&hub.vm, &hub.world);
+    println!("the ship at the hub: {ship:?}");
+    assert!(ship.equipped.contains(&part_id), "{ship:?}");
+    let hung = format!("ShipPart_{part_id:03}");
+    assert!(ship.hung.contains(&hung), "{hung}: {ship:?}");
+    let saved_row = start_rows.last().expect("the hub's start saved");
+    for done in [
+        "Level_213_Tutorial",
+        "Level_214_Tutorial_2",
+        "Level_201_Rescue_the_Hermit",
+        "Level_205_Pirate_Cards",
+    ] {
+        assert!(
+            guacamole::story_save::done(saved_row, done),
+            "{done} done in the save"
+        );
+    }
+    // Its first visit's intro to its end, then its way on as after 201:
+    // Cali's question no, Flynn's yes, which asks the level after 205.
+    let intro = hub.placement("CS_Intro_Controller");
+    while !hub.vm.removed(intro) {
+        assert!(hub.steps < 6000, "the hub's intro never ended");
+        saved(
+            &mut hub,
+            &mut session,
+            HUB_1,
+            &mut hub_stops,
+            &mut start_rows,
+            [false; 4],
+        );
+    }
+    let cali = hub_talk(&mut hub, &mut hub_stops, Vec3::from_array(BY_CALI), false);
+    println!("Cali: {cali:?}");
+    assert!(hub.world.level_change().is_none());
+    let flynn = hub_talk(&mut hub, &mut hub_stops, Vec3::from_array(BY_FLYNN), true);
+    let change = hub.world.level_change().cloned();
+    println!("Flynn: {flynn:?}; the level change {change:?}");
+    assert_eq!(cali, [Some("03_Cali_WantToTry?".to_owned())]);
+    assert_eq!(flynn, [Some("208_Flynn_YES/NO_string".to_owned())]);
+    let change = change.expect("Flynn's yes changes level");
+    assert_eq!(change.name, NEXT_LEVEL);
+    assert!(hub_stops.is_empty(), "{hub_stops:#?}");
+    println!(
+        "205 {steps_205} steps, the hub {} steps; {:.1} s; load at end: {}",
+        hub.steps,
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
+
+/// Flynn at the helm and Cali on the main deck of the hub's first stage,
+/// where a player talks to each (`giants_hub`'s).
+const BY_FLYNN: [f32; 3] = [0.10, -4.64, 47.5];
+const BY_CALI: [f32; 3] = [-10.30, -12.61, 16.91];
+/// The adventure after 205 in the disc's order, by its archive.
+const NEXT_LEVEL: &str = "level_208_ice";
+
+/// The hero set down at `at`, then the talk button pressed every 20 steps
+/// until a cutscene starts, and the steps run until it ends or the run
+/// changes level, each question answered `yes` as the TV's modal answers
+/// it, 90 steps on (`giants_hub`'s `talk`): the questions asked.
+fn hub_talk(run: &mut Run, stops: &mut Vec<String>, at: Vec3, yes: bool) -> Vec<Option<String>> {
+    run.put(at, 0.0);
+    let mut asked = Vec::new();
+    let (mut began, mut read) = (false, 0);
+    for k in 0..3600u32 {
+        still(run, stops, [false, false, false, !began && k % 20 == 0]);
+        let cs = cutscene_name(run);
+        began |= cs.is_some();
+        if let Some(p) = guacamole::prompt::up(&run.vm, &run.world) {
+            read += 1;
+            if read < 90 {
+                continue;
+            }
+            read = 0;
+            asked.push(match p.question {
+                guac_script::Value::Object(o) => run.vm.program().name_of(o).map(str::to_owned),
+                _ => None,
+            });
+            assert!(
+                run.with_host(|vm, host| guacamole::prompt::answer(vm, host, &p, yes))
+                    .unwrap_or_else(|h| panic!("the answer: {h}"))
+            );
+        }
+        if (began && cs.is_none()) || run.world.level_change().is_some() {
+            break;
+        }
+    }
+    still(run, stops, [false; 4]);
+    asked
+}
