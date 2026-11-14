@@ -26,6 +26,10 @@
 //! part of the way; and the Giant Pirate Head's script (`GiantPirateHead`),
 //! which fades the arch as the camera nears it (openspec AS.288's).
 
+use guac_script::{Value, Vm};
+
+use crate::scripts::ScriptWorld;
+
 /// The placements the way off the island needs, by name, listed and never
 /// walked: the crane, its mast, the wheel that turns them and the hint
 /// that pans to the wheel. The crane's co-op half (a second player inside
@@ -102,6 +106,107 @@ pub fn listed(level: &str) -> impl Iterator<Item = &'static str> {
     people(level).iter().chain(scenes).copied()
 }
 
+/// Level 205's end (openspec AS.287), by placement name, listed and never
+/// walked. The level ends at Dreadbeard's ([`PEOPLE`]): his scene
+/// (`Card_Pirate_05_Cine`, [`SCENES`]) pans to him when Setup_005's fight
+/// begins and again once its 17 foes are off, then opens his card game;
+/// once his game's won theatrics are over his scene plays his last lines
+/// and clones the outro (`205_Outro_IGC`), which takes him, the arch's fade
+/// and the landing's planks off and sets the cast down back on the start
+/// island: the landing pod brings Flynn and Cali in, Blobbers and Bowers
+/// see them off, and its `Game - Level End` names the village and the
+/// level end's movie. The outro's own actors (`205_Outro_Landing_Pod`,
+/// `205_Outro_Blobbers`, `Outro_Mechanic_Clone`) draw as its clones, their
+/// placements unrun, as the intro's are.
+pub const END: [&str; 1] = ["205_Outro_IGC"];
+
+/// The placements [`END`] lists for the level whose archive is `level`.
+pub fn end(level: &str) -> &'static [&'static str] {
+    match level {
+        LEVEL => &END,
+        _ => &[],
+    }
+}
+
+/// Dreadbeard's scene, whose state ([`SCENE_STATE`]) runs the end.
+pub const FINALE_SCENE: &str = "Card_Pirate_05_Cine";
+/// The scene's state variable, and the states it waits in: on Setup_005's
+/// first waves (its controller's `start pan` 2), on its 17 foes off, and on
+/// Dreadbeard's game won.
+pub const SCENE_STATE: &str = "speakerinit";
+pub const ON_THE_FIGHT: i32 = 5;
+pub const ON_THE_FOES: i32 = 9;
+pub const ON_THE_GAME: i32 = 12;
+/// Setup_005's controller and what it sets once its first waves are done.
+const FIGHT_CONTROLLER: &str = "Setup_005_Controller";
+const FIGHT_STARTED: &str = "start pan";
+/// The level's set of Setup_005's foes, all of which his scene waits to see
+/// off.
+const FIGHT_FOES: &str = "Setup_005_Enemies";
+/// Dreadbeard, his game's result and the quit the TV's answer leaves in it
+/// (`prompt::quit_card_game`).
+pub const DREADBEARD: &str = "CardGame_Template(4)_Dreadbeard";
+const GAME_RESULT: &str = "win val";
+const GAME_QUIT: i32 = -2;
+/// What a won game's theatrics set at their end, which his scene waits on.
+pub const GAME_WON: &str = "CardTheatricsDone";
+
+/// What [`finale_stand_in`] made true this step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FinaleStep {
+    /// Setup_005's first waves done.
+    pub fight: bool,
+    /// Setup_005's foes taken off, how many.
+    pub foes: usize,
+    /// Dreadbeard's game won.
+    pub game: bool,
+}
+
+/// The way to 205's end that isn't run yet, stood in (openspec AS.287; the
+/// disc test's and the dev entry's `finale`, stand-in ledger: `dev-entry`),
+/// each the step Dreadbeard's scene waits on it: Setup_005's first waves
+/// done (its controller's `start pan` 2, which its fight sets: AS.284),
+/// its foes taken off as beaten (AS.284), and his card game, which the TV
+/// doesn't have (a yes is told it's quit, `prompt::quit_card_game`), won:
+/// the quit left as a game still running and the flag his win's theatrics
+/// end on set (those theatrics' card and loot screens the TV doesn't
+/// have either; AS.315). From there the scene, the outro and the level end
+/// are the level's own. On level unit `unit`.
+pub fn finale_stand_in(vm: &mut Vm, world: &mut ScriptWorld, unit: u16) -> FinaleStep {
+    let mut made = FinaleStep::default();
+    let id = |vm: &Vm, world: &ScriptWorld, name: &str| {
+        world.placed_in(unit, name).and_then(|h| vm.placement_of(h))
+    };
+    let Some(scene) = id(vm, world, FINALE_SCENE) else {
+        return made;
+    };
+    let state = vm
+        .local(scene, SCENE_STATE)
+        .map(|v| vm.value(v))
+        .and_then(|v| v.as_f32());
+    match state {
+        Some(s) if s == ON_THE_FIGHT as f32 => {
+            if let Some(c) = id(vm, world, FIGHT_CONTROLLER) {
+                made.fight = vm.set_local(c, FIGHT_STARTED, Value::Int(2));
+            }
+        }
+        Some(s) if s == ON_THE_FOES as f32 => {
+            made.foes = crate::scripts::take_off_sets(vm, world, &[FIGHT_FOES]);
+        }
+        Some(s) if s == ON_THE_GAME as f32 => {
+            let quit = id(vm, world, DREADBEARD).filter(|d| {
+                vm.local(*d, GAME_RESULT).map(|v| vm.value(v)) == Some(Value::Int(GAME_QUIT))
+            });
+            if let (Some(d), Some(g)) = (quit, vm.program().global_named(GAME_WON)) {
+                made.game =
+                    vm.set_local(d, GAME_RESULT, Value::Int(0)) && vm.set_global(g, Value::Int(1));
+            }
+        }
+        _ => {}
+    }
+    made
+}
+
 #[cfg(test)]
 mod tests {
     use guac_script::Mode;
@@ -151,5 +256,24 @@ mod tests {
             );
         }
         assert!(people("level_201").is_empty());
+    }
+
+    /// openspec AS.287: its outro is on 205's listing and on no other
+    /// level's, with Dreadbeard and his scene, which start it.
+    #[test]
+    fn level_205s_end_is_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        let off = level_config(Mode::Play, &files, 5, "level_201");
+        for name in END {
+            assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+            assert!(
+                !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
+                "{name} on 201"
+            );
+        }
+        assert!(on.whitelist.lists(FINALE_SCENE, "C:/l/Unlisted.ai"));
+        assert!(on.whitelist.lists(DREADBEARD, "C:/l/Unlisted.ai"));
+        assert!(end("level_201").is_empty());
     }
 }

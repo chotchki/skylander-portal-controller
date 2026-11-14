@@ -4245,6 +4245,8 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
         );
         // Level 205's people and scenes (openspec AS.286).
         placements.extend(crate::level_205::listed(name).map(str::to_owned));
+        // Level 205's end (openspec AS.287).
+        placements.extend(crate::level_205::end(name).iter().map(|s| (*s).to_owned()));
     }
     // Level 201's own scripts, by their path under its folder (openspec
     // AU.53).
