@@ -42,6 +42,33 @@ fn step(run: &mut Run, stops: &mut Vec<String>, stick: Stick, actions: [bool; 4]
     };
     stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
     note_card(run);
+    note_beds(run);
+}
+
+thread_local! {
+    /// The music and ambience plays (`mu_*`, `am_*`) this test's run has
+    /// started, each as it was first seen: the step, its name and the sound
+    /// clock it started on ([`note_beds`]).
+    static BEDS: std::cell::RefCell<Vec<(u32, String, u64)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Each music or ambience play started since the last step onto [`BEDS`].
+fn note_beds(run: &Run) {
+    BEDS.with_borrow_mut(|beds| {
+        for p in run.world.plays() {
+            let Some(name) = p
+                .name
+                .as_deref()
+                .filter(|n| n.starts_with("mu_") || n.starts_with("am_"))
+            else {
+                continue;
+            };
+            if !beds.iter().any(|(_, n, at)| n == name && *at == p.started) {
+                beds.push((run.steps, name.to_owned(), p.started));
+            }
+        }
+    });
 }
 
 /// An enemy intro's card as it stood: its first and last step, its
@@ -1815,4 +1842,129 @@ fn hub_talk(run: &mut Run, stops: &mut Vec<String>, at: Vec3, yes: bool) -> Vec<
     }
     still(run, stops, [false; 4]);
     asked
+}
+
+/// The beds [`BEDS`] holds started at or after `from`, by name.
+fn beds_from(from: u32) -> Vec<(u32, String)> {
+    BEDS.with_borrow(|beds| {
+        beds.iter()
+            .filter(|(at, _, _)| *at >= from)
+            .map(|(at, n, _)| (*at, n.clone()))
+            .collect()
+    })
+}
+
+/// The dynamic sound controller's flag `name` (the combat watchers' `in
+/// combat`), as an int.
+fn sound_flag(run: &Run, name: &str) -> Option<i32> {
+    let id = run.placement("dynamic_sound_controller_205");
+    match run.vm.value(run.vm.local(id, name)?) {
+        guac_script::Value::Int(i) => Some(i),
+        _ => None,
+    }
+}
+
+/// openspec AS.289: level 205's own sound scripts play its music, as a kid
+/// meets it. At the start the intro scene's track with the night's
+/// ambience, the gameplay intro once the intro hands him over, the ship's
+/// wind on the boat. At the first yard the first combat watcher wakes
+/// before its fight and marks the controller in combat, its scripts'
+/// transition to combat keeping the music as it is; the five beaten, it
+/// takes itself off on the thin explore bed, out of combat. Then into the
+/// house by the yard (`Interior_Controller_2`) at its door: the inside bed
+/// and the house's ambience. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_205s_music_follows_its_start_its_first_fight_and_an_interior() {
+    println!("load at start: {}", load());
+    BEDS.with_borrow_mut(Vec::clear);
+    let mut stops = Vec::new();
+    let mut run = joined_205(&mut stops);
+    over_the_crane(&mut run, &mut stops);
+    let to_yard = beds_from(0);
+    println!("to the yard {to_yard:?}");
+    let first =
+        |beds: &[(u32, String)], name: &str| beds.iter().find(|(_, n)| n == name).map(|b| b.0);
+    // The intro's track and the night's ambience from the start, the
+    // gameplay intro once the intro is skipped (by step 140), the ship's
+    // wind on the boat.
+    assert!(first(&to_yard, "mu_205_intro_igc").is_some_and(|s| s <= 10));
+    assert!(first(&to_yard, "am_night_exterior").is_some_and(|s| s <= 10));
+    let gameplay = first(&to_yard, "mu_205_v2_intro_gameplay");
+    assert!(
+        gameplay.is_some_and(|s| (100..400).contains(&s)),
+        "{gameplay:?}"
+    );
+    assert!(first(&to_yard, "am_windy_night_on_ship").is_some());
+
+    let watcher = "combat_watcher_1 (town entrance)";
+    let in_combat_before = sound_flag(&run, "in combat");
+    let watching_before = behaviour(&run, watcher);
+    let at_yard = run.steps;
+    let (_, goal) = run.placed("Setup_001_Trigger(2)");
+    let fought = fight(
+        &mut run,
+        &mut stops,
+        "Setup_001_Controller",
+        &YARD_FOES,
+        goal,
+        8000,
+    );
+    let first_awake = fought
+        .log
+        .iter()
+        .find(|(_, n, b)| n.starts_with("Enemy_") && b != "asleep")
+        .map(|e| e.0);
+    let last_off = YARD_FOES.iter().filter_map(|n| fought.removed(n)).max();
+    for _ in 0..120 {
+        still(&mut run, &mut stops, [false; 4]);
+    }
+    let in_yard = beds_from(at_yard);
+    println!(
+        "watcher {watching_before} and in combat {in_combat_before:?} at the yard; first awake {first_awake:?}, last off {last_off:?}; beds {in_yard:?}; after, watcher {} and in combat {:?}",
+        behaviour(&run, watcher),
+        sound_flag(&run, "in combat")
+    );
+    assert!(fought.ended, "the fight never ended");
+    // Woken as he came to the yard, before its fight.
+    assert_eq!(watching_before, "watching");
+    assert_eq!(in_combat_before, Some(1));
+    // The music unchanged through the fight, the thin explore bed as the
+    // last foe goes and the watcher with it.
+    let last_off = last_off.expect("all five off");
+    let explore = first(&in_yard, "mu_205_v2_explore_thin");
+    assert!(
+        explore.is_some_and(|s| s >= last_off && s <= last_off + 5),
+        "{explore:?} against {last_off}"
+    );
+    assert!(
+        in_yard
+            .iter()
+            .all(|(s, n)| !n.starts_with("mu_") || *s >= last_off),
+        "{in_yard:?}"
+    );
+    assert_eq!(behaviour(&run, watcher), "removed");
+    assert_eq!(sound_flag(&run, "in combat"), Some(0));
+
+    // Into the house by the yard at its door.
+    let (door, facing) =
+        guacamole::interiors::door(&run.world, LEVEL, "Interior_Controller_2").expect("its door");
+    run.put(door, facing);
+    let at_door = run.steps;
+    for k in 0..600u32 {
+        let s = if k < 120 {
+            let d = (facing - run.bench.view).to_radians();
+            Stick::new(-d.sin(), d.cos())
+        } else {
+            Stick::new(0.0, 0.0)
+        };
+        step(&mut run, &mut stops, s, [false; 4]);
+    }
+    let inside = beds_from(at_door);
+    println!("inside at {}: {inside:?}", run.hero().pivot);
+    assert!(run.hero().pivot.y < -250.0, "in its room");
+    assert!(first(&inside, "mu_205_v2_inside").is_some(), "{inside:?}");
+    assert!(first(&inside, "am_house_interior").is_some(), "{inside:?}");
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
 }
