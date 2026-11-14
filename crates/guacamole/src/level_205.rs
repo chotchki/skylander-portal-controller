@@ -175,6 +175,97 @@ pub fn passage(level: &str) -> &'static [&'static str] {
     }
 }
 
+/// The way on from the first yard to Setup_002's end (openspec AS.325), by
+/// placement name, listed and never walked; the doors, keys, push blocks,
+/// spike gates and rooms on it run by their scripts on every level already.
+/// In order:
+/// - **The jump pad.** Setup_001's five gone, its activator (woken within
+///   its range) lays the pad below the key ledge south of the yard; on it a
+///   hero is thrown up onto the ledge and takes the first key.
+/// - **The key door.** Off the ledge, the key turned in the door west of
+///   the yard (`Door_Template(3)`, △) opens the market, where the armored
+///   Chompy's intro plays and its Chompies come at him.
+/// - **Blobbers' crane.** Its wheel (`SpinCrank2`, △) swings the crane
+///   (`Crane(2)`, its mast `Crane_Head(1)`) between west and south; its
+///   boat carries a block between them, a block riding it being drawn by
+///   the crate (`FAke_Block`s) and woken again at the other end as that
+///   end's push block. Turned south, the block by the boat's north end is
+///   pushed onto it; turned west, that block is pushed off its far end
+///   into the channel; turned south again, the boat bridges the gap and
+///   the block past it is pushed into the channel there, a way into
+///   Setup_002's yard.
+/// - **The card house.** In the yard Setup_002 wakes; a pirate with a key
+///   laughs and runs into the card house, its door (`Interior_Door(3)`)
+///   swinging open for him, and the house's room takes the hero in. There
+///   Fangs plays his card game; won, his scene wakes the first gate killer
+///   (`Gate_Killer`), whose leaving lowers the gate before the key; the key
+///   taken, the second (`Gate_Killer(1)`) lowers the gate by the door.
+///   Carried back to the yard, the key sets Setup_002's fight off; beaten,
+///   past its far trigger, its controller goes.
+pub const STRETCH_1: [&str; 12] = [
+    "SpecialJumpPadActivator_For_JumpPad08",
+    "PvP_JumpPad_SUPER(8)",
+    "Crane(2)",
+    "Crane_Head(1)",
+    "SpinCrank2",
+    "FAke_Block",
+    "FAke_Block(1)",
+    "FAke_Block(2)",
+    "Fake_Card_Pirate_1",
+    "Interior_Door(3)",
+    "Gate_Killer",
+    "Gate_Killer(1)",
+];
+
+/// The placements [`STRETCH_1`] lists for the level whose archive is
+/// `level`: none on another level.
+pub fn stretch_1(level: &str) -> &'static [&'static str] {
+    match level {
+        LEVEL => &STRETCH_1,
+        _ => &[],
+    }
+}
+
+/// Who of [`STRETCH_1`] the TV draws as one of the level's people, awake
+/// on his own model: the pirate who runs into the card house.
+pub const STRETCH_1_PEOPLE: [&str; 1] = ["Fake_Card_Pirate_1"];
+
+/// The placements [`STRETCH_1_PEOPLE`] lists for the level whose archive
+/// is `level`: none on another level.
+pub fn stretch_1_people(level: &str) -> &'static [&'static str] {
+    match level {
+        LEVEL => &STRETCH_1_PEOPLE,
+        _ => &[],
+    }
+}
+
+/// The card house's pirate (Fangs), whose game the key behind the room's
+/// gate waits on.
+pub const CARD_HOUSE_PIRATE: &str = "CardGame_Template(2)";
+
+/// Fangs' card game won where the TV has no card game (openspec AS.329;
+/// the disc test's, stand-in ledger: `dev-entry`): a quit the TV's answer
+/// left in his result turned to a game still running and the flag a won
+/// game's theatrics end on set, as [`finale_stand_in`] does for
+/// Dreadbeard's. From there his scene's outro, the gate killers and the
+/// key are the level's own. Whether it stood in this step, on level unit
+/// `unit`.
+pub fn card_house_stand_in(vm: &mut Vm, world: &mut ScriptWorld, unit: u16) -> bool {
+    let Some(fangs) = world
+        .placed_in(unit, CARD_HOUSE_PIRATE)
+        .and_then(|h| vm.placement_of(h))
+    else {
+        return false;
+    };
+    if vm.local(fangs, GAME_RESULT).map(|v| vm.value(v)) != Some(Value::Int(GAME_QUIT)) {
+        return false;
+    }
+    let Some(g) = vm.program().global_named(GAME_WON) else {
+        return false;
+    };
+    vm.set_local(fangs, GAME_RESULT, Value::Int(0)) && vm.set_global(g, Value::Int(1))
+}
+
 /// Level 205's people (openspec AS.286), by placement name, drawn awake on
 /// their own models as the hub's are and never walked. Bowers the mechanic
 /// stands by the start (his talk on his own trigger, the talk button within
@@ -394,6 +485,33 @@ mod tests {
         let arch = "C:/tfb/Content/Levels/Level_205/Scripts/GiantPirateHead.ai";
         assert!(!on.whitelist.lists("GiantPirateHead", arch));
         assert!(passage("level_201").is_empty());
+    }
+
+    /// openspec AS.325: its way on from the first yard to Setup_002's end
+    /// is on 205's listing alone, the runaway pirate drawn among its people
+    /// there, and none of it walked as a fight or listed twice over.
+    #[test]
+    fn level_205s_way_to_setup_002s_end_is_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        let off = level_config(Mode::Play, &files, 5, "level_201");
+        for name in STRETCH_1 {
+            assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+            assert!(
+                !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
+                "{name} on 201"
+            );
+            assert!(!WAY.placements.contains(&name), "{name} fights");
+            assert!(!PASSAGE.contains(&name), "{name}");
+            assert!(!listed(LEVEL).any(|n| n == name), "{name}");
+        }
+        for name in STRETCH_1_PEOPLE {
+            assert!(STRETCH_1.contains(&name), "{name}");
+            assert!(crate::scripts::is_level_person(LEVEL, name), "{name}");
+            assert!(!crate::scripts::is_level_person("level_201", name));
+        }
+        assert!(stretch_1("level_201").is_empty());
+        assert!(stretch_1_people("level_201").is_empty());
     }
 
     /// openspec AS.286: its people are on 205's listing and among the TV's

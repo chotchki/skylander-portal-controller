@@ -3165,10 +3165,12 @@ pub fn is_hub_person(script: &str) -> bool {
 
 /// Whether the placement `name` of the level whose archive is `level` is
 /// one of its own people ([`LEVEL_PEOPLE`], and level 205's
-/// [`crate::level_205::PEOPLE`]).
+/// [`crate::level_205::PEOPLE`] and the card house's runaway pirate,
+/// [`crate::level_205::STRETCH_1_PEOPLE`]).
 pub fn is_level_person(level: &str, name: &str) -> bool {
     LEVEL_PEOPLE.iter().any(|(l, n)| *l == level && *n == name)
         || crate::level_205::people(level).contains(&name)
+        || crate::level_205::stretch_1_people(level).contains(&name)
 }
 
 /// Whether the level whose archive is `level` is a hub stage.
@@ -4271,6 +4273,13 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
         // Level 205's way off its start island (openspec AS.283).
         placements.extend(
             crate::level_205::passage(name)
+                .iter()
+                .map(|s| (*s).to_owned()),
+        );
+        // Level 205's way on from its first yard to Setup_002's end
+        // (openspec AS.325).
+        placements.extend(
+            crate::level_205::stretch_1(name)
                 .iter()
                 .map(|s| (*s).to_owned()),
         );
