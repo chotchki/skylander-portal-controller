@@ -119,12 +119,17 @@ fn level_205s_intro_plays_to_its_end_and_hands_him_over() {
         "where it hands him over: {at}"
     );
     for who in ["Flynn_NPC", "Cali_NPC", "Mechanic_Clone"] {
+        let theirs: Vec<_> = run
+            .world
+            .clones()
+            .into_iter()
+            .filter(|h| run.world.name(*h) == who)
+            .collect();
+        assert!(!theirs.is_empty(), "{who} cloned by the intro");
         assert!(
-            run.world
-                .clones()
-                .into_iter()
-                .filter(|h| run.world.name(*h) == who)
-                .all(|h| run.world.actor(h).is_none_or(|a| a.removed)),
+            theirs
+                .iter()
+                .all(|h| run.world.actor(*h).is_none_or(|a| a.removed)),
             "{who} off"
         );
     }
