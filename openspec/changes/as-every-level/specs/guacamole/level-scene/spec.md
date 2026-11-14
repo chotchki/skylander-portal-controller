@@ -305,6 +305,13 @@ A hero hung on what a script hangs him from (a scene's rig or ship, a turret) SH
 - **WHEN** level 205's intro flies the joined hero on its landing pod over the level
 - **THEN** no setup's controller wakes and no enemy intro plays before he's handed over
 
+### Requirement: Level 205's people
+Level 205's people SHALL stand where their scripts stand them, drawn awake on their own models, the talk prompt by each near a hero, a talk played to its end on the talk button and the hero handed back. Bowers the mechanic sleeps through the intro, which talks in his stead, and stands by the start after it. The TV answers a card pirate's yes by telling him his game was quit.
+
+#### Scenario: The mechanic by the start
+- **WHEN** a hero handed over by 205's intro walks to Bowers and presses △
+- **THEN** the prompt hangs by him, his talk plays to its end, and the hero walks on with nothing stopped
+
 ### Requirement: A level's sky stays about the eye
 A level's sky SHALL draw through the view with its translation taken out, its coordinates metres from the eye wherever the camera stands: in the first capture chapter 1's 14 sky draws hold 0, 0, -0.2, 0 in the matrix's last column where every other static draw holds the eye's 37.58, -14.97, 114.07, 114.17.
 
