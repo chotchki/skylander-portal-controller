@@ -128,6 +128,12 @@ pub fn end(level: &str) -> &'static [&'static str] {
     }
 }
 
+/// Level 205's legendary treasure, its ship part (in the boathouse), and
+/// where Dreadbeard's scene puts the player before him: the dev entry's
+/// `finale` set-downs.
+pub const TREASURE: &str = "Legendary_Treasure_Bones_Masthead(2)";
+pub const BY_DREADBEARD: &str = "Dreadbeard_Player_Waypoints";
+
 /// Dreadbeard's scene, whose state ([`SCENE_STATE`]) runs the end.
 pub const FINALE_SCENE: &str = "Card_Pirate_05_Cine";
 /// The scene's state variable, and the states it waits in: on Setup_005's

@@ -950,6 +950,7 @@ fn level_205s_end_plays_from_its_last_fight_to_the_hub() {
         panic!("205's treasures: {treasures:?}");
     };
     println!("205's treasure {name} at {at}");
+    assert_eq!(name, level_205::TREASURE);
     run.put(*at + Vec3::new(2.0, 1.0, 0.0), 0.0);
     run.world.wake(*treasure);
     let from = run.steps;
@@ -974,7 +975,7 @@ fn level_205s_end_plays_from_its_last_fight_to_the_hub() {
         panic!("205's part: {:?}", part.stand_in);
     };
     // By Dreadbeard, where his scene's intro plays on his approach.
-    let (_, by) = run.placed("Dreadbeard_Player_Waypoints");
+    let (_, by) = run.placed(level_205::BY_DREADBEARD);
     run.put(by, 180.0);
     let scene_state = |run: &Run| {
         let (h, _) = run.placed(FINALE_SCENE);
