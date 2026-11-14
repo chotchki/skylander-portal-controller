@@ -2489,19 +2489,23 @@ mod tests {
         assert!(activity_from(&mut w, &[], None, None).is_empty());
     }
 
-    /// openspec AS.284: the TV's step measures a hung hero from where he
-    /// last stood, an unhung one from where he is.
+    /// openspec AS.284: the TV's step measures each hero through
+    /// [`ScriptWorld::measured_from`]: standing, from where he is, and
+    /// carried by what the TV poses (a scene's rig, a sail's ship, a
+    /// turret), from where it carries him, as before AS.284; only an
+    /// unposed rig under him (the world's own test) measures from where he
+    /// stood.
     #[test]
-    fn the_tvs_activity_measures_a_hung_hero_from_where_he_stood() {
+    fn the_tvs_activity_measures_a_carried_hero_where_hes_carried() {
         let mut w = ScriptWorld::new(&Files::default(), &HashMap::new(), [0; 7]);
-        let (stood, carried) = (Vec3::new(146.8, 14.6, 252.0), Vec3::ZERO);
+        let (stood, carried) = (Vec3::new(146.8, 14.6, 252.0), Vec3::new(-14.7, 59.3, 35.7));
         assert_eq!(
             activity_from(&mut w, &[(7, stood, false)], None, None),
             [stood]
         );
         assert_eq!(
             activity_from(&mut w, &[(7, carried, true)], None, None),
-            [stood]
+            [carried]
         );
         assert_eq!(
             activity_from(&mut w, &[(7, carried, false)], None, None),

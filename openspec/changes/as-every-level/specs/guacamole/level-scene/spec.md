@@ -298,12 +298,12 @@ Level 205's first yard SHALL fight on its own controller: once the crane has tur
 - **WHEN** a hero walks over the turned crane's boat into Setup_001's yard and fights what wakes
 - **THEN** the Cyclops' intro plays once with its card, the five fall, the gate goes and the controller ends with nothing stopped
 
-### Requirement: A carried hero wakes nothing where he's carried
-A hero hung on what a script hangs him from (a scene's rig or ship, a turret) SHALL wake the level from where he last stood on his own, so a scene flying him over a yard leaves its controller asleep until he's let go there.
+### Requirement: A hero on an unposed camera wakes the level from where he stood
+A hero hung on what rides a scene's camera rig that no pose has reached SHALL wake the level from where he last stood; carried by anything posed, a rig, a ship or a turret, from where he is. Headless 205's intro holds its pod and him at the world's origin, 137 ft from Setup_004's controller; on the TV the flyover passes 195 ft from it at its nearest, outside the 160 ft that plays its Biclops' intro.
 
 #### Scenario: Level 205's intro
-- **WHEN** level 205's intro flies the joined hero on its landing pod over the level
-- **THEN** no setup's controller wakes and no enemy intro plays before he's handed over
+- **WHEN** level 205's intro flies the joined hero on its landing pod over the level, headless or on the TV
+- **THEN** no setup's enemy intro plays before he's handed over
 
 ### Requirement: Level 205's people
 Level 205's people SHALL stand where their scripts stand them, drawn awake on their own models, the talk prompt by each near a hero, a talk played to its end on the talk button and the hero handed back. Bowers the mechanic sleeps through the intro, which talks in his stead, and stands by the start after it. The TV answers a card pirate's yes by telling him his game was quit.

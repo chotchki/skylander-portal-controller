@@ -1098,7 +1098,9 @@ enum Met {
     /// scene, which plays to its end.
     Scene(Option<&'static str>),
     /// Awake on its model, the talk prompt by it, its talk waiting on a
-    /// fight no listing runs yet (openspec AS.284).
+    /// fight the hero put there hasn't fought (openspec AS.284); no scene
+    /// of its own, though a setup's enemy intro may play as he's put by it
+    /// ([`FIGHTS_INTROS`]).
     Waits,
     /// Awake on its model, turning to him; no talk.
     Turns,
@@ -1110,6 +1112,12 @@ enum Met {
     /// Asleep: woken by a script past what runs today.
     Asleep,
 }
+
+/// The setups' enemy intros that play as a hero is put within their reach
+/// (openspec AS.284): Setup_004's Biclops' intro, within 160 ft of its
+/// controller, as Cali in town stands (86 ft off), where a kid's walk has
+/// played it on the way.
+const FIGHTS_INTROS: [&str; 1] = ["IGC_Cyclops_Heavy"];
 
 /// 205's people and scenes past the first yard, by placement, and what each
 /// does with a hero put beside it.
@@ -1245,7 +1253,10 @@ fn level_205s_people_and_scenes_past_the_yard_as_far_as_put() {
                 assert!(awake(&run, h), "{name} awake");
                 drawn(&run);
                 assert!(near.iter().any(|c| c == TALK_PROMPT), "{name}: {near:?}");
-                assert!(scenes.is_empty(), "{name}: {scenes:?}");
+                assert!(
+                    scenes.iter().all(|s| FIGHTS_INTROS.contains(&s.as_str())),
+                    "{name}: {scenes:?}"
+                );
             }
             Met::Turns => {
                 assert!(awake(&run, h), "{name} awake");
