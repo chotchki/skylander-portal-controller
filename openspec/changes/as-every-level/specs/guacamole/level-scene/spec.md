@@ -291,6 +291,20 @@ Level 205's crane SHALL lay its boat east from the Giant Pirate Head's stage to 
 - **WHEN** a hero handed over by 205's intro crosses the boat, comes to the pier's end and presses △ at the wheel
 - **THEN** the hint pans to the wheel, the crane turns once, and he walks over the boat into Setup_001's yard with nothing stopped
 
+### Requirement: Level 205's first yard
+Level 205's first yard SHALL fight on its own controller: once the crane has turned, a hero at its trigger raises the yard's gate, a Cyclops Near steps out of the house by the water and its intro shows the Cyclops' card once for 3.5 s, then two more Cyclopes and two lobbers fight; the first Cyclops beaten takes the gate down, and with all five beaten and the yard's far trigger crossed the controller takes itself off.
+
+#### Scenario: Into the yard
+- **WHEN** a hero walks over the turned crane's boat into Setup_001's yard and fights what wakes
+- **THEN** the Cyclops' intro plays once with its card, the five fall, the gate goes and the controller ends with nothing stopped
+
+### Requirement: A carried hero wakes nothing where he's carried
+A hero hung on what a script hangs him from (a scene's rig or ship, a turret) SHALL wake the level from where he last stood on his own, so a scene flying him over a yard leaves its controller asleep until he's let go there.
+
+#### Scenario: Level 205's intro
+- **WHEN** level 205's intro flies the joined hero on its landing pod over the level
+- **THEN** no setup's controller wakes and no enemy intro plays before he's handed over
+
 ### Requirement: A level's sky stays about the eye
 A level's sky SHALL draw through the view with its translation taken out, its coordinates metres from the eye wherever the camera stands: in the first capture chapter 1's 14 sky draws hold 0, 0, -0.2, 0 in the matrix's last column where every other static draw holds the eye's 37.58, -14.97, 114.07, 114.17.
 
