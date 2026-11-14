@@ -2556,6 +2556,7 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
     println!("TRAIL {}", t.join(";"));
     let m: Vec<String> = trail.1.iter().map(|(i, n)| format!("{i}:{n}")).collect();
     println!("MARKS {}", m.join(";"));
+    println!("the card house's key still carried: {}", key_held(&run));
     assert!(
         fight_2.ended,
         "Setup_002's fight never ended: {:?}",
