@@ -299,7 +299,7 @@ Level 205's people SHALL stand where their scripts stand them, drawn awake on th
 - **THEN** the prompt hangs by him, his talk plays to its end, and the hero walks on with nothing stopped
 
 ### Requirement: Level 205's end
-Level 205 SHALL end as its scripts end it: once Setup_005's foes are off and Dreadbeard's card game is won, his scene plays his last lines and starts the outro, which sets the cast down on the start island and ends the level into the hub's stage the village opens, with the completion screen of 205's objectives and finds, FMV04, the story save carried with 205 done and its ship part, once collected, hung at the hub.
+Level 205 SHALL end as its scripts end it: once all 17 of Setup_005's foes are off and Dreadbeard's card game is won, his scene plays his last lines and starts the outro, which sets the cast down on the start island and ends the level into the hub's stage the village opens, with the completion screen of 205's objectives and finds, FMV04, the story save carried with 205 done and its ship part, once collected, hung at the hub.
 
 #### Scenario: From the last fight to the hub
 - **WHEN** a hero on a save past 201 beats Setup_005 and wins Dreadbeard's game
