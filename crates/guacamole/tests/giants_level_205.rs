@@ -2322,6 +2322,12 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
         "asleep",
         "carried off"
     );
+    // The crate that draws the block riding the boat went west with it.
+    let crate_z = run.at("FAke_Block(2)").z;
+    assert!(
+        crate_z > 125.0,
+        "the riding crate carried west: z {crate_z}"
+    );
     assert!(
         behaviour(&run, "Push_Block_Template(2)").starts_with("1."),
         "at the boat's west end: {}",
@@ -2486,6 +2492,9 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
         still(&mut run, &mut stops, [false; 4]);
     }
     assert!(key_held(&run), "the card house's key taken");
+    // The second gate killer goes with the key taken, and the door's gate
+    // with it; it isn't listed: the walk is the same to the step
+    // with it listed or not.
     assert_eq!(
         behaviour(&run, "Gate_Killer(1)"),
         "removed",

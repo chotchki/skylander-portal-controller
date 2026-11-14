@@ -199,10 +199,11 @@ pub fn passage(level: &str) -> &'static [&'static str] {
 ///   swinging open for him, and the house's room takes the hero in. There
 ///   Fangs plays his card game; won, his scene wakes the first gate killer
 ///   (`Gate_Killer`), whose leaving lowers the gate before the key; the key
-///   taken, the second (`Gate_Killer(1)`) lowers the gate by the door.
+///   taken, the second gate killer goes and the gate by the door with it,
+///   unlisted (the walk is the same to the step with it listed).
 ///   Carried back to the yard, the key sets Setup_002's fight off; beaten,
 ///   past its far trigger, its controller goes.
-pub const STRETCH_1: [&str; 12] = [
+pub const STRETCH_1: [&str; 11] = [
     "SpecialJumpPadActivator_For_JumpPad08",
     "PvP_JumpPad_SUPER(8)",
     "Crane(2)",
@@ -214,7 +215,6 @@ pub const STRETCH_1: [&str; 12] = [
     "Fake_Card_Pirate_1",
     "Interior_Door(3)",
     "Gate_Killer",
-    "Gate_Killer(1)",
 ];
 
 /// The placements [`STRETCH_1`] lists for the level whose archive is
