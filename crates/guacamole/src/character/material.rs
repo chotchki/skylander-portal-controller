@@ -740,11 +740,22 @@ pub fn specialize_for(
     descriptor: &mut RenderPipelineDescriptor,
     layout: &MeshVertexBufferLayoutRef,
 ) -> Result<(), MissingVertexAttributeError> {
+    specialize_with(key, descriptor, layout, super::isolate::asked())
+}
+
+/// [`specialize_for`] with `off`'s isolation defs ([`super::isolate`]) after
+/// the key's, on both stages.
+pub fn specialize_with(
+    key: &MaterialKey,
+    descriptor: &mut RenderPipelineDescriptor,
+    layout: &MeshVertexBufferLayoutRef,
+    off: &[&'static str],
+) -> Result<(), MissingVertexAttributeError> {
     if is_prepass(descriptor) {
         return Ok(());
     }
     let mut defs = key.shader_defs();
-    defs.extend(super::isolate::asked().iter().map(|d| (*d).into()));
+    defs.extend(off.iter().map(|d| (*d).into()));
     descriptor.vertex.shader_defs.extend(defs.iter().cloned());
     if let Some(fragment) = descriptor.fragment.as_mut() {
         fragment.shader_defs.extend(defs);
@@ -1688,9 +1699,18 @@ mod tests {
             ..Default::default()
         };
         d.primitive.cull_mode = Some(Face::Back);
+        let untouched = d.clone();
         specialize_for(&key, &mut d, &layout).unwrap();
         assert_eq!(d.vertex.shader_defs, key.shader_defs());
         assert_eq!(d.fragment.as_ref().unwrap().shader_defs, key.shader_defs());
+
+        // AS.300's isolation defs follow the key's on both stages.
+        let mut off = untouched;
+        specialize_with(&key, &mut off, &layout, &["CHAR_OFF_LAYER3"]).unwrap();
+        let mut want = key.shader_defs();
+        want.push("CHAR_OFF_LAYER3".into());
+        assert_eq!(off.vertex.shader_defs, want);
+        assert_eq!(off.fragment.as_ref().unwrap().shader_defs, want);
         let buffer = &d.vertex.buffers[0];
         let locations: Vec<u32> = buffer
             .attributes

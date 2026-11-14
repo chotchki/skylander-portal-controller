@@ -4,15 +4,11 @@
 //! list of [`SWITCHES`]' names. Each adds a shader def to every pipeline the
 //! character material specializes (the level's, the props', the heroes'), so
 //! it reaches every part at once; a kid's build reads nothing and adds none.
-//! `GUAC_TEST_SHADOW_BIAS=<depth>,<normal>` (the same builds) sets the level's
-//! shadow light's two biases in place of Bevy's defaults.
 
 use std::sync::OnceLock;
 
 /// The process env key [`asked`] reads.
 pub const KEY: &str = "GUAC_TEST_SHADE_OFF";
-/// The process env key [`shadow_bias`] reads.
-pub const BIAS_KEY: &str = "GUAC_TEST_SHADOW_BIAS";
 
 /// Each switch's name and the shader def it sets.
 pub const SWITCHES: [(&str, &str); 8] = [
@@ -52,49 +48,33 @@ pub fn defs(value: &str) -> Result<Vec<&'static str>, String> {
         .collect())
 }
 
-/// `<depth>,<normal>` as two finite biases.
-pub fn parse_bias(value: &str) -> Result<(f32, f32), String> {
-    let mut parts = value.split(',').map(|s| s.trim().parse::<f32>());
-    match (parts.next(), parts.next(), parts.next()) {
-        (Some(Ok(d)), Some(Ok(n)), None) if d.is_finite() && n.is_finite() => Ok((d, n)),
-        _ => Err(format!("{BIAS_KEY}: want <depth>,<normal>, got {value:?}")),
+/// What a build reads off [`KEY`]'s `value`: nothing unless `test_hooks`,
+/// nothing (logged) when it doesn't read.
+pub fn read(test_hooks: bool, value: Option<&str>) -> Vec<&'static str> {
+    let (true, Some(value)) = (test_hooks, value) else {
+        return Vec::new();
+    };
+    match defs(value) {
+        Ok(d) => {
+            tracing::warn!(?d, "{KEY}: material inputs switched off");
+            d
+        }
+        Err(e) => {
+            tracing::error!("{e}");
+            Vec::new()
+        }
     }
 }
 
-/// The defs this process's [`KEY`] asks for, read once; none outside a
-/// `test-hooks` build, or when the value doesn't read (logged).
+/// The defs this process's [`KEY`] asks for, read once ([`read`]).
 pub fn asked() -> &'static [&'static str] {
     static ASKED: OnceLock<Vec<&'static str>> = OnceLock::new();
     ASKED.get_or_init(|| {
-        if !cfg!(feature = "test-hooks") {
-            return Vec::new();
-        }
-        let Ok(value) = std::env::var(KEY) else {
-            return Vec::new();
-        };
-        match defs(&value) {
-            Ok(d) => {
-                tracing::warn!(?d, "{KEY}: material inputs switched off");
-                d
-            }
-            Err(e) => {
-                tracing::error!("{e}");
-                Vec::new()
-            }
-        }
+        read(
+            cfg!(feature = "test-hooks"),
+            std::env::var(KEY).ok().as_deref(),
+        )
     })
-}
-
-/// The level's shadow light's biases this process's [`BIAS_KEY`] asks for;
-/// `None` outside a `test-hooks` build or when unset or unreadable (logged).
-pub fn shadow_bias() -> Option<(f32, f32)> {
-    if !cfg!(feature = "test-hooks") {
-        return None;
-    }
-    let value = std::env::var(BIAS_KEY).ok()?;
-    parse_bias(&value)
-        .inspect_err(|e| tracing::error!("{e}"))
-        .ok()
 }
 
 #[cfg(test)]
@@ -114,19 +94,13 @@ mod tests {
         assert!(defs("shadow").unwrap_err().contains("\"shadow\""));
     }
 
+    /// A kid's build must ignore the key even when it's set, and a typo must
+    /// not leave a half-switched TV that reads as the switch's look.
     #[test]
-    fn a_bias_is_two_finite_numbers() {
-        assert_eq!(parse_bias("0.05, 0.6"), Ok((0.05, 0.6)));
-        assert!(parse_bias("0.05").is_err());
-        assert!(parse_bias("0.05,0.6,1").is_err());
-        assert!(parse_bias("nan,1").is_err());
-    }
-
-    /// A build without `test-hooks` (the unit tests' own) reads neither key.
-    #[test]
-    #[cfg(not(feature = "test-hooks"))]
-    fn a_build_without_test_hooks_reads_neither_key() {
-        assert!(asked().is_empty());
-        assert_eq!(shadow_bias(), None);
+    fn only_a_test_hooks_build_switches_anything_off() {
+        assert_eq!(read(true, Some("layer3")), vec!["CHAR_OFF_LAYER3"]);
+        assert!(read(false, Some("layer3")).is_empty());
+        assert!(read(true, None).is_empty());
+        assert!(read(true, Some("layer3,bogus")).is_empty());
     }
 }
