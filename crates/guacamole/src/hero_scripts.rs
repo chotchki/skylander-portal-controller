@@ -1261,8 +1261,9 @@ pub(crate) fn view_heading(cameras: &Query<&FollowCamera>) -> f32 {
 /// measured from the start, it put everything past its range from there to
 /// sleep, and a coin asleep for a step left the loot for good.
 /// Each hero is measured from where [`ScriptWorld::measured_from`] has
-/// him: a hung one from where he last stood (openspec AS.284), given as his
-/// handle, his pivot and whether he's hung.
+/// him (openspec AS.284: where he is, but held where he was last measured
+/// while an unposed camera's rig carries him), given as his handle, his
+/// pivot and whether he's hung.
 pub(crate) fn activity_from(
     world: &mut ScriptWorld,
     heroes: &[(Handle, Vec3, bool)],
@@ -2493,8 +2494,8 @@ mod tests {
     /// [`ScriptWorld::measured_from`]: standing, from where he is, and
     /// carried by what the TV poses (a scene's rig, a sail's ship, a
     /// turret), from where it carries him, as before AS.284; only an
-    /// unposed rig under him (the world's own test) measures from where he
-    /// stood.
+    /// unposed rig under him (the world's own test) holds him where he was
+    /// last measured.
     #[test]
     fn the_tvs_activity_measures_a_carried_hero_where_hes_carried() {
         let mut w = ScriptWorld::new(&Files::default(), &HashMap::new(), [0; 7]);
