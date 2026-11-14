@@ -284,6 +284,13 @@ Level 205 SHALL start where its intro sets the first player down: the intro held
 - **WHEN** Flynn's ready question is answered yes on hub stage 1 on a save past level 201
 - **THEN** level 205's intro plays, and he walks from where it sets him down with nothing stopped
 
+### Requirement: Level 205's way off its start island
+Level 205's crane SHALL lay its boat east from the Giant Pirate Head's stage to the far pier, its hint pan to the wheel at the pier's south end, and the wheel's talk button swing the crane and its mast 90° so the boat lies from the pier's end to Setup_001's yard, a second press swinging them back.
+
+#### Scenario: Off the island
+- **WHEN** a hero handed over by 205's intro crosses the boat, comes to the pier's end and presses △ at the wheel
+- **THEN** the hint pans to the wheel, the crane turns once, and he walks over the boat into Setup_001's yard with nothing stopped
+
 ### Requirement: A level's sky stays about the eye
 A level's sky SHALL draw through the view with its translation taken out, its coordinates metres from the eye wherever the camera stands: in the first capture chapter 1's 14 sky draws hold 0, 0, -0.2, 0 in the matrix's last column where every other static draw holds the eye's 37.58, -14.97, 114.07, 114.17.
 
