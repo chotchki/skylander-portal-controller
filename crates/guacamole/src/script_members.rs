@@ -3350,11 +3350,16 @@ impl ScriptWorld {
                 Ok(Answer::Done)
             }
             Some(w) => {
-                // Within the reading's 0.01° it lands on the facing asked, as
-                // the steering's last frame of a turn does: a scene measuring
-                // how far off it is reads 0 (openspec AS.385).
+                // Turned by another's script (a scene's), within the
+                // reading's 0.01° it lands on the facing asked, as the
+                // steering's last frame of a turn does: the scene measures
+                // how far off it is and goes on at 0 (openspec AS.385). Its
+                // own turns steer as they did: landed too, chapter 1's
+                // Chompies fight on other steps.
                 w.aim = Aim::Still;
-                a.angles.facing = to.rem_euclid(360.0);
+                if call.placement != h {
+                    a.angles.facing = to.rem_euclid(360.0);
+                }
                 Ok(Answer::Run {
                     receiver: None,
                     result: None,
@@ -7768,18 +7773,28 @@ mod fight_tests {
         assert!((facings[0] - 12.0).abs() < 1e-3, "{facings:?}");
         assert_eq!(ran, Some(5), "facing it after 5 frames: {facings:?}");
         assert!((w.actor(C1).unwrap().position - at).length() < 0.02);
-        // Within the reading's 0.01° it runs its block landed on the
-        // facing asked, exactly (openspec AS.385: the reveal's turn step
-        // measures what's left of the turn and moves on at 0).
+        // Turned by a scene, within the reading's 0.01° it runs its block
+        // landed on the facing asked, exactly (openspec AS.385: the
+        // reveal's turn step measures what's left of the turn and moves on
+        // at 0); by its own script it stays where its steering left it.
+        let by_scene = |f: f32| OpCall {
+            placement: C2,
+            ..turn(f)
+        };
         w.actors.get_mut(&C1).unwrap().angles.facing = 90.006;
         assert!(matches!(
             ask(&mut w, &mut e, &turn(90.0)),
             Answer::Run { .. }
         ));
+        assert_eq!(w.actor(C1).unwrap().angles.facing, 90.006);
+        assert!(matches!(
+            ask(&mut w, &mut e, &by_scene(90.0)),
+            Answer::Run { .. }
+        ));
         assert_eq!(w.actor(C1).unwrap().angles.facing, 90.0);
         w.actors.get_mut(&C1).unwrap().angles.facing = 0.004;
         assert!(matches!(
-            ask(&mut w, &mut e, &turn(-0.002)),
+            ask(&mut w, &mut e, &by_scene(-0.002)),
             Answer::Run { .. }
         ));
         assert_eq!(w.actor(C1).unwrap().angles.facing, 359.998);

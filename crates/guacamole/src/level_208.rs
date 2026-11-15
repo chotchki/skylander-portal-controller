@@ -31,12 +31,16 @@
 //!   and within their 6 ft attack range breathe ice on him between
 //!   cooldowns, until beaten.
 //! - **Setup_002**, down on the frozen river west of the yard: once a
-//!   player is in its trigger (`Setup_002_Trigger(1)`) it sets its two
-//!   spinning Cyclopes on him and walks three more in along their paths;
-//!   within 60 ft of the snowman by the first gate it plays Noodles' scene
-//!   there (`IGC_Noodles_FirstGate`), then sends its heavy Biclops; with
-//!   its six (`Setup_002_Enemies`) gone it takes its set off, itself, its
-//!   trigger and its paths.
+//!   player is in its trigger (`Setup_002_Trigger(1)`) it runs its two
+//!   spinning Cyclopes' queues (208's intro turned them and the three adds
+//!   off; the queue's `control` wakes them, ledger `control-wakes`); with
+//!   both beaten and a player within 60 ft of the snowman by the first gate
+//!   it wakes Noodles' scene there (`IGC_Noodles_FirstGate`, a pan), then
+//!   runs its heavy Biclops and walks the three adds in along their paths;
+//!   with its six (`Setup_002_Enemies`) gone it takes its set off (itself,
+//!   its trigger, its paths), Noodles plays his post-fight part and the
+//!   spike gate by the spinners (`Spike_Gate_Metal_Template(1)`, on the
+//!   generic listing) lowers, opening the river west.
 
 use crate::scripts::Encounter;
 

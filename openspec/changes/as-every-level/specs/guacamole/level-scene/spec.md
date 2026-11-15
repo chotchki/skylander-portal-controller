@@ -298,6 +298,13 @@ Level 208's start plaza SHALL open south by its own scripts: a hero walking into
 - **WHEN** a hero handed over by 208's intro holds the stick south and attacks the wall where it holds him
 - **THEN** the reveal plays once, the wall falls to his attacks and he reaches Setup_002's place with nothing stopped
 
+### Requirement: Level 208's first fights
+Level 208's first fights SHALL run on their own scripts: out of the reveal its five Ice Chompies notice a hero, chase him and breathe ice on him until beaten; at Setup_002's trigger its controller sets its two spinning Cyclopes on him, with both beaten Noodles' first-gate scene plays, then its heavy Biclops and three more Cyclopes come, and with all six beaten the controller takes its set off and the spike gate by the spinners lowers.
+
+#### Scenario: The Chompies and Setup_002
+- **WHEN** a hero past the snow wall stands among the Chompies, beats them, then fights from Setup_002's trigger
+- **THEN** they hurt him and fall, Setup_002's six fall in its order with Noodles' scene between, its controller ends and the way past the spike gate opens, with nothing stopped
+
 ### Requirement: Level 205's way off its start island
 Level 205's crane SHALL lay its boat east from the Giant Pirate Head's stage to the far pier, its hint pan to the wheel at the pier's south end, and the wheel's talk button swing the crane and its mast 90° so the boat lies from the pier's end to Setup_001's yard, a second press swinging them back.
 

@@ -447,32 +447,12 @@ struct Fought {
     scenes: Vec<(u32, String)>,
     /// The hero's health at the fight's start and his lowest in it.
     health: (f32, f32),
-    /// Each foe's farthest from where it first woke, metres.
-    roamed: HashMap<String, f32>,
     /// Steps the stick was his (cutscenes not counted).
     played: u32,
     /// Whether `done` held before the cap.
     ended: bool,
     /// Where he stood every quarter second: what the Mac's driver follows.
     trail: Vec<Vec3>,
-}
-
-impl Fought {
-    /// The first step `name` was in `state`, if it was.
-    fn first(&self, name: &str, state: &str) -> Option<u32> {
-        self.log
-            .iter()
-            .find(|(_, n, b)| n == name && b == state)
-            .map(|e| e.0)
-    }
-
-    /// The first step `name` was awake (neither asleep nor taken off).
-    fn woke(&self, name: &str) -> Option<u32> {
-        self.log
-            .iter()
-            .find(|(_, n, b)| n == name && !["asleep", "removed", "-"].contains(&b.as_str()))
-            .map(|e| e.0)
-    }
 }
 
 /// A fight as a kid fights it (giants_level_205's, with no top-up): the
@@ -493,7 +473,6 @@ fn fight_to(
     let mut fought = Fought::default();
     let hp = run.health().unwrap_or(0.0);
     fought.health = (hp, hp);
-    let mut woke_at: HashMap<String, Vec3> = HashMap::new();
     let mut last: HashMap<String, String> = HashMap::new();
     let (mut pressed, start) = (0u32, run.steps);
     let (mut route, mut routed, mut next): (Vec<Vec3>, u32, usize) = (Vec::new(), 0, 0);
@@ -503,13 +482,7 @@ fn fight_to(
             let b = behaviour(run, n);
             if last.get(*n) != Some(&b) {
                 fought.log.push((run.steps, (*n).to_owned(), b.clone()));
-                last.insert((*n).to_owned(), b.clone());
-            }
-            let awake = !["asleep", "removed", "-"].contains(&b.as_str());
-            if let Some(a) = run.world.actor(run.placed(n).0).filter(|_| awake) {
-                let from = *woke_at.entry((*n).to_owned()).or_insert(a.position);
-                let r = fought.roamed.entry((*n).to_owned()).or_default();
-                *r = r.max(a.position.distance(from));
+                last.insert((*n).to_owned(), b);
             }
         }
         if let Some(hp) = run.health() {
