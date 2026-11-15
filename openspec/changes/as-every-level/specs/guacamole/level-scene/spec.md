@@ -291,6 +291,13 @@ Level 208 SHALL start where its intro walks the first player in: the intro held 
 - **WHEN** Flynn's ready question is answered yes on hub stage 1 on a save past level 205
 - **THEN** level 208's intro plays, and he walks from where it hands him over with nothing stopped
 
+### Requirement: Level 208's way out of its start plaza
+Level 208's start plaza SHALL open south by its own scripts: a hero walking into the exit's trigger plays the Ice Chompy's reveal once (its card, its Chompies drawn) and takes the trigger off; the brick wall past it stands, holding him, until his attacks beat it, its bricks blown apart and gone, its box off; then he walks on to Setup_002's place.
+
+#### Scenario: Out of the plaza
+- **WHEN** a hero handed over by 208's intro holds the stick south and attacks the wall where it holds him
+- **THEN** the reveal plays once, the wall falls to his attacks and he reaches Setup_002's place with nothing stopped
+
 ### Requirement: Level 205's way off its start island
 Level 205's crane SHALL lay its boat east from the Giant Pirate Head's stage to the far pier, its hint pan to the wheel at the pier's south end, and the wheel's talk button swing the crane and its mast 90° so the boat lies from the pier's end to Setup_001's yard, a second press swinging them back.
 
