@@ -3025,7 +3025,10 @@ impl ScriptWorld {
         walking.sort_unstable();
         let walks = &self.scene_walks;
         self.scene_bodies.retain(|h, _| walks.contains_key(h));
-        let people = self.people();
+        let mut people = self.people();
+        people.extend(self.grounded_clones());
+        people.sort_unstable();
+        people.dedup();
         let mut bodies = self.actor_bodies(engine);
         bodies.extend(people.iter().filter_map(|p| engine.body(*p)));
         bodies.sort_unstable();
@@ -7341,6 +7344,64 @@ mod fight_tests {
             to,
         );
         assert!(at.y.abs() < 0.05, "down on the floor: {at}");
+    }
+
+    /// openspec AS.326: level 205's galleon scene walks its Cali (a clone of
+    /// `Cali_NPC`, a 3 x 6 ft capsule that meets the level) up onto the dock
+    /// over a 0.25 m step: on her body she stops at it, as on any other
+    /// level; on 205 she stands on the ground under each step, as its people
+    /// do, and comes up onto it.
+    #[test]
+    fn level_205s_galleon_cali_walks_up_the_docks_step() {
+        let floor = |id: u32, x: [f32; 2], top: f32| Body {
+            id: BodyId(id),
+            kind: BodyKind::Static,
+            pose: Pose::at(Vec3::new((x[0] + x[1]) / 2.0, top - 0.5, 0.0)),
+            collider: Collider::Convex(Shape::Box {
+                half_extents: Vec3::new((x[1] - x[0]) / 2.0, 0.5, 20.0),
+                margin: 0.0,
+            }),
+        };
+        let template = Obj { unit: 5, index: 77 };
+        let walk = |level: &str| {
+            let mut e = pit();
+            e.world = ParryWorld::new(&[floor(1, [-20.0, 4.0], 0.0), floor(2, [4.0, 20.0], 0.25)])
+                .unwrap();
+            let mut w = world();
+            w.set_level(level);
+            w.templates
+                .insert(template, Placed::named(template, "Cali_NPC", None, 5));
+            w.points.insert(WP, Vec3::new(8.0, 0.25, 0.0));
+            let mut cali = chompy(Vec3::ZERO, 90.0);
+            cali.walker = None;
+            cali.obj = None;
+            cali.template = Some(template);
+            cali.solid.shape = 2;
+            cali.solid.width = 3.0;
+            cali.solid.length = 3.0;
+            cali.solid.height = 6.0;
+            cali.physics.gravity_acceleration = 32.0;
+            cali.physics.gravity_max_speed = 120.0;
+            w.actors.insert(C1, cali);
+            let grounded = w.grounded_clones();
+            for _ in 0..300 {
+                if matches!(
+                    ask(&mut w, &mut e, &move_to(Value::Object(WP), 1)),
+                    Answer::Run { .. }
+                ) {
+                    break;
+                }
+                w.advance(STEP, &mut e);
+            }
+            (grounded, w.actor(C1).unwrap().position)
+        };
+        let (grounded, at) = walk("level_213_tutotial");
+        assert!(grounded.is_empty());
+        assert!(at.x < 4.0 && at.y < 0.1, "stopped at the step: {at}");
+        let (grounded, at) = walk(crate::level_205::LEVEL);
+        assert_eq!(grounded, [C1]);
+        assert!(at.x > 7.0, "up onto the dock: {at}");
+        assert!((at.y - 0.25).abs() < 0.05, "on it: {at}");
     }
 
     /// AS.68: a scene walk steps from its actor's velocity, which is its
