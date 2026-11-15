@@ -4470,6 +4470,19 @@ mod tests {
         assert!(level.scripts.is_none(), "taken once the level failed");
         assert_eq!(level.report.scripts_reason.as_deref(), Some("no part"));
 
+        // Still uploading, the level isn't spawned: held (the race the
+        // TV lost, the part linked before the upload ended).
+        until(&mut app, &["uploading"], |_| {});
+        {
+            let mut level = app.world_mut().resource_mut::<Level>();
+            assert!(matches!(level.stage, Stage::Uploading(_)));
+            level.scripts = Some(linked());
+            poll(&mut level);
+            assert!(level.scripts.is_some(), "held while uploading");
+            assert_eq!(level.report.scripts_reason, None);
+            level.scripts = None;
+        }
+
         // Spawned (waiting on the renderer), it goes in.
         until(&mut app, &["waiting"], |_| {});
         let mut level = app.world_mut().resource_mut::<Level>();
