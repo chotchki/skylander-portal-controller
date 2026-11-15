@@ -226,6 +226,20 @@ impl Controllers for Framework {
         }
     }
 
+    /// Share's the same way: AG.5 read it as a gesture-aware element on
+    /// the Switch Pro (`Button Share`), which Apple's headers say the system
+    /// takes for its screenshot gesture until the app asks it off.
+    fn ask_share_gesture_off(&mut self, key: u64) -> Option<bool> {
+        let pad = self.pads.get(&key)?;
+        // SAFETY: as in `ask_home_gesture_off`.
+        unsafe {
+            let share =
+                button_name(Element::Share).and_then(|n| pad.profile.buttons().objectForKey(n))?;
+            share.setPreferredSystemGestureState(GCSystemGestureState::Disabled);
+            Some(share.isBoundToSystemGesture())
+        }
+    }
+
     fn next_state(&mut self, key: u64) -> Option<PadState> {
         let pad = self.pads.get_mut(&key)?;
         // SAFETY: main thread, as the handler's queue.

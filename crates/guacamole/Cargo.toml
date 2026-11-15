@@ -96,6 +96,10 @@ bevy_transform_interpolation = { version = "0.6", default-features = false, feat
 # The shots plugin (AE.29) and hero_view write their PNGs themselves; the
 # version bevy_image already pulls.
 image = { version = "0.25", default-features = false, features = ["png"] }
+# AS.440's flags: the phone's ask waits on the TV's frame (a oneshot, a
+# timeout) and a capture is JSON. Both in the graph already through guac-server.
+tokio = { workspace = true }
+serde_json = { workspace = true }
 
 # One Bevy for the build and the tests (openspec AQ.30). The tests' `tempfile`
 # turns on rustix's `default` (on unix, as tempfile pulls it), and a feature the
@@ -152,10 +156,8 @@ objc2-game-controller = { version = "0.3.2", default-features = false, features 
 [dev-dependencies]
 # The seam's shared test table, run through the Avian side (physics.rs).
 guac-motion = { path = "../guac-motion", features = ["conformance"] }
-tokio = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
-serde_json = { workspace = true }
 # The oracle's recording reader, for AG.28's headless verify (tests/giants_camera.rs).
 guac-oracle = { path = "../guac-oracle" }
 tempfile = "3"

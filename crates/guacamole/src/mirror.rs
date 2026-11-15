@@ -385,6 +385,8 @@ fn pad_button(name: &str) -> Option<GamepadButton> {
         "r1" => GamepadButton::RightTrigger,
         "l2" => GamepadButton::LeftTrigger2,
         "r2" => GamepadButton::RightTrigger2,
+        // The capture button (openspec AS.440): Apple's Share element.
+        "capture" => crate::flags::FLAG_BUTTON,
         _ => return None,
     })
 }
@@ -656,8 +658,13 @@ impl FrameLog {
         self.frames.push_back(frame);
     }
 
+    /// The last frame's end, ms; 0 with none.
+    pub(crate) fn last_ms(&self) -> f64 {
+        self.frames.back().map_or(0.0, |f| f[0])
+    }
+
     /// Frames that ended after `since_ms`, and the last one's end.
-    fn since(&self, since_ms: f64) -> FramesBody {
+    pub(crate) fn since(&self, since_ms: f64) -> FramesBody {
         FramesBody {
             now_ms: self.frames.back().map_or(0.0, |f| f[0]),
             frames: self
@@ -672,7 +679,7 @@ impl FrameLog {
 
 /// `GET /api/_test/tv/frames`' body.
 #[derive(Debug, Serialize, PartialEq)]
-struct FramesBody {
+pub(crate) struct FramesBody {
     now_ms: f64,
     /// `[ended_ms, took_ms, pipelines_compiled]` each.
     frames: Vec<[f64; 3]>,
@@ -887,7 +894,7 @@ impl DrawnLog {
         self.frames.push_back(frame);
     }
 
-    fn since(&self, since: u32) -> DrawnBody {
+    pub(crate) fn since(&self, since: u32) -> DrawnBody {
         let frames: Vec<DrawnFrame> = self
             .frames
             .iter()
@@ -909,7 +916,7 @@ impl DrawnLog {
 
 /// `GET /api/_test/tv/drawn`' body.
 #[derive(Debug, Serialize, PartialEq)]
-struct DrawnBody {
+pub(crate) struct DrawnBody {
     frames: Vec<DrawnFrame>,
     /// From the first frame's `at_ms` on: when each render frame began
     /// and finished.

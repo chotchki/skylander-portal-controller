@@ -23,6 +23,7 @@ mod dev_entry;
 mod driver;
 mod emitters;
 mod extraction;
+mod flags;
 mod held_band;
 mod hero;
 mod hero_scripts;
@@ -94,7 +95,7 @@ use guac_server::progress::ProgressSink;
 use guac_server::state::{LauncherScreen, LauncherStatus};
 use guac_server::{logging, paths, setup};
 use guacamole::character::{CharacterShadingPlugin, GlowPlugin};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::cards::PortalFeed;
 use crate::cli::Command;
@@ -149,6 +150,8 @@ fn main() -> Result<()> {
         dev_entry::EntryAsks::default(),
         level_choice::LevelAsks::default(),
     );
+    // AS.440's playtest flags, asked over the test hooks and taken by the TV.
+    let flag_asks = flags::FlagAsks::default();
     // Writes nothing, so a second copy that loses the port leaves no trace.
     let loaded = match setup::load(&root).context("load guacamole's settings") {
         Ok(loaded) => loaded,
@@ -169,7 +172,7 @@ fn main() -> Result<()> {
                 None,
                 OutputLatency::default(),
                 (mirror, asked, entry_asks),
-                (None, None),
+                (None, None, None),
                 log_guard,
             );
         }
@@ -198,6 +201,7 @@ fn main() -> Result<()> {
         "starting guacamole",
     );
     let setup_view = SetupView::at_start(picked, needs_setup, &loaded.dump_dirs, &scan);
+    let flags = playtest_flags(&root, loaded.extract_dir.as_deref(), &flag_asks);
     let mut job = ExtractJob {
         test_known: test_known_dump(),
         shelf: Some(shelf_tx),
@@ -221,7 +225,7 @@ fn main() -> Result<()> {
         migrator: &setup::MIGRATOR,
         driver_factory: Box::new(move |kind| build_driver(kind, portal_tx)),
         hooks: Hooks::default(),
-        extra_routes: test_routes(&mirror, &asked, &entry_asks),
+        extra_routes: test_routes(&mirror, &asked, &entry_asks, &flag_asks),
         catalogue: Catalogue::Native {
             games: scan.games(),
             roster,
@@ -264,9 +268,52 @@ fn main() -> Result<()> {
         Some(job),
         latency,
         (mirror, asked, entry_asks),
-        (level_hero, story),
+        (level_hero, story, flags),
         log_guard,
     )
+}
+
+/// AS.440's flags in a `test-hooks` build: their folder ([`flags::flag_dir`]:
+/// `GUAC_FLAG_DIR` from the process env or `.env.dev`, else beside the
+/// extract root), turned on for the phone once it's made; none (and the
+/// phone's field off) in any other build or when it's refused.
+fn playtest_flags(
+    root: &Path,
+    extract_dir: Option<&str>,
+    asks: &flags::FlagAsks,
+) -> Option<flags::Flags> {
+    if !cfg!(feature = "test-hooks") {
+        return None;
+    }
+    let asked = std::env::var("GUAC_FLAG_DIR")
+        .ok()
+        .or_else(|| setup::env().get("GUAC_FLAG_DIR").cloned());
+    match flags::flag_dir(asked.as_deref(), extract_dir) {
+        Ok(dir) => {
+            asks.set_on(true);
+            Some(flags::Flags {
+                dir,
+                log_dir: setup::log_dir(root),
+                asks: asks.clone(),
+            })
+        }
+        Err(flags::FlagDirError::InCheckout { dir, repo }) => {
+            error!(
+                dir = %dir.display(),
+                repo = %repo.display(),
+                "GUAC_FLAG_DIR is inside a git work tree and a flag's frame is game output; no flags"
+            );
+            None
+        }
+        Err(flags::FlagDirError::NotMade { dir, why }) => {
+            error!(dir = %dir.display(), %why, "the flag folder couldn't be made; no flags");
+            None
+        }
+        Err(flags::FlagDirError::Unset) => {
+            warn!("no GUAC_FLAG_DIR and no extract root to put flags beside; no flags");
+            None
+        }
+    }
 }
 
 /// `.env.dev`'s `GUAC_TEST_KNOWN_DUMP`, `test-hooks` builds only: the e2e
@@ -402,15 +449,17 @@ impl Plugin for TvPacing {
 }
 
 /// `/api/_test/tv` for the e2e harness, and AH.62's health, AH.26's
-/// experience, AH.25's dev entry and AS.13's level by name beside it;
-/// nothing outside `test-hooks`.
+/// experience, AH.25's dev entry, AS.13's level by name and AS.440's flags
+/// beside it; nothing outside `test-hooks`.
 fn test_routes(
     mirror: &TvMirror,
     (health, xp): &(hero_scripts::AskedHealth, hero_scripts::AskedExperience),
     (entry_asks, level_asks): &(dev_entry::EntryAsks, level_choice::LevelAsks),
+    flag_asks: &flags::FlagAsks,
 ) -> Option<axum::Router<std::sync::Arc<guac_server::state::AppState>>> {
     cfg!(feature = "test-hooks").then(|| {
         mirror::routes(mirror)
+            .merge(flags::routes(flag_asks))
             .merge(hero_scripts::health_routes(health))
             .merge(hero_scripts::experience_routes(xp))
             .merge(dev_entry::routes(entry_asks))
@@ -468,9 +517,10 @@ fn run_tv(
         (hero_scripts::AskedHealth, hero_scripts::AskedExperience),
         (dev_entry::EntryAsks, level_choice::LevelAsks),
     ),
-    (level_hero, story): (
+    (level_hero, story, flags): (
         Option<guac_server::progress::LevelHero>,
         Option<story::StoryLink>,
+        Option<flags::Flags>,
     ),
     log_guard: WorkerGuard,
 ) -> Result<()> {
@@ -587,6 +637,9 @@ fn run_tv(
             .insert_resource(asked_health)
             .insert_resource(asked_xp)
             .add_plugins(mirror::Mirror);
+        if let Some(flags) = flags {
+            app.add_plugins(flags);
+        }
     }
     let exit = app.run();
     info!(?exit, "guacamole exited");

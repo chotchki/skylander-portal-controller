@@ -302,13 +302,15 @@ fn held_direction(dpad: Vec2, stick: Vec2) -> Option<CompassOctant> {
 }
 
 /// The press half of a frame from the keys and pads, with the D-pad and
-/// arrows held (each axis clamped to -1..1) and the most deflected stick.
+/// arrows held (each axis clamped to -1..1) and the most deflected stick;
+/// with `flags` (AS.440's taken) their key and button press nothing.
 /// A direction pressed this frame counts as held in it, so a tap whose
 /// press and release land in one frame still moves (AH.279: GameController
 /// drains a pad's queue each frame, both halves of a quick tap with it).
 pub(crate) fn read_devices<'a>(
     keys: Option<&ButtonInput<KeyCode>>,
     pads: impl Iterator<Item = &'a Gamepad>,
+    flags: bool,
 ) -> (Frame, Vec2, Vec2) {
     let mut frame = Frame::default();
     let mut dpad = Vec2::ZERO;
@@ -319,7 +321,11 @@ pub(crate) fn read_devices<'a>(
         (GamepadButton::Mode, TvInput::Home),
     ];
     for pad in pads {
-        frame.pressed |= pad.get_just_pressed().next().is_some();
+        // A flag's press (openspec AS.440) is no "any button" while flags
+        // are taken: flagging an intro doesn't skip it.
+        frame.pressed |= pad
+            .get_just_pressed()
+            .any(|b| !(flags && *b == crate::flags::FLAG_BUTTON));
         for (button, input) in mapped {
             if pad.just_pressed(button) {
                 frame.inputs.push(input);
@@ -331,7 +337,9 @@ pub(crate) fn read_devices<'a>(
         }
     }
     if let Some(keys) = keys {
-        frame.pressed |= keys.get_just_pressed().next().is_some();
+        frame.pressed |= keys
+            .get_just_pressed()
+            .any(|k| !(flags && *k == crate::flags::FLAG_KEY));
         if keys.just_pressed(KeyCode::NumpadEnter) {
             frame.inputs.push(TvInput::Activate);
         }
@@ -410,8 +418,13 @@ fn route_input(
     modals: Modals,
     ending: Option<Res<crate::completion::LevelEnding>>,
     mut out: MessageWriter<TvInput>,
+    flags: Option<Res<crate::flags::FlagsTaken>>,
 ) {
-    let (mut frame, dpad, stick) = read_devices(keys.as_deref(), pads.iter().map(|(_, p)| p));
+    let (mut frame, dpad, stick) = read_devices(
+        keys.as_deref(),
+        pads.iter().map(|(_, p)| p),
+        flags.is_some(),
+    );
     let level_pads = level.frames(pads.iter());
     let moved = repeat.step(dpad, stick, time.elapsed());
     frame.inputs.extend(moved.map(TvInput::Move));
@@ -764,20 +777,20 @@ mod tests {
         test_pad::button(&mut app, pad, GamepadButton::DPadRight, false);
         app.update();
         let mut q = app.world_mut().query::<&Gamepad>();
-        let (frame, dpad, stick) = read_devices(None, q.iter(app.world()));
+        let (frame, dpad, stick) = read_devices(None, q.iter(app.world()), false);
         assert!(frame.pressed);
         assert_eq!(dpad, Vec2::X, "the tap counts as held this frame");
         let mut repeat = NavRepeat::default();
         assert_eq!(repeat.step(dpad, stick, at(0)), Some(CompassOctant::East));
         // Counted for its own frame only, so one tap never repeats.
         app.update();
-        let (_, dpad, _) = read_devices(None, q.iter(app.world()));
+        let (_, dpad, _) = read_devices(None, q.iter(app.world()), false);
         assert_eq!(dpad, Vec2::ZERO);
 
         let mut keys = ButtonInput::<KeyCode>::default();
         keys.press(KeyCode::ArrowLeft);
         keys.release(KeyCode::ArrowLeft);
-        let (_, dpad, _) = read_devices(Some(&keys), std::iter::empty());
+        let (_, dpad, _) = read_devices(Some(&keys), std::iter::empty(), false);
         assert_eq!(dpad, -Vec2::X);
     }
 
@@ -945,19 +958,40 @@ mod tests {
     fn any_key_or_controller_button_is_a_press() {
         let none: [Gamepad; 0] = [];
         let mut keys = ButtonInput::<KeyCode>::default();
-        assert!(!read_devices(Some(&keys), none.iter()).0.pressed);
+        assert!(!read_devices(Some(&keys), none.iter(), false).0.pressed);
         keys.press(KeyCode::KeyQ);
-        assert!(read_devices(Some(&keys), none.iter()).0.pressed);
+        assert!(read_devices(Some(&keys), none.iter(), false).0.pressed);
         keys.clear();
         assert!(
-            !read_devices(Some(&keys), none.iter()).0.pressed,
+            !read_devices(Some(&keys), none.iter(), false).0.pressed,
             "held, not new"
         );
         let mut pad = Gamepad::default();
-        assert!(!read_devices(None, std::iter::once(&pad)).0.pressed);
+        assert!(!read_devices(None, std::iter::once(&pad), false).0.pressed);
         pad.digital_mut().press(GamepadButton::Start);
-        let (frame, _, _) = read_devices(None, std::iter::once(&pad));
+        let (frame, _, _) = read_devices(None, std::iter::once(&pad), false);
         assert!(frame.pressed && frame.inputs.is_empty(), "{frame:?}");
+    }
+
+    /// AS.440: while flags are taken their key and the pad's capture button
+    /// press nothing (an intro flagged isn't skipped), another key or
+    /// button beside them still does; with flags off both are any press.
+    #[test]
+    fn a_flags_key_and_button_are_no_press_while_flags_are_taken() {
+        use crate::flags::{FLAG_BUTTON, FLAG_KEY};
+        let none: [Gamepad; 0] = [];
+        let mut keys = ButtonInput::<KeyCode>::default();
+        keys.press(FLAG_KEY);
+        assert!(!read_devices(Some(&keys), none.iter(), true).0.pressed);
+        assert!(read_devices(Some(&keys), none.iter(), false).0.pressed);
+        keys.press(KeyCode::KeyQ);
+        assert!(read_devices(Some(&keys), none.iter(), true).0.pressed);
+        let mut pad = Gamepad::default();
+        pad.digital_mut().press(FLAG_BUTTON);
+        assert!(!read_devices(None, std::iter::once(&pad), true).0.pressed);
+        assert!(read_devices(None, std::iter::once(&pad), false).0.pressed);
+        pad.digital_mut().press(GamepadButton::Start);
+        assert!(read_devices(None, std::iter::once(&pad), true).0.pressed);
     }
 
     #[test]
@@ -970,7 +1004,7 @@ mod tests {
         ] {
             pad.digital_mut().press(button);
         }
-        let (frame, _, _) = read_devices(None, std::iter::once(&pad));
+        let (frame, _, _) = read_devices(None, std::iter::once(&pad), false);
         assert_eq!(
             frame.inputs,
             [TvInput::Activate, TvInput::Back, TvInput::Home]
@@ -982,7 +1016,7 @@ mod tests {
         keys.press(KeyCode::Enter);
         keys.press(KeyCode::Space);
         let none: [Gamepad; 0] = [];
-        let (frame, _, _) = read_devices(Some(&keys), none.iter());
+        let (frame, _, _) = read_devices(Some(&keys), none.iter(), false);
         assert_eq!(frame.inputs, [TvInput::Activate, TvInput::Back]);
     }
 
@@ -993,7 +1027,7 @@ mod tests {
         let mut pad = Gamepad::default();
         pad.digital_mut().press(GamepadButton::DPadLeft);
         pad.digital_mut().press(GamepadButton::DPadUp);
-        let (_, dpad, _) = read_devices(Some(&keys), std::iter::once(&pad));
+        let (_, dpad, _) = read_devices(Some(&keys), std::iter::once(&pad), false);
         assert_eq!(dpad, Vec2::new(-1.0, 1.0), "clamped");
 
         let mut calm = Gamepad::default();
@@ -1004,7 +1038,7 @@ mod tests {
         pushed
             .analog_mut()
             .set(GamepadInput::Axis(GamepadAxis::LeftStickY), -0.8);
-        let (_, _, stick) = read_devices(None, [&calm, &pushed].into_iter());
+        let (_, _, stick) = read_devices(None, [&calm, &pushed].into_iter(), false);
         assert_eq!(stick, Vec2::new(0.0, -0.8));
     }
 

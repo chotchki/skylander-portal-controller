@@ -1394,6 +1394,9 @@ mod tests {
             fn ask_home_gesture_off(&mut self, _: u64) -> Option<bool> {
                 Some(false)
             }
+            fn ask_share_gesture_off(&mut self, _: u64) -> Option<bool> {
+                None
+            }
             fn next_state(&mut self, key: u64) -> Option<PadState> {
                 let mut pads = self.0.borrow_mut();
                 pads.iter_mut().find(|p| p.0 == key)?.2.pop_front()

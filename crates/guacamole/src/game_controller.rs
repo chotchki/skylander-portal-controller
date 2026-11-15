@@ -290,6 +290,11 @@ pub trait Controllers {
     /// whether the system still reports Home bound to a gesture after the
     /// ask.
     fn ask_home_gesture_off(&mut self, key: u64) -> Option<bool>;
+    /// The same ask of its Share element (the Switch Pro's capture button,
+    /// an Xbox pad's Share: a screenshot gesture's by default), for
+    /// AS.440's flags. None for a pad without one, else whether the system
+    /// still reports it bound to a gesture.
+    fn ask_share_gesture_off(&mut self, key: u64) -> Option<bool>;
     /// The oldest reading buffered since the last call, or none once drained.
     fn next_state(&mut self, key: u64) -> Option<PadState>;
     /// Let go of a controller that's no longer connected (the key may come
@@ -335,6 +340,9 @@ pub struct GcPads {
     open: Vec<OpenPad>,
     /// Connected controllers that aren't gamepads, not asked again.
     refused: Vec<u64>,
+    /// Ask each pad's Share gesture off as it connects: AS.440's flags take
+    /// the button (`test-hooks` builds), so macOS's screenshot doesn't.
+    claim_share: bool,
 }
 
 impl GcPads {
@@ -343,7 +351,14 @@ impl GcPads {
             controllers,
             open: Vec::new(),
             refused: Vec::new(),
+            claim_share: false,
         }
+    }
+
+    /// [`GcPads::new`], asking each pad's Share gesture off when `claim`.
+    pub fn claiming_share(mut self, claim: bool) -> Self {
+        self.claim_share = claim;
+        self
     }
 
     /// This frame's events: pads gone, pads new (`spawn` makes each one's
@@ -390,6 +405,15 @@ impl GcPads {
                 Some(false) => "gesture asked off, macOS reports it unbound",
                 Some(true) => "gesture asked off, macOS reports it still bound",
             };
+            let share = if self.claim_share {
+                match self.controllers.ask_share_gesture_off(key) {
+                    None => "no Share",
+                    Some(false) => "gesture asked off, macOS reports it unbound",
+                    Some(true) => "gesture asked off, macOS reports it still bound",
+                }
+            } else {
+                "left to macOS"
+            };
             info!(
                 pad = ?entity,
                 name = %opened.name,
@@ -397,6 +421,7 @@ impl GcPads {
                 layout = layout.measured.unwrap_or("Apple's default, unmeasured"),
                 faces = ?faces.0,
                 home,
+                share,
                 queued,
                 "GameController pad connected"
             );
@@ -513,7 +538,7 @@ pub fn read_game_controllers(
 
 /// `controllers` as the app's pad source.
 pub fn install(app: &mut App, controllers: Box<dyn Controllers>) {
-    app.insert_non_send(GcPads::new(controllers))
+    app.insert_non_send(GcPads::new(controllers).claiming_share(cfg!(feature = "test-hooks")))
         .add_systems(PreUpdate, read_game_controllers.before(InputSystems));
 }
 
@@ -553,6 +578,8 @@ mod tests {
         glyphs: [Glyph; 4],
         gamepad: bool,
         has_home: bool,
+        has_share: bool,
+        share_asked: bool,
         has_queue: bool,
         state: PadState,
         queued: VecDeque<PadState>,
@@ -668,6 +695,14 @@ mod tests {
             self.with(key, |p| {
                 p.home_asked = p.has_home;
                 p.has_home.then_some(false)
+            })
+            .flatten()
+        }
+
+        fn ask_share_gesture_off(&mut self, key: u64) -> Option<bool> {
+            self.with(key, |p| {
+                p.share_asked = p.has_share;
+                p.has_share.then_some(false)
             })
             .flatten()
         }
@@ -1133,6 +1168,39 @@ mod tests {
         );
     }
 
+    /// AS.440: a flags build asks each pad's Share gesture off as it
+    /// connects, a pad without Share left as it is; any other build leaves
+    /// Share's gesture to macOS. Share's press reaches Bevy as the flag's
+    /// button either way.
+    #[test]
+    fn share_gesture_asked_off_only_when_flags_claim_it() {
+        let fake = Fake::default();
+        let mut pads = GcPads::new(Box::new(fake.clone())).claiming_share(true);
+        let mut spawn = entities();
+        fake.connect(1, "Switch Pro Controller");
+        let mut no_share = fake.pad_template(2);
+        no_share.has_share = false;
+        fake.connect_pad(no_share);
+        polled(&mut pads, &mut spawn);
+        assert!(fake.pad(1).share_asked);
+        assert!(!fake.pad(2).share_asked);
+        fake.send(1, PadState::default().with(Element::Share, true));
+        assert_eq!(
+            polled(&mut pads, &mut spawn),
+            [PadEvent::Button(
+                Entity::from_raw_u32(1).unwrap(),
+                GamepadButton::Other(0),
+                1.0
+            )]
+        );
+
+        let plain = Fake::default();
+        let mut pads = GcPads::new(Box::new(plain.clone()));
+        plain.connect(1, "Switch Pro Controller");
+        polled(&mut pads, &mut entities());
+        assert!(!plain.pad(1).share_asked, "left to macOS");
+    }
+
     /// A pad on an OS without the queue is read once a frame: what it holds
     /// as the frame reads it, nothing repeated.
     #[test]
@@ -1188,6 +1256,8 @@ mod tests {
                 glyphs: apple_glyphs(),
                 gamepad: true,
                 has_home: true,
+                has_share: true,
+                share_asked: false,
                 has_queue: true,
                 state: PadState::default(),
                 queued: VecDeque::new(),

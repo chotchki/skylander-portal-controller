@@ -2039,6 +2039,12 @@ impl ScriptWorld {
         }
     }
 
+    /// Every actor the scripts reach, file placements and clones, in no
+    /// order: a reader's (openspec AS.440's capture), never a script's.
+    pub fn actors(&self) -> impl Iterator<Item = (Handle, &Actor)> {
+        self.actors.iter().map(|(h, a)| (*h, a))
+    }
+
     /// Each file placement's handle, by its object.
     pub fn handles(&self) -> &HashMap<Obj, Handle> {
         &self.objects
