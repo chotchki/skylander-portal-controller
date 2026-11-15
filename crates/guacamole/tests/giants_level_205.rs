@@ -3994,3 +3994,539 @@ fn on_to_setup_003s_end(setup: Setup) -> AtCali {
         started,
     }
 }
+
+/// Every enemy Setup_004's sets name: its three Biclopes, the right
+/// door's and the town's Cyclopes, the left door's, its heavy elf and its
+/// four lobbers.
+const SETUP_004_FOES: [&str; 16] = [
+    "Enemy_Biclops_Heavy_S2(1)",
+    "Enemy_Biclops_Heavy_S2(2)",
+    "Enemy_Biclops_Heavy_S2(3)",
+    "Enemy_Cyclops_Near(13)",
+    "Enemy_Cyclops_Near(14)",
+    "Enemy_Cyclops_Near(15)",
+    "Enemy_Cyclops_Near(16)",
+    "Enemy_Cyclops_Near(17)",
+    "Enemy_Cyclops_Near(18)",
+    "Enemy_Cyclops_Near(19)",
+    "Enemy_Cyclops_Near(22)",
+    "Enemy_Elf_Heavy_S2(5)",
+    "Enemy_Elf_Lobber(8)",
+    "Enemy_Elf_Lobber(9)",
+    "Enemy_Elf_Lobber(15)",
+    "Enemy_Elf_Lobber(16)",
+];
+
+/// The gate's pirate, the jailed pirate's cell's scene and the push
+/// cannon the gate's pirate wakes.
+const GATE_PIRATE: &str = "Card_Pirate_04_Gate_Woof";
+const JAIL_SCENE: &str = "CardPirate_Bandit_Cine";
+const PUSH_CANNON: &str = "Push_Block_Template(9)";
+/// The turntable's lever and the turntable it tells to turn.
+const LEVER: &str = "Switch_Controller_template(1)";
+const TURNTABLE: &str = "Switch_Straight_Art_Template(1)";
+/// The wall in the lever's way and the jailed pirate's cell's wall.
+const LEVER_WALL: &str = "Breakable_Metal_Wall(1)";
+const CELL_WALL: &str = "Breakable_Metal_Wall(5)";
+
+/// Within 1.6 m of `to` across the ground over the flood's cells
+/// ([`walk_until`]), `to` within `near` m of a cell.
+fn walk_near(
+    run: &mut Run,
+    stops: &mut Vec<String>,
+    scenes: &mut Vec<(u32, String)>,
+    trail: &mut Trail,
+    to: Vec3,
+    near: f32,
+) {
+    walk_until(run, stops, scenes, trail, to, near, &|r: &Run| {
+        let p = r.hero().pivot;
+        (p.x - to.x).hypot(p.z - to.z) < 1.6
+    });
+}
+
+/// The push cannon's top nearest the hero (the clone its block made).
+fn cannon_top(run: &Run) -> Option<guac_script::Handle> {
+    let me = run.hero().pivot;
+    let at = |h: &guac_script::Handle| run.world.actor(*h).map(|a| a.position.distance(me));
+    run.world
+        .clones()
+        .into_iter()
+        .filter(|h| {
+            run.world.name(*h) == "Push_Canon_Art_Top"
+                && run.world.actor(*h).is_some_and(|a| !a.removed)
+        })
+        .min_by(|a, b| at(a).unwrap().total_cmp(&at(b).unwrap()))
+}
+
+/// Up to the push cannon's top, △ until `wall` goes: the step it went.
+fn fire_at(
+    run: &mut Run,
+    stops: &mut Vec<String>,
+    scenes: &mut Vec<(u32, String)>,
+    trail: &mut Trail,
+    wall: &str,
+) -> u32 {
+    let top = cannon_top(run).expect("the push cannon's top");
+    let at = run.world.actor(top).unwrap().position;
+    walk_near(run, stops, scenes, trail, at, 4.0);
+    assert!(
+        tap_until(run, stops, 900, &|r: &Run| behaviour(r, wall) == "removed"),
+        "{wall} stands: the cannon {:?}",
+        run.vm.placement_of(top).and_then(|i| run.vm.behaviour(i))
+    );
+    run.steps
+}
+
+/// openspec AS.327: level 205 on from Setup_003's end (AS.372's walk,
+/// Tree Rex still in) to Setup_004's end, each thing by its own trigger.
+/// Past the blown gate the gate's pirate laughs at him and wakes the push
+/// cannon; pushed west and fired, it breaks the wall before the
+/// turntable's lever; pulled, the lever turns the turntable, and the cannon
+/// pushed east over it and fired breaks the jailed pirate's cell. His
+/// card game (stood in won, `level_205::jail_stand_in`) has his cell's
+/// scene tell the gate's pirate, who opens his gate and walks the hero
+/// through. Setup_004 wakes there: its Biclops' intro, its first fights,
+/// then the town's push-block bridge (the block off the east ledge, up onto
+/// the upper town, its block pushed off the north ledge, woken below as the
+/// town's block and pushed west into place) and its last fights to its
+/// controller's end. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_205s_way_on_from_setup_003s_end_ends_setup_004() {
+    let AtCali {
+        at:
+            AtSetup002sEnd {
+                stops,
+                scenes,
+                topups,
+                ..
+            },
+        lowest,
+        started,
+    } = on_to_setup_004s_end(Setup {
+        spare: Some(TREE_REX),
+        ..setup()
+    });
+    println!(
+        "scenes {scenes:?}; top-ups {topups:?}; lowest health {lowest:?}; {:.1} s",
+        started.elapsed().as_secs_f64()
+    );
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
+}
+
+/// AS.327's walk on from AS.372's ([`on_to_setup_003s_end`]) on `setup`
+/// to Setup_004's controller gone; `lowest` is his lowest health in
+/// Setup_004's fights.
+fn on_to_setup_004s_end(setup: Setup) -> AtCali {
+    let AtCali {
+        at:
+            AtSetup002sEnd {
+                mut run,
+                mut stops,
+                mut scenes,
+                mut trail,
+                mut topups,
+            },
+        started,
+        ..
+    } = on_to_setup_003s_end(setup);
+    println!(
+        "Setup_003's end at step {}, {:.1} s",
+        run.steps,
+        started.elapsed().as_secs_f64()
+    );
+    assert!(!scenes.iter().any(|(_, n)| n == "Gate Pirate Intro"));
+    assert_eq!(behaviour(&run, "Setup_004_Controller"), "asleep");
+
+    // Past the blown gate the gate's pirate's intro: he walks to his gate
+    // and wakes the push cannon.
+    let pirate = run.at(GATE_PIRATE);
+    let by = Vec3::new(pirate.x + 4.0, pirate.y, pirate.z + 10.0);
+    walk_near(&mut run, &mut stops, &mut scenes, &mut trail, by, 4.0);
+    let mut stood_in = 0;
+    for _ in 0..1500 {
+        if behaviour(&run, PUSH_CANNON).starts_with("1.")
+            && local_int(&run, GATE_PIRATE, "speakerinit") == Some(1)
+        {
+            break;
+        }
+        if !scene_step(&mut run, &mut stops, &mut scenes, &mut stood_in) {
+            still(&mut run, &mut stops, [false; 4]);
+        }
+    }
+    assert!(
+        scenes.iter().any(|(_, n)| n == "Gate Pirate Intro"),
+        "the gate's pirate's intro: {scenes:?}"
+    );
+    assert!(
+        behaviour(&run, PUSH_CANNON).starts_with("1."),
+        "the cannon asleep: {}",
+        behaviour(&run, PUSH_CANNON)
+    );
+    println!(
+        "the gate's pirate's intro over at step {}, he at {}",
+        run.steps,
+        run.at(GATE_PIRATE)
+    );
+    trail.mark(&run, "gate-pirate");
+
+    // The cannon west and fired: the wall before the lever.
+    let b = run.at(PUSH_CANNON);
+    walk_near(
+        &mut run,
+        &mut stops,
+        &mut scenes,
+        &mut trail,
+        Vec3::new(b.x + 2.5, b.y, b.z),
+        2.0,
+    );
+    let moves = shove(
+        &mut run,
+        &mut stops,
+        &mut trail,
+        PUSH_CANNON,
+        -90.0,
+        &|r: &Run| r.at(PUSH_CANNON).x < -34.0,
+    );
+    println!("the cannon west in {moves} to {}", run.at(PUSH_CANNON));
+    assert!(
+        run.at(PUSH_CANNON).x < -34.0,
+        "the cannon short: {}",
+        run.at(PUSH_CANNON)
+    );
+    let broke = fire_at(&mut run, &mut stops, &mut scenes, &mut trail, LEVER_WALL);
+    println!("the lever's wall gone at step {broke}");
+    trail.mark(&run, "lever-wall");
+
+    // Pushed east before the lever, the cannon stops short of the
+    // turntable, unturned in the track's way.
+    let b = run.at(PUSH_CANNON);
+    walk_near(
+        &mut run,
+        &mut stops,
+        &mut scenes,
+        &mut trail,
+        Vec3::new(b.x - 2.5, b.y, b.z),
+        2.0,
+    );
+    let moves = shove(
+        &mut run,
+        &mut stops,
+        &mut trail,
+        PUSH_CANNON,
+        90.0,
+        &|r: &Run| r.at(PUSH_CANNON).x > -20.0,
+    );
+    let short = run.at(PUSH_CANNON);
+    println!("the cannon east before the lever in {moves} to {short}");
+    assert!(
+        short.x < -22.0,
+        "the cannon over the turntable unturned: {short}"
+    );
+
+    // The lever turns the turntable 90°.
+    let turned_from = facing(&run, TURNTABLE);
+    let lever = run.at(LEVER);
+    walk_near(&mut run, &mut stops, &mut scenes, &mut trail, lever, 3.0);
+    assert!(
+        tap_until(&mut run, &mut stops, 600, &|r: &Run| behaviour(r, LEVER)
+            == "finallydone"),
+        "the lever: {}",
+        behaviour(&run, LEVER)
+    );
+    for _ in 0..600 {
+        if !scene_step(&mut run, &mut stops, &mut scenes, &mut stood_in) {
+            still(&mut run, &mut stops, [false; 4]);
+        }
+    }
+    let turned = (facing(&run, TURNTABLE) - turned_from).rem_euclid(360.0);
+    println!(
+        "the lever pulled, the turntable {} turned {turned:.1} at step {}",
+        behaviour(&run, TURNTABLE),
+        run.steps
+    );
+    assert!((turned - 90.0).abs() < 2.0, "the turntable turned {turned}");
+    trail.mark(&run, "lever");
+
+    // The cannon east over the turntable and fired: the cell's wall.
+    let b = run.at(PUSH_CANNON);
+    walk_near(
+        &mut run,
+        &mut stops,
+        &mut scenes,
+        &mut trail,
+        Vec3::new(b.x - 2.5, b.y, b.z),
+        2.0,
+    );
+    let moves = shove(
+        &mut run,
+        &mut stops,
+        &mut trail,
+        PUSH_CANNON,
+        90.0,
+        &|r: &Run| r.at(PUSH_CANNON).x > -7.5,
+    );
+    println!("the cannon east in {moves} to {}", run.at(PUSH_CANNON));
+    assert!(
+        run.at(PUSH_CANNON).x > -7.5,
+        "the cannon short of the cell: {}",
+        run.at(PUSH_CANNON)
+    );
+    let broke = fire_at(&mut run, &mut stops, &mut scenes, &mut trail, CELL_WALL);
+    println!("the cell's wall gone at step {broke}");
+    trail.mark(&run, "cell-wall");
+
+    // The jailed pirate's breakout and his card game, stood in won; his
+    // cell's scene tells the gate's pirate.
+    let mut jail = 0;
+    for _ in 0..3000 {
+        if local_int(&run, JAIL_SCENE, "speakerinit") == Some(7) {
+            break;
+        }
+        if guacamole::level_205::jail_stand_in(&mut run.vm, &mut run.world, LEVEL) {
+            jail += 1;
+        }
+        if !scene_step(&mut run, &mut stops, &mut scenes, &mut stood_in) {
+            still(&mut run, &mut stops, [false; 4]);
+        }
+    }
+    println!(
+        "the cell's scene on {:?} at step {}",
+        local_int(&run, JAIL_SCENE, "speakerinit"),
+        run.steps
+    );
+    assert!(
+        scenes.iter().any(|(_, n)| n == "Cage Pirate Intro"),
+        "{scenes:?}"
+    );
+    // The scene before the count: with the stand-in off it holds short of
+    // 7 (at 4), so the walk, not only the count, rests on the stand-in. It
+    // stands in only a quit, so once means the TV's yes was told a quit.
+    assert_eq!(
+        local_int(&run, JAIL_SCENE, "speakerinit"),
+        Some(7),
+        "the cell's scene waits on the jailed pirate's game"
+    );
+    assert_eq!(jail, 1, "the jailed pirate's game stood in once");
+
+    // The gate's pirate's outro: his gate opened, the hero walked through.
+    let checker = run.at("GatePirate_CollisionChecker");
+    walk_until(
+        &mut run,
+        &mut stops,
+        &mut scenes,
+        &mut trail,
+        checker,
+        2.0,
+        &|r: &Run| local_int(r, GATE_PIRATE, "speakerinit").is_some_and(|s| s >= 2),
+    );
+    for _ in 0..3000 {
+        if local_int(&run, GATE_PIRATE, "speakerinit") == Some(5) && cutscene_name(&run).is_none() {
+            break;
+        }
+        if !scene_step(&mut run, &mut stops, &mut scenes, &mut stood_in) {
+            still(&mut run, &mut stops, [false; 4]);
+        }
+    }
+    let through = run.hero().pivot;
+    println!("through the gate at step {} at {through}", run.steps);
+    assert!(
+        scenes.iter().any(|(_, n)| n == "Gate Pirate Outro"),
+        "{scenes:?}"
+    );
+    assert!(
+        through.z < run.at("Door_Template(1)").z,
+        "short of the gate: {through}"
+    );
+    trail.mark(&run, "gate");
+
+    // Setup_004: its Biclops' intro and its first fights, to its wait on
+    // the town's block.
+    let goal = run.at("Setup_004_Trigger(1)");
+    let first = fight_to(
+        &mut run,
+        &mut stops,
+        "Setup_004_Controller",
+        &SETUP_004_FOES,
+        goal,
+        12000,
+        &|r: &Run| behaviour(r, "Setup_004_Controller") == "check if pushblock is in place",
+    );
+    scenes.extend(first.scenes.iter().cloned());
+    topups.extend(first.topups.iter().copied());
+    trail.0.extend(first.trail.iter().copied());
+    assert!(first.ended, "Setup_004's first fights: {:?}", first.log);
+    assert!(
+        scenes.iter().any(|(_, n)| n == "IGC_Cyclops_Heavy"),
+        "the Biclops' intro: {scenes:?}"
+    );
+    for n in &SETUP_004_FOES[..3] {
+        assert!(first.removed(n).is_some(), "{n} unbeaten");
+    }
+    println!("Setup_004 on the town's block at step {}", run.steps);
+    trail.mark(&run, "setup-004-block");
+
+    // The block off the east ledge: a bridge up onto the upper town.
+    for _ in 0..600 {
+        still(&mut run, &mut stops, [false; 4]);
+    }
+    let east = "Push_Block_Template(3)";
+    let n3 = run.at(east) + Vec3::new(0.0, 0.0, 3.15);
+    walk_near(&mut run, &mut stops, &mut scenes, &mut trail, n3, 1.5);
+    let moves = shove(&mut run, &mut stops, &mut trail, east, 180.0, &|r: &Run| {
+        r.at(east).y < 34.0
+    });
+    println!(
+        "the east block off its ledge in {moves} to {}",
+        run.at(east)
+    );
+    assert!(run.at(east).y < 34.0, "the east block on its ledge");
+    trail.mark(&run, "east-block");
+
+    // Over it up onto the upper town, where Setup_004's town's three
+    // Cyclopes take their places: fought there.
+    let upper = "Push_Block_Template(12)";
+    let s12 = run.at(upper) + Vec3::new(0.0, 0.0, -2.6);
+    walk_near(&mut run, &mut stops, &mut scenes, &mut trail, s12, 2.0);
+    println!("on the upper town at step {}", run.steps);
+    let cyclopes = &SETUP_004_FOES[3..6];
+    let three = fight_to(
+        &mut run,
+        &mut stops,
+        "Setup_004_Controller",
+        cyclopes,
+        s12,
+        4000,
+        &|r: &Run| cyclopes.iter().all(|n| behaviour(r, n) == "removed"),
+    );
+    topups.extend(three.topups.iter().copied());
+    trail.0.extend(three.trail.iter().copied());
+    assert!(three.ended, "the town's three: {:?}", three.log);
+    println!(
+        "the town's three off at step {} at {}",
+        run.steps,
+        run.hero().pivot
+    );
+
+    // The upper block pushed off its north ledge wakes the town's block
+    // below.
+    walk_near(&mut run, &mut stops, &mut scenes, &mut trail, s12, 2.0);
+    let town = "Push_Block_Template(14)";
+    assert_eq!(behaviour(&run, town), "asleep");
+    let moves = shove(&mut run, &mut stops, &mut trail, upper, 0.0, &|r: &Run| {
+        behaviour(r, town) != "asleep"
+    });
+    println!(
+        "the upper block off in {moves}; the town's {}",
+        behaviour(&run, town)
+    );
+    assert!(
+        behaviour(&run, town).starts_with("1."),
+        "the town's block asleep"
+    );
+    trail.mark(&run, "upper-block");
+
+    // Down over the town's block, and the block pushed west into place.
+    let b14 = run.at(town);
+    let e14 = b14 + Vec3::new(2.6, 0.0, 0.0);
+    assert!(
+        go_by(
+            &mut run,
+            &mut stops,
+            &mut scenes,
+            &mut trail,
+            &[(b14.x, b14.z), (b14.x + 4.5, b14.z), (e14.x, e14.z)],
+            600,
+        ),
+        "down over the town's block"
+    );
+    walk_until(
+        &mut run,
+        &mut stops,
+        &mut scenes,
+        &mut trail,
+        e14,
+        2.0,
+        &|r: &Run| {
+            let p = r.hero().pivot;
+            (p.x - e14.x).hypot(p.z - e14.z) < 0.8
+        },
+    );
+    let checker = run.at("Setup_004_Pushblock_Checker");
+    let moves = shove(&mut run, &mut stops, &mut trail, town, -90.0, &|r: &Run| {
+        let p = r.at(town);
+        (p.x - checker.x).hypot(p.z - checker.z) < 3.0
+    });
+    println!(
+        "the town's block in place in {moves} at {}, step {}",
+        run.at(town),
+        run.steps
+    );
+    assert_ne!(
+        behaviour(&run, "Setup_004_Controller"),
+        "check if pushblock is in place"
+    );
+    trail.mark(&run, "town-block");
+
+    // The left door's fights, then the two lobbers on the upper town.
+    let goal = run.at("Setup_004_Trigger(2)");
+    let lobbers = &SETUP_004_FOES[14..];
+    let left: Vec<&str> = SETUP_004_FOES[..14].to_vec();
+    let rest = fight_to(
+        &mut run,
+        &mut stops,
+        "Setup_004_Controller",
+        &left,
+        goal,
+        9000,
+        &|r: &Run| left.iter().all(|n| behaviour(r, n) == "removed"),
+    );
+    topups.extend(rest.topups.iter().copied());
+    trail.0.extend(rest.trail.iter().copied());
+    assert!(rest.ended, "the left door's: {:?}", rest.log);
+    println!(
+        "the left door's off at step {}; the controller {}",
+        run.steps,
+        behaviour(&run, "Setup_004_Controller")
+    );
+    let up_there = run.at(lobbers[0]);
+    let last = fight(
+        &mut run,
+        &mut stops,
+        "Setup_004_Controller",
+        lobbers,
+        up_there,
+        9000,
+    );
+    topups.extend(last.topups.iter().copied());
+    trail.0.extend(last.trail.iter().copied());
+    for (step, n, b) in &last.log {
+        println!("  {step} {n} {b}");
+    }
+    assert!(
+        last.ended,
+        "Setup_004's lobbers: {:?} at {}",
+        last.log,
+        run.hero().pivot
+    );
+    assert_eq!(behaviour(&run, "Setup_004_Controller"), "removed");
+    println!("Setup_004's end at step {}", run.steps);
+    trail.mark(&run, "setup-004-end");
+    let lowest = [first.lowest, three.lowest, rest.lowest, last.lowest]
+        .into_iter()
+        .flatten()
+        .reduce(f32::min);
+    AtCali {
+        at: AtSetup002sEnd {
+            run,
+            stops,
+            scenes,
+            trail,
+            topups,
+        },
+        lowest,
+        started,
+    }
+}

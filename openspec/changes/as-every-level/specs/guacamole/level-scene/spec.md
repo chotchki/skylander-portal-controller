@@ -397,6 +397,13 @@ On the galleon pulled in, any hero SHALL board by the deck, set Cali's pan to th
 - **WHEN** a hero aboard the docked galleon presses △ by its cannon
 - **THEN** Cali's `pan done` is set, the gate and its padlock go, and Setup_003's last three come through it into the yard
 
+### Requirement: Level 205's way on to Setup_004's end
+Past the blown gate, level 205's push cannon SHALL break the wall before the turntable's lever, the turntable SHALL hold it short until the lever turns it 90°, and pushed over it the cannon SHALL break the jailed pirate's cell; his card game won, the gate's pirate SHALL walk a hero through his gate into Setup_004, whose fights and three-block bridge run to its controller's end (headless step 50,019 of a walk from the hand-over, the game stood in won).
+
+#### Scenario: The cannon, the cell and the gate
+- **WHEN** a hero past the blown gate fires the push cannon west into the lever's wall, pulls the lever, fires the cannon east into the cell and wins the jailed pirate's game
+- **THEN** the gate's pirate opens his gate, and Setup_004's fights and its bridge run to its controller's end with nothing stopped
+
 ### Requirement: The hub stands at the story's every point
 A hub stage SHALL show what the adventures done open, by what the host's save holds or the last level just finished: its count, its sky and zone, its people and removals and the next chapter Flynn offers. A level end just finished SHALL bring its first-visit scenes, a story movie among them played full screen, and its intro SHALL hand the hero over where every stage does, nothing stopped.
 
