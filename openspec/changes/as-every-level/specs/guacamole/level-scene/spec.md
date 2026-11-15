@@ -305,6 +305,13 @@ Past its first yard, level 205 SHALL lay the jump pad up to the first key, open 
 - **WHEN** a hero past the first yard takes the pad, the key door, the crane's three turns and pushes, the card house with Fangs' game won, and carries its key back
 - **THEN** Setup_002's fight runs to its controller's end with nothing stopped
 
+### Requirement: Level 205's way on to Cali at the galleon
+From Setup_002's end, level 205 SHALL let the card house's key open the key gate west of Blobbers' crane, reached over its boat turned west, close it behind a hero in Setup_003's combat area and send Setup_003's foes out of the house by the galleon, and with its twelve off play Cali's scene there to its end, handing her back at her place to wait on the galleon pulled in.
+
+#### Scenario: Through the key gate
+- **WHEN** a hero carries the card house's key from Setup_002's end, turns the crane west, opens the key gate and fights Setup_003's twelve
+- **THEN** Cali's scene at the galleon plays to its end and she waits at her place, nothing stopped
+
 ### Requirement: A hero on an unposed camera wakes the level from where he was
 A hero hung on what rides a scene's camera rig that no pose has reached SHALL wake the level from where he was last measured; carried by anything posed, a rig, a ship or a turret, from where he is. Headless 205's intro holds its pod and him at the world's origin, 137 ft from Setup_004's controller; on the TV the flyover passes 195 ft from it at its nearest, outside the 160 ft that plays its Biclops' intro.
 

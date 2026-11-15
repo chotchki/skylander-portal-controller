@@ -632,6 +632,8 @@ mod tests {
             assert!(!STRETCH_1.contains(&name), "{name}");
             assert!(!listed(LEVEL).any(|n| n == name), "{name}");
         }
+        // Setup_003's controller waits on its combat area's signal face.
+        assert!(on.whitelist.lists("CloseDoor", "C:/l/Unlisted.ai"));
         for name in ["Remove_Part1", "TitanChainPeg(1)"] {
             assert!(!on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
         }
