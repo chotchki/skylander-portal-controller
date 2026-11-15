@@ -78,6 +78,23 @@ pub fn exit(level: &str) -> impl Iterator<Item = &'static str> {
     EXIT.iter().chain(&REVEAL_FOES).copied().filter(move |_| on)
 }
 
+/// The way from Setup_002's yard down to its trigger on the frozen river
+/// (openspec AS.406), by name, each run by its own script:
+/// - **The AI's hint** (`IGC_AI_Intro`, `208_IGC_AI.ai`, with the follower
+///   it drives, `NPC_AI`). Once the reveal's five Chompies are gone and a
+///   player comes within 30 ft of it, the AI talks to him, plays its pan
+///   and its two lines, draws its hint into him and takes the hint's
+///   blocker (`Pandoran_Hint_Template(1)`, a 90 by 6 by 16 ft box solid to
+///   actors across the yard's east side) off the level, opening the way
+///   east and down to the lower terrace.
+pub const DOWN: [&str; 2] = ["IGC_AI_Intro", "NPC_AI"];
+
+/// [`DOWN`] on 208 alone.
+pub fn down(level: &str) -> impl Iterator<Item = &'static str> {
+    let on = level == LEVEL;
+    DOWN.iter().copied().filter(move |_| on)
+}
+
 /// What fights on level 208 (openspec AS.345), walked as creatures: the
 /// reveal's five Ice Chompies, then Setup_002's controller, its six foes
 /// (`Setup_002_Enemies`) and Noodles' scene at its first gate.
@@ -138,6 +155,26 @@ mod tests {
         // (AS.345's).
         let ice = "C:/tfb/Content/Levels/_Enemies/Chompy_Ice/scripts/S2_Enemy_IceChompy.ai";
         assert!(!on.whitelist.lists("Enemy_Chompy_Ice(1)", ice));
+    }
+
+    /// openspec AS.406: the AI's hint and its follower are on 208's listing
+    /// and on no other level's (the follower's script is named for 202).
+    #[test]
+    fn level_208s_way_down_is_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        assert_eq!(down(LEVEL).collect::<Vec<_>>(), DOWN);
+        for other in ["level_202", "level_205_piratecards"] {
+            let off = level_config(Mode::Play, &files, 5, other);
+            for name in DOWN {
+                assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+                assert!(
+                    !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
+                    "{name} on {other}"
+                );
+            }
+            assert_eq!(down(other).count(), 0);
+        }
     }
 
     /// openspec AS.345: 208's fights are its one encounter, walked there
