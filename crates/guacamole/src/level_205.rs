@@ -346,6 +346,53 @@ pub fn end(level: &str) -> &'static [&'static str] {
     }
 }
 
+/// Level 205's music (openspec AS.289), by their path under its folder, as
+/// [`crate::scripts::MUSIC_SCRIPTS`] lists 201's; the level's ambience
+/// (`snd_level_audio_environment.ai`) and the music's mute mix are already
+/// that list's by file name. Each starts a track through the music macro:
+/// - **The dynamic sound controller** (one): at its start the intro scene's
+///   track, then on the music events the level's scripts raise its tracks
+///   through the level (the gameplay intro once the intro hands over, the
+///   thin explore bed after Cali and after the gate's blow-up, the snare,
+///   the town's combat in the arena, the final battle's two and its
+///   stingers, the outro's). It holds the flags the watchers read: in
+///   combat, the intro's switch, the key picked up, the interior switch.
+/// - **The combat watchers** (five, by their ids): woken in range, the
+///   first marks the controller in combat, the third starts the
+///   percussive combat bed; once every enemy each watches is off it says a
+///   victory line on a random minion and takes itself off, the first and
+///   second going back to the thin explore bed, the third to the stinger.
+///   The first's range is the controller's to give (150) as the yard's
+///   fight starts, the fourth's the gate's blow-up (80), the second's the
+///   key's.
+/// - **The interior watchers** (five, one round each interior below the
+///   level): stepping in starts the inside bed; stepping out the gameplay
+///   intro, the thin explore bed, the percussive bed while the key is held,
+///   or the town's combat for the town's two.
+/// - **The undead watchers** (two): the undead area's minimal explore bed
+///   inside it, the town's combat once out of both.
+/// - **The air watcher**: the air area's explore bed inside it, the thin
+///   explore bed out of it.
+/// - **The key watchers** (two): the one by the key gives the other a range
+///   and goes; that one, reached, marks the key picked up and gives the
+///   second combat watcher its range.
+pub const MUSIC: [&str; 6] = [
+    "Level_205/Scripts/snd_dynamic_sound_controller_205.ai",
+    "Level_205/Scripts/snd_combat_watcher_205.ai",
+    "Level_205/Scripts/snd_interior_watcher_205.ai",
+    "Level_205/Scripts/snd_undead_watcher_205.ai",
+    "Level_205/Scripts/snd_elemental_air_watcher_205.ai",
+    "Level_205/Scripts/snd_key_watcher.ai",
+];
+
+/// The scripts [`MUSIC`] lists for the level whose archive is `level`.
+pub fn music(level: &str) -> &'static [&'static str] {
+    match level {
+        LEVEL => &MUSIC,
+        _ => &[],
+    }
+}
+
 /// Level 205's legendary treasure, its ship part (in the boathouse), and
 /// where Dreadbeard's scene puts the player before him: the dev entry's
 /// `finale` set-downs.
@@ -553,5 +600,29 @@ mod tests {
         assert!(on.whitelist.lists(FINALE_SCENE, "C:/l/Unlisted.ai"));
         assert!(on.whitelist.lists(DREADBEARD, "C:/l/Unlisted.ai"));
         assert!(end("level_201").is_empty());
+    }
+
+    /// openspec AS.289: its sound scripts are on 205's listing, held with
+    /// the music while the level's sounds are on their way and set apart
+    /// with it, and on no other level's listing (each by its path under
+    /// 205's folder, so another level's copy of a file by the same name
+    /// stays off).
+    #[test]
+    fn level_205s_music_is_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        let off = level_config(Mode::Play, &files, 5, "level_201");
+        for s in MUSIC {
+            let path = format!("C:/tfb/Content/Levels/{s}");
+            assert!(on.whitelist.lists("watcher", &path), "{s}");
+            assert!(!off.whitelist.lists("watcher", &path), "{s} on 201");
+            assert!(crate::scripts::is_music_script(&path), "{s}");
+            let apart = crate::scripts::without_music(on.clone());
+            assert!(!apart.whitelist.lists("watcher", &path), "{s} set apart");
+        }
+        let elsewhere = "C:/tfb/Content/Levels/Level_208/Scripts/snd_key_watcher.ai";
+        assert!(!on.whitelist.lists("watcher", elsewhere));
+        assert!(!crate::scripts::is_music_script(elsewhere));
+        assert!(music("level_201").is_empty());
     }
 }

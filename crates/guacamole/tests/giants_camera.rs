@@ -1945,3 +1945,142 @@ fn the_levels_placements_tick_as_the_scheduler_holds_them_at_the_fresh_state() {
     assert!(at(&read_shared, "Sheep_1") < at(&read_shared, "Sliding_Rock(5)"));
     assert!(at(&shared, "Sliding_Rock(5)") < at(&shared, "Sheep_1"));
 }
+
+// ---- (5) level 205's camera switches (openspec AS.301) ----
+
+/// Each camera the scripts have in use and where its definition puts the
+/// eye off its own follow point: `look from distance offset` feet at `look
+/// from pitch offset`, on the side of the follow point away from the
+/// placement its look-from heading is relative to. Each as its id, that
+/// placement's name and the eye.
+fn cameras_in_use(run: &Run) -> Vec<(f32, String, Vec3)> {
+    let g = run
+        .vm
+        .program()
+        .global_named("camera control data")
+        .unwrap();
+    let cc = run.vm.value(run.vm.global_peek(g).unwrap());
+    let num = |v: Value, k: &str| field(run, v, k).and_then(|x| x.as_f32()).unwrap();
+    let infos = field(run, cc, "active cam infos").unwrap();
+    let mut out = Vec::new();
+    for e in run.vm.set(infos).unwrap().to_vec() {
+        let e = run.vm.value(e);
+        let def = field(run, e, "cam def").unwrap();
+        let (_, follow) = actor_at(run, field(run, e, "camera")).unwrap();
+        let Some(Value::Entity(from)) = field(run, def, "look from heading relative from") else {
+            panic!("camera {} looks from no placement", num(def, "id"));
+        };
+        let placement = run.world.actor(from).unwrap().position;
+        let (dist, pitch) = (
+            num(def, "look from distance offset") * 0.3048,
+            num(def, "look from pitch offset").to_radians(),
+        );
+        let away = Vec3::new(follow.x - placement.x, 0.0, follow.z - placement.z).normalize();
+        let eye = follow + away * dist * pitch.cos() + Vec3::Y * dist * pitch.sin();
+        out.push((num(def, "id"), run.world.name(from), eye));
+    }
+    out
+}
+
+/// The placement the current transition plane is, by name.
+fn current_plane(run: &Run) -> Option<String> {
+    let g = run
+        .vm
+        .program()
+        .global_named("camera control data")
+        .unwrap();
+    let cc = run.vm.value(run.vm.global_peek(g).unwrap());
+    let plane = field(run, cc, "current transition plane")?;
+    match field(run, plane, "trigger actor")? {
+        Value::Entity(h) => Some(run.world.name(h)),
+        _ => None,
+    }
+}
+
+/// openspec AS.301: level 205's camera switches, as its definition
+/// (`_LevelDef_205.ai`) makes them. Each `CameraSwitch_A-B` placement is the
+/// box of a transition plane between cameras A and B, and camera N looks
+/// from beyond its follow point as seen from `Look_at_Target_N`. Put at the
+/// wagon (where a driven run found him behind a cart) and in two more
+/// switches' boxes and let rest, the hero has that switch's plane current,
+/// its two cameras in use, each off its own look-at placement, and the
+/// view's eye on the line between the eyes their definitions give, 14 m
+/// and more from him. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_205s_camera_switches_name_its_cameras() {
+    println!("load at start: {}", load());
+    let mut stops: Vec<String> = Vec::new();
+    let (mut run, _) = run_on_level(
+        Mode::Play,
+        "level_205_piratecards",
+        Setup {
+            interface: true,
+            props: true,
+            sounds: true,
+            ..Setup::default()
+        },
+    );
+    let still = |run: &mut Run, skip: bool, stops: &mut Vec<String>| {
+        run.bench.pads[0] = guacamole::script_engine::Pad {
+            stick: guac_motion::stick::Stick::new(0.0, 0.0),
+            actions: [false, false, false, skip],
+            connected: true,
+        };
+        stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+    };
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    // Its intro skipped by △, as a player skips it.
+    for k in 0..3000u32 {
+        still(&mut run, k > 120 && k % 20 == 10, &mut stops);
+        if k > 400 && !guacamole::anchors::scene_holds(&run.vm) && cutscene_name(&run).is_none() {
+            break;
+        }
+    }
+    for (at, switch, ids) in [
+        (
+            Vec3::new(128.9, 14.9, 251.0),
+            "CameraSwitch_0-0.5",
+            [0.0, 0.5],
+        ),
+        (
+            Vec3::new(104.2, 14.8, 257.6),
+            "CameraSwitch_0.5-1",
+            [0.5, 1.0],
+        ),
+        (Vec3::new(95.2, 15.3, 266.3), "CameraSwitch_1-2", [1.0, 2.0]),
+    ] {
+        run.put(at, 270.0);
+        for _ in 0..240 {
+            still(&mut run, false, &mut stops);
+        }
+        let hero = run.hero().pivot;
+        let view = *run.world.viewport();
+        let cams = cameras_in_use(&run);
+        let (a, b) = (cams[0].2, cams[cams.len() - 1].2);
+        let ab = b - a;
+        let t = ((view.eye - a).dot(ab) / ab.length_squared().max(1e-9)).clamp(0.0, 1.0);
+        let miss = (a + ab * t).distance(view.eye);
+        let back = Vec3::new(view.eye.x - hero.x, 0.0, view.eye.z - hero.z).length();
+        println!(
+            "{switch}: him {hero}, plane {:?}, cameras {:?}, eye {} ({back:.1} m back, {miss:.1e} m off the line)",
+            current_plane(&run),
+            cams.iter().map(|c| (c.0, c.1.as_str())).collect::<Vec<_>>(),
+            view.eye
+        );
+        assert_eq!(view.source, guacamole::viewport::Source::Scripts);
+        assert_eq!(current_plane(&run).as_deref(), Some(switch));
+        let got: Vec<f32> = cams.iter().map(|c| c.0).collect();
+        assert_eq!(got, ids, "{switch}");
+        for (id, from, _) in &cams {
+            assert_eq!(*from, format!("Look_at_Target_{id}"), "camera {id}");
+        }
+        assert!(miss < 0.01, "{switch}: {miss}");
+        assert!(back > 14.0, "{switch}: {back}");
+    }
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
+}

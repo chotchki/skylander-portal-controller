@@ -3854,13 +3854,16 @@ pub fn hold_music_while(
 }
 
 /// Whether a script's source path names one of [`MUSIC_SCRIPTS`], by its
-/// file name, any case.
+/// file name, any case, or one of level 205's ([`crate::level_205::MUSIC`])
+/// by its path under the level's folder.
 pub fn is_music_script(path: &str) -> bool {
     guac_extract::scripts::listed(&MUSIC_SCRIPTS, path)
         // One named by its path under its level's folder (level 201's).
         || MUSIC_SCRIPTS
             .iter()
             .any(|s| s.contains('/') && path.ends_with(s))
+        // Level 205's (openspec AS.289).
+        || crate::level_205::MUSIC.iter().any(|s| path.ends_with(s))
 }
 
 /// The VM's config for the TV's run (openspec AH.27): AH.17's with AH.20's
@@ -4206,12 +4209,14 @@ pub fn with_walkers(mut config: Config, walkers: &[WalkerScripts]) -> Config {
 }
 
 /// `config` without the levels' music scripts ([`MUSIC_SCRIPTS`], openspec
-/// AR.16): what a probe sets the music's draws apart by. The TV's run lists
+/// AR.16, and level 205's, AS.289): what a probe sets the music's draws apart by. The TV's run lists
 /// them since AR.16 read the original's music controller rolling the same
 /// placed environment sounds' repeat timers.
 pub fn without_music(mut config: Config) -> Config {
     if let Whitelist::Only { scripts, .. } = &mut config.whitelist {
-        scripts.retain(|s| !MUSIC_SCRIPTS.contains(&s.as_str()));
+        scripts.retain(|s| {
+            !MUSIC_SCRIPTS.contains(&s.as_str()) && !crate::level_205::MUSIC.contains(&s.as_str())
+        });
     }
     config
 }
@@ -4295,6 +4300,12 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
             crate::level_201::own_scripts(name)
                 .iter()
                 .chain(crate::level_201::shared_scripts(name))
+                .map(|s| (*s).to_owned()),
+        );
+        // Level 205's music (openspec AS.289).
+        scripts.extend(
+            crate::level_205::music(name)
+                .iter()
                 .map(|s| (*s).to_owned()),
         );
     }
