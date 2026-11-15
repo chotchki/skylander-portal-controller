@@ -2621,6 +2621,17 @@ impl ScriptWorld {
                 along: 0,
             }));
         }
+        // Level 205's cannon's ball flies without falling (openspec AS.372;
+        // stand-in ledger: `cannon-shot`).
+        if source
+            .and_then(|t| self.templates.get(&t))
+            .is_some_and(|p| {
+                crate::level_205::flat_shots(self.level.as_deref().unwrap_or_default())
+                    .contains(&p.name.as_str())
+            })
+        {
+            a.physics.gravity_acceleration = 0.0;
+        }
         self.actors.insert(h, a);
         if let Some(hero) = engine.hero(h) {
             if let Some(p) = place {
@@ -4350,6 +4361,12 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
         // Level 205's chain pull at the galleon (openspec AS.371).
         placements.extend(
             crate::level_205::chain_pull(name)
+                .iter()
+                .map(|s| (*s).to_owned()),
+        );
+        // Level 205's galleon to Setup_003's end (openspec AS.372).
+        placements.extend(
+            crate::level_205::galleon(name)
                 .iter()
                 .map(|s| (*s).to_owned()),
         );
@@ -7859,6 +7876,58 @@ mod tests {
         );
         assert_eq!(w.revived, [(grunt, GRUNT)]);
         assert!(w.actor(grunt).unwrap().walker.is_none(), "walked by none");
+    }
+
+    /// AS.372: on level 205 a clone of the cannon's ball flies without
+    /// falling (`level_205::FLAT_SHOTS`); on another level, and any other
+    /// template's clone on 205, keeps its template's gravity.
+    #[test]
+    fn level_205s_cannon_ball_is_made_without_its_fall() {
+        const BALL: Obj = Obj { unit: 4, index: 9 };
+        let falls = crate::script_engine::Physics {
+            gravity_acceleration: 32.0,
+            gravity_max_speed: 120.0,
+            ..Default::default()
+        };
+        let files = Files {
+            lights: HashMap::new(),
+            emitters: HashMap::new(),
+            placed: vec![
+                Placed {
+                    physics: Some(falls),
+                    ..Placed::named(BALL, "Canon_Ball", Some("C:/x/Canon_Ball.ai"), 5)
+                },
+                Placed {
+                    physics: Some(falls),
+                    ..Placed::named(GRUNT, "Grunt", Some("C:/x/Grunt.ai"), RUNNING)
+                },
+            ],
+            ids: HashMap::new(),
+            points: HashMap::new(),
+            turns: HashMap::new(),
+        };
+        let gravity = |level: &str, template: Obj| {
+            let handles = headless_handles(&files);
+            let objects = headless_objects(&handles);
+            let mut w = ScriptWorld::new(&files, &handles, objects);
+            w.set_level(level);
+            let at_grunt = OpCall {
+                operands: vec![
+                    ("_LHS", Some(Value::Object(template))),
+                    ("_RHS", Some(Value::Entity(handles[&GRUNT]))),
+                ],
+                ..call(Class::Spawn, None)
+            };
+            w.op(&at_grunt, &mut |_| 900, &mut NoEngine).unwrap();
+            w.actor(900).unwrap().physics.gravity_acceleration
+        };
+        assert_eq!(gravity(crate::level_205::LEVEL, BALL), 0.0, "flat on 205");
+        assert_eq!(gravity("level_201", BALL), 32.0, "falls on 201");
+        assert_eq!(
+            gravity(crate::level_205::LEVEL, GRUNT),
+            32.0,
+            "a grunt falls"
+        );
     }
 
     /// AS.98: a placement the engine walks stays walked through a take-off
