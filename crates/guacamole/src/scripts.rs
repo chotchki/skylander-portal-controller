@@ -3011,10 +3011,11 @@ pub const THIRD_ISLAND: Encounter = Encounter {
 /// scenes with them and sets the cast down at their places as it ends or is
 /// skipped, taking its own Flynn, Cali and mechanic off
 /// ([`crate::level_scene::INTRO_CAST_PLACES`]).
-pub const INTROS: [(&str, &str); 7] = [
+pub const INTROS: [(&str, &str); 8] = [
     ("level_214_tutotial_2", "214_Intro_IGC"),
     ("level_201", "_Level_201_Intro_CS"),
     ("level_205_piratecards", "205_Intro_IGC"),
+    ("level_208_ice", "208_Intro_IGC"),
     ("level_hub_2_stage_1", "CS_Intro_Controller"),
     ("level_hub_2_stage_2", "CS_Hub_Intro_Stage2"),
     ("level_hub_2_stage_3", "CS_Hub_Intro_Stage3"),
@@ -7036,6 +7037,16 @@ mod tests {
         let files = Files::default();
         let l205 = level_config(Mode::Play, &files, 4, "level_205_piratecards");
         assert!(l205.whitelist.lists("205_Intro_IGC", "C:/x/Any.ai"));
+    }
+
+    /// openspec AS.343: level 208's intro is on the TV's listing, held for
+    /// the hero as 201's and 205's are.
+    #[test]
+    fn level_208s_intro_is_run() {
+        assert_eq!(intro("level_208_ice"), Some("208_Intro_IGC"));
+        let files = Files::default();
+        let l208 = level_config(Mode::Play, &files, 4, "level_208_ice");
+        assert!(l208.whitelist.lists("208_Intro_IGC", "C:/x/Any.ai"));
     }
 
     /// openspec AS.96: the interiors' scripts on every level's listing,

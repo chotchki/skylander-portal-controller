@@ -217,6 +217,16 @@ pub const ARENA_START_PLACEMENT: &str = "StartLoc_P1";
 /// hands him over.
 pub const INTRO_PATH: &str = "p1 WP's";
 
+/// The ending of the other name a story level's intro walks the first player
+/// in along (openspec AS.343: level 208's `208_Intro_P1_WP`, whose last
+/// waypoint its intro skipped sets him on to the micrometre): [`INTRO_PATH`]'s
+/// rule, on a level whose intro the TV runs ([`crate::scripts::INTROS`]) and
+/// a path of two points or more. Level 214's holds one point, 4.3 m off
+/// where its intro hands him over on the ship's deck; the levels whose
+/// intros aren't listed yet (200, 203, 204, 207, 210's boss, 215) keep
+/// their start until theirs are (AS.143).
+pub const INTRO_P1_PATH: &str = "_Intro_P1_WP";
+
 /// The places a story level's intro sets its cast down at as it ends or is
 /// skipped (level 205's `205_Intro_Player_Pos_WP`, openspec AS.282), by the
 /// placement's name's ending: one waypoint each, Cali's, Flynn's, then the
@@ -233,9 +243,10 @@ pub const INTRO_P1_PLACE: usize = 2;
 /// settled onto the ground. A hub stage starts where its intro hands the
 /// first player over, [`HUB_START_PLACEMENT`]'s first waypoint, its
 /// intro's run setting him down there again ([`crate::scripts::INTROS`]).
-/// A story level whose intro walks him in starts at that path's end
-/// ([`INTRO_PATH`], AS.113), one whose intro sets its cast down at the
-/// first player's place there ([`INTRO_CAST_PLACES`], AS.282), a PvP arena
+/// A story level whose intro sets its cast down starts at the first
+/// player's place there ([`INTRO_CAST_PLACES`], AS.282), one whose intro
+/// walks him in at that path's end ([`INTRO_PATH`], AS.113, or
+/// [`INTRO_P1_PATH`], AS.343), a PvP arena
 /// at [`ARENA_START_PLACEMENT`]
 /// (AS.126). Any other level starts at its first placement running
 /// [`INIT_SCRIPT`]: its first waypoint, or its own place when it has no
@@ -257,15 +268,9 @@ pub fn start_point(placements: &Placements) -> Result<Vec3, LevelError> {
             .map(|w| Vec3::from_array(w.position))
     };
     let named = |name: &str| placements.actors.iter().find(|a| a.name == name);
-    // A story level whose intro walks him in hands him over at its path's
-    // end (openspec AS.113, AS.126).
-    if let Some(p) = named(INTRO_PATH).and_then(last_waypoint)
-        && p.is_finite()
-    {
-        return Ok(p);
-    }
     // A story level whose intro sets its cast down hands him over at the
-    // first player's place (openspec AS.282).
+    // first player's place (openspec AS.282), before the path it walks him
+    // in along (205's ends 2.5 m short of that place).
     if let Some(p) = placements
         .actors
         .iter()
@@ -277,6 +282,26 @@ pub fn start_point(placements: &Placements) -> Result<Vec3, LevelError> {
         })
         .and_then(|w| w.get(INTRO_P1_PLACE))
         .map(|w| Vec3::from_array(w.position))
+        && p.is_finite()
+    {
+        return Ok(p);
+    }
+    // A story level whose intro walks him in hands him over at its path's
+    // end (openspec AS.113, AS.126): `p1 WP's`, or `<NNN>_Intro_P1_WP` walked
+    // (two points or more) on a level whose intro the TV runs (AS.343).
+    let walked_in = |a: &&guac_ir::level::Placement| {
+        a.name == INTRO_PATH
+            || (a.name.ends_with(INTRO_P1_PATH)
+                && crate::scripts::intro(&placements.level).is_some()
+                && a.waypoints
+                    .and_then(|i| placements.waypoints.get(usize::try_from(i).ok()?))
+                    .is_some_and(|w| w.len() > 1))
+    };
+    if let Some(p) = placements
+        .actors
+        .iter()
+        .find(walked_in)
+        .and_then(last_waypoint)
         && p.is_finite()
     {
         return Ok(p);
@@ -2693,9 +2718,55 @@ mod tests {
             ],
         };
         assert_eq!(start_point(&p), Ok(Vec3::new(146.8, 14.6, 252.0)));
-        // Short of the first player's place: the old rule.
+        // Short of the first player's place: the end of the path the intro
+        // walks him in along (AS.343), and without it the old rule.
         p.waypoints[1].truncate(INTRO_P1_PLACE);
+        assert_eq!(start_point(&p), Ok(Vec3::new(145.6, 14.5, 249.4)));
+        p.actors[1].name = "205_Some_Other_WP".into();
         assert_eq!(start_point(&p), Ok(Vec3::new(149.5, 14.4, 257.9)));
+    }
+
+    /// openspec AS.343: level 208's start is where its intro walks the first
+    /// player in to, `208_Intro_P1_WP`'s last waypoint, not its
+    /// `InitializeLevel.ai` marker; the path counts only on a level whose
+    /// intro the TV runs and when it's walked (two points or more: level
+    /// 214's one-point path keeps its start), and a level holding its cast's
+    /// places starts there instead (205's).
+    #[test]
+    fn level_208s_start_is_read_off_its_intros_walk_in() {
+        let mut marker = placement("_Init_Level", None);
+        marker.script = Some("C:/tfb/InitializeLevel.ai".into());
+        marker.position = [12.4, 10.2, -2.2];
+        let mut p = Placements {
+            identity: identity(),
+            level: "level_208_ice".into(),
+            actors: vec![marker, placement("208_Intro_P1_WP", Some(0))],
+            waypoints: vec![
+                vec![
+                    waypoint([-12.8, 12.2, -1.5]),
+                    waypoint([6.1, 10.1, -10.6]),
+                    waypoint([12.1, 10.2, -9.5]),
+                ],
+                vec![
+                    waypoint([1.0, 2.0, 3.0]),
+                    waypoint([4.0, 5.0, 6.0]),
+                    waypoint([7.0, 8.0, 9.0]),
+                ],
+            ],
+        };
+        assert_eq!(start_point(&p), Ok(Vec3::new(12.1, 10.2, -9.5)));
+        // A level whose intro the TV doesn't run keeps its marker.
+        p.level = "level_200".into();
+        assert_eq!(start_point(&p), Ok(Vec3::new(12.4, 10.2, -2.2)));
+        p.level = "level_208_ice".into();
+        // A path of one point isn't a walk in (level 214's).
+        p.waypoints[0].truncate(1);
+        assert_eq!(start_point(&p), Ok(Vec3::new(12.4, 10.2, -2.2)));
+        p.waypoints[0].push(waypoint([12.1, 10.2, -9.5]));
+        assert_eq!(start_point(&p), Ok(Vec3::new(12.1, 10.2, -9.5)));
+        // The cast's places win over the path (level 205's shape).
+        p.actors.push(placement("208_Intro_Player_Pos_WP", Some(1)));
+        assert_eq!(start_point(&p), Ok(Vec3::new(7.0, 8.0, 9.0)));
     }
 
     /// AS.13: a level without chapter 1's start placement starts at its

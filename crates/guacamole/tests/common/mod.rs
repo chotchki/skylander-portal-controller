@@ -343,6 +343,9 @@ pub struct Run {
     pub entering: Option<Handle>,
     /// His figure's toy id: Eruptor's 9, or [`Setup::character`]'s.
     pub toy: u16,
+    /// What poses whatever hangs on a skinned model ([`Setup::posed_rigs`]):
+    /// each such model's skeleton and idle, palette and attach list.
+    pub posed_rigs: Vec<guacamole::hands::Rig>,
 }
 
 /// His model's turn off his facing alone for a recorded `[tilt, heading,
@@ -387,7 +390,55 @@ impl Run {
                 .collect();
             self.world.set_nodes(self.hero, leaned);
         }
+        self.pose_rigs();
         self.world.place_hung(&mut self.bench);
+    }
+
+    /// Each actor something hangs on whose model [`Run::posed_rigs`] holds,
+    /// its nodes posed as the TV's `creature_nodes` poses a drawn one: its
+    /// locomotion (else its idle) on the run's clock with what its scripts
+    /// play laid over it, a camera's rig holding its last clip
+    /// (`hands::posing`), at the actor's scale. Turned by its facing alone,
+    /// where the TV turns a clone by its tilt and roll too (a rig and a pod
+    /// stand untilted).
+    fn pose_rigs(&mut self) {
+        if self.posed_rigs.is_empty() {
+            return;
+        }
+        let seconds = f64::from(self.steps) / 60.0;
+        for h in self.world.hung_on() {
+            let Some(a) = self.world.actor(h) else {
+                continue;
+            };
+            let Some(model) = a
+                .template
+                .or(a.obj)
+                .and_then(|t| self.files.placed.iter().find(|p| p.obj == t))
+                .and_then(|p| p.model.as_deref())
+            else {
+                continue;
+            };
+            let Some(rig) = self.posed_rigs.iter().find(|r| r.palette.owner == model) else {
+                continue;
+            };
+            let scale = Vec3::from_array(a.scale) / 100.0;
+            let over = guacamole::hands::posing(&self.world, h, &rig.palette);
+            let base = guacamole::picks::under_clips(
+                &self.world,
+                h,
+                Some(&rig.palette),
+                &rig.model.idle,
+                seconds,
+            );
+            let nodes = guacamole::hands::posed(&rig.model.skeleton, &rig.nodes, &base, &over, 1.0)
+                .into_iter()
+                .map(|n| NodePose {
+                    at: n.at * scale,
+                    turn: n.turn,
+                })
+                .collect();
+            self.world.set_nodes(h, nodes);
+        }
     }
 
     pub fn with_host<T>(&mut self, f: impl FnOnce(&mut Vm, &mut WorldHost<'_, '_>) -> T) -> T {
@@ -1099,6 +1150,13 @@ pub struct Setup {
     /// The wake rule in the TV's place (openspec AS.246: a probe's way to
     /// run a level on the original's).
     pub wake: Wake,
+    /// What something hangs on posed each step as the TV poses the creatures
+    /// and clones it draws (openspec AS.343, the TV's `pose_creature_nodes`):
+    /// a camera's rig and a skinned clone on it by their clips, so a landing
+    /// pod lets its riders go where the shot flies it. Without it a rig
+    /// stands at the world's origin with what rides it (AS.284), and level
+    /// 208's riders are let go under its plaza.
+    pub posed_rigs: bool,
 }
 
 /// Which sleepers a run wakes with their declared locals made anew
@@ -1454,6 +1512,35 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
             }
         }
     }
+    // The skinned models something may hang on, posed as the TV poses them
+    // (openspec AS.343), the camera rigs registered as the TV's load does.
+    let mut posed_rigs = Vec::new();
+    if setup.posed_rigs {
+        let nodes = levels::nodes(&igzs[LEVEL as usize], level, identity())
+            .expect("the level's nodes")
+            .ir;
+        for (path, model) in skinned_models_of(level) {
+            if let (Some(palette), Some(n)) = (
+                palettes.palettes.iter().find(|x| x.owner == path),
+                nodes.get(&path),
+            ) {
+                posed_rigs.push(guacamole::hands::Rig {
+                    model,
+                    palette: palette.clone(),
+                    nodes: n.clone(),
+                    scale: 1.0,
+                });
+            }
+        }
+        for p in files.placed.iter().filter(|p| {
+            p.obj.unit == LEVEL
+                && p.model
+                    .as_deref()
+                    .is_some_and(guacamole::hands::camera_rig_model)
+        }) {
+            world.set_rig(p.obj);
+        }
+    }
     if chapter_1 {
         world.walk_first_fight(LEVEL);
         world.walk_goats(LEVEL);
@@ -1522,6 +1609,7 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
             hangs: Default::default(),
             entering: None,
             toy: setup.character.map_or(9, |c| c.toy),
+            posed_rigs,
         },
         found,
     )
