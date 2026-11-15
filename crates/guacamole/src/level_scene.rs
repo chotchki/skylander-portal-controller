@@ -223,8 +223,10 @@ pub const INTRO_PATH: &str = "p1 WP's";
 /// rule, on a level whose intro the TV runs ([`crate::scripts::INTROS`]) and
 /// a path of two points or more. Level 214's holds one point, 4.3 m off
 /// where its intro hands him over on the ship's deck; the levels whose
-/// intros aren't listed yet (200, 203, 204, 207, 210's boss, 215) keep
-/// their start until theirs are (AS.143).
+/// intros aren't listed yet (200, 203, 204, 207, 215) keep their start
+/// until theirs are (AS.143). The level's number alone stands before it:
+/// level 210's `210_Boss_Intro_P1_WP` walks him into its boss's arena, not
+/// the level's start.
 pub const INTRO_P1_PATH: &str = "_Intro_P1_WP";
 
 /// The places a story level's intro sets its cast down at as it ends or is
@@ -291,7 +293,10 @@ pub fn start_point(placements: &Placements) -> Result<Vec3, LevelError> {
     // (two points or more) on a level whose intro the TV runs (AS.343).
     let walked_in = |a: &&guac_ir::level::Placement| {
         a.name == INTRO_PATH
-            || (a.name.ends_with(INTRO_P1_PATH)
+            || (a
+                .name
+                .strip_suffix(INTRO_P1_PATH)
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
                 && crate::scripts::intro(&placements.level).is_some()
                 && a.waypoints
                     .and_then(|i| placements.waypoints.get(usize::try_from(i).ok()?))
@@ -2759,6 +2764,11 @@ mod tests {
         p.level = "level_200".into();
         assert_eq!(start_point(&p), Ok(Vec3::new(12.4, 10.2, -2.2)));
         p.level = "level_208_ice".into();
+        // Only the level's number before the name (level 210's boss
+        // arena's walk-in isn't its start).
+        p.actors[1].name = "208_Boss_Intro_P1_WP".into();
+        assert_eq!(start_point(&p), Ok(Vec3::new(12.4, 10.2, -2.2)));
+        p.actors[1].name = "208_Intro_P1_WP".into();
         // A path of one point isn't a walk in (level 214's).
         p.waypoints[0].truncate(1);
         assert_eq!(start_point(&p), Ok(Vec3::new(12.4, 10.2, -2.2)));

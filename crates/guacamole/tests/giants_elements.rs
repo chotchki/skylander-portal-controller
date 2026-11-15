@@ -60,6 +60,7 @@ impl Walk {
                 sounds: true,
                 character,
                 scripts,
+                posed_rigs: true,
                 ..Setup::default()
             },
         );

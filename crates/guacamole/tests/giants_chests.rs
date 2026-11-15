@@ -28,6 +28,7 @@ fn setup() -> Setup {
         interface: true,
         props: true,
         sounds: true,
+        posed_rigs: true,
         ..Setup::default()
     }
 }
