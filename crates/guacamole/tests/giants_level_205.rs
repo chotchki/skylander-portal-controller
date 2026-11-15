@@ -4095,7 +4095,13 @@ fn fire_at(
 #[ignore = "reads the Giants dump"]
 fn level_205s_way_on_from_setup_003s_end_ends_setup_004() {
     let AtCali {
-        at: AtSetup002sEnd { stops, scenes, .. },
+        at:
+            AtSetup002sEnd {
+                stops,
+                scenes,
+                topups,
+                ..
+            },
         lowest,
         started,
     } = on_to_setup_004s_end(Setup {
@@ -4103,7 +4109,7 @@ fn level_205s_way_on_from_setup_003s_end_ends_setup_004() {
         ..setup()
     });
     println!(
-        "scenes {scenes:?}; lowest health {lowest:?}; {:.1} s",
+        "scenes {scenes:?}; top-ups {topups:?}; lowest health {lowest:?}; {:.1} s",
         started.elapsed().as_secs_f64()
     );
     assert!(stops.is_empty(), "{stops:#?}");
@@ -4194,13 +4200,39 @@ fn on_to_setup_004s_end(setup: Setup) -> AtCali {
     println!("the lever's wall gone at step {broke}");
     trail.mark(&run, "lever-wall");
 
-    // The lever turns the turntable.
-    let lever = run.at(LEVER);
-    walk_near(&mut run, &mut stops, &mut scenes, &mut trail, lever, 2.0);
+    // Pushed east before the lever, the cannon stops short of the
+    // turntable, its blocker in the track's way.
+    let b = run.at(PUSH_CANNON);
+    walk_near(
+        &mut run,
+        &mut stops,
+        &mut scenes,
+        &mut trail,
+        Vec3::new(b.x - 2.5, b.y, b.z),
+        2.0,
+    );
+    let moves = shove(
+        &mut run,
+        &mut stops,
+        &mut trail,
+        PUSH_CANNON,
+        90.0,
+        &|r: &Run| r.at(PUSH_CANNON).x > -20.0,
+    );
+    let short = run.at(PUSH_CANNON);
+    println!("the cannon east before the lever in {moves} to {short}");
     assert!(
-        tap_until(&mut run, &mut stops, 600, &|r: &Run| behaviour(
-            r, TURNTABLE
-        ) != "wait"),
+        short.x < -22.0,
+        "the cannon over the turntable unturned: {short}"
+    );
+
+    // The lever turns the turntable 90°.
+    let turned_from = facing(&run, TURNTABLE);
+    let lever = run.at(LEVER);
+    walk_near(&mut run, &mut stops, &mut scenes, &mut trail, lever, 3.0);
+    assert!(
+        tap_until(&mut run, &mut stops, 600, &|r: &Run| behaviour(r, LEVER)
+            == "finallydone"),
         "the lever: {}",
         behaviour(&run, LEVER)
     );
@@ -4209,11 +4241,13 @@ fn on_to_setup_004s_end(setup: Setup) -> AtCali {
             still(&mut run, &mut stops, [false; 4]);
         }
     }
+    let turned = (facing(&run, TURNTABLE) - turned_from).rem_euclid(360.0);
     println!(
-        "the lever pulled, the turntable {} at step {}",
+        "the lever pulled, the turntable {} turned {turned:.1} at step {}",
         behaviour(&run, TURNTABLE),
         run.steps
     );
+    assert!((turned - 90.0).abs() < 2.0, "the turntable turned {turned}");
     trail.mark(&run, "lever");
 
     // The cannon east over the turntable and fired: the cell's wall.
@@ -4344,10 +4378,33 @@ fn on_to_setup_004s_end(setup: Setup) -> AtCali {
     assert!(run.at(east).y < 34.0, "the east block on its ledge");
     trail.mark(&run, "east-block");
 
-    // Over it up onto the upper town; its block pushed off the north ledge
-    // wakes the town's block below.
+    // Over it up onto the upper town, where Setup_004's town's three
+    // Cyclopes take their places: fought there.
     let upper = "Push_Block_Template(12)";
     let s12 = run.at(upper) + Vec3::new(0.0, 0.0, -2.6);
+    walk_near(&mut run, &mut stops, &mut scenes, &mut trail, s12, 2.0);
+    println!("on the upper town at step {}", run.steps);
+    let cyclopes = &SETUP_004_FOES[3..6];
+    let three = fight_to(
+        &mut run,
+        &mut stops,
+        "Setup_004_Controller",
+        cyclopes,
+        s12,
+        4000,
+        &|r: &Run| cyclopes.iter().all(|n| behaviour(r, n) == "removed"),
+    );
+    topups.extend(three.topups.iter().copied());
+    trail.0.extend(three.trail.iter().copied());
+    assert!(three.ended, "the town's three: {:?}", three.log);
+    println!(
+        "the town's three off at step {} at {}",
+        run.steps,
+        run.hero().pivot
+    );
+
+    // The upper block pushed off its north ledge wakes the town's block
+    // below.
     walk_near(&mut run, &mut stops, &mut scenes, &mut trail, s12, 2.0);
     let town = "Push_Block_Template(14)";
     assert_eq!(behaviour(&run, town), "asleep");
@@ -4364,8 +4421,7 @@ fn on_to_setup_004s_end(setup: Setup) -> AtCali {
     );
     trail.mark(&run, "upper-block");
 
-    // Down over the town's block, the town's three Cyclopes fought, and
-    // the block pushed west into place.
+    // Down over the town's block, and the block pushed west into place.
     let b14 = run.at(town);
     let e14 = b14 + Vec3::new(2.6, 0.0, 0.0);
     assert!(
@@ -4379,23 +4435,18 @@ fn on_to_setup_004s_end(setup: Setup) -> AtCali {
         ),
         "down over the town's block"
     );
-    let cyclopes = &SETUP_004_FOES[3..6];
-    let three = fight_to(
+    walk_until(
         &mut run,
         &mut stops,
-        "Setup_004_Controller",
-        cyclopes,
+        &mut scenes,
+        &mut trail,
         e14,
-        4000,
+        2.0,
         &|r: &Run| {
             let p = r.hero().pivot;
-            cyclopes.iter().all(|n| behaviour(r, n) == "removed")
-                && (p.x - e14.x).hypot(p.z - e14.z) < 1.0
+            (p.x - e14.x).hypot(p.z - e14.z) < 0.8
         },
     );
-    topups.extend(three.topups.iter().copied());
-    trail.0.extend(three.trail.iter().copied());
-    assert!(three.ended, "the town's three: {:?}", three.log);
     let checker = run.at("Setup_004_Pushblock_Checker");
     let moves = shove(&mut run, &mut stops, &mut trail, town, -90.0, &|r: &Run| {
         let p = r.at(town);
