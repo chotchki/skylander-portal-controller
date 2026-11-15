@@ -383,6 +383,13 @@ A chain pull's chain SHALL be drawn and posed by the clips its peg plays on it, 
 - **WHEN** a hero who isn't a Giant presses △ and mashes there
 - **THEN** the need-a-Giant hint stays up and the galleon doesn't move
 
+### Requirement: Level 205's galleon cannon blows the gate
+On the galleon pulled in, any hero SHALL board by the deck, set Cali's pan to the gate off at her trigger there and fire the cannon with △; its ball SHALL fly over the bluff into the gate's blocker, and the gate's controller SHALL blow the gate into its pieces and break its padlock and chains. Setup_003's last three SHALL then walk through to their markers, and beaten, its controller SHALL go, nothing stopped (headless, 2026-11-15).
+
+#### Scenario: Tree Rex fires the galleon's cannon
+- **WHEN** a hero aboard the docked galleon presses △ by its cannon
+- **THEN** Cali's `pan done` is set, the gate and its padlock go, and Setup_003's last three come through it into the yard
+
 ### Requirement: The hub stands at the story's every point
 A hub stage SHALL show what the adventures done open, by what the host's save holds or the last level just finished: its count, its sky and zone, its people and removals and the next chapter Flynn offers. A level end just finished SHALL bring its first-visit scenes, a story movie among them played full screen, and its intro SHALL hand the hero over where every stage does, nothing stopped.
 
