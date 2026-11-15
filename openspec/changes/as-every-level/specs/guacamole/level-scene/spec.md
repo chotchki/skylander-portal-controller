@@ -284,6 +284,13 @@ Level 205 SHALL start where its intro sets the first player down: the intro held
 - **WHEN** Flynn's ready question is answered yes on hub stage 1 on a save past level 201
 - **THEN** level 205's intro plays, and he walks from where it sets him down with nothing stopped
 
+### Requirement: Level 208's start
+Level 208 SHALL start where its intro walks the first player in: the intro held for his join, then played (the landing pod flying him, Flynn, Cali and the Hermit in over the level to the snow plaza, its five scenes) or skipped by △, him then on the ground about (12.1, 10.2, -9.5) with the HUD back, walking on the stick.
+
+#### Scenario: From the hub
+- **WHEN** Flynn's ready question is answered yes on hub stage 1 on a save past level 205
+- **THEN** level 208's intro plays, and he walks from where it hands him over with nothing stopped
+
 ### Requirement: Level 205's way off its start island
 Level 205's crane SHALL lay its boat east from the Giant Pirate Head's stage to the far pier, its hint pan to the wheel at the pier's south end, and the wheel's talk button swing the crane and its mast 90° so the boat lies from the pier's end to Setup_001's yard, a second press swinging them back.
 
