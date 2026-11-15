@@ -43,7 +43,9 @@ pub const EXIT: [&str; 4] = [
 
 /// The five Ice Chompies of the first room's set, which the reveal's
 /// trigger waits on, by name, listed and never walked (taken from AS.345's
-/// fights; walking them, and the rest of their fight, is AS.345's). Walked,
+/// fights; walking them, and the rest of their fight, is AS.345's), drawn
+/// as the level's people ([`people`]): on their scripts' clips, hopping
+/// where their scripts move them and biting a hero beside them. Walked,
 /// the reveal's turn of its Chompy toward its mark never finishes and the
 /// reveal holds the hero for good (openspec AS.385); unwalked, a creature's
 /// `turn to` turns it at once.
@@ -54,6 +56,16 @@ pub const REVEAL_FOES: [&str; 5] = [
     "Enemy_Chompy_Ice(21)",
     "Enemy_Chompy_Ice(40)",
 ];
+
+/// [`REVEAL_FOES`] on 208, drawn as the level's people are (unwalked, on
+/// their scripts' clips: the TV draws an unwalked creature no other way),
+/// nothing on any other level.
+pub fn people(level: &str) -> &'static [&'static str] {
+    match level {
+        LEVEL => &REVEAL_FOES,
+        _ => &[],
+    }
+}
 
 /// [`EXIT`] and [`REVEAL_FOES`] on 208 alone: another level's `brick`
 /// templates are its own.
@@ -90,6 +102,14 @@ mod tests {
             assert_eq!(exit(other).count(), 0);
         }
         assert_eq!(encounters(LEVEL).count(), 0);
+        // Drawn as its people, there alone.
+        for name in REVEAL_FOES {
+            assert!(crate::scripts::is_level_person(LEVEL, name), "{name}");
+            assert!(!crate::scripts::is_level_person(
+                "level_205_piratecards",
+                name
+            ));
+        }
         // The Ice Chompies' own script stays off for the level's others
         // (AS.345's).
         let ice = "C:/tfb/Content/Levels/_Enemies/Chompy_Ice/scripts/S2_Enemy_IceChompy.ai";
