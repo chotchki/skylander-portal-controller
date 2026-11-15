@@ -821,3 +821,144 @@ fn level_208s_first_fights_by_their_own_triggers() {
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
 }
+
+/// The AI's hint in the yard and the blocker it takes off (openspec
+/// AS.406).
+const AI: &str = "IGC_AI_Intro";
+const AI_BLOCKER: &str = "Pandoran_Hint_Template(1)";
+
+/// The first ice block, across the lower terrace's way to the river
+/// (openspec AS.406, AS.431).
+const ICE_BLOCK: &str = "Melting_Ice_blocks_reflect_1";
+
+/// Whether placement `name`'s actor is off the level.
+fn gone_actor(run: &Run, name: &str) -> bool {
+    run.world
+        .actor(run.placed(name).0)
+        .is_none_or(|a| a.removed)
+}
+
+/// The lower terrace east of the river, below the yard, by the first ice
+/// block's switch (openspec AS.406).
+const TERRACE: Vec3 = Vec3::new(3.6, 6.7, -65.0);
+
+/// openspec AS.406: level 208 from the intro's hand-over down to the lower
+/// terrace by the stick and the attack alone: out of the plaza and through
+/// the reveal's five Chompies as AS.344's and AS.345's tests go, then to
+/// the AI in the yard, which waits on the five gone and a player within
+/// 30 ft of it, plays its pan and takes its hint's blocker off the yard's
+/// east side; then east and down to the terrace. Before the hint the
+/// yard's ground doesn't reach the terrace. On toward Setup_002's trigger
+/// the first ice block holds him on the terrace (its beam puzzle is
+/// AS.431's). Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_208s_way_down_to_the_terrace_by_the_stick() {
+    println!("load at start: {}", load());
+    let mut stops = Vec::new();
+    let mut run = joined_208(&mut stops);
+    for k in 0..6000u32 {
+        still(&mut run, &mut stops, [false; 4]);
+        if k > 200 && scene_of(&run).is_none() && !guacamole::anchors::scene_holds(&run.vm) {
+            break;
+        }
+    }
+    assert!(intro_off(&run), "the intro played out");
+    println!("handed over at step {} at {}", run.steps, run.hero().pivot);
+    let out = walk_out(&mut run, &mut stops, 6000);
+    assert!(out.reached.is_some(), "at Setup_002's place: {out:?}");
+    let chompies = fight_to(
+        &mut run,
+        &mut stops,
+        &CHOMPIES,
+        &[],
+        SETUP_002,
+        6000,
+        &|run: &Run| CHOMPIES.iter().all(|n| removed(run, n)),
+    );
+    println!(
+        "chompies beaten {} at step {}, health {:?}",
+        chompies.ended, run.steps, chompies.health
+    );
+    assert!(chompies.ended, "the five beaten");
+    // Before the hint, the yard's ground ends short of the terrace.
+    let short = |run: &Run| {
+        way_to(run, run.hero().pivot, TERRACE)
+            .last()
+            .unwrap()
+            .distance(TERRACE)
+    };
+    let before = short(&run);
+    assert!(!gone_actor(&run, AI_BLOCKER), "the blocker stands");
+    // To the AI: its hint takes the blocker off.
+    let ai = run.at(AI);
+    let hint = fight_to(&mut run, &mut stops, &[], &[AI], ai, 3000, &|run: &Run| {
+        gone_actor(run, AI_BLOCKER)
+    });
+    for (step, n, b) in &hint.log {
+        println!("  {step} {n} {b}");
+    }
+    println!(
+        "the AI's hint: blocker off {} at step {}, scenes {:?}, at {}",
+        hint.ended,
+        run.steps,
+        hint.scenes,
+        run.hero().pivot
+    );
+    assert!(hint.ended, "the AI's blocker off: {:?}", hint.log);
+    let woke = first_in(&hint.log, AI, &["wait", "go"]);
+    assert!(woke.is_some(), "the AI talked: {:?}", hint.log);
+    assert!(
+        hint.scenes.iter().any(|(s, _)| *s >= woke.unwrap()),
+        "its pan: {:?}",
+        hint.scenes
+    );
+    let after = short(&run);
+    println!("the terrace {before:.2} m off the yard's ground before the hint, {after:.2} after");
+    assert!(before > 5.0 && after < 1.0, "{before} m, {after} m");
+    // East and down to the terrace.
+    let flat = |a: Vec3, b: Vec3| Vec3::new(a.x - b.x, 0.0, a.z - b.z).length();
+    let down = fight_to(
+        &mut run,
+        &mut stops,
+        &[],
+        &[],
+        TERRACE,
+        3000,
+        &|run: &Run| flat(run.hero().pivot, TERRACE) < 2.0,
+    );
+    let trail: Vec<String> = hint
+        .trail
+        .iter()
+        .chain(&down.trail)
+        .map(|p| format!("{:.2},{:.2},{:.2}", p.x, p.y, p.z))
+        .collect();
+    println!("TRAIL {}", trail.join(";"));
+    println!(
+        "down: on the terrace {} at step {}, at {}, health {:?}",
+        down.ended,
+        run.steps,
+        run.hero().pivot,
+        down.health
+    );
+    assert!(down.ended, "on the terrace: {}", run.hero().pivot);
+    assert!(run.hero().pivot.y < 7.5, "below the yard");
+    // On west toward Setup_002's trigger: the first ice block, across the
+    // terrace's way to the river, holds him.
+    let block = run.at(ICE_BLOCK);
+    let on = fight_to(&mut run, &mut stops, &[], &[], block, 1800, &|run: &Run| {
+        flat(run.hero().pivot, block) < 1.0
+    });
+    let held = run.hero().pivot;
+    println!(
+        "on toward the trigger: held at {held} by the ice block {:.2} m off, {:.2} m short of the trigger",
+        flat(held, block),
+        flat(held, run.at(SETUP_002_TRIGGER))
+    );
+    assert!(
+        !on.ended && held.x > block.x,
+        "held east of the block: {held}"
+    );
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
+}

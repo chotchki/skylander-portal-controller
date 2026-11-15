@@ -2635,8 +2635,12 @@ fn figure_materials(
 
 /// The script part's task, reported once it's done: what linked and what
 /// it cost, or why it didn't, and the run installed from it (AH.16). The
-/// level goes on either way.
+/// level goes on either way. Taken only once the level's collision is in
+/// Avian's world ([`scripts_may_run`]).
 fn poll_scripts(level: &mut Level, commands: &mut Commands) {
+    if !scripts_may_run(&level.stage) {
+        return;
+    }
     let Some(task) = level.scripts.as_mut() else {
         return;
     };
@@ -2738,6 +2742,16 @@ fn poll_scripts(level: &mut Level, commands: &mut Commands) {
             level.report.scripts_reason = Some(why);
         }
     }
+}
+
+/// Whether a linked run may go in at `stage` (openspec AS.401): once the
+/// level is spawned, its collision with it, or once it failed (no collision
+/// will come). Its scripts' first steps read the ground: in before the
+/// collision, a level's creature reads none under it and dies falling
+/// (level 208's five Cyclopes on the river, taken off under it before the
+/// join, on the runs whose part linked before the level's upload ended).
+fn scripts_may_run(stage: &Stage) -> bool {
+    stage.loaded().is_some() || matches!(stage, Stage::Failed)
 }
 
 /// Ready once the renderer has every part resident and the warm every key
@@ -4413,6 +4427,71 @@ mod tests {
         assert!(level.walkable().is_none(), "its part still linking");
         level.scripts = None;
         assert!(level.walkable().is_some());
+    }
+
+    /// AS.401: a linked part goes in only once the level's collision is in
+    /// Avian's world (spawned with the level) or the level failed: before,
+    /// its scripts would read no ground under the level's creatures. The
+    /// part's result is held, not lost, until then.
+    #[test]
+    fn the_run_waits_on_the_levels_collision() {
+        use bevy::ecs::world::CommandQueue;
+        // The app first: it makes the task pools.
+        let tmp = tempfile::tempdir().unwrap();
+        let source = write_level(tmp.path(), &lights());
+        let mut app = level_app(tmp.path(), source, true);
+        let poll = |level: &mut Level| {
+            let world = World::new();
+            let mut queue = CommandQueue::default();
+            poll_scripts(level, &mut Commands::new(&mut queue, &world));
+        };
+        let linked = || {
+            let task = AsyncComputeTaskPool::get()
+                .spawn(async { Err::<level_scripts::Linked, String>("no part".into()) });
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !task.is_finished() {
+                assert!(Instant::now() < deadline, "the task never ran");
+                std::thread::yield_now();
+            }
+            task
+        };
+        let pending =
+            || AsyncComputeTaskPool::get().spawn(std::future::pending::<Result<Built, String>>());
+        let mut level = Level::new(false);
+        for stage in [Stage::Idle, Stage::Reading(pending())] {
+            level.stage = stage;
+            level.scripts = Some(linked());
+            poll(&mut level);
+            assert!(level.scripts.is_some(), "held at {}", level.stage.name());
+            assert_eq!(level.report.scripts_reason, None);
+        }
+        level.stage = Stage::Failed;
+        poll(&mut level);
+        assert!(level.scripts.is_none(), "taken once the level failed");
+        assert_eq!(level.report.scripts_reason.as_deref(), Some("no part"));
+
+        // Still uploading, the level isn't spawned: held (the race the
+        // TV lost, the part linked before the upload ended).
+        until(&mut app, &["uploading"], |_| {});
+        {
+            let mut level = app.world_mut().resource_mut::<Level>();
+            assert!(matches!(level.stage, Stage::Uploading(_)));
+            level.scripts = Some(linked());
+            poll(&mut level);
+            assert!(level.scripts.is_some(), "held while uploading");
+            assert_eq!(level.report.scripts_reason, None);
+            level.scripts = None;
+        }
+
+        // Spawned (waiting on the renderer), it goes in.
+        until(&mut app, &["waiting"], |_| {});
+        let mut level = app.world_mut().resource_mut::<Level>();
+        assert!(level.stage.loaded().is_some());
+        level.report.scripts_reason = None;
+        level.scripts = Some(linked());
+        poll(&mut level);
+        assert!(level.scripts.is_none(), "taken once spawned");
+        assert_eq!(level.report.scripts_reason.as_deref(), Some("no part"));
     }
 
     /// A second source while the first still waits on the renderer: what
