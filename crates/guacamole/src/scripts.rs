@@ -1411,6 +1411,31 @@ impl ScriptWorld {
         out
     }
 
+    /// Whether `h` is a placement's own actor (not a clone) whose placement
+    /// has no script (openspec AS.371): what clips play on it are other
+    /// scripts' (a chain pull's chain), so nothing of its own puts it back.
+    pub fn scriptless(&self, h: Handle) -> bool {
+        self.actors.get(&h).is_some_and(|a| {
+            a.template.is_none()
+                && a.obj
+                    .and_then(|o| self.templates.get(&o))
+                    .is_some_and(|p| p.script.is_none())
+        })
+    }
+
+    /// The actors something hangs on that are [`ScriptWorld::scriptless`]
+    /// and on (openspec AS.371: the chain the galleon hangs on), in handle
+    /// order: the TV draws each skinned one as a creature, so its clips
+    /// pose the nodes what hangs on it rides.
+    pub fn scriptless_hung_on(&self) -> Vec<Handle> {
+        self.hung_on()
+            .into_iter()
+            .filter(|&h| {
+                self.scriptless(h) && self.actors.get(&h).is_some_and(|a| a.active && !a.removed)
+            })
+            .collect()
+    }
+
     /// The clones a scene walks standing on the ground under each step as
     /// [`ScriptWorld::people`] stand, by their template's name
     /// ([`crate::level_205::stretch_2_grounded`]), sorted.
@@ -4317,6 +4342,12 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
         // (openspec AS.326).
         placements.extend(
             crate::level_205::stretch_2(name)
+                .iter()
+                .map(|s| (*s).to_owned()),
+        );
+        // Level 205's chain pull at the galleon (openspec AS.371).
+        placements.extend(
+            crate::level_205::chain_pull(name)
                 .iter()
                 .map(|s| (*s).to_owned()),
         );

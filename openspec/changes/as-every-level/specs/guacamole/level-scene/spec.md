@@ -365,6 +365,17 @@ A camera's rig SHALL hold the pose its last clip reached once none plays, what h
 - **WHEN** a shot's new rig is made and isn't drawn yet
 - **THEN** the view and what hangs on the rig stay where the last rig left them until it's posed, and no frame stands at the rig's origin
 
+### Requirement: A Giant's chain pull brings its island in
+A chain pull's chain SHALL be drawn and posed by the clips its peg plays on it, what hangs on its node riding it, and SHALL hold its pull clip's end once none plays: level 205's galleon comes in to the dock for a Giant's mash and stays there. A hero who isn't a Giant SHALL get the level's need-a-Giant hint and pull nothing.
+
+#### Scenario: Tree Rex at 205's peg
+- **WHEN** a Giant takes the chain at △ and mashes until the pull plays
+- **THEN** the galleon comes within 145 ft of the peg and stays, and Cali goes on
+
+#### Scenario: Eruptor at 205's peg
+- **WHEN** a hero who isn't a Giant presses △ and mashes there
+- **THEN** the need-a-Giant hint stays up and the galleon doesn't move
+
 ### Requirement: The hub stands at the story's every point
 A hub stage SHALL show what the adventures done open, by what the host's save holds or the last level just finished: its count, its sky and zone, its people and removals and the next chapter Flynn offers. A level end just finished SHALL bring its first-visit scenes, a story movie among them played full screen, and its intro SHALL hand the hero over where every stage does, nothing stopped.
 

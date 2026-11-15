@@ -79,12 +79,18 @@ pub fn playing<'p>(
 }
 
 /// The last clip `actor` played of `sequences`, whether it played out or
-/// was stopped ([`held`]): none for one that played no clip.
-fn last_clip(sequences: &[Sequence], actor: Handle) -> Option<&Sequence> {
+/// was stopped ([`held`]): none for one that played no clip. A sound with a
+/// length started after it (the chain pull's pull sound, 13.25 s) isn't
+/// one: `is_clip` says which are.
+fn last_clip(
+    sequences: &[Sequence],
+    actor: Handle,
+    is_clip: impl Fn(&Sequence) -> bool,
+) -> Option<&Sequence> {
     sequences
         .iter()
         .rev()
-        .find(|s| s.actor == actor && s.length > 0.0 && s.laid_over())
+        .find(|s| s.actor == actor && s.length > 0.0 && s.laid_over() && is_clip(s))
 }
 
 /// What a camera's rig holds with no clip on it (openspec AS.141): the last
@@ -97,7 +103,7 @@ pub fn held<'p>(
     actor: Handle,
     palette: &'p Palette,
 ) -> Option<(&'p Clip, f64)> {
-    let s = last_clip(world.sequences(), actor)?;
+    let s = last_clip(world.sequences(), actor, |s| world.clip_of(s).is_some())?;
     let (_, slot) = world.clip_of(s)?;
     let end = f64::from(s.length) - 1e-3;
     palette.clip_at(u16::try_from(slot).ok()?, f64::from(s.time).min(end))
@@ -117,6 +123,9 @@ pub fn camera_rig_model(model: &str) -> bool {
 
 /// What a drawn actor's clips pose as the TV draws it (openspec AS.141):
 /// [`playing`], and with none on it a camera's rig holds what [`held`] says,
+/// and so does a placement with no script of its own (openspec AS.371,
+/// [`ScriptWorld::scriptless`]: the chain pull's chain holds its pull clip's
+/// end, the galleon docked on its node; stand-in ledger: `held-clip`),
 /// where any other goes back to its idle.
 pub fn posing<'p>(
     world: &ScriptWorld,
@@ -124,7 +133,7 @@ pub fn posing<'p>(
     palette: &'p Palette,
 ) -> Vec<(&'p Clip, f64)> {
     let mut on = playing(world, actor, palette);
-    if on.is_empty() && camera_rig(palette) {
+    if on.is_empty() && (camera_rig(palette) || world.scriptless(actor)) {
         on.extend(held(world, actor, palette));
     }
     on
@@ -270,11 +279,121 @@ mod tests {
             sequence(8, 4.0, 4.0, true),
         ];
         played[1].stopped = true;
-        assert_eq!(last_clip(&played, 7).map(|s| s.time), Some(1.5));
-        assert!(last_clip(&played, 9).is_none());
+        assert_eq!(last_clip(&played, 7, |_| true).map(|s| s.time), Some(1.5));
+        assert!(last_clip(&played, 9, |_| true).is_none());
         // One his locomotion's weights pose isn't laid over him.
         played[1].layered = true;
-        assert_eq!(last_clip(&played, 7).map(|s| s.time), Some(3.0));
+        assert_eq!(last_clip(&played, 7, |_| true).map(|s| s.time), Some(3.0));
+    }
+
+    /// openspec AS.371: a placement with no script of its own holds the
+    /// last clip others' scripts played on it, at its end, once nothing
+    /// plays on it (the chain pull's chain, the galleon on its node 0); one
+    /// with a script, and a clone of the scriptless one's template, go back
+    /// to their idle. The scriptless actors something hangs on are listed,
+    /// while they're on.
+    #[test]
+    fn a_scriptless_placement_holds_its_last_clip() {
+        use crate::script_engine::{Actor, Object, Sequence};
+        use crate::scripts::{Files, Placed, headless_handles, headless_objects};
+        let chain = guac_script::Obj { unit: 5, index: 1 };
+        let grunt = guac_script::Obj { unit: 5, index: 2 };
+        let files = Files {
+            placed: vec![
+                Placed::named(chain, "Titan_Chain", None, 5),
+                Placed::named(grunt, "Grunt", Some("C:/x/Grunt.ai"), 4),
+            ],
+            ..Files::default()
+        };
+        let handles = headless_handles(&files);
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let (c, g, clone) = (handles[&chain], handles[&grunt], 990);
+        world.actors.insert(
+            clone,
+            Actor {
+                template: Some(chain),
+                ..Actor::blank()
+            },
+        );
+        assert!(world.scriptless(c));
+        assert!(!world.scriptless(g) && !world.scriptless(clone));
+        let palette = Palette {
+            identity: identity(),
+            owner: "C:/tfb/Content/Models/characters/TitanChain.mdl".into(),
+            slots: 3,
+            entries: (0..3u16)
+                .map(|slot| guac_ir::palette::PaletteSlot {
+                    slot,
+                    name: None,
+                    label: None,
+                    entry: guac_ir::palette::SlotEntry::Clip {
+                        additive: false,
+                        partial: false,
+                        layered: false,
+                        motion_extraction: 0,
+                        clip: Clip {
+                            name: format!("pull{slot}.ma"),
+                            ..swing()
+                        },
+                    },
+                })
+                .collect(),
+            refused: Vec::new(),
+        };
+        for actor in [c, g, clone] {
+            for (slot, time) in [(1, 0.4), (2, 1.0)] {
+                let template = world.objs.value(Object::Clip {
+                    template: chain,
+                    slot,
+                });
+                world.sequences.push(Sequence {
+                    actor,
+                    template,
+                    length: 1.0,
+                    time,
+                    rate: 100.0,
+                    looping: false,
+                    stopped: false,
+                    done: true,
+                    blend: 100.0,
+                    kind: 0,
+                    layered: false,
+                    allow_restart: false,
+                    ping_pong: false,
+                    back: false,
+                });
+            }
+        }
+        // The pull's sound, started on the chain after its last clip, isn't
+        // one it holds.
+        world.sequences.push(Sequence {
+            template: guac_script::Value::Null,
+            length: 13.25,
+            time: 13.25,
+            ..world.sequences[0].clone()
+        });
+        let held = posing(&world, c, &palette);
+        assert_eq!(held.len(), 1, "the chain holds its pull");
+        assert_eq!(held[0].0.name, "pull2.ma");
+        assert!((held[0].1 - 0.999).abs() < 1e-6, "{}", held[0].1);
+        assert!(posing(&world, g, &palette).is_empty(), "his script's");
+        assert!(posing(&world, clone, &palette).is_empty(), "a clone");
+        // What hangs on the chain's node rides its pose; one hung on the
+        // grunt doesn't list him.
+        let (boat, other) = (991, 992);
+        for (h, on) in [(boat, c), (other, g)] {
+            let attach = world.objs.value(Object::Node(on, 0));
+            world.actors.insert(
+                h,
+                Actor {
+                    attach,
+                    ..Actor::blank()
+                },
+            );
+        }
+        assert_eq!(world.scriptless_hung_on(), [c]);
+        world.actors.get_mut(&c).unwrap().removed = true;
+        assert!(world.scriptless_hung_on().is_empty(), "taken off");
     }
 
     #[test]

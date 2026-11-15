@@ -33,7 +33,10 @@
 //!   and cannon top, level 214's Chompy pods and enemy gate lock) are drawn
 //!   and posed the same way while they're on, whether their script runs or
 //!   not (a pod has none), turned by all three of their angles as the
-//!   static clones are.
+//!   static clones are. So is a placement with no script of its own while
+//!   something hangs on it (openspec AS.371: the chain pull's chain, a
+//!   template's own actor its peg drives, the galleon on its node 0), by
+//!   the clips the peg plays on it, holding the last one's end.
 //! - The report (`/api/_test/tv`'s `creatures`): each creature's behaviour,
 //!   health and place, what the fight woke past its own (design decision
 //!   6, listed once each), what the scripts have spawned that's still on,
@@ -431,6 +434,9 @@ fn draw_creatures(
         .chain(world.people())
         .filter(|h| vm.placement_of(*h).is_some() && !inert.contains(h))
         .chain(clones)
+        // A scriptless placement something hangs on (openspec AS.371: the
+        // chain pull's chain), so its clips pose the node the galleon rides.
+        .chain(world.scriptless_hung_on())
         .filter_map(|h| {
             let a = world.actor(h)?;
             if a.removed || !a.active {

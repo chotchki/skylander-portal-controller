@@ -25,11 +25,15 @@ const LEVEL_205: &str = "level_205_piratecards";
 /// waypoint (`205_Intro_Player_Pos_WP`).
 const HAND_OVER: Vec3 = Vec3::new(146.82, 14.60, 251.97);
 
+/// The TV's run: its interface, props and sounds, and what hangs on a
+/// skinned model posed by its clips as the TV poses what it draws
+/// (openspec AS.371: the galleon on the chain pull's chain).
 fn setup() -> Setup {
     Setup {
         interface: true,
         props: true,
         sounds: true,
+        posed_rigs: true,
         ..Setup::default()
     }
 }
@@ -102,7 +106,12 @@ fn still(run: &mut Run, stops: &mut Vec<String>, actions: [bool; 4]) {
 
 /// The run joined at its start, its intro held until the join lets it go.
 fn joined_205(stops: &mut Vec<String>) -> Run {
-    let (mut run, _) = run_on_level(Mode::Play, LEVEL_205, setup());
+    joined_205_with(stops, setup())
+}
+
+/// [`joined_205`] on `setup`.
+fn joined_205_with(stops: &mut Vec<String>, setup: Setup) -> Run {
+    let (mut run, _) = run_on_level(Mode::Play, LEVEL_205, setup);
     for _ in 0..2 {
         stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
     }
@@ -2748,11 +2757,12 @@ struct AtSetup002sEnd {
 /// `level_205s_way_on_from_the_first_yard_ends_setup_002` walks it (a copy:
 /// that test is left as it stands), for the stretch on from there to carry
 /// on from: the same run, its state the one that walk leaves.
-fn on_to_setup_002s_end() -> AtSetup002sEnd {
+/// On `setup` (openspec AS.371: [`setup`]'s with a spare linked).
+fn on_to_setup_002s_end_with(setup: Setup) -> AtSetup002sEnd {
     let started = std::time::Instant::now();
     println!("load at start: {}", load());
     let mut stops = Vec::new();
-    let mut run = joined_205(&mut stops);
+    let mut run = joined_205_with(&mut stops, setup);
     let mut scenes = over_the_crane(&mut run, &mut stops);
     let (_, goal) = run.placed("Setup_001_Trigger(2)");
     let yard = fight(
@@ -3268,6 +3278,49 @@ fn local_int(run: &Run, name: &str, var: &str) -> Option<i32> {
 #[test]
 #[ignore = "reads the Giants dump"]
 fn level_205s_way_on_from_setup_002s_end_to_cali_at_the_galleon() {
+    let AtCali {
+        at:
+            AtSetup002sEnd {
+                mut run,
+                mut stops,
+                scenes,
+                trail,
+                topups,
+            },
+        lowest,
+        started,
+    } = on_to_cali_at_the_galleon(setup());
+    walks_on(&mut run, &mut stops);
+    println!(
+        "over at step {}; top-ups {topups:?}, lowest health {lowest:?}; scenes {scenes:?}; {:.1} s",
+        run.steps,
+        started.elapsed().as_secs_f64()
+    );
+    let t: Vec<String> = trail
+        .0
+        .iter()
+        .map(|p| format!("{:.2},{:.2},{:.2}", p.x, p.y, p.z))
+        .collect();
+    println!("TRAIL {}", t.join(";"));
+    let m: Vec<String> = trail.1.iter().map(|(i, n)| format!("{i}:{n}")).collect();
+    println!("MARKS {}", m.join(";"));
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
+}
+
+/// Where [`on_to_cali_at_the_galleon`] leaves him, and how the walk went.
+struct AtCali {
+    at: AtSetup002sEnd,
+    /// The hero's lowest health in Setup_003's fight.
+    lowest: Option<f32>,
+    started: std::time::Instant,
+}
+
+/// AS.326's walk on from Setup_002's end on `setup`, as
+/// [`level_205s_way_on_from_setup_002s_end_to_cali_at_the_galleon`]
+/// asserts it, to Cali handed back at her place after her scene at the
+/// galleon, waiting on the galleon pulled in.
+fn on_to_cali_at_the_galleon(setup: Setup) -> AtCali {
     let started = std::time::Instant::now();
     let AtSetup002sEnd {
         mut run,
@@ -3275,7 +3328,7 @@ fn level_205s_way_on_from_setup_002s_end_to_cali_at_the_galleon() {
         mut scenes,
         mut trail,
         mut topups,
-    } = on_to_setup_002s_end();
+    } = on_to_setup_002s_end_with(setup);
     println!(
         "Setup_002's end at step {}, {:.1} s",
         run.steps,
@@ -3450,21 +3503,214 @@ fn level_205s_way_on_from_setup_002s_end_to_cali_at_the_galleon() {
         "check if gate has been blown up"
     );
     trail.mark(&run, "cali");
-    walks_on(&mut run, &mut stops);
+    AtCali {
+        at: AtSetup002sEnd {
+            run,
+            stops,
+            scenes,
+            trail,
+            topups,
+        },
+        lowest: fight_3.lowest,
+        started,
+    }
+}
+
+/// Where a hero takes the chain pull's chain: the peg's first waypoint,
+/// where its talk point stands.
+const BY_THE_PEG: Vec3 = Vec3::new(-44.67, 25.37, 132.59);
+
+/// From Cali's place after her scene at the galleon to the peg's talk point
+/// ([`BY_THE_PEG`]), down the dock (x, z).
+const TO_THE_PEG: [(f32, f32); 2] = [(-40.0, 140.0), (BY_THE_PEG.x, BY_THE_PEG.z)];
+
+/// How near the peg Cali waits on the galleon, feet across the ground.
+const DOCKED_FT: f32 = 145.0;
+
+/// The galleon's distance from the chain pull's peg across the ground, feet.
+fn galleon_off(run: &Run) -> f32 {
+    let (g, p) = (run.at("Titan_Chain_Boat"), run.at("TitanChainPeg(1)"));
+    (g.x - p.x).hypot(g.z - p.z) / 0.3048
+}
+
+/// A field of the peg's `chain data`, if it holds one.
+fn chain_data(run: &Run, field: &str) -> Option<guac_script::Value> {
+    let id = run.vm.placement_of(run.placed("TitanChainPeg(1)").0)?;
+    let data = run.vm.value(run.vm.local(id, "chain data")?);
+    run.vm.field(data, field).map(|f| run.vm.value(f))
+}
+
+/// The level's hints up now, by their strings.
+fn hints_up(run: &Run) -> Vec<guac_script::Value> {
+    guacamole::announcements::hints(&run.vm, &run.world)
+        .into_iter()
+        .map(|l| l.string)
+        .collect()
+}
+
+/// openspec AS.371: the Giant's chain pull at the galleon, on from AS.370's
+/// walk (Cali handed back at her place, waiting on the galleon pulled in),
+/// Tree Rex linked beside Eruptor as the TV links every walker. Walked up to
+/// the peg's talk point, Eruptor gets the level's need-a-Giant hint, and △
+/// and the mash there pull nothing: the chain isn't his, the galleon stays
+/// out on the chain. Tree Rex swapped in where he stands takes the chain at
+/// △, the mash's prompt goes up and the mash counts to the pull, whose own
+/// camera and the chain's pull clip bring the galleon in to the dock on the
+/// chain's node, held there; Cali goes on past her state 4. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_205s_galleon_is_pulled_in_by_a_giant_at_its_chain() {
+    let AtCali {
+        at:
+            AtSetup002sEnd {
+                mut run,
+                mut stops,
+                mut scenes,
+                mut trail,
+                ..
+            },
+        started,
+        ..
+    } = on_to_cali_at_the_galleon(Setup {
+        spare: Some(TREE_REX),
+        ..setup()
+    });
     println!(
-        "over at step {}; top-ups {topups:?}, lowest health {:?}; scenes {scenes:?}; {:.1} s",
+        "Cali waiting at step {}, {:.1} s; the galleon {:.1} ft off the peg at {}",
         run.steps,
-        fight_3.lowest,
-        started.elapsed().as_secs_f64()
+        started.elapsed().as_secs_f64(),
+        galleon_off(&run),
+        run.at("Titan_Chain_Boat")
     );
-    let t: Vec<String> = trail
-        .0
+    assert!(galleon_off(&run) > DOCKED_FT, "the galleon in already");
+    assert_ne!(behaviour(&run, "TitanChainPeg(1)"), "asleep", "the peg on");
+    println!("from {} to the peg", run.hero().pivot);
+    if !go_by(
+        &mut run,
+        &mut stops,
+        &mut scenes,
+        &mut trail,
+        &TO_THE_PEG,
+        900,
+    ) {
+        // Held: eight headings from the spot, metres moved in 1.5 s.
+        let at = run.hero().pivot;
+        let mut moved = Vec::new();
+        for k in 0..8 {
+            run.put(at, 0.0);
+            run.bench.view = 45.0 * k as f32;
+            run.bench.hold_view = true;
+            for _ in 0..90 {
+                step(&mut run, &mut stops, Stick::new(0.0, 1.0), [false; 4]);
+            }
+            moved.push(format!("{:.2}", run.hero().pivot.distance(at)));
+        }
+        panic!(
+            "held at {at} short of the peg; eight headings {moved:?}; trail {:?}",
+            &trail.0[trail.0.len().saturating_sub(12)..]
+        );
+    }
+    for _ in 0..30 {
+        still(&mut run, &mut stops, [false; 4]);
+    }
+    let toggle = |run: &Run| local_int(run, "TitanChainPeg(1)", "announce toggle");
+    let hint = hints_up(&run);
+    println!(
+        "by the peg at step {}: hints {hint:?}, announced {:?}",
+        run.steps,
+        toggle(&run)
+    );
+    assert_eq!(toggle(&run), Some(1), "the need-a-Giant hint announced");
+    let need_a_giant = *hint
         .iter()
-        .map(|p| format!("{:.2},{:.2},{:.2}", p.x, p.y, p.z))
-        .collect();
-    println!("TRAIL {}", t.join(";"));
-    let m: Vec<String> = trail.1.iter().map(|(i, n)| format!("{i}:{n}")).collect();
-    println!("MARKS {}", m.join(";"));
+        .find(|s| matches!(s, guac_script::Value::Object(o) if o.unit == 5))
+        .expect("the level's need-a-Giant hint up");
+
+    // Eruptor isn't a Giant: △ and the mash pull nothing.
+    let off = galleon_off(&run);
+    for k in 0..900u32 {
+        still(&mut run, &mut stops, [false, false, false, k % 4 == 2]);
+        assert_ne!(toggle(&run), Some(2), "the chain taken by Eruptor");
+    }
+    println!(
+        "Eruptor at the peg 900 steps: hints {:?}, shake {:?}, the galleon {:.1} ft",
+        hints_up(&run),
+        chain_data(&run, "current shake val"),
+        galleon_off(&run)
+    );
+    assert!(
+        hints_up(&run).contains(&need_a_giant),
+        "the hint gone for Eruptor"
+    );
+    assert_eq!(
+        chain_data(&run, "current shake val"),
+        Some(guac_script::Value::Int(0))
+    );
+    assert!(chain_data(&run, "animator camera") == Some(guac_script::Value::Null));
+    assert!((galleon_off(&run) - off).abs() < 1.0, "the galleon moved");
+
+    // Tree Rex swapped in where he stands: △ takes the chain, the mash
+    // pulls.
+    run.swap_to().unwrap_or_else(|h| panic!("the swap: {h}"));
+    println!("Tree Rex in at step {}", run.steps);
+    assert_eq!(run.toy, TREE_REX.toy);
+    let (mut took, mut mash_up, mut camera, mut docked, mut on) = (None, None, None, None, None);
+    let mut most_shake = 0.0f32;
+    for k in 0..4000u32 {
+        trail.note(&run);
+        if toggle(&run) == Some(2) && took.is_none() {
+            took = Some(run.steps);
+        }
+        if mash_up.is_none()
+            && !guacamole::announcements::gesture_prompts(&run.vm, &run.world).is_empty()
+        {
+            mash_up = Some(run.steps);
+        }
+        if let Some(guac_script::Value::Float(f)) = chain_data(&run, "current shake val") {
+            most_shake = most_shake.max(f);
+        }
+        if camera.is_none()
+            && chain_data(&run, "animator camera").is_some_and(|v| v != guac_script::Value::Null)
+        {
+            camera = Some(run.steps);
+        }
+        if docked.is_none() && galleon_off(&run) < DOCKED_FT {
+            docked = Some(run.steps);
+        }
+        if on.is_none() && local_int(&run, "Cali", "speakerinit").is_some_and(|s| s > 4) {
+            on = Some(run.steps);
+        }
+        if on.is_some() && docked.is_some_and(|d| run.steps > d + 600) {
+            break;
+        }
+        // △ until he's taken the chain, then the mash as a kid mashes it.
+        let press = match took {
+            None => k % 20 == 10,
+            Some(_) => camera.is_none() && k % 4 == 2,
+        };
+        still(&mut run, &mut stops, [false, false, false, press]);
+    }
+    println!(
+        "took the chain {took:?}, the mash up {mash_up:?} (shake to {most_shake}), the pull's camera {camera:?}, the galleon in {docked:?}, Cali on {on:?} (state {:?}); the galleon {:.1} ft off at {}; hints {:?}",
+        local_int(&run, "Cali", "speakerinit"),
+        galleon_off(&run),
+        run.at("Titan_Chain_Boat"),
+        hints_up(&run)
+    );
+    assert!(took.is_some(), "Tree Rex never took the chain");
+    assert!(mash_up.is_some(), "no mash prompt");
+    assert!(most_shake >= 300.0, "the mash short: {most_shake}");
+    assert!(camera.is_some(), "the pull's own camera");
+    assert!(
+        docked.is_some(),
+        "the galleon out: {:.1} ft",
+        galleon_off(&run)
+    );
+    assert!(on.is_some(), "Cali held at her state 4");
+    // In for good: the chain holds its pull's end.
+    assert!(galleon_off(&run) < DOCKED_FT, "the galleon back out");
+    assert!(!hints_up(&run).contains(&need_a_giant), "the hint up still");
+    println!("{:.1} s", started.elapsed().as_secs_f64());
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
 }
