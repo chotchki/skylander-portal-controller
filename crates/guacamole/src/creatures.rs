@@ -409,6 +409,40 @@ pub(crate) fn skinned_clones(world: &ScriptWorld, holds: impl Fn(&str) -> bool) 
         .collect()
 }
 
+/// What [`draw_creatures`] draws, each with its model's path: the walked
+/// creatures and the people whose script `runs`, the skinned clones the
+/// level `holds` models for, and a scriptless placement something hangs on
+/// (openspec AS.371: the chain pull's chain, so its clips pose the node the
+/// galleon rides), each while it's on.
+pub(crate) fn wanted(
+    world: &ScriptWorld,
+    runs: impl Fn(Handle) -> bool,
+    holds: impl Fn(&str) -> bool,
+) -> Vec<(Handle, String)> {
+    let clones = skinned_clones(world, holds);
+    world
+        .creatures()
+        .into_iter()
+        .chain(world.people())
+        .filter(|h| runs(*h))
+        .chain(clones)
+        .chain(world.scriptless_hung_on())
+        .filter_map(|h| {
+            let a = world.actor(h)?;
+            if a.removed || !a.active {
+                return None;
+            }
+            let path = a
+                .obj
+                .or(a.template)
+                .and_then(|o| world.template(o))?
+                .model
+                .clone()?;
+            Some((h, path))
+        })
+        .collect()
+}
+
 /// Each awake creature whose script runs and each skinned clone that's on
 /// drawn on its model, once its keys are compiled (asked for if they
 /// aren't); each taken off, asleep or gone from the run let go (the module
@@ -427,30 +461,11 @@ fn draw_creatures(
     };
     let vm = &runtime.vm;
     let inert = vm.inert();
-    let clones = skinned_clones(&world, |path| level.creature(path).is_some());
-    let wanted: Vec<(Handle, String)> = world
-        .creatures()
-        .into_iter()
-        .chain(world.people())
-        .filter(|h| vm.placement_of(*h).is_some() && !inert.contains(h))
-        .chain(clones)
-        // A scriptless placement something hangs on (openspec AS.371: the
-        // chain pull's chain), so its clips pose the node the galleon rides.
-        .chain(world.scriptless_hung_on())
-        .filter_map(|h| {
-            let a = world.actor(h)?;
-            if a.removed || !a.active {
-                return None;
-            }
-            let path = a
-                .obj
-                .or(a.template)
-                .and_then(|o| world.template(o))?
-                .model
-                .clone()?;
-            Some((h, path))
-        })
-        .collect();
+    let wanted = wanted(
+        &world,
+        |h| vm.placement_of(h).is_some() && !inert.contains(&h),
+        |path| level.creature(path).is_some(),
+    );
     // Let go of what's no longer wanted.
     let gone: Vec<Handle> = drawn
         .0
@@ -1385,6 +1400,40 @@ mod tests {
             t.translation.distance(Vec3::from_array(ART_AT)) < 1e-4,
             "{t:?}"
         );
+    }
+
+    /// openspec AS.371: a placement with no script something hangs on (the
+    /// chain pull's chain, the galleon on its node 0) is drawn on its model;
+    /// nothing hanging on it, or taken off, it isn't.
+    #[test]
+    fn a_scriptless_placement_something_hangs_on_is_drawn() {
+        use guacamole::scripts::{Files, Placed, headless_handles, headless_objects};
+        let chain = guac_script::Obj { unit: 5, index: 1 };
+        let boat = guac_script::Obj { unit: 5, index: 2 };
+        let files = Files {
+            placed: vec![
+                Placed {
+                    model: Some("C:/m/TitanChain.mdl".into()),
+                    ..Placed::named(chain, "Titan_Chain", None, 5)
+                },
+                Placed::named(boat, "Titan_Chain_Boat", None, 4),
+            ],
+            ..Files::default()
+        };
+        let handles = headless_handles(&files);
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let (c, b) = (handles[&chain], handles[&boat]);
+        assert!(
+            wanted(&world, |_| false, |_| true).is_empty(),
+            "nothing on it"
+        );
+        assert!(world.hang(b, c, 0));
+        assert_eq!(
+            wanted(&world, |_| false, |_| true),
+            [(c, "C:/m/TitanChain.mdl".to_owned())]
+        );
+        assert!(world.take_off(chain));
+        assert!(wanted(&world, |_| false, |_| true).is_empty(), "taken off");
     }
 
     /// openspec AS.180: a person is reported posed by the clips the TV
