@@ -4476,7 +4476,7 @@ mod tests {
         assert!(level.stage.loaded().is_some());
         level.report.scripts_reason = None;
         level.scripts = Some(linked());
-        poll(&mut *level);
+        poll(&mut level);
         assert!(level.scripts.is_none(), "taken once spawned");
         assert_eq!(level.report.scripts_reason.as_deref(), Some("no part"));
     }
