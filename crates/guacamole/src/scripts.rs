@@ -4385,6 +4385,13 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
                 .iter()
                 .map(|s| (*s).to_owned()),
         );
+        // Level 205's way on from Setup_003's end to Setup_004's end
+        // (openspec AS.327).
+        placements.extend(
+            crate::level_205::stretch_3(name)
+                .iter()
+                .map(|s| (*s).to_owned()),
+        );
         // Level 205's people and scenes (openspec AS.286).
         placements.extend(crate::level_205::listed(name).map(str::to_owned));
         // Level 205's end (openspec AS.287).

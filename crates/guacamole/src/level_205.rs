@@ -330,6 +330,30 @@ pub fn galleon(level: &str) -> &'static [&'static str] {
     }
 }
 
+/// The way on from Setup_003's end to Setup_004's end (openspec AS.327),
+/// by placement name, listed and never walked (CANDIDATES, being pruned).
+pub const STRETCH_3: [&str; 10] = [
+    "Remove_Part2",
+    "Remove_Part3",
+    "Switch_Controller_template(1)",
+    "Switch_Straight_Art_Template(1)",
+    "Cannon_Blocker",
+    "Breakable_Metal_Wall(1)",
+    "Breakable_Metal_Wall(2)",
+    "Breakable_Metal_Wall(5)",
+    "Interior_Door(8)",
+    "Interior_Door(6)",
+];
+
+/// The placements [`STRETCH_3`] lists for the level whose archive is
+/// `level`: none on another level.
+pub fn stretch_3(level: &str) -> &'static [&'static str] {
+    match level {
+        LEVEL => &STRETCH_3,
+        _ => &[],
+    }
+}
+
 /// The cannon's ball (openspec AS.372), whose clones fly without falling
 /// until their script sets their gravity (stand-in ledger: `cannon-shot`):
 /// the ball's STARTUP takes its fall off under a check of a variable the VM
@@ -391,19 +415,41 @@ pub const CARD_HOUSE_PIRATE: &str = "CardGame_Template(2)";
 /// key are the level's own. Whether it stood in this step, on level unit
 /// `unit`.
 pub fn card_house_stand_in(vm: &mut Vm, world: &mut ScriptWorld, unit: u16) -> bool {
-    let Some(fangs) = world
-        .placed_in(unit, CARD_HOUSE_PIRATE)
+    won_where_quit(vm, world, unit, CARD_HOUSE_PIRATE)
+}
+
+/// The jailed pirate (the bandit), who challenges the hero to his card game
+/// once the push cannon's ball breaks his cell's wall; his cell's scene
+/// (`CardPirate_Bandit_Cine`) waits on that game won before it tells the
+/// gate's pirate to let the hero by.
+pub const JAIL_PIRATE: &str = "CardGame_Template(1)_Bandit";
+
+/// The jailed pirate's card game won where the TV has no card game
+/// (openspec AS.327; the disc test's, stand-in ledger: `dev-entry`), as
+/// [`card_house_stand_in`] stands in Fangs': a quit turned to a game still
+/// running and `CardTheatricsDone` set. From there his cell's scene, the
+/// gate's pirate and the gate are the level's own. Whether it stood in
+/// this step, on level unit `unit`.
+pub fn jail_stand_in(vm: &mut Vm, world: &mut ScriptWorld, unit: u16) -> bool {
+    won_where_quit(vm, world, unit, JAIL_PIRATE)
+}
+
+/// `pirate`'s quit card game turned to a game still running with
+/// [`GAME_WON`] set: whether there was one to turn.
+fn won_where_quit(vm: &mut Vm, world: &mut ScriptWorld, unit: u16, pirate: &str) -> bool {
+    let Some(id) = world
+        .placed_in(unit, pirate)
         .and_then(|h| vm.placement_of(h))
     else {
         return false;
     };
-    if vm.local(fangs, GAME_RESULT).map(|v| vm.value(v)) != Some(Value::Int(GAME_QUIT)) {
+    if vm.local(id, GAME_RESULT).map(|v| vm.value(v)) != Some(Value::Int(GAME_QUIT)) {
         return false;
     }
     let Some(g) = vm.program().global_named(GAME_WON) else {
         return false;
     };
-    vm.set_local(fangs, GAME_RESULT, Value::Int(0)) && vm.set_global(g, Value::Int(1))
+    vm.set_local(id, GAME_RESULT, Value::Int(0)) && vm.set_global(g, Value::Int(1))
 }
 
 /// Level 205's people (openspec AS.286), by placement name, drawn awake on
