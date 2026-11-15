@@ -556,6 +556,22 @@ fn fight(
     goal: Vec3,
     cap: u32,
 ) -> Fought {
+    fight_to(run, stops, controller, foes, goal, cap, &|run: &Run| {
+        behaviour(run, controller) == "removed"
+    })
+}
+
+/// [`fight`], over once `done` holds rather than once the controller goes
+/// (`controller` still logged).
+fn fight_to(
+    run: &mut Run,
+    stops: &mut Vec<String>,
+    controller: &str,
+    foes: &[&str],
+    goal: Vec3,
+    cap: u32,
+    done: &dyn Fn(&Run) -> bool,
+) -> Fought {
     let mut fought = Fought::default();
     let mut last: HashMap<String, String> = HashMap::new();
     let (mut pressed, start) = (0u32, run.steps);
@@ -575,7 +591,7 @@ fn fight(
         if (run.steps - start).is_multiple_of(15) {
             fought.trail.push(run.hero().pivot);
         }
-        if behaviour(run, controller) == "removed" {
+        if done(run) {
             fought.ended = true;
             return fought;
         }
@@ -1842,6 +1858,755 @@ fn hub_talk(run: &mut Run, stops: &mut Vec<String>, at: Vec3, yes: bool) -> Vec<
     }
     still(run, stops, [false; 4]);
     asked
+}
+
+/// Where the hero has stood every quarter second over AS.325's stretch, for
+/// the Mac's driver to follow, and where each of its legs ended (the
+/// trail's length then, the leg's name).
+#[derive(Default)]
+struct Trail(Vec<Vec3>, Vec<(usize, &'static str)>);
+
+impl Trail {
+    fn note(&mut self, run: &Run) {
+        if run.steps.is_multiple_of(15) {
+            self.0.push(run.hero().pivot);
+        }
+    }
+
+    fn mark(&mut self, run: &Run, leg: &'static str) {
+        self.0.push(run.hero().pivot);
+        self.1.push((self.0.len(), leg));
+    }
+}
+
+/// Cutscenes waited out, a prompt's question answered yes as the TV's modal
+/// answers it, and Fangs' game stood in won (`level_205::card_house_stand_in`)
+/// before the step: whether the step was the scene's.
+fn scene_step(
+    run: &mut Run,
+    stops: &mut Vec<String>,
+    scenes: &mut Vec<(u32, String)>,
+    stood_in: &mut u32,
+) -> bool {
+    if let Some(p) = guacamole::prompt::up(&run.vm, &run.world) {
+        assert!(
+            run.with_host(|vm, host| guacamole::prompt::answer(vm, host, &p, true))
+                .unwrap_or_else(|h| panic!("the answer: {h}"))
+        );
+    }
+    if guacamole::level_205::card_house_stand_in(&mut run.vm, &mut run.world, LEVEL) {
+        *stood_in += 1;
+    }
+    if let Some(cs) = cutscene_name(run) {
+        if scenes.last().is_none_or(|(_, n)| *n != cs) {
+            scenes.push((run.steps, cs));
+        }
+        still(run, stops, [false; 4]);
+        return true;
+    }
+    if guacamole::anchors::scene_holds(&run.vm) {
+        still(run, stops, [false; 4]);
+        return true;
+    }
+    false
+}
+
+/// The stick held toward each of `points` (x, z) in turn until he's within
+/// 0.7 m of it across the ground, cutscenes waited out: whether he came to
+/// the last within `cap` steps a point.
+fn go_by(
+    run: &mut Run,
+    stops: &mut Vec<String>,
+    scenes: &mut Vec<(u32, String)>,
+    trail: &mut Trail,
+    points: &[(f32, f32)],
+    cap: u32,
+) -> bool {
+    let mut stood_in = 0;
+    for &(x, z) in points {
+        let mut there = false;
+        for _ in 0..cap {
+            trail.note(run);
+            if scene_step(run, stops, scenes, &mut stood_in) {
+                continue;
+            }
+            let me = run.hero().pivot;
+            let (dx, dz) = (x - me.x, z - me.z);
+            if dx.hypot(dz) < 0.7 {
+                there = true;
+                break;
+            }
+            run.bench.view = dx.atan2(dz).to_degrees();
+            run.bench.hold_view = true;
+            step(run, stops, Stick::new(0.0, 1.0), [false; 4]);
+        }
+        if !there {
+            println!("!! short of ({x}, {z}) at {}", run.hero().pivot);
+            return false;
+        }
+    }
+    true
+}
+
+/// Over the flood's cells ([`way_to`]) to within 0.7 m of the cell nearest
+/// `to`, which must lie within `near` m of it.
+fn walk_to(
+    run: &mut Run,
+    stops: &mut Vec<String>,
+    scenes: &mut Vec<(u32, String)>,
+    trail: &mut Trail,
+    to: Vec3,
+    near: f32,
+) {
+    walk_until(run, stops, scenes, trail, to, near, &|_| false);
+}
+
+/// [`walk_to`], over early once `stop` holds (a room's door taking him out).
+fn walk_until(
+    run: &mut Run,
+    stops: &mut Vec<String>,
+    scenes: &mut Vec<(u32, String)>,
+    trail: &mut Trail,
+    to: Vec3,
+    near: f32,
+    stop: &dyn Fn(&Run) -> bool,
+) {
+    let (way, off) = way_to(run, run.hero().pivot, to);
+    assert!(
+        off < near,
+        "{to} is {off:.1} m off any walk from {}",
+        run.hero().pivot
+    );
+    // The stick on the first cell 1.5 m off past the nearest of the next
+    // six, as [`walk`] aims.
+    let flat = |a: Vec3, b: Vec3| Vec3::new(a.x - b.x, 0.0, a.z - b.z).length();
+    let (mut next, mut stood_in) = (0, 0);
+    for _ in 0..8000 {
+        trail.note(run);
+        if scene_step(run, stops, scenes, &mut stood_in) {
+            continue;
+        }
+        let at = run.hero().pivot;
+        if flat(at, *way.last().unwrap()) < 0.7 || stop(run) {
+            return;
+        }
+        next = (next..(next + 6).min(way.len()))
+            .min_by(|a, b| flat(at, way[*a]).total_cmp(&flat(at, way[*b])))
+            .unwrap();
+        let aim = way[next..]
+            .iter()
+            .find(|c| flat(at, **c) > 1.5)
+            .unwrap_or(way.last().unwrap());
+        run.bench.view = (aim.x - at.x).atan2(aim.z - at.z).to_degrees();
+        run.bench.hold_view = true;
+        step(run, stops, Stick::new(0.0, 1.0), [false; 4]);
+    }
+    panic!(
+        "toward {to}: at {}, in {:?} (held {}), scenes {scenes:?}",
+        run.hero().pivot,
+        cutscene_name(run),
+        guacamole::anchors::scene_holds(&run.vm)
+    );
+}
+
+/// △ tapped every 20 steps until `done` holds or `cap` steps pass: whether
+/// it held.
+fn tap_until(
+    run: &mut Run,
+    stops: &mut Vec<String>,
+    cap: u32,
+    done: &dyn Fn(&Run) -> bool,
+) -> bool {
+    for k in 0..cap {
+        if done(run) {
+            return true;
+        }
+        still(run, stops, [false, false, false, k % 20 == 10]);
+    }
+    done(run)
+}
+
+/// A push block shoved along `heading` (degrees, the stick's) as a kid
+/// pushes it, the stick held at a point 3 m past it, until `done` holds:
+/// how many moves it made.
+fn shove(
+    run: &mut Run,
+    stops: &mut Vec<String>,
+    trail: &mut Trail,
+    block: &str,
+    heading: f32,
+    done: &dyn Fn(&Run) -> bool,
+) -> u32 {
+    let h = run.placed(block).0;
+    let along = Vec3::new(heading.to_radians().sin(), 0.0, heading.to_radians().cos());
+    let (mut moves, mut was) = (0, false);
+    for _ in 0..1500 {
+        trail.note(run);
+        if done(run) {
+            break;
+        }
+        let aim = run.world.actor(h).unwrap().position + along * 3.0;
+        let me = run.hero().pivot;
+        run.bench.view = (aim.x - me.x).atan2(aim.z - me.z).to_degrees();
+        run.bench.hold_view = true;
+        step(run, stops, Stick::new(0.0, 1.0), [false; 4]);
+        let now = behaviour(run, block).starts_with("2.");
+        moves += u32::from(now && !was);
+        was = now;
+    }
+    for _ in 0..30 {
+        still(run, stops, [false; 4]);
+    }
+    moves
+}
+
+/// Blobbers' crane's wheel, from the ground west of the crane up the north
+/// steps onto its deck, and back.
+const UP_TO_THE_WHEEL: [(f32, f32); 6] = [
+    (50.0, 139.0),
+    (56.0, 139.0),
+    (60.0, 138.5),
+    (60.0, 136.0),
+    (57.0, 133.0),
+    (54.5, 131.6),
+];
+const DOWN_FROM_THE_WHEEL: [(f32, f32); 6] = [
+    (57.0, 133.0),
+    (60.0, 136.0),
+    (60.0, 138.5),
+    (56.0, 139.0),
+    (50.0, 139.0),
+    (47.0, 133.0),
+];
+
+/// Every enemy Setup_002's sets name, and its heavy elf.
+const SETUP_002_FOES: [&str; 15] = [
+    "Enemy_Chompy(1)",
+    "Enemy_Chompy(2)",
+    "Enemy_Chompy(3)",
+    "Enemy_Chompy(4)",
+    "Enemy_Chompy(5)",
+    "Enemy_Chompy(6)",
+    "Enemy_Chompy(7)",
+    "Enemy_Chompy(8)",
+    "Enemy_Chompy(9)",
+    "Enemy_Chompy(10)",
+    "Enemy_Chompy(11)",
+    "Enemy_Chompy(12)",
+    "Enemy_Elf_Heavy_S2(1)",
+    "Enemy_Elf_Lobber(3)",
+    "Enemy_Elf_Lobber(4)",
+];
+
+/// The armored Chompy and the market's three, whom its intro sets on him.
+const MARKET_FOES: [&str; 4] = [
+    "Enemy_Chompy(13)",
+    "Enemy_Chompy(14)",
+    "Enemy_Chompy(15)",
+    "Enemy_Chompy(16)",
+];
+
+/// The crane's facing now, 0-360.
+fn crane(run: &Run) -> f32 {
+    facing(run, "Crane(2)").rem_euclid(360.0)
+}
+
+/// openspec AS.325: level 205 from its first yard to Setup_002's end, each
+/// thing on the way worked by its own trigger. Over the crane (AS.283) and
+/// through Setup_001 (AS.305); the five gone, the jump pad below the key
+/// ledge throws him up onto it and he takes the first key; off the ledge
+/// the key opens the door west of the yard; in the market the armored
+/// Chompy's intro plays and its Chompies are fought; at Blobbers' crane the
+/// wheel turns the boat south, the block by it is pushed aboard, the boat
+/// turned west carries it and it's pushed off the far end into the
+/// channel, and turned south again the boat bridges the gap and the block
+/// past it is pushed into the channel there; in Setup_002's yard the
+/// pirate with the key runs into the card house, its door opening for him;
+/// in the house Fangs' intro plays, his game is stood in won (the TV has
+/// no card game, AS.329), his outro plays and the gate before the key
+/// lowers, and the key taken, the gate by the door; carried back to the
+/// yard the key sets Setup_002's fight off, which ends with its
+/// controller. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let mut stops = Vec::new();
+    let mut run = joined_205(&mut stops);
+    let mut scenes = over_the_crane(&mut run, &mut stops);
+    let (_, goal) = run.placed("Setup_001_Trigger(2)");
+    let yard = fight(
+        &mut run,
+        &mut stops,
+        "Setup_001_Controller",
+        &YARD_FOES,
+        goal,
+        8000,
+    );
+    assert!(yard.ended, "the first yard: {:?}", yard.log);
+    scenes.extend(yard.scenes.iter().cloned());
+    println!("the first yard over at step {}", run.steps);
+    let mut trail = Trail::default();
+    let mut topups = yard.topups.clone();
+    trail.mark(&run, "yard-end");
+
+    // The jump pad, laid once the five are gone, throws him up onto the
+    // key ledge.
+    let pad = run.placed("PvP_JumpPad_SUPER(8)").0;
+    let pad_range = |run: &Run| run.world.actor(pad).map(|a| a.range);
+    assert_eq!(pad_range(&run), Some(0.0), "no pad before");
+    walk_to(
+        &mut run,
+        &mut stops,
+        &mut scenes,
+        &mut trail,
+        Vec3::new(88.7, 17.8, 170.0),
+        1.5,
+    );
+    // Its pan to the pad, then it goes.
+    let pan_from = run.steps;
+    let mut stood_in = 0;
+    for _ in 0..600 {
+        if behaviour(&run, "SpecialJumpPadActivator_For_JumpPad08") == "removed" {
+            break;
+        }
+        if !scene_step(&mut run, &mut stops, &mut scenes, &mut stood_in) {
+            still(&mut run, &mut stops, [false; 4]);
+        }
+    }
+    println!("the pad's activator done {} steps on", run.steps - pan_from);
+    assert_eq!(
+        behaviour(&run, "SpecialJumpPadActivator_For_JumpPad08"),
+        "removed",
+        "the pad's activator done"
+    );
+    assert_eq!(pad_range(&run), Some(230.0), "the pad laid");
+    trail.mark(&run, "pad");
+    let below = run.hero().pivot.y;
+    run.bench.view = 180.0;
+    run.bench.hold_view = true;
+    for _ in 0..240 {
+        trail.note(&run);
+        step(&mut run, &mut stops, Stick::new(0.0, 1.0), [false; 4]);
+    }
+    let ledge = run.hero().pivot;
+    println!("thrown from {below:.2} up to {ledge} at step {}", run.steps);
+    assert!(ledge.y > below + 3.0, "up on the ledge: {ledge}");
+    trail.mark(&run, "ledge");
+    let key_held = |run: &Run| {
+        run.world.clones().into_iter().any(|h| {
+            run.world.name(h) == "Key Pickup"
+                && run.world.actor(h).is_some_and(|a| !a.removed)
+                && run
+                    .vm
+                    .placement_of(h)
+                    .and_then(|i| run.vm.behaviour(i))
+                    .is_some_and(|b| b == "grabbed by player")
+        })
+    };
+    assert!(key_held(&run), "the first key taken");
+
+    // Off the ledge to the door west of the yard: △ turns the key and it
+    // opens.
+    run.bench.view = 0.0;
+    for _ in 0..90 {
+        trail.note(&run);
+        step(&mut run, &mut stops, Stick::new(0.0, 1.0), [false; 4]);
+    }
+    walk_to(
+        &mut run,
+        &mut stops,
+        &mut scenes,
+        &mut trail,
+        Vec3::new(71.2, 17.85, 173.5),
+        1.5,
+    );
+    trail.mark(&run, "door");
+    assert!(
+        tap_until(&mut run, &mut stops, 900, &|r| behaviour(
+            r,
+            "Door_Template(3)"
+        ) == "done"),
+        "the key door open: {}",
+        behaviour(&run, "Door_Template(3)")
+    );
+    assert!(!key_held(&run), "the key in its lock");
+    println!("the key door open at step {}", run.steps);
+
+    trail.mark(&run, "door-open");
+    // The market: the armored Chompy's intro, then its Chompies fought on
+    // the way to the crane.
+    walk_to(
+        &mut run,
+        &mut stops,
+        &mut scenes,
+        &mut trail,
+        Vec3::new(64.2, 20.6, 158.7),
+        1.5,
+    );
+    let west_of_crane = Vec3::new(47.2, 21.12, 133.06);
+    trail.mark(&run, "market");
+    let market = fight_to(
+        &mut run,
+        &mut stops,
+        "IGC_Armored_Chompy",
+        &MARKET_FOES,
+        west_of_crane,
+        9000,
+        &|r: &Run| {
+            let me = r.hero().pivot;
+            MARKET_FOES
+                .iter()
+                .all(|n| matches!(behaviour(r, n).as_str(), "removed" | "asleep"))
+                && Vec3::new(me.x - west_of_crane.x, 0.0, me.z - west_of_crane.z).length() < 1.5
+        },
+    );
+    scenes.extend(market.scenes.iter().cloned());
+    topups.extend(market.topups.iter().copied());
+    trail.0.extend(market.trail.iter().copied());
+    assert!(market.ended, "the market: {:?}", market.log);
+    assert!(
+        scenes.iter().any(|(_, n)| n == "205_IGC_Armored_Chompy"),
+        "the armored Chompy's intro: {scenes:?}"
+    );
+    println!("by the crane at step {}", run.steps);
+
+    trail.mark(&run, "crane-west");
+    // Blobbers' crane: south, the block aboard, west, the block off into
+    // the channel, south again, the far block into the channel there.
+    assert_eq!(crane(&run), 270.0, "the boat lies west");
+    let turn = |run: &mut Run,
+                stops: &mut Vec<String>,
+                scenes: &mut Vec<(u32, String)>,
+                trail: &mut Trail,
+                to: f32| {
+        assert!(
+            go_by(run, stops, scenes, trail, &UP_TO_THE_WHEEL, 900),
+            "at the wheel"
+        );
+        trail.mark(
+            run,
+            if to == 180.0 {
+                "wheel-south"
+            } else {
+                "wheel-west"
+            },
+        );
+        assert!(
+            tap_until(run, stops, 900, &|r| crane(r) == to
+                && behaviour(r, "Crane(2)").starts_with("turned")),
+            "the crane turned to {to}: {}",
+            crane(run)
+        );
+        assert_eq!(
+            facing(run, "Crane_Head(1)").rem_euclid(360.0),
+            to,
+            "its mast with it"
+        );
+        assert!(
+            go_by(run, stops, scenes, trail, &DOWN_FROM_THE_WHEEL, 900),
+            "down from the wheel"
+        );
+        trail.mark(run, "down");
+    };
+    turn(&mut run, &mut stops, &mut scenes, &mut trail, 180.0);
+    assert!(go_by(
+        &mut run,
+        &mut stops,
+        &mut scenes,
+        &mut trail,
+        &[(49.7, 117.0)],
+        900
+    ));
+    trail.mark(&run, "block-1");
+    let aboard = shove(
+        &mut run,
+        &mut stops,
+        &mut trail,
+        "Push_Block_Template(1)",
+        180.0,
+        &|r| {
+            r.at("Push_Block_Template(1)").z < 108.5
+                && behaviour(r, "Push_Block_Template(1)").starts_with("1.")
+        },
+    );
+    trail.mark(&run, "pushed-1");
+    let on_boat = run.at("Push_Block_Template(1)");
+    println!("the block aboard at {on_boat} in {aboard} moves");
+    assert!(on_boat.z < 108.5, "aboard: {on_boat}");
+    assert!(go_by(
+        &mut run,
+        &mut stops,
+        &mut scenes,
+        &mut trail,
+        &[(47.0, 125.0), (47.0, 133.0)],
+        900
+    ));
+    turn(&mut run, &mut stops, &mut scenes, &mut trail, 270.0);
+    assert_eq!(
+        behaviour(&run, "Push_Block_Template(1)"),
+        "asleep",
+        "carried off"
+    );
+    // The crate that draws the block riding the boat went west with it.
+    let crate_z = run.at("FAke_Block(2)").z;
+    assert!(
+        crate_z > 125.0,
+        "the riding crate carried west: z {crate_z}"
+    );
+    assert!(
+        behaviour(&run, "Push_Block_Template(2)").starts_with("1."),
+        "at the boat's west end: {}",
+        behaviour(&run, "Push_Block_Template(2)")
+    );
+    assert!(go_by(
+        &mut run,
+        &mut stops,
+        &mut scenes,
+        &mut trail,
+        &[(40.0, 131.0), (31.5, 130.7)],
+        900
+    ));
+    trail.mark(&run, "block-2");
+    let off_west = shove(
+        &mut run,
+        &mut stops,
+        &mut trail,
+        "Push_Block_Template(2)",
+        270.0,
+        &|r| r.at("Push_Block_Template(2)").y < 18.5,
+    );
+    trail.mark(&run, "pushed-2");
+    let west = run.at("Push_Block_Template(2)");
+    println!("the block in the west channel at {west} in {off_west} moves");
+    assert!(west.y < 18.5, "in the channel: {west}");
+    assert!(go_by(
+        &mut run,
+        &mut stops,
+        &mut scenes,
+        &mut trail,
+        &[(24.0, 130.7), (31.0, 130.7), (40.0, 131.0), (47.0, 133.0)],
+        900
+    ));
+    turn(&mut run, &mut stops, &mut scenes, &mut trail, 180.0);
+    assert!(go_by(
+        &mut run,
+        &mut stops,
+        &mut scenes,
+        &mut trail,
+        &[(49.7, 116.0), (49.7, 111.0), (49.7, 102.5)],
+        900
+    ));
+    trail.mark(&run, "block-7");
+    let into = shove(
+        &mut run,
+        &mut stops,
+        &mut trail,
+        "Push_Block_Template(7)",
+        180.0,
+        &|r| behaviour(r, "Push_Block_Template(7)") == "special - push block inactive",
+    );
+    trail.mark(&run, "pushed-7");
+    let south = run.at("Push_Block_Template(7)");
+    println!(
+        "the far block in the channel at {south} in {into} moves, step {}",
+        run.steps
+    );
+    assert_eq!(
+        behaviour(&run, "Push_Block_Template(7)"),
+        "special - push block inactive"
+    );
+
+    // Setup_002's yard: its first Chompies fought as they come, the pirate
+    // with the key off into the card house, its door swung open for him.
+    let door = Vec3::new(39.5, 26.3, 53.5);
+    let part_1 = &SETUP_002_FOES[..6];
+    let yard_2 = fight_to(
+        &mut run,
+        &mut stops,
+        "Setup_002_Controller",
+        part_1,
+        door,
+        9000,
+        &|r: &Run| {
+            let me = r.hero().pivot;
+            behaviour(r, "Fake_Card_Pirate_1") == "removed"
+                && Vec3::new(me.x - door.x, 0.0, me.z - door.z).length() < 1.5
+        },
+    );
+    scenes.extend(yard_2.scenes.iter().cloned());
+    topups.extend(yard_2.topups.iter().copied());
+    trail.0.extend(yard_2.trail.iter().copied());
+    assert!(yard_2.ended, "to the card house: {:?}", yard_2.log);
+    let woke = yard_2
+        .log
+        .iter()
+        .find(|e| e.1 == "Setup_002_Controller" && e.2 == "wait")
+        .map(|e| e.0);
+    println!(
+        "Setup_002 waiting from step {woke:?}; at the card house at step {}",
+        run.steps
+    );
+    assert!(woke.is_some(), "Setup_002 woke: {:?}", yard_2.log);
+
+    trail.mark(&run, "card-house");
+    // Into the card house: Fangs' intro, his game (stood in won), his
+    // outro, the gate before the key down.
+    let mut stood_in = 0;
+    for _ in 0..600 {
+        trail.note(&run);
+        if run.hero().pivot.y < -300.0 {
+            break;
+        }
+        run.bench.view = (38.7f32 - run.hero().pivot.x)
+            .atan2(51.2 - run.hero().pivot.z)
+            .to_degrees();
+        step(&mut run, &mut stops, Stick::new(0.0, 1.0), [false; 4]);
+    }
+    assert!(
+        run.hero().pivot.y < -300.0,
+        "in the card house: {}",
+        run.hero().pivot
+    );
+    let by_fangs = Vec3::new(377.0, -304.4, 288.3);
+    let mut lowered = false;
+    for k in 0..6000u32 {
+        trail.note(&run);
+        if behaviour(&run, "Spike_Gate_Wooden_Template(2)").starts_with("spikes in down") {
+            lowered = true;
+            break;
+        }
+        if scene_step(&mut run, &mut stops, &mut scenes, &mut stood_in) {
+            continue;
+        }
+        let me = run.hero().pivot;
+        let (dx, dz) = (by_fangs.x - me.x, by_fangs.z - me.z);
+        if dx.hypot(dz) < 1.0 {
+            still(&mut run, &mut stops, [false, false, false, k % 20 == 10]);
+        } else {
+            run.bench.view = dx.atan2(dz).to_degrees();
+            step(&mut run, &mut stops, Stick::new(0.0, 1.0), [false; 4]);
+        }
+    }
+    println!(
+        "the key's gate down {lowered} at step {}, stood in {stood_in}",
+        run.steps
+    );
+    assert!(
+        lowered,
+        "the gate before the key: {}",
+        behaviour(&run, "Spike_Gate_Wooden_Template(2)")
+    );
+    assert_eq!(stood_in, 1, "his game stood in once");
+    assert_eq!(behaviour(&run, "Gate_Killer"), "removed");
+    for scene in ["Casino Pirate Intro", "Casino Pirate Outro"] {
+        assert!(
+            scenes.iter().any(|(_, n)| n == scene),
+            "{scene}: {scenes:?}"
+        );
+    }
+    // The key, then out past the gate by the door.
+    walk_to(
+        &mut run,
+        &mut stops,
+        &mut scenes,
+        &mut trail,
+        Vec3::new(357.5, -304.3, 286.2),
+        1.5,
+    );
+    for _ in 0..60 {
+        still(&mut run, &mut stops, [false; 4]);
+    }
+    assert!(key_held(&run), "the card house's key taken");
+    // The second gate killer goes with the key taken, and the door's gate
+    // with it; it isn't listed: the walk is the same to the step
+    // with it listed or not.
+    assert_eq!(
+        behaviour(&run, "Gate_Killer(1)"),
+        "removed",
+        "the door's gate let go"
+    );
+    walk_until(
+        &mut run,
+        &mut stops,
+        &mut scenes,
+        &mut trail,
+        Vec3::new(405.0, -304.4, 278.8),
+        1.5,
+        &|r| r.hero().pivot.y > 0.0,
+    );
+    for _ in 0..900 {
+        trail.note(&run);
+        if run.hero().pivot.y > 0.0 {
+            break;
+        }
+        let me = run.hero().pivot;
+        run.bench.view = (407.2 - me.x).atan2(278.76 - me.z).to_degrees();
+        step(&mut run, &mut stops, Stick::new(0.0, 1.0), [false; 4]);
+    }
+    for _ in 0..120 {
+        still(&mut run, &mut stops, [false; 4]);
+    }
+    assert!(
+        run.hero().pivot.y > 0.0,
+        "out of the card house: {}",
+        run.hero().pivot
+    );
+    assert!(key_held(&run), "the key carried out");
+    println!(
+        "out with the key at {} at step {}",
+        run.hero().pivot,
+        run.steps
+    );
+
+    // Back in the yard with the key: Setup_002's fight to its end.
+    let (_, far) = run.placed("Setup_002_Trigger(1)");
+    let fight_2 = fight(
+        &mut run,
+        &mut stops,
+        "Setup_002_Controller",
+        &SETUP_002_FOES,
+        far,
+        12000,
+    );
+    scenes.extend(fight_2.scenes.iter().cloned());
+    topups.extend(fight_2.topups.iter().copied());
+    trail.0.extend(fight_2.trail.iter().copied());
+    for (step, n, b) in &fight_2.log {
+        println!("  {step} {n} {b}");
+    }
+    println!("scenes {scenes:?}");
+    println!(
+        "over at step {}, ended {}; top-ups {topups:?}, lowest health {:?}; {:.1} s",
+        run.steps,
+        fight_2.ended,
+        fight_2.lowest,
+        started.elapsed().as_secs_f64()
+    );
+    let t: Vec<String> = trail
+        .0
+        .iter()
+        .map(|p| format!("{:.2},{:.2},{:.2}", p.x, p.y, p.z))
+        .collect();
+    println!("TRAIL {}", t.join(";"));
+    let m: Vec<String> = trail.1.iter().map(|(i, n)| format!("{i}:{n}")).collect();
+    println!("MARKS {}", m.join(";"));
+    println!("the card house's key still carried: {}", key_held(&run));
+    assert!(
+        fight_2.ended,
+        "Setup_002's fight never ended: {:?}",
+        fight_2.log
+    );
+    for n in [
+        "Enemy_Elf_Lobber(3)",
+        "Enemy_Elf_Lobber(4)",
+        "Enemy_Elf_Heavy_S2(1)",
+    ] {
+        assert_eq!(behaviour(&run, n), "removed", "{n}");
+    }
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
 }
 
 /// The beds [`BEDS`] holds started at or after `from`, by name.
