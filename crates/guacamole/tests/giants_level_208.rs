@@ -1,4 +1,4 @@
-//! Level 208 (openspec AS.343), headless with guacamole's host on the TV's
+//! Level 208 (openspec AS.343, AS.344), headless with guacamole's host on the TV's
 //! listing for the level: Eruptor joined at its start, its intro played to
 //! its end or skipped as a player skips it, then the stick his. Ignored by
 //! default; they read `GUAC_GIANTS_DUMP` (process env, else `.env.dev`):
@@ -172,6 +172,193 @@ fn level_208s_intro_skipped_hands_him_over_and_he_walks() {
     assert!(at.distance(HAND_OVER) < 0.1, "set down at its place: {at}");
     assert!(intro_off(&run), "the intro off");
     walks_on(&mut run, &mut stops);
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
+}
+
+/// Setup_002's controller's place, past the plaza's exit (openspec AS.344).
+const SETUP_002: Vec3 = Vec3::new(12.4, 9.0, -49.2);
+
+/// The exit's reveal: its trigger and the cutscene it plays.
+const TRIGGER: &str = "Ice_Chompy_IGC_Trigger";
+const REVEAL: &str = "IGC_Ice_Chompy_Reveal";
+
+/// The brick wall past the trigger.
+const WALL: &str = "Wall_Spawner_Template(5)";
+
+/// A placement's behaviour now: `removed`, `asleep`, or its own.
+fn behaviour(run: &Run, name: &str) -> String {
+    let h = run.placed(name).0;
+    match run.vm.placement_of(h) {
+        None => "-".to_owned(),
+        Some(id) if run.vm.removed(id) => "removed".to_owned(),
+        Some(id) if run.vm.asleep(id) => "asleep".to_owned(),
+        Some(id) => run.vm.behaviour(id).unwrap_or("?").to_ascii_lowercase(),
+    }
+}
+
+/// The wall's bricks still standing (clones of `brick` and `brick2`): how
+/// many and the farthest from the wall's place.
+fn bricks(run: &Run, wall: Vec3) -> (usize, f32) {
+    let at: Vec<Vec3> = run
+        .world
+        .clones()
+        .into_iter()
+        .filter(|h| run.world.name(*h).starts_with("brick"))
+        .filter_map(|h| {
+            run.world
+                .actor(h)
+                .filter(|a| !a.removed)
+                .map(|a| a.position)
+        })
+        .collect();
+    let far = at.iter().map(|p| p.distance(wall)).fold(0.0, f32::max);
+    (at.len(), far)
+}
+
+/// What the walk out of the plaza met ([`walk_out`]).
+#[derive(Debug, Default)]
+struct WalkedOut {
+    /// Each cutscene and its first step.
+    scenes: Vec<(u32, String)>,
+    /// The step the reveal's trigger took itself off.
+    trigger_off: Option<u32>,
+    /// The step the wall was beaten (its bricks blown apart).
+    beaten: Option<u32>,
+    /// The most bricks standing before it was beaten, and the farthest one
+    /// flew from it once beaten.
+    laid: usize,
+    flown: f32,
+    /// How far south he got while the wall stood.
+    south_while_standing: f32,
+    /// Attacks pressed at the wall.
+    swings: u32,
+    /// The step he reached Setup_002's place.
+    reached: Option<u32>,
+}
+
+/// The stick held from where he stands toward Setup_002's place, as a kid
+/// heads out of the plaza: cutscenes waited out with the stick let go, and
+/// the attack pressed every third of a second while the wall stands within
+/// 8 m. Over once he's within 2 m of the place (across the ground) or after
+/// `cap` steps.
+fn walk_out(run: &mut Run, stops: &mut Vec<String>, cap: u32) -> WalkedOut {
+    let flat = |a: Vec3, b: Vec3| Vec3::new(a.x - b.x, 0.0, a.z - b.z).length();
+    let wall = run.at(WALL);
+    let mut out = WalkedOut {
+        south_while_standing: f32::MAX,
+        ..WalkedOut::default()
+    };
+    let start = run.steps;
+    while run.steps < start + cap {
+        if out.trigger_off.is_none() && behaviour(run, TRIGGER) == "removed" {
+            out.trigger_off = Some(run.steps);
+        }
+        let wall_now = behaviour(run, WALL);
+        let standing = wall_now == "main loop";
+        let gone = [
+            "wait a few seconds before shutting down",
+            "reset",
+            "removed",
+        ];
+        if out.beaten.is_none() && gone.contains(&wall_now.as_str()) {
+            out.beaten = Some(run.steps);
+        }
+        if out.beaten.is_some() {
+            out.flown = out.flown.max(bricks(run, wall).1);
+        } else {
+            out.laid = out.laid.max(bricks(run, wall).0);
+        }
+        if let Some(cs) = cutscene_name(run) {
+            if out.scenes.last().is_none_or(|(_, n)| *n != cs) {
+                out.scenes.push((run.steps, cs));
+            }
+            still(run, stops, [false; 4]);
+            continue;
+        }
+        if guacamole::anchors::scene_holds(&run.vm) {
+            still(run, stops, [false; 4]);
+            continue;
+        }
+        let me = run.hero().pivot;
+        if standing {
+            out.south_while_standing = out.south_while_standing.min(me.z);
+        }
+        if flat(me, SETUP_002) < 2.0 {
+            out.reached = Some(run.steps);
+            break;
+        }
+        run.bench.view = (SETUP_002.x - me.x).atan2(SETUP_002.z - me.z).to_degrees();
+        run.bench.hold_view = true;
+        let swing = standing && flat(me, wall) < 8.0 && run.steps.is_multiple_of(20);
+        out.swings += u32::from(swing);
+        step(
+            run,
+            stops,
+            Stick::new(0.0, 1.0),
+            [swing, false, false, false],
+        );
+    }
+    out
+}
+
+/// openspec AS.344: out of 208's start plaza on its own scripts. The intro
+/// played to its end, the stick held from the hand-over toward Setup_002's
+/// place: walking into the exit's trigger plays the Ice Chompy's reveal
+/// once and takes the trigger off; the wall past it holds him until his
+/// attacks beat it, its bricks flying apart; then he walks on to Setup_002's
+/// place and the wall takes itself off. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_208s_exit_opens_by_its_reveal_and_its_wall() {
+    println!("load at start: {}", load());
+    let mut stops = Vec::new();
+    let mut run = joined_208(&mut stops);
+    let mut ended = false;
+    for k in 0..6000u32 {
+        still(&mut run, &mut stops, [false; 4]);
+        if k > 200 && scene_of(&run).is_none() && !guacamole::anchors::scene_holds(&run.vm) {
+            ended = true;
+            break;
+        }
+    }
+    assert!(ended && intro_off(&run), "the intro played out");
+    let from = run.hero().pivot;
+    println!("handed over at step {} at {from}", run.steps);
+    let out = walk_out(&mut run, &mut stops, 6000);
+    println!("{out:?}, at {}", run.hero().pivot);
+    let reveal: Vec<u32> = out
+        .scenes
+        .iter()
+        .filter(|(_, n)| n == REVEAL)
+        .map(|(s, _)| *s)
+        .collect();
+    assert_eq!(reveal.len(), 1, "its reveal once: {:?}", out.scenes);
+    assert!(
+        out.trigger_off.is_some_and(|s| s > reveal[0]),
+        "the trigger off after its reveal"
+    );
+    let wall = run.at(WALL);
+    assert!(
+        out.south_while_standing > wall.z,
+        "held behind the wall while it stood: {}",
+        out.south_while_standing
+    );
+    assert!(out.laid > 10, "its bricks laid: {}", out.laid);
+    assert!(
+        out.beaten.is_some() && out.swings > 0,
+        "beaten by his attacks"
+    );
+    assert!(out.flown > 10.0, "its bricks blown apart: {} m", out.flown);
+    assert!(out.reached.is_some(), "at Setup_002's place");
+    for _ in 0..600 {
+        if behaviour(&run, WALL) == "removed" {
+            break;
+        }
+        still(&mut run, &mut stops, [false; 4]);
+    }
+    assert_eq!(behaviour(&run, WALL), "removed", "the wall off");
+    assert_eq!(bricks(&run, wall).0, 0, "its bricks gone");
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
 }
