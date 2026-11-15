@@ -1411,15 +1411,15 @@ impl ScriptWorld {
         out
     }
 
-    /// Whether `h` is a placement's own actor (not a clone) whose placement
-    /// has no script (openspec AS.371): what clips play on it are other
-    /// scripts' (a chain pull's chain), so nothing of its own puts it back.
+    /// Whether `h` is a placement's own actor (a clone has no object of its
+    /// own) whose placement has no script (openspec AS.371): what clips play
+    /// on it are other scripts' (a chain pull's chain), so nothing of its
+    /// own puts it back.
     pub fn scriptless(&self, h: Handle) -> bool {
         self.actors.get(&h).is_some_and(|a| {
-            a.template.is_none()
-                && a.obj
-                    .and_then(|o| self.templates.get(&o))
-                    .is_some_and(|p| p.script.is_none())
+            a.obj
+                .and_then(|o| self.templates.get(&o))
+                .is_some_and(|p| p.script.is_none())
         })
     }
 
