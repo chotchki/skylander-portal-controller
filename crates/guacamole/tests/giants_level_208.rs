@@ -892,15 +892,9 @@ fn level_208s_way_down_to_the_terrace_by_the_stick() {
     assert!(!gone_actor(&run, AI_BLOCKER), "the blocker stands");
     // To the AI: its hint takes the blocker off.
     let ai = run.at(AI);
-    let hint = fight_to(
-        &mut run,
-        &mut stops,
-        &[],
-        &[AI, "NPC_AI"],
-        ai,
-        3000,
-        &|run: &Run| gone_actor(run, AI_BLOCKER),
-    );
+    let hint = fight_to(&mut run, &mut stops, &[], &[AI], ai, 3000, &|run: &Run| {
+        gone_actor(run, AI_BLOCKER)
+    });
     for (step, n, b) in &hint.log {
         println!("  {step} {n} {b}");
     }
