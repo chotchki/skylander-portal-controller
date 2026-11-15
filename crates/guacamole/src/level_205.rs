@@ -270,8 +270,9 @@ pub fn stretch_2(level: &str) -> &'static [&'static str] {
 /// in (a hero who isn't one is refused and keeps the hint), turns him into
 /// place, puts the mash prompt up and counts each press of the mash; once
 /// the count reaches 300 the pull's own camera (`DefaultAnimatorCamera`)
-/// and the chain's pull clip play, the galleon riding node 0 in to 138 ft
-/// of the peg, and the peg sets its value to set on completion. The pose
+/// and the chain's pull clip play, the galleon riding node 0 in to 141.7 ft
+/// of the peg, and the peg sets the value to set on completion its level
+/// hands it (205's hands it none: Cali reads the distance). The pose
 /// at the clip's end holds (`hands::posing`, stand-in ledger: `held-clip`).
 pub const CHAIN_PULL: [&str; 1] = ["TitanChainPeg(1)"];
 

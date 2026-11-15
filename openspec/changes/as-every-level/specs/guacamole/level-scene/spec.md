@@ -366,7 +366,7 @@ A camera's rig SHALL hold the pose its last clip reached once none plays, what h
 - **THEN** the view and what hangs on the rig stay where the last rig left them until it's posed, and no frame stands at the rig's origin
 
 ### Requirement: A Giant's chain pull brings its island in
-A chain pull's chain SHALL be drawn and posed by the clips its peg plays on it, what hangs on its node riding it, and SHALL hold its pull clip's end once none plays: level 205's galleon comes in to the dock for a Giant's mash and stays there. A hero who isn't a Giant SHALL get the level's need-a-Giant hint and pull nothing.
+A chain pull's chain SHALL be drawn and posed by the clips its peg plays on it, what hangs on its node riding it, and SHALL hold its pull clip's end once none plays: level 205's galleon comes in from 438 ft out to 141.7 ft of the peg for a Giant's mash, inside the 145 ft Cali waits on, and stays there (headless, 2026-11-15). A hero who isn't a Giant SHALL get the level's need-a-Giant hint and pull nothing.
 
 #### Scenario: Tree Rex at 205's peg
 - **WHEN** a Giant takes the chain at △ and mashes until the pull plays
