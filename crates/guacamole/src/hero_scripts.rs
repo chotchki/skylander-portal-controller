@@ -142,6 +142,8 @@ pub(crate) struct ScriptSource {
     /// placements join each run once its save is in, and their part ids.
     streams: Vec<u16>,
     stream_ids: Vec<i32>,
+    /// The card game's streams the level links (openspec AS.364).
+    card_streams: guacamole::card_game::CardStreams,
     /// Each walker's scripts (AG.27): the other modelled characters whose
     /// own scripts the part holds.
     walkers: Vec<WalkerScripts>,
@@ -324,6 +326,7 @@ impl ScriptSource {
             fighters: Vec::new(),
             streams: Vec::new(),
             stream_ids: Vec::new(),
+            card_streams: Default::default(),
             walkers: Vec::new(),
             left_out: Vec::new(),
             layout: None,
@@ -365,6 +368,7 @@ pub(crate) struct Part {
     pub(crate) fighters: Vec<(String, u16)>,
     pub(crate) streams: Vec<u16>,
     pub(crate) stream_ids: Vec<i32>,
+    pub(crate) card_streams: guacamole::card_game::CardStreams,
     pub(crate) walkers: Vec<WalkerScripts>,
     pub(crate) left_out: Vec<(String, String)>,
     pub(crate) layout: Option<Layout>,
@@ -409,6 +413,7 @@ pub(crate) fn install(world: &mut World, part: Part) {
         fighters: part.fighters,
         streams: part.streams,
         stream_ids: part.stream_ids,
+        card_streams: part.card_streams,
         walkers: part.walkers,
         left_out: part.left_out,
         layout: part.layout,
@@ -470,6 +475,9 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     };
     // The streams' scripts (openspec AS.157).
     let config = guacamole::ship_parts::with_streams(config, &source.files, &source.streams);
+    // The card game's (openspec AS.364).
+    let config =
+        guacamole::card_game::with_streams(config, &source.files, &source.card_streams.unit_list());
     #[allow(unused_mut)]
     let mut config = scripts::with_walkers(config, &source.walkers);
     // The interface's members on the model, when the run holds one (AT.9).
@@ -499,6 +507,9 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     // AS.157, `ship_parts::start`).
     script_world.ship_parts.units = source.streams.clone();
     script_world.ship_parts.ids = source.stream_ids.clone();
+    // The card game's streams, each joining as a script asks for it
+    // (openspec AS.364).
+    script_world.card_streams = guacamole::card_game::CardStreams::fresh(&source.card_streams);
     // The sounds its starts play (openspec AR.9).
     if let Some(s) = &source.sounds {
         script_world.set_sounds(s.book.clone(), s.stems.clone());
@@ -3113,6 +3124,7 @@ mod tests {
                 fighters: linked.fighters,
                 streams: Vec::new(),
                 stream_ids: Vec::new(),
+                card_streams: Default::default(),
                 walkers: Vec::new(),
                 left_out: Vec::new(),
                 layout: None,
@@ -3179,6 +3191,7 @@ mod tests {
                 fighters: linked.fighters,
                 streams: linked.streams,
                 stream_ids: linked.stream_ids,
+                card_streams: linked.card_streams,
                 walkers: Vec::new(),
                 left_out: Vec::new(),
                 layout: None,
@@ -3263,6 +3276,7 @@ mod tests {
                     fighters: linked.fighters,
                     streams: Vec::new(),
                     stream_ids: Vec::new(),
+                    card_streams: Default::default(),
                     walkers: Vec::new(),
                     left_out: Vec::new(),
                     layout: None,

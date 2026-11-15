@@ -2161,6 +2161,17 @@ pub const CAMERA: &[Registered] = &[
         0.0,
         Host,
     ),
+    // The second camera layer (openspec AS.364): the card game's board
+    // saves its far clip, sets its own and puts it back.
+    m(
+        "viewportinfo",
+        "alternate viewport",
+        "ReferenceVariant",
+        "",
+        0.0,
+        0.0,
+        Host,
+    ),
     m(
         "viewportinfo",
         "container sprite",

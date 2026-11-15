@@ -188,6 +188,9 @@ pub(crate) enum Member {
     RayEnd,
     RayHasContact,
     Viewport,
+    /// `viewportinfo.alternate viewport` (openspec AS.364): the second
+    /// camera layer the card game's board is drawn through, its own object.
+    AlternateViewport,
     // AG.28's: the gameplay camera's scripts.
     /// `viewportinfo.field of view` and `far clip` on the viewport.
     ViewportFov,
@@ -489,6 +492,11 @@ impl Member {
         add("raycontact", "end", Member::RayEnd);
         add("raycontact", "has contact", Member::RayHasContact);
         add("viewportinfo", "default", Member::Viewport);
+        add(
+            "viewportinfo",
+            "alternate viewport",
+            Member::AlternateViewport,
+        );
         add("viewportinfo", "field of view", Member::ViewportFov);
         add("viewportinfo", "far clip", Member::ViewportFarClip);
         add("viewportinfo", "view converter", Member::Converter);
@@ -1676,6 +1684,15 @@ impl ScriptWorld {
             Member::RayEnd => self.objs.value(Object::RayEnd),
             Member::RayHasContact => Value::Int(i32::from(self.ray_contact(engine).is_some())),
             Member::Viewport => Value::Entity(self.viewport),
+            Member::AlternateViewport => self.objs.value(Object::AlternateViewport),
+            // The second layer's picture, kept as its scripts leave it
+            // (openspec AS.364): nothing draws it yet.
+            Member::ViewportFov if object == Some(Object::AlternateViewport) => {
+                Value::Float(self.alternate_view.fov)
+            }
+            Member::ViewportFarClip if object == Some(Object::AlternateViewport) => {
+                Value::Float(self.alternate_view.far_clip)
+            }
             // The gameplay camera's own (openspec AG.28).
             Member::ViewportFov
             | Member::ViewportFarClip
@@ -2316,6 +2333,16 @@ impl ScriptWorld {
                 self.set_point(at.placement, r, to, engine)?;
             }
             Member::NormalizedAngle => self.normalized = normalized(float(v)?),
+            // The second layer's (openspec AS.364), kept apart.
+            Member::ViewportFov | Member::ViewportFarClip
+                if object == Some(Object::AlternateViewport) =>
+            {
+                let x = float(v)?;
+                match m {
+                    Member::ViewportFov => self.alternate_view.fov = x,
+                    _ => self.alternate_view.far_clip = x,
+                }
+            }
             // The gameplay camera's picture (openspec AG.28).
             Member::ViewportFov | Member::ViewportFarClip => {
                 if recv.and_then(|r| self.handle(r)) != Some(self.viewport) {
@@ -4408,6 +4435,63 @@ mod tests {
             ),
             Err(HostFault::Nothing)
         );
+    }
+
+    /// openspec AS.364: the alternate viewport is an object of its own,
+    /// whose far clip and field of view are kept as its scripts leave them,
+    /// apart from the gameplay camera's: the card game's board saves its far
+    /// clip, sets its own and puts it back.
+    #[test]
+    fn the_alternate_viewport_keeps_its_own_picture() {
+        let mut w = world();
+        let mut e = bench();
+        let alt = w
+            .get(
+                &at("viewportinfo", "alternate viewport", None, None),
+                &mut e,
+            )
+            .unwrap();
+        assert_eq!(alt, w.objs.value(Object::AlternateViewport));
+        assert_ne!(alt, Value::Entity(w.viewport));
+        let main = Value::Entity(w.viewport);
+        let far = |w: &mut ScriptWorld, e: &mut Bench, r: Value| {
+            w.get(&at("viewportinfo", "far clip", Some(r), None), e)
+        };
+        let saved = far(&mut w, &mut e, alt).unwrap();
+        assert_eq!(saved, Value::Float(500.0));
+        w.set(
+            &at("viewportinfo", "far clip", Some(alt), None),
+            Value::Float(40.0),
+            &mut e,
+        )
+        .unwrap();
+        w.set(
+            &at("viewportinfo", "field of view", Some(alt), None),
+            Value::Float(30.0),
+            &mut e,
+        )
+        .unwrap();
+        assert_eq!(far(&mut w, &mut e, alt), Ok(Value::Float(40.0)));
+        assert_eq!(
+            w.get(
+                &at("viewportinfo", "field of view", Some(alt), None),
+                &mut e
+            ),
+            Ok(Value::Float(30.0))
+        );
+        assert_eq!(
+            far(&mut w, &mut e, main),
+            Ok(Value::Float(500.0)),
+            "the camera's own"
+        );
+        assert_eq!(w.view.fov, crate::viewport::Viewport::default().fov);
+        w.set(
+            &at("viewportinfo", "far clip", Some(alt), None),
+            saved,
+            &mut e,
+        )
+        .unwrap();
+        assert_eq!(far(&mut w, &mut e, alt), Ok(saved));
     }
 
     #[test]

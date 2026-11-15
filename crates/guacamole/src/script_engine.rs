@@ -444,6 +444,9 @@ pub enum Object {
     RayEnd,
     /// `viewportinfo.default`: the gameplay camera.
     Viewport,
+    /// `viewportinfo.alternate viewport`: the second camera layer
+    /// (openspec AS.364).
+    AlternateViewport,
     /// Its view converter (openspec AG.28), the point that converter
     /// projects, and the container sprite the picture fills.
     ViewConverter,

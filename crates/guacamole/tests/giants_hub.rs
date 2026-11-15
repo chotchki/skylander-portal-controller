@@ -1270,3 +1270,281 @@ fn a_persephone_woken_anew_lands_from_either_side() {
     }
     assert_eq!(sides.len(), 2, "both sides were flown: {sides:?}");
 }
+
+/// What Dreadbeard's win came to on hub stage 2 ([`dreadbeards_win`]): the
+/// steps from his entering `wait for 2d sprites to be ready` to his leaving
+/// it (none if he never did), the behaviour after it, the reward macro the
+/// sprite stream sets, the card streams' joins and every stop.
+struct Win {
+    waited: Option<u32>,
+    next: Option<String>,
+    reward_macro: Option<Value>,
+    joined: Vec<(&'static str, usize)>,
+    stops: Vec<guac_script::Halt>,
+}
+
+/// The longest the reward sprites may keep him waiting (the box's bound):
+/// the stream asked the step he enters the wait, joined at that step's end
+/// and its STARTUP run the next.
+const SPRITES_READY: u32 = 60;
+
+/// Hub stage 2's intro played, the hero set by Dreadbeard and his talk
+/// button pressed until the game's question, answered yes as the TV's modal
+/// answers it; the step he enters `play the game` his `win val` is written
+/// 1 by the test (a won game: the TV's own answer stays the quit, openspec
+/// AS.342's probe), and the run goes on until he has left `wait for 2d
+/// sprites to be ready` or `hold` steps have passed in it.
+fn dreadbeards_win(no_card_streams: bool, hold: u32) -> Win {
+    let (stage, intro) = STAGES[1];
+    let (mut run, _found) = run_on_level(
+        Mode::Play,
+        stage,
+        Setup {
+            no_card_streams,
+            ..setup(&[])
+        },
+    );
+    let mut stops = Vec::new();
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap());
+    }
+    run.join().unwrap();
+    let intro = run.placement(intro);
+    while !run.vm.removed(intro) {
+        assert!(run.steps < 3600, "the intro's end");
+        stops.extend(run.step_play().unwrap());
+    }
+    for _ in 0..30 {
+        stops.extend(run.step_play().unwrap());
+    }
+    let id = run.placement("Dreadbeard");
+    let at = guac_motion::seam::Vec3::from_array(
+        run.files
+            .placed
+            .iter()
+            .find(|p| p.obj.unit == LEVEL && p.name == "Dreadbeard")
+            .expect("his placement")
+            .position,
+    );
+    run.put(at + guac_motion::seam::Vec3::new(1.5, 0.5, 1.5), 0.0);
+    for _ in 0..10 {
+        stops.extend(run.step_play().unwrap());
+    }
+    const WAIT: &str = "wait for 2d sprites to be ready";
+    let (mut won, mut read, mut entered, mut left) = (false, 0, None, None);
+    for k in 0..6000u32 {
+        let free = cutscene_name(&run).is_none();
+        talk_button(&mut run, !won && free && k % 20 == 0);
+        stops.extend(run.step_play().unwrap());
+        if let Some(p) = guacamole::prompt::up(&run.vm, &run.world) {
+            read += 1;
+            if read >= READING {
+                read = 0;
+                let answered = run
+                    .with_host(|vm, host| guacamole::prompt::answer(vm, host, &p, true))
+                    .unwrap_or_else(|h| panic!("the answer: {h}"));
+                assert!(answered);
+            }
+        }
+        let b = run.vm.behaviour(id).map(str::to_owned);
+        if !won && b.as_deref() == Some("play the game") {
+            assert!(run.vm.set_local(id, "win val", Value::Int(1)));
+            won = true;
+        }
+        match (entered, b.as_deref()) {
+            (None, Some(WAIT)) => entered = Some(run.steps),
+            (Some(_), Some(WAIT)) => {}
+            (Some(e), _) => {
+                left = Some((run.steps - e, b.clone()));
+                break;
+            }
+            (None, _) => {}
+        }
+        if entered.is_some_and(|e| run.steps - e >= hold) {
+            break;
+        }
+    }
+    talk_button(&mut run, false);
+    assert!(
+        entered.is_some(),
+        "his win's loot reached the sprites' wait"
+    );
+    let reward_macro = global(&run, "Game Systems").and_then(|gs| {
+        run.vm
+            .field(gs, "reward card sprite macro")
+            .map(|v| run.vm.value(v))
+    });
+    println!(
+        "Dreadbeard's win (card streams {}): entered the wait at {entered:?}, left {left:?}, reward macro {reward_macro:?}, joined {:?}, streams asked {:?}, steps {}",
+        !no_card_streams, run.world.card_streams.joined, run.world.streams, run.steps
+    );
+    Win {
+        waited: left.as_ref().map(|(n, _)| *n),
+        next: left.and_then(|(_, b)| b),
+        reward_macro,
+        joined: run.world.card_streams.joined.clone(),
+        stops,
+    }
+}
+
+/// openspec AS.364: the card game's streams linked beside hub stage 2,
+/// which places Dreadbeard running: his won game's loot asks for the reward
+/// card's sprites (`misc/CardGame_2dSprites_Streamed`), the stream's two
+/// running placements join the run at that step's end, its startup sets the
+/// reward macro, and he passes `wait for 2d sprites to be ready` inside
+/// [`SPRITES_READY`] steps to `wait for loot theatrics`, nothing stopped.
+/// Without the streams (an extract without their part) the same win waits
+/// out the 600 steps held, the macro unset, as AS.342's probe found.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn dreadbeards_win_passes_the_reward_sprites_with_the_card_streams() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let win = dreadbeards_win(false, 600);
+    let waited = win.waited.expect("he left the sprites' wait");
+    assert!(
+        waited <= SPRITES_READY,
+        "{waited} steps in the sprites' wait"
+    );
+    assert_eq!(win.next.as_deref(), Some("wait for loot theatrics"));
+    assert!(
+        matches!(win.reward_macro, Some(v) if v != Value::Null),
+        "{:?}",
+        win.reward_macro
+    );
+    assert_eq!(win.joined, [(guacamole::card_game::SPRITES, 2)]);
+    assert!(win.stops.is_empty(), "{:#?}", win.stops);
+    let bare = dreadbeards_win(true, 600);
+    assert_eq!(bare.waited, None, "no stream: he waits it out");
+    assert_eq!(bare.reward_macro, Some(Value::Null));
+    assert!(bare.joined.is_empty());
+    assert!(bare.stops.is_empty(), "{:#?}", bare.stops);
+    println!(
+        "{:.1} s, load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
+
+/// Each operand an op names, as a list.
+fn operands_of(ins: &guac_script::Ins) -> Vec<guac_script::OperandId> {
+    use guac_script::Ins;
+    let all: Vec<Option<guac_script::OperandId>> = match ins {
+        Ins::Parameter(p) => vec![p.rhs, p.index],
+        Ins::UseMacro { np, index } | Ins::SetBehavior { np, index } => vec![*np, *index],
+        Ins::SetValue { lhs, rhs } => vec![*lhs, *rhs],
+        Ins::SetReference { lhs, rhs, index } => vec![*lhs, *rhs, *index],
+        Ins::Inc { lhs } | Ins::Dec { lhs } => vec![*lhs],
+        Ins::Reset { np } => vec![*np],
+        Ins::CheckValue { lhs, rhs, .. }
+        | Ins::CheckMembership { lhs, rhs, .. }
+        | Ins::ChangeMembership { lhs, rhs, .. }
+        | Ins::ForEach { lhs, rhs, .. }
+        | Ins::FindSubSet { lhs, rhs, .. } => vec![*lhs, *rhs],
+        Ins::CheckReference {
+            lhs, rhs, index, ..
+        } => vec![*lhs, *rhs, *index],
+        Ins::LoopValue { rhs } => vec![*rhs],
+        Ins::FindVariable {
+            owner, index, skip, ..
+        } => vec![*owner, *index, *skip],
+        Ins::World { operands, .. } => operands.iter().map(|(_, o)| *o).collect(),
+        _ => Vec::new(),
+    };
+    all.into_iter().flatten().collect()
+}
+
+/// Every member a path in operand `o` reaches, its other point and its
+/// expression's sides included.
+fn members_in(
+    program: &guac_script::Program,
+    o: guac_script::OperandId,
+    out: &mut Vec<guac_script::MemberId>,
+) {
+    use guac_script::{Elem, Operand};
+    match program.operands.get(o as usize) {
+        Some(Operand::Path { elems, other, .. }) => {
+            out.extend(elems.iter().filter_map(|e| match e {
+                Elem::Member(m) => Some(*m),
+                _ => None,
+            }));
+            if let Some(x) = other {
+                members_in(program, *x, out);
+            }
+        }
+        Some(Operand::Expr { a, b, .. }) => {
+            for x in [a, b].into_iter().flatten() {
+                members_in(program, *x, out);
+            }
+        }
+        None => {}
+    }
+}
+
+/// openspec AS.364: every member the card game's three streams' scripts
+/// name, linked beside hub stage 2 with the interface's model on as the
+/// TV's run has it, is the VM's own (a builtin or a packed value's part the
+/// VM computes), registered, or one of the Wii U instruction page's pair
+/// (`wiicontroller.button 1`, `scriptcontroller.wii`), which stay
+/// unregistered: `viewportinfo.alternate viewport` among the registered.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn the_card_streams_name_no_member_the_tv_lacks_but_the_wii_pair() {
+    use guac_script::MemberId;
+    let (run, _found) = run_on_level(Mode::Play, STAGES[1].0, setup(&[]));
+    let program = run.vm.program_arc();
+    let members = run.vm.config().members.clone();
+    let units: Vec<u16> = run
+        .world
+        .card_streams
+        .units
+        .iter()
+        .map(|(_, u)| *u)
+        .collect();
+    assert_eq!(units.len(), 3, "{:?}", run.world.card_streams.units);
+    let vm_own: Vec<MemberId> = guac_script::members::INIT_CHAIN
+        .iter()
+        .filter(|r| r.keeper == guac_script::members::Keeper::Vm)
+        .map(|r| MemberId::named(r.namespace, r.name))
+        .collect();
+    let (mut ops, mut seen) = (0, std::collections::BTreeSet::new());
+    for s in program.scripts.iter().filter(|s| units.contains(&s.unit)) {
+        for &op in &s.ops {
+            ops += 1;
+            for o in operands_of(&program.ops[op as usize]) {
+                let mut ms = Vec::new();
+                members_in(&program, o, &mut ms);
+                seen.extend(ms);
+            }
+        }
+    }
+    let lacking: Vec<String> = seen
+        .iter()
+        .filter(|&&m| {
+            guac_script::Builtin::of(m).is_none()
+                && members.get(m).is_none()
+                && !vm_own.contains(&m)
+        })
+        .map(|&m| members.name(m))
+        .collect();
+    println!("{ops} ops, {} members, lacking {lacking:?}", seen.len());
+    let alternate = MemberId::named("viewportinfo", "alternate viewport");
+    assert!(seen.contains(&alternate) && members.get(alternate).is_some());
+    let wii = [
+        MemberId::named("wiicontroller", "button 1"),
+        MemberId::named("scriptcontroller", "wii"),
+    ];
+    let mut lacking_ids: Vec<MemberId> = seen
+        .iter()
+        .copied()
+        .filter(|&m| {
+            guac_script::Builtin::of(m).is_none()
+                && members.get(m).is_none()
+                && !vm_own.contains(&m)
+        })
+        .collect();
+    let mut wii = wii.to_vec();
+    lacking_ids.sort();
+    wii.sort();
+    assert_eq!(lacking_ids, wii, "{lacking:?}");
+}
