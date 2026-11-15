@@ -368,10 +368,12 @@ pub fn galleon(level: &str) -> &'static [&'static str] {
 /// (`Remove_Part2`, `Remove_Part3`), which take the stretch's people and
 /// pieces off behind a hero (the gate's pirate and the cell's scene are
 /// woken by Cali's script already), the cannon's blocker
-/// (`Cannon_Blocker`, another switch's place in the track's set, the walk
-/// the same to the step with it listed), the third metal wall (`Breakable_Metal_Wall(2)`, off the way) and Setup_004's
-/// two doors (`Interior_Door(8)`, `(6)`; its controller sets its foes at
-/// their places itself), each walked the same without.
+/// (`Cannon_Blocker`, which only joins the set a push checks ahead of it,
+/// 4.1 m off the cannon's one straight track, so never inside a push's
+/// 29 ft, 20° cone; the walk the same to the step with it listed), the
+/// third metal wall (`Breakable_Metal_Wall(2)`, off the way) and
+/// Setup_004's two doors (`Interior_Door(8)`, `(6)`; its controller sets
+/// its foes at their places itself), each walked the same without.
 pub const STRETCH_3: [&str; 4] = [
     "Switch_Controller_template(1)",
     "Switch_Straight_Art_Template(1)",

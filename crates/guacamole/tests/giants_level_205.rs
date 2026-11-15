@@ -4301,8 +4301,15 @@ fn on_to_setup_004s_end(setup: Setup) -> AtCali {
         scenes.iter().any(|(_, n)| n == "Cage Pirate Intro"),
         "{scenes:?}"
     );
+    // The scene before the count: with the stand-in off it holds short of
+    // 7 (at 4), so the walk, not only the count, rests on the stand-in. It
+    // stands in only a quit, so once means the TV's yes was told a quit.
+    assert_eq!(
+        local_int(&run, JAIL_SCENE, "speakerinit"),
+        Some(7),
+        "the cell's scene waits on the jailed pirate's game"
+    );
     assert_eq!(jail, 1, "the jailed pirate's game stood in once");
-    assert_eq!(local_int(&run, JAIL_SCENE, "speakerinit"), Some(7));
 
     // The gate's pirate's outro: his gate opened, the hero walked through.
     let checker = run.at("GatePirate_CollisionChecker");
