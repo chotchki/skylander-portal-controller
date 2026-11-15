@@ -331,18 +331,50 @@ pub fn galleon(level: &str) -> &'static [&'static str] {
 }
 
 /// The way on from Setup_003's end to Setup_004's end (openspec AS.327),
-/// by placement name, listed and never walked (CANDIDATES, being pruned).
-pub const STRETCH_3: [&str; 10] = [
-    "Remove_Part2",
-    "Remove_Part3",
+/// by placement name, listed and never walked; the gate's pirate, the
+/// jailed pirate and his cell's scene, the push cannon
+/// (`Push_Block_Template(9)`, its cannon on the shared push-block and
+/// cannon scripts), the gate (`Door_Template(1)`), Setup_004, its foes and
+/// the town's push blocks were on the listing already. In order:
+/// - **The gate's pirate.** Past the blown gate Cali's script has woken
+///   him, the cell's scene, the lever and the walls; a hero within 75 ft
+///   plays his intro (he laughs at him from behind his gate), and he walks
+///   to his gate and wakes the push cannon on its track.
+/// - **The lever's wall.** The cannon pushed west along its track and
+///   fired (△) breaks the metal wall (`Breakable_Metal_Wall(1)`,
+///   `MetalWall.ai`) between the track and the turntable's lever.
+/// - **The turntable.** The lever (`Switch_Controller_template(1)`, △)
+///   tells the turntable (`Switch_Straight_Art_Template(1)`,
+///   `205_FakePlate.ai`) to turn 90°, so the cannon passes over it east.
+/// - **The cell.** Pushed east to the track's end and fired, the cannon
+///   breaks the jailed pirate's cell's wall (`Breakable_Metal_Wall(5)`);
+///   his cell's scene plays his breakout, and he offers his card game,
+///   which the TV doesn't have ([`jail_stand_in`] stands it in won for the
+///   disc test); won, the scene tells the gate's pirate.
+/// - **The gate.** A hero by the gate's pirate's checker plays his outro:
+///   he opens his gate and walks the hero through, then shuts it.
+/// - **Setup_004**, past the gate within 160 ft of its controller: its
+///   Biclops' intro and its fights; it waits on the town's block, a bridge
+///   of three push blocks: the east block pushed off its ledge
+///   (`Push_Block_Template(3)`) is a way up onto the upper town, whose
+///   block (`Push_Block_Template(12)`) pushed off its north ledge lands as
+///   the town's block (`Push_Block_Template(14)`), pushed west to its
+///   checker; then its left door's fights and the two lobbers on the
+///   upper town, and its controller goes.
+///
+/// Left off: the signal faces past the blown gate and past the gate
+/// (`Remove_Part2`, `Remove_Part3`), which take the stretch's people and
+/// pieces off behind a hero (the gate's pirate and the cell's scene are
+/// woken by Cali's script already), the cannon's blocker
+/// (`Cannon_Blocker`, a switch's place in the track's set), the third
+/// metal wall (`Breakable_Metal_Wall(2)`, off the way) and Setup_004's
+/// two doors (`Interior_Door(8)`, `(6)`; its controller sets its foes at
+/// their places itself), each walked the same without.
+pub const STRETCH_3: [&str; 4] = [
     "Switch_Controller_template(1)",
     "Switch_Straight_Art_Template(1)",
-    "Cannon_Blocker",
     "Breakable_Metal_Wall(1)",
-    "Breakable_Metal_Wall(2)",
     "Breakable_Metal_Wall(5)",
-    "Interior_Door(8)",
-    "Interior_Door(6)",
 ];
 
 /// The placements [`STRETCH_3`] lists for the level whose archive is
@@ -821,6 +853,42 @@ mod tests {
         assert!(galleon("level_201").is_empty());
         assert_eq!(flat_shots(LEVEL), ["Canon_Ball"]);
         assert!(flat_shots("level_201").is_empty());
+    }
+
+    /// openspec AS.327: the way on from Setup_003's end is on 205's listing
+    /// alone, listed once, none of it on an earlier stretch's; the
+    /// jailed pirate is one of the level's people.
+    #[test]
+    fn level_205s_way_on_from_setup_003s_end_is_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        let off = level_config(Mode::Play, &files, 5, "level_201");
+        for name in STRETCH_3 {
+            assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+            assert!(
+                !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
+                "{name} on 201"
+            );
+            assert!(!WAY.placements.contains(&name), "{name} fights");
+            assert!(!PASSAGE.contains(&name), "{name}");
+            assert!(!STRETCH_1.contains(&name), "{name}");
+            assert!(!STRETCH_2.contains(&name), "{name}");
+            assert!(!CHAIN_PULL.contains(&name), "{name}");
+            assert!(!GALLEON.contains(&name), "{name}");
+            assert!(!listed(LEVEL).any(|n| n == name), "{name}");
+        }
+        // The turntable's lever and the cell's wall.
+        assert!(
+            on.whitelist
+                .lists("Switch_Controller_template(1)", "C:/l/Unlisted.ai")
+        );
+        assert!(
+            on.whitelist
+                .lists("Breakable_Metal_Wall(5)", "C:/l/Unlisted.ai")
+        );
+        assert!(!on.whitelist.lists("Remove_Part2", "C:/l/Unlisted.ai"));
+        assert!(PEOPLE.contains(&JAIL_PIRATE));
+        assert!(stretch_3("level_201").is_empty());
     }
 
     /// openspec AS.286: its people are on 205's listing and among the TV's
