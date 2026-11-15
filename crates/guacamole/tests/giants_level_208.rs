@@ -640,11 +640,23 @@ fn removed(run: &Run, name: &str) -> bool {
     behaviour(run, name) == "removed"
 }
 
+/// The step `name` was first in one of `states`, from `log`.
+fn first_in(log: &[(u32, String, String)], name: &str, states: &[&str]) -> Option<u32> {
+    log.iter()
+        .find(|(_, n, b)| n == name && states.contains(&b.as_str()))
+        .map(|e| e.0)
+}
+
 /// openspec AS.345: level 208's first fights on their own scripts. The
 /// intro played out and the exit opened as AS.344's test opens it, the
-/// reveal's five Ice Chompies, walked, wake, chase and bite him and are
-/// beaten; then at Setup_002's trigger its controller sets its Cyclopes
-/// on him, and once he has beaten them ... Nothing stops.
+/// reveal's five Ice Chompies, walked, notice him, chase him and breathe
+/// ice on him as he stands among them, and are beaten. Then, put by
+/// Setup_002's trigger on the frozen river (the way down from the yard
+/// is AS.346's), its controller sets its two spinning Cyclopes on him;
+/// with both beaten Noodles' first-gate scene plays, then the heavy
+/// Biclops comes and the three adds walk in, and with all six beaten the
+/// controller takes its set off and the spike gate by the spinners
+/// lowers. Nothing stops.
 #[test]
 #[ignore = "reads the Giants dump"]
 fn level_208s_first_fights_by_their_own_triggers() {
@@ -662,6 +674,40 @@ fn level_208s_first_fights_by_their_own_triggers() {
     let out = walk_out(&mut run, &mut stops, 6000);
     println!("{out:?}, at {}", run.hero().pivot);
     assert!(out.reached.is_some(), "at Setup_002's place");
+    // Stood among them: they come for him and hurt him.
+    let (hp0, start) = (run.health().unwrap(), run.steps);
+    let mut stood: Vec<(u32, String, String)> = Vec::new();
+    let mut last: HashMap<&str, String> = HashMap::new();
+    let mut nearest = [f32::MAX; 5];
+    for _ in 0..600 {
+        for (k, n) in CHOMPIES.iter().enumerate() {
+            let b = behaviour(&run, n);
+            if last.get(n) != Some(&b) {
+                stood.push((run.steps, (*n).to_owned(), b.clone()));
+                last.insert(n, b.clone());
+            }
+            if b != "removed"
+                && let Some(a) = run.world.actor(run.placed(n).0)
+            {
+                nearest[k] = nearest[k].min(a.position.distance(run.hero().pivot));
+            }
+        }
+        if run.health().unwrap() < hp0 - 10.0 {
+            break;
+        }
+        still(&mut run, &mut stops, [false; 4]);
+    }
+    let hurt = hp0 - run.health().unwrap();
+    println!(
+        "stood {} steps: {hurt} health lost, nearest {nearest:?}, {stood:?}",
+        run.steps - start
+    );
+    assert!(hurt > 0.0, "the Chompies hurt him");
+    let fighting = CHOMPIES
+        .iter()
+        .filter(|n| first_in(&stood, n, &["battle", "attack - freeze"]).is_some())
+        .count();
+    assert!(fighting >= 3, "they fight him: {stood:?}");
     let chompies = fight_to(
         &mut run,
         &mut stops,
@@ -675,10 +721,24 @@ fn level_208s_first_fights_by_their_own_triggers() {
         println!("  {step} {n} {b}");
     }
     println!(
-        "chompies: ended {} at step {}, health {:?}, roamed {:?}, scenes {:?}",
-        chompies.ended, run.steps, chompies.health, chompies.roamed, chompies.scenes
+        "chompies: ended {} at step {}, health {:?}",
+        chompies.ended, run.steps, chompies.health
     );
+    assert!(chompies.ended, "the five beaten");
+    // The yard's ways down to the river (its ice traps and slide) are
+    // openspec AS.346's: put by Setup_002's trigger.
     let trigger = run.at(SETUP_002_TRIGGER);
+    run.put(trigger, 270.0);
+    // How far short of the river past the spike gate a walk from him
+    // ends (the flood's cells).
+    let past_gate = |run: &Run| {
+        let to = Vec3::new(-30.0, 4.6, -43.8);
+        way_to(run, run.hero().pivot, to)
+            .last()
+            .unwrap()
+            .distance(to)
+    };
+    let before = past_gate(&run);
     let fought = fight_to(
         &mut run,
         &mut stops,
@@ -688,12 +748,44 @@ fn level_208s_first_fights_by_their_own_triggers() {
         12000,
         &|run: &Run| removed(run, SETUP_002_CONTROLLER),
     );
-    for (step, n, b) in &fought.log {
+    // What its end opens, once its scene's out.
+    let mut tail: Vec<(u32, String, String)> = Vec::new();
+    let mut last: HashMap<&str, String> = HashMap::new();
+    for _ in 0..1800 {
+        for n in SETUP_002_WATCH {
+            let b = behaviour(&run, n);
+            if last.get(n) != Some(&b) {
+                tail.push((run.steps, n.to_owned(), b.clone()));
+                last.insert(n, b);
+            }
+        }
+        if cutscene_name(&run).is_none()
+            && !guacamole::anchors::scene_holds(&run.vm)
+            && removed(&run, "IGC_Noodles_FirstGate")
+        {
+            break;
+        }
+        still(&mut run, &mut stops, [false; 4]);
+    }
+    let log: Vec<_> = fought.log.iter().chain(&tail).cloned().collect();
+    for (step, n, b) in &log {
         println!("  {step} {n} {b}");
     }
+    let gate = run
+        .world
+        .actor(run.placed("Spike_Gate_Metal_Template(1)").0);
     println!(
-        "setup_002: ended {} at step {}, health {:?}, roamed {:?}, scenes {:?}, played {}",
-        fought.ended, run.steps, fought.health, fought.roamed, fought.scenes, fought.played
+        "setup_002: ended {} at step {}, health {:?}, scenes {:?}, played {} steps, gate {:?}",
+        fought.ended,
+        run.steps,
+        fought.health,
+        fought.scenes,
+        fought.played,
+        gate.map(|g| (
+            g.removed,
+            g.stands_for_actors(),
+            g.solid.interacts_with_actors
+        ))
     );
     let trail: Vec<String> = chompies
         .trail
@@ -702,6 +794,57 @@ fn level_208s_first_fights_by_their_own_triggers() {
         .map(|p| format!("{:.2},{:.2},{:.2}", p.x, p.y, p.z))
         .collect();
     println!("TRAIL {}", trail.join(";"));
-    println!("stops {stops:#?}");
+    assert!(fought.ended, "Setup_002's controller off: {log:?}");
+    let off = first_in(&log, SETUP_002_CONTROLLER, &["removed"]).unwrap();
+    let woke = |n: &str| {
+        log.iter()
+            .find(|(_, m, b)| m == n && !["asleep", "removed"].contains(&b.as_str()))
+            .map(|e| e.0)
+    };
+    // The spinners first, by its trigger.
+    let spinners = ["Enemy_Cyclops_Near(20)", "Enemy_Cyclops_Near(21)"];
+    for n in spinners {
+        assert!(woke(n).is_some(), "{n} woke: {log:?}");
+    }
+    let spinners_off = spinners
+        .iter()
+        .map(|n| first_in(&log, n, &["removed"]).unwrap())
+        .max()
+        .unwrap();
+    // Noodles' scene once both are beaten, then the Biclops, then the adds.
+    let noodles = first_in(&log, "IGC_Noodles_FirstGate", &["init"]).unwrap();
+    assert!(noodles >= spinners_off, "Noodles after the spinners");
+    assert!(
+        fought.scenes.iter().any(|(s, _)| *s >= spinners_off),
+        "his scene plays: {:?}",
+        fought.scenes
+    );
+    let biclops = first_in(&log, SETUP_002_CONTROLLER, &["biclops - execute"]).unwrap();
+    assert!(biclops > noodles);
+    assert!(woke("Enemy_Biclops_Heavy_S2(1)").is_some_and(|w| w >= biclops));
+    for n in [
+        "Enemy_Cyclops_Near(22)",
+        "Enemy_Cyclops_Near(23)",
+        "Enemy_Cyclops_Near(24)",
+    ] {
+        assert!(
+            woke(n).is_some_and(|w| w >= biclops),
+            "{n} after the Biclops"
+        );
+    }
+    for n in SETUP_002_FOES {
+        let gone = first_in(&log, n, &["removed"]);
+        assert!(gone.is_some_and(|g| g <= off), "{n}: {gone:?}");
+    }
+    // Its end opens the spike gate by the spinners.
+    let lowered = first_in(&log, "Spike_Gate_Metal_Template(1)", &["lower spikes"]);
+    assert!(
+        lowered.is_some_and(|l| l >= off),
+        "the gate lowers: {log:?}"
+    );
+    let after = past_gate(&run);
+    println!("past the gate {before:.2} m off before, {after:.2} after");
+    assert!(before > 3.0 && after < 1.0, "{before} m, {after} m");
+    assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
 }

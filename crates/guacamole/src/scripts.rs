@@ -2375,6 +2375,22 @@ impl ScriptWorld {
                 {
                     self.pause_controlled.push(h);
                 }
+                // A creature a script put to sleep (no range, a buffer)
+                // wakes as another takes control of it (openspec AS.345:
+                // the enemy system's queue runs a controller's enemies by
+                // `control` alone, Setup_002's spinners on level 208 among
+                // them, which its intro had turned off). Stand-in ledger:
+                // `control-wakes`.
+                if let Some(a) = target.and_then(|h| self.actors.get_mut(&h))
+                    && a.walker.is_some()
+                    && a.managed
+                    && !a.active
+                    && !a.removed
+                    && a.range <= 0.0
+                    && a.buffer > 0.0
+                {
+                    a.buffer = 0.0;
+                }
                 match (first, target) {
                     (_, Some(h)) if self.actors.get(&h).is_some_and(|k| k.removed) => Answer::Skip,
                     (Some(v), _) if self.sprite_removed(v) => Answer::Skip,
