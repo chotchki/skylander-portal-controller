@@ -346,6 +346,12 @@ pub struct Run {
     /// What poses whatever hangs on a skinned model ([`Setup::posed_rigs`]):
     /// each such model's skeleton and idle, palette and attach list.
     pub posed_rigs: Vec<guacamole::hands::Rig>,
+    /// The unit his file is linked as: Eruptor's (or [`Setup::character`]'s)
+    /// until [`Run::swap_to`] puts [`Setup::spare`] in.
+    pub unit: u16,
+    /// [`Setup::spare`] as linked: who he is, his unit, his minion's
+    /// template and what poses his hands.
+    pub spare: Option<(Character, u16, Obj, guacamole::hands::Rig)>,
 }
 
 /// His model's turn off his facing alone for a recorded `[tilt, heading,
@@ -745,7 +751,8 @@ impl Run {
         let layout = self.layout.clone();
         let data = self.with_host(|vm, host| figure::put_on_portal(vm, host, &layout, &tag))?;
         self.figure = Some(data);
-        self.with_host(|vm, host| scripts::join_request(vm, host, &files, ERUPTOR, &handles))?;
+        let unit = self.unit;
+        self.with_host(|vm, host| scripts::join_request(vm, host, &files, unit, &handles))?;
         self.step()?;
         let hero = self.hero;
         let minion = self.with_host(|vm, host| scripts::join_activate(vm, host, hero))?;
@@ -768,7 +775,8 @@ impl Run {
         let layout = self.layout.clone();
         let data = self.with_host(|vm, host| figure::put_on_portal(vm, host, &layout, &tag))?;
         self.figure = Some(data);
-        self.with_host(|vm, host| scripts::join_request(vm, host, &files, ERUPTOR, &handles))?;
+        let unit = self.unit;
+        self.with_host(|vm, host| scripts::join_request(vm, host, &files, unit, &handles))?;
         self.step()?;
         let hero = self.hero;
         let entry = self.with_host(|vm, host| scripts::join_enter(vm, host, hero, true))?;
@@ -791,8 +799,9 @@ impl Run {
     pub fn deactivate(&mut self) -> Result<scripts::Deactivated, Halt> {
         let files = self.files.clone();
         let hero = self.hero;
+        let unit = self.unit;
         let gone =
-            self.with_host(|vm, host| scripts::join_deactivate(vm, host, &files, ERUPTOR, hero));
+            self.with_host(|vm, host| scripts::join_deactivate(vm, host, &files, unit, hero));
         let next = self.next;
         self.next += 1;
         self.bench.rekey(hero, next);
@@ -804,6 +813,24 @@ impl Run {
             Some(h) => Err(h),
             None => Ok(gone),
         }
+    }
+
+    /// [`Setup::spare`] swapped in where he stands (openspec AS.371), as
+    /// the TV's swap brings the next figure: this one taken off
+    /// ([`Run::deactivate`]), the spare's palette on his minion's template
+    /// and his rig posing his hands, his toy on the portal and the join on
+    /// his unit. His body in the seam stays Eruptor's controller's, as
+    /// [`Setup::character`]'s does.
+    pub fn swap_to(&mut self) -> Result<(), Halt> {
+        let (c, unit, template, rig) = self.spare.clone().expect("a spare linked");
+        if self.minion.is_some() {
+            self.deactivate()?;
+        }
+        self.world.set_palette_of(template, &rig.palette);
+        self.rig = rig;
+        self.unit = unit;
+        self.toy = c.toy;
+        self.join()
     }
 
     /// The hero set down at `at` (dropped onto what's under it) facing
@@ -1061,9 +1088,15 @@ pub fn eruptor_rig(part: &[Vec<u8>]) -> guacamole::hands::Rig {
 
 /// A character's rig off his file ([`Setup::character`]), as Eruptor's is.
 pub fn character_rig(part: &[Vec<u8>], load_file: &str) -> guacamole::hands::Rig {
+    character_rig_in(part, ERUPTOR, load_file)
+}
+
+/// [`character_rig`] off the file linked as `unit` ([`Setup::spare`]'s).
+pub fn character_rig_in(part: &[Vec<u8>], unit: u16, load_file: &str) -> guacamole::hands::Rig {
     let globals = guac_extract::models::Globals::new(&part[1], &part[0]).expect("the globals");
-    let read = guac_extract::models::read(&part[3], load_file, identity(), Some(&globals))
-        .expect("his model");
+    let read =
+        guac_extract::models::read(&part[unit as usize], load_file, identity(), Some(&globals))
+            .expect("his model");
     guacamole::hands::Rig {
         model: read.model,
         palette: read.palette.with_networks(&read.networks),
@@ -1157,6 +1190,11 @@ pub struct Setup {
     /// stands at the world's origin with what rides it (AS.284), and level
     /// 208's riders are let go under its plaza.
     pub posed_rigs: bool,
+    /// A character linked beside Eruptor (openspec AS.371), as the TV links
+    /// every walker's file at the level's load: his file after the level
+    /// and its streams, his scripts listed as a walker's, for
+    /// [`Run::swap_to`] to put on the portal mid-level.
+    pub spare: Option<Character>,
 }
 
 /// Which sleepers a run wakes with their declared locals made anew
@@ -1356,10 +1394,17 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
         .chain(streams.iter().map(|s| format!("level/{s}.bld")))
         .collect();
     let stream_units: Vec<u16> = (ARCHIVES.len()..archives.len()).map(|u| u as u16).collect();
+    // The spare's file after them (openspec AS.371).
+    let mut archives = archives;
+    let spare_unit = setup.spare.map(|c| {
+        archives.push(c.archive.to_owned());
+        (archives.len() - 1) as u16
+    });
     let roles: Vec<Role> = ARCHIVES
         .iter()
         .map(|(_, r)| *r)
         .chain(stream_units.iter().map(|_| Role::Other))
+        .chain(spare_unit.iter().map(|_| Role::Other))
         .collect();
     let part: Vec<Vec<u8>> = archives
         .iter()
@@ -1384,6 +1429,7 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     let read: Vec<(u16, &Igz<'_>)> = [1u16, 2, LEVEL, ERUPTOR]
         .iter()
         .chain(&stream_units)
+        .chain(&spare_unit)
         .map(|&u| (u, &igzs[u as usize]))
         .collect();
     let files = Files::read(&read).unwrap();
@@ -1419,6 +1465,14 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
             .expect("his scripts")
     });
     if let Some(w) = &walker {
+        config = scripts::with_walkers(config, std::slice::from_ref(w));
+    }
+    let spare_walker = setup.spare.zip(spare_unit).map(|(c, u)| {
+        scripts::walker_scripts(&program, &files, &[(c.load_file.to_owned(), u)])
+            .pop()
+            .expect("the spare's scripts")
+    });
+    if let Some(w) = &spare_walker {
         config = scripts::with_walkers(config, std::slice::from_ref(w));
     }
     match setup.wake {
@@ -1512,6 +1566,14 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
             }
         }
     }
+    let spare = setup
+        .spare
+        .zip(spare_unit)
+        .zip(spare_walker)
+        .map(|((c, u), w)| {
+            let rig = character_rig_in(&part, u, c.load_file);
+            (c, u, w.template.expect("the spare's template"), rig)
+        });
     // The skinned models something may hang on, posed as the TV poses them
     // (openspec AS.343), the camera rigs registered as the TV's load does.
     let mut posed_rigs = Vec::new();
@@ -1610,6 +1672,8 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
             entering: None,
             toy: setup.character.map_or(9, |c| c.toy),
             posed_rigs,
+            unit: ERUPTOR,
+            spare,
         },
         found,
     )

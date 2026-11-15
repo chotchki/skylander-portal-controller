@@ -248,10 +248,7 @@ pub fn stretch_1(level: &str) -> &'static [&'static str] {
 ///
 /// Left off: the signal face by the gate (`Remove_Part1`), which widens the
 /// co-op camera tether to 95 ft once the gate is open and goes, nothing a
-/// one-player walk meets; and the chain pull's peg (`TitanChainPeg(1)`):
-/// listed, the galleon stood on the peg itself from AS.325's end on (its
-/// start hangs the galleon on the chain, whose node the TV doesn't place),
-/// its hull where Cali walks.
+/// one-player walk meets; the chain pull's peg is [`CHAIN_PULL`]'s.
 pub const STRETCH_2: [&str; 1] = ["CloseDoor"];
 
 /// The placements [`STRETCH_2`] lists for the level whose archive is
@@ -259,6 +256,31 @@ pub const STRETCH_2: [&str; 1] = ["CloseDoor"];
 pub fn stretch_2(level: &str) -> &'static [&'static str] {
     match level {
         LEVEL => &STRETCH_2,
+        _ => &[],
+    }
+}
+
+/// The Giant's chain pull at the galleon (openspec AS.371), which Cali
+/// waits on: the peg (`TitanChainPeg(1)`, the shared `TitanChainPull.ai`),
+/// whose start hangs the chain's template actor (`Titan_Chain`, no script of
+/// its own) on the peg and the galleon (`Titan_Chain_Boat`, the level's
+/// definition names it the main island) on the chain's node 0, the airship
+/// floating out on the chain's idle. Within 40 ft of the talk point by the
+/// peg every hero gets the level's need-a-Giant hint; △ there locks a Giant
+/// in (a hero who isn't one is refused and keeps the hint), turns him into
+/// place, puts the mash prompt up and counts each press of the mash; once
+/// the count reaches 300 the pull's own camera (`DefaultAnimatorCamera`)
+/// and the chain's pull clip play, the galleon riding node 0 in to 141.7 ft
+/// of the peg, and the peg sets the value to set on completion its level
+/// hands it (205's hands it none: Cali reads the distance). The pose
+/// at the clip's end holds (`hands::posing`, stand-in ledger: `held-clip`).
+pub const CHAIN_PULL: [&str; 1] = ["TitanChainPeg(1)"];
+
+/// The placements [`CHAIN_PULL`] lists for the level whose archive is
+/// `level`: none on another level.
+pub fn chain_pull(level: &str) -> &'static [&'static str] {
+    match level {
+        LEVEL => &CHAIN_PULL,
         _ => &[],
     }
 }
@@ -636,12 +658,33 @@ mod tests {
         }
         // Setup_003's controller waits on its combat area's signal face.
         assert!(on.whitelist.lists("CloseDoor", "C:/l/Unlisted.ai"));
-        for name in ["Remove_Part1", "TitanChainPeg(1)"] {
-            assert!(!on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
-        }
+        assert!(!on.whitelist.lists("Remove_Part1", "C:/l/Unlisted.ai"));
         assert!(stretch_2("level_201").is_empty());
         assert_eq!(stretch_2_grounded(LEVEL), ["Cali_NPC"]);
         assert!(stretch_2_grounded("level_201").is_empty());
+    }
+
+    /// openspec AS.371: the chain pull's peg is on 205's listing alone,
+    /// listed once.
+    #[test]
+    fn level_205s_chain_pull_is_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        let off = level_config(Mode::Play, &files, 5, "level_201");
+        assert_eq!(CHAIN_PULL, ["TitanChainPeg(1)"]);
+        for name in CHAIN_PULL {
+            assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+            assert!(
+                !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
+                "{name} on 201"
+            );
+            assert!(!WAY.placements.contains(&name), "{name} fights");
+            assert!(!PASSAGE.contains(&name), "{name}");
+            assert!(!STRETCH_1.contains(&name), "{name}");
+            assert!(!STRETCH_2.contains(&name), "{name}");
+            assert!(!listed(LEVEL).any(|n| n == name), "{name}");
+        }
+        assert!(chain_pull("level_201").is_empty());
     }
 
     /// openspec AS.286: its people are on 205's listing and among the TV's
