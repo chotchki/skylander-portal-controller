@@ -198,22 +198,21 @@ fn behaviour(run: &Run, name: &str) -> String {
 }
 
 /// The wall's bricks still standing (clones of `brick` and `brick2`): how
-/// many and the farthest from the wall's place.
-fn bricks(run: &Run, wall: Vec3) -> (usize, f32) {
-    let at: Vec<Vec3> = run
-        .world
-        .clones()
-        .into_iter()
-        .filter(|h| run.world.name(*h).starts_with("brick"))
-        .filter_map(|h| {
-            run.world
-                .actor(h)
-                .filter(|a| !a.removed)
-                .map(|a| a.position)
-        })
-        .collect();
-    let far = at.iter().map(|p| p.distance(wall)).fold(0.0, f32::max);
-    (at.len(), far)
+/// many, and the farthest of each template's from the wall's place.
+fn bricks(run: &Run, wall: Vec3) -> (usize, [f32; 2]) {
+    let mut n = 0;
+    let mut far = [0.0f32; 2];
+    for h in run.world.clones() {
+        let name = run.world.name(h);
+        let Some(k) = ["brick", "brick2"].iter().position(|t| *t == name) else {
+            continue;
+        };
+        if let Some(a) = run.world.actor(h).filter(|a| !a.removed) {
+            n += 1;
+            far[k] = far[k].max(a.position.distance(wall));
+        }
+    }
+    (n, far)
 }
 
 /// What the walk out of the plaza met ([`walk_out`]).
@@ -225,10 +224,10 @@ struct WalkedOut {
     trigger_off: Option<u32>,
     /// The step the wall was beaten (its bricks blown apart).
     beaten: Option<u32>,
-    /// The most bricks standing before it was beaten, and the farthest one
-    /// flew from it once beaten.
+    /// The most bricks standing before it was beaten, and the farthest of
+    /// each template's (`brick`, `brick2`) flew from it once beaten.
     laid: usize,
-    flown: f32,
+    flown: [f32; 2],
     /// How far south he got while the wall stood.
     south_while_standing: f32,
     /// Attacks pressed at the wall.
@@ -265,7 +264,8 @@ fn walk_out(run: &mut Run, stops: &mut Vec<String>, cap: u32) -> WalkedOut {
             out.beaten = Some(run.steps);
         }
         if out.beaten.is_some() {
-            out.flown = out.flown.max(bricks(run, wall).1);
+            let far = bricks(run, wall).1;
+            out.flown = [out.flown[0].max(far[0]), out.flown[1].max(far[1])];
         } else {
             out.laid = out.laid.max(bricks(run, wall).0);
         }
@@ -349,7 +349,13 @@ fn level_208s_exit_opens_by_its_reveal_and_its_wall() {
         out.beaten.is_some() && out.swings > 0,
         "beaten by his attacks"
     );
-    assert!(out.flown > 10.0, "its bricks blown apart: {} m", out.flown);
+    // Both templates' bricks fly: either one unlisted, its bricks stand
+    // where they were laid (within 6 m) while the other's fly.
+    assert!(
+        out.flown.iter().all(|f| *f > 10.0),
+        "its bricks blown apart, each template's: {:?} m",
+        out.flown
+    );
     assert!(out.reached.is_some(), "at Setup_002's place");
     for _ in 0..600 {
         if behaviour(&run, WALL) == "removed" {
