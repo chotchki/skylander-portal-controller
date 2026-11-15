@@ -181,6 +181,11 @@ pub fn App() -> impl IntoView {
     let current_game = RwSignal::new(None::<GameLaunched>);
     // The controller or guacamole (AA.18, AA.19), from `/api/status` below.
     let server_app = RwSignal::new(ServerApp::default());
+    // AS.440: the menu's "flag this" field, on only when the server says so.
+    let flags_on = RwSignal::new(false);
+    leptos::task::spawn_local(async move {
+        flags_on.set(crate::api::fetch_flags_on().await);
+    });
     // guacamole's roster state (AE.4); `None` on the product.
     let roster = RwSignal::new(None::<RosterState>);
     let unlocked_profile = RwSignal::new(None::<UnlockedProfile>);
@@ -469,6 +474,7 @@ pub fn App() -> impl IntoView {
                 manage_gate
                 toasts
                 server_app
+                flags_on
             />
             <ToastStack toasts />
             <ConnectionLost reconnect_attempts manual_retry />

@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use leptos::prelude::*;
 
+use super::FlagThis;
 use crate::api::{post_open_rpcs3_settings, post_quit_for_switch, post_shutdown};
 use crate::components::{ActionButton, ActionVariant};
 use crate::gloo_timer;
@@ -46,6 +47,8 @@ pub(crate) fn MenuOverlay(
     toasts: RwSignal<Vec<ToastMsg>>,
     /// The controller or guacamole; guacamole has no game settings (AA.19).
     server_app: RwSignal<ServerApp>,
+    /// The server takes playtest flags (AS.440): the "flag this" field.
+    flags_on: RwSignal<bool>,
 ) -> impl IntoView {
     let initial = Signal::derive(move || {
         unlocked_profile
@@ -164,6 +167,10 @@ pub(crate) fn MenuOverlay(
                                 </Show>
                             </div>
                         </div>
+                    </Show>
+
+                    <Show when=move || flags_on.get() fallback=|| ()>
+                        <FlagThis toasts />
                     </Show>
 
                     <div class="menu-join-card">

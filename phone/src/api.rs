@@ -748,6 +748,40 @@ pub async fn post_open_rpcs3_settings() -> Result<(), String> {
     do_fetch(&url, "POST", None).await.map(|_| ())
 }
 
+/// `GET /api/_test/flag`'s body (openspec AS.440).
+#[derive(serde::Deserialize)]
+struct FlagsOn {
+    on: bool,
+}
+
+/// What a flag came to: its folder's name on the TV's Mac and whether the
+/// note joined a capture the pad or the key took.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct FlagTaken {
+    pub folder: String,
+    pub joined: bool,
+}
+
+/// Whether the server takes playtest flags (openspec AS.440): only a yes in
+/// JSON counts, so a server without the route (the product, a plain
+/// guacamole, whose fallback serves the SPA) is a no.
+pub async fn fetch_flags_on() -> bool {
+    let url = format!("{}/api/_test/flag", origin());
+    match do_fetch(&url, "GET", None).await {
+        Ok(text) => serde_json::from_str::<FlagsOn>(&text).is_ok_and(|f| f.on),
+        Err(_) => false,
+    }
+}
+
+/// Sends a flag: the TV takes a capture with `note`, or adds the note to
+/// the one its pad or key took inside the last minute.
+pub async fn post_flag(note: &str) -> Result<FlagTaken, String> {
+    let url = format!("{}/api/_test/flag", origin());
+    let body = serde_json::json!({ "note": note }).to_string();
+    let text = do_fetch(&url, "POST", Some(&body)).await?;
+    serde_json::from_str(&text).map_err(|e| e.to_string())
+}
+
 async fn do_fetch(url: &str, method: &str, body: Option<&str>) -> Result<String, String> {
     match fetch_answer(url, method, body).await? {
         (200..=299, text) => Ok(text),
