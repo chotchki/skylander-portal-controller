@@ -1,4 +1,4 @@
-//! Level 208 (openspec AS.343, AS.344), headless with guacamole's host on the TV's
+//! Level 208 (openspec AS.343, AS.344, AS.345), headless with guacamole's host on the TV's
 //! listing for the level: Eruptor joined at its start, its intro played to
 //! its end or skipped as a player skips it, then the stick his. Ignored by
 //! default; they read `GUAC_GIANTS_DUMP` (process env, else `.env.dev`):
@@ -7,6 +7,9 @@
 //!
 //! No recording of 208 exists: every step is the level's own scripts.
 
+use std::collections::{HashMap, VecDeque};
+
+use guac_motion::ground;
 use guac_motion::seam::Vec3;
 use guac_motion::stick::Stick;
 use guac_script::Mode;
@@ -366,5 +369,339 @@ fn level_208s_exit_opens_by_its_reveal_and_its_wall() {
     assert_eq!(behaviour(&run, WALL), "removed", "the wall off");
     assert_eq!(bricks(&run, wall).0, 0, "its bricks gone");
     assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
+}
+
+/// How far from a wall at knee height a cell of [`way_to`]'s lies, metres.
+const CLEAR: f32 = 0.6;
+
+/// The ground a hero walks to from `from` as `giants_swap_fit`'s flood has
+/// it (giants_level_205's: cells a metre across, a step up to 0.7 m and
+/// down to 4 m, none within [`CLEAR`] of a wall at knee height), with the
+/// props and the clones standing as the run has them now; the way from
+/// `from` to the cell nearest `to`, first to last.
+fn way_to(run: &Run, from: Vec3, to: Vec3) -> Vec<Vec3> {
+    let key = |p: Vec3| {
+        (
+            p.x.floor() as i32,
+            (p.y / 1.5).floor() as i32,
+            p.z.floor() as i32,
+        )
+    };
+    let world = &run.bench.world;
+    let mut seen = HashMap::from([(key(from), 0usize)]);
+    let (mut cells, mut parent) = (vec![from], vec![0usize]);
+    let mut queue = VecDeque::from([0usize]);
+    while let Some(at) = queue.pop_front() {
+        let p = cells[at];
+        for (dx, dz) in [(1.0f32, 0.0f32), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+            let over = p + Vec3::new(dx, 0.7, dz);
+            let Some(hit) = ground::ray(world, over, Vec3::NEG_Y, 4.7, &[HERO_BODY]) else {
+                continue;
+            };
+            if hit.normal.y < 0.65 || p.y - hit.point.y > 4.0 {
+                continue;
+            }
+            let to = hit.point;
+            let (a, b) = (
+                p + Vec3::Y * 0.8,
+                Vec3::new(to.x, to.y.max(p.y) + 0.8, to.z),
+            );
+            if ground::ray(world, a, b - a, (b - a).length(), &[HERO_BODY]).is_some() {
+                continue;
+            }
+            let knee = to + Vec3::Y * 0.8;
+            let walled = [Vec3::X, Vec3::NEG_X, Vec3::Z, Vec3::NEG_Z]
+                .iter()
+                .any(|d| ground::ray(world, knee, *d, CLEAR, &[HERO_BODY]).is_some());
+            if walled {
+                continue;
+            }
+            if let std::collections::hash_map::Entry::Vacant(v) = seen.entry(key(to)) {
+                v.insert(cells.len());
+                cells.push(to);
+                parent.push(at);
+                queue.push_back(cells.len() - 1);
+            }
+        }
+    }
+    let end = (0..cells.len())
+        .min_by(|a, b| cells[*a].distance(to).total_cmp(&cells[*b].distance(to)))
+        .unwrap();
+    let mut way = vec![cells[end]];
+    let mut at = end;
+    while at != 0 {
+        at = parent[at];
+        way.push(cells[at]);
+    }
+    way.reverse();
+    way
+}
+
+/// What a fight did ([`fight_to`]).
+#[derive(Debug, Default)]
+struct Fought {
+    /// Each watched placement's behaviour as it changed: step, name, state.
+    log: Vec<(u32, String, String)>,
+    /// Each cutscene and its first step.
+    scenes: Vec<(u32, String)>,
+    /// The hero's health at the fight's start and his lowest in it.
+    health: (f32, f32),
+    /// Each foe's farthest from where it first woke, metres.
+    roamed: HashMap<String, f32>,
+    /// Steps the stick was his (cutscenes not counted).
+    played: u32,
+    /// Whether `done` held before the cap.
+    ended: bool,
+    /// Where he stood every quarter second: what the Mac's driver follows.
+    trail: Vec<Vec3>,
+}
+
+impl Fought {
+    /// The first step `name` was in `state`, if it was.
+    fn first(&self, name: &str, state: &str) -> Option<u32> {
+        self.log
+            .iter()
+            .find(|(_, n, b)| n == name && b == state)
+            .map(|e| e.0)
+    }
+
+    /// The first step `name` was awake (neither asleep nor taken off).
+    fn woke(&self, name: &str) -> Option<u32> {
+        self.log
+            .iter()
+            .find(|(_, n, b)| n == name && !["asleep", "removed", "-"].contains(&b.as_str()))
+            .map(|e| e.0)
+    }
+}
+
+/// A fight as a kid fights it (giants_level_205's, with no top-up): the
+/// nearest of `foes` awake within 40 m and 12 m of his height chased over
+/// the flood's cells and hit, stepping back out after 4 s pressed into
+/// one; with none awake near, on to `goal`. Cutscenes wait out with the
+/// stick let go. `watch` and the foes logged as their behaviours change;
+/// over once `done` holds or after `cap` steps.
+fn fight_to(
+    run: &mut Run,
+    stops: &mut Vec<String>,
+    foes: &[&str],
+    watch: &[&str],
+    goal: Vec3,
+    cap: u32,
+    done: &dyn Fn(&Run) -> bool,
+) -> Fought {
+    let mut fought = Fought::default();
+    let hp = run.health().unwrap_or(0.0);
+    fought.health = (hp, hp);
+    let mut woke_at: HashMap<String, Vec3> = HashMap::new();
+    let mut last: HashMap<String, String> = HashMap::new();
+    let (mut pressed, start) = (0u32, run.steps);
+    let (mut route, mut routed, mut next): (Vec<Vec3>, u32, usize) = (Vec::new(), 0, 0);
+    let flat = |a: Vec3, b: Vec3| Vec3::new(a.x - b.x, 0.0, a.z - b.z).length();
+    loop {
+        for n in foes.iter().chain(watch) {
+            let b = behaviour(run, n);
+            if last.get(*n) != Some(&b) {
+                fought.log.push((run.steps, (*n).to_owned(), b.clone()));
+                last.insert((*n).to_owned(), b.clone());
+            }
+            let awake = !["asleep", "removed", "-"].contains(&b.as_str());
+            if let Some(a) = run.world.actor(run.placed(n).0).filter(|_| awake) {
+                let from = *woke_at.entry((*n).to_owned()).or_insert(a.position);
+                let r = fought.roamed.entry((*n).to_owned()).or_default();
+                *r = r.max(a.position.distance(from));
+            }
+        }
+        if let Some(hp) = run.health() {
+            fought.health.1 = fought.health.1.min(hp);
+        }
+        if (run.steps - start).is_multiple_of(15) {
+            fought.trail.push(run.hero().pivot);
+        }
+        if done(run) {
+            fought.ended = true;
+            return fought;
+        }
+        if run.steps >= start + cap {
+            return fought;
+        }
+        if let Some(cs) = cutscene_name(run) {
+            if fought.scenes.last().is_none_or(|(_, n)| *n != cs) {
+                fought.scenes.push((run.steps, cs));
+            }
+            still(run, stops, [false; 4]);
+            continue;
+        }
+        if guacamole::anchors::scene_holds(&run.vm) {
+            still(run, stops, [false; 4]);
+            continue;
+        }
+        fought.played += 1;
+        let me = run.hero().pivot;
+        let near = foes
+            .iter()
+            .map(|n| run.placed(n).0)
+            .filter(|h| {
+                run.vm
+                    .placement_of(*h)
+                    .is_some_and(|i| !run.vm.removed(i) && !run.vm.asleep(i))
+            })
+            .filter_map(|h| {
+                run.world
+                    .actor(h)
+                    .filter(|a| !a.removed)
+                    .map(|a| a.position)
+            })
+            .filter(|p| (p.y - me.y).abs() < 12.0 && flat(*p, me) < 40.0)
+            .min_by(|a, b| a.distance(me).total_cmp(&b.distance(me)));
+        let target = near.unwrap_or(goal);
+        let far = flat(target, me);
+        if near.is_none() && far < 1.0 {
+            still(run, stops, [false; 4]);
+            continue;
+        }
+        let stale = route.last().is_none_or(|e: &Vec3| e.distance(target) > 3.0);
+        if routed + 90 <= run.steps || stale {
+            route = way_to(run, me, target);
+            (routed, next) = (run.steps, 0);
+        }
+        let aim = if far <= 4.0 || route.is_empty() {
+            target
+        } else {
+            next = (next..(next + 6).min(route.len()))
+                .min_by(|a, b| flat(me, route[*a]).total_cmp(&flat(me, route[*b])))
+                .unwrap_or(next);
+            route[next..]
+                .iter()
+                .find(|c| flat(me, **c) > 1.5)
+                .copied()
+                .unwrap_or(target)
+        };
+        pressed = if near.is_some() && far <= 2.5 {
+            pressed + 1
+        } else {
+            0
+        };
+        let to = if pressed > 240 {
+            if pressed > 270 {
+                pressed = 0;
+            }
+            Vec3::new(me.x * 2.0 - aim.x, me.y, me.z * 2.0 - aim.z)
+        } else {
+            aim
+        };
+        run.bench.view = (to.x - me.x).atan2(to.z - me.z).to_degrees();
+        run.bench.hold_view = true;
+        let push = if far > 2.5 || pressed > 240 {
+            1.0
+        } else {
+            0.35
+        };
+        let swing = near.is_some() && far <= 5.0 && run.steps.is_multiple_of(20);
+        step(
+            run,
+            stops,
+            Stick::new(0.0, push),
+            [swing, false, false, false],
+        );
+    }
+}
+
+/// The reveal's five Ice Chompies (`Setup_001_Enemies`).
+const CHOMPIES: [&str; 5] = [
+    "Enemy_Chompy_Ice(2)",
+    "Enemy_Chompy_Ice(3)",
+    "Enemy_Chompy_Ice(20)",
+    "Enemy_Chompy_Ice(21)",
+    "Enemy_Chompy_Ice(40)",
+];
+
+/// Setup_002's controller, its trigger and its six (`Setup_002_Enemies`).
+const SETUP_002_CONTROLLER: &str = "Setup_002_Controller";
+const SETUP_002_TRIGGER: &str = "Setup_002_Trigger(1)";
+const SETUP_002_FOES: [&str; 6] = [
+    "Enemy_Cyclops_Near(20)",
+    "Enemy_Cyclops_Near(21)",
+    "Enemy_Cyclops_Near(22)",
+    "Enemy_Cyclops_Near(23)",
+    "Enemy_Cyclops_Near(24)",
+    "Enemy_Biclops_Heavy_S2(1)",
+];
+
+/// What else Setup_002's fight touches: Noodles' scene at the first gate
+/// and the spike gate by its spinners.
+const SETUP_002_WATCH: [&str; 3] = [
+    SETUP_002_CONTROLLER,
+    "IGC_Noodles_FirstGate",
+    "Spike_Gate_Metal_Template(1)",
+];
+
+fn removed(run: &Run, name: &str) -> bool {
+    behaviour(run, name) == "removed"
+}
+
+/// openspec AS.345: level 208's first fights on their own scripts. The
+/// intro played out and the exit opened as AS.344's test opens it, the
+/// reveal's five Ice Chompies, walked, wake, chase and bite him and are
+/// beaten; then at Setup_002's trigger its controller sets its Cyclopes
+/// on him, and once he has beaten them ... Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_208s_first_fights_by_their_own_triggers() {
+    println!("load at start: {}", load());
+    let mut stops = Vec::new();
+    let mut run = joined_208(&mut stops);
+    for k in 0..6000u32 {
+        still(&mut run, &mut stops, [false; 4]);
+        if k > 200 && scene_of(&run).is_none() && !guacamole::anchors::scene_holds(&run.vm) {
+            break;
+        }
+    }
+    assert!(intro_off(&run), "the intro played out");
+    println!("handed over at step {} at {}", run.steps, run.hero().pivot);
+    let out = walk_out(&mut run, &mut stops, 6000);
+    println!("{out:?}, at {}", run.hero().pivot);
+    assert!(out.reached.is_some(), "at Setup_002's place");
+    let chompies = fight_to(
+        &mut run,
+        &mut stops,
+        &CHOMPIES,
+        &[],
+        SETUP_002,
+        6000,
+        &|run: &Run| CHOMPIES.iter().all(|n| removed(run, n)),
+    );
+    for (step, n, b) in &chompies.log {
+        println!("  {step} {n} {b}");
+    }
+    println!(
+        "chompies: ended {} at step {}, health {:?}, roamed {:?}, scenes {:?}",
+        chompies.ended, run.steps, chompies.health, chompies.roamed, chompies.scenes
+    );
+    let trigger = run.at(SETUP_002_TRIGGER);
+    let fought = fight_to(
+        &mut run,
+        &mut stops,
+        &SETUP_002_FOES,
+        &SETUP_002_WATCH,
+        trigger,
+        12000,
+        &|run: &Run| removed(run, SETUP_002_CONTROLLER),
+    );
+    for (step, n, b) in &fought.log {
+        println!("  {step} {n} {b}");
+    }
+    println!(
+        "setup_002: ended {} at step {}, health {:?}, roamed {:?}, scenes {:?}, played {}",
+        fought.ended, run.steps, fought.health, fought.roamed, fought.scenes, fought.played
+    );
+    let trail: Vec<String> = chompies
+        .trail
+        .iter()
+        .chain(&fought.trail)
+        .map(|p| format!("{:.2},{:.2},{:.2}", p.x, p.y, p.z))
+        .collect();
+    println!("TRAIL {}", trail.join(";"));
+    println!("stops {stops:#?}");
     println!("load at end: {}", load());
 }

@@ -3216,13 +3216,11 @@ pub fn is_hub_person(script: &str) -> bool {
 /// Whether the placement `name` of the level whose archive is `level` is
 /// one of its own people ([`LEVEL_PEOPLE`], and level 205's
 /// [`crate::level_205::PEOPLE`] and the card house's runaway pirate,
-/// [`crate::level_205::STRETCH_1_PEOPLE`], and level 208's reveal's Ice
-/// Chompies, [`crate::level_208::REVEAL_FOES`]).
+/// [`crate::level_205::STRETCH_1_PEOPLE`]).
 pub fn is_level_person(level: &str, name: &str) -> bool {
     LEVEL_PEOPLE.iter().any(|(l, n)| *l == level && *n == name)
         || crate::level_205::people(level).contains(&name)
         || crate::level_205::stretch_1_people(level).contains(&name)
-        || crate::level_208::people(level).contains(&name)
 }
 
 /// Whether the level whose archive is `level` is a hub stage.
@@ -3299,6 +3297,7 @@ pub fn encounters(level: &str) -> impl Iterator<Item = &'static Encounter> {
         .chain(std::iter::once(&crate::chapter_1::WAY))
         .chain(std::iter::once(&crate::level_201::WAY))
         .chain(std::iter::once(&crate::level_205::WAY))
+        .chain(std::iter::once(&crate::level_208::WAY))
         .filter(move |e| e.level == level)
 }
 

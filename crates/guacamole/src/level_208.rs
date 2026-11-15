@@ -23,9 +23,22 @@
 //!   off a few seconds on. Nothing else spends it: a hero who doesn't
 //!   attack it stays behind it.
 //!
-//! Past both lies Setup_002's place, whose fight is openspec AS.345's, as is
-//! the five Chompies' (the reveal needs their scripts running, not their
-//! bodies).
+//! Past both lies the yard by Setup_002's controller, and its fights
+//! (openspec AS.345, [`WAY`]):
+//! - **The five Ice Chompies.** Out of the reveal they stand idle until the
+//!   combat manager's alert check (every 0.25 s) finds a player within
+//!   their 40 ft notice radius with a clear line to him; then they chase,
+//!   and within their 6 ft attack range breathe ice on him between
+//!   cooldowns, until beaten.
+//! - **Setup_002**, down on the frozen river west of the yard: once a
+//!   player is in its trigger (`Setup_002_Trigger(1)`) it sets its two
+//!   spinning Cyclopes on him and walks three more in along their paths;
+//!   within 60 ft of the snowman by the first gate it plays Noodles' scene
+//!   there (`IGC_Noodles_FirstGate`), then sends its heavy Biclops; with
+//!   its six (`Setup_002_Enemies`) gone it takes its set off, itself, its
+//!   trigger and its paths.
+
+use crate::scripts::Encounter;
 
 /// The archive the story reaches after 205 (openspec AS.340).
 pub const LEVEL: &str = "level_208_ice";
@@ -41,14 +54,11 @@ pub const EXIT: [&str; 4] = [
     "brick2",
 ];
 
-/// The five Ice Chompies of the first room's set, which the reveal's
-/// trigger waits on, by name, listed and never walked (taken from AS.345's
-/// fights; walking them, and the rest of their fight, is AS.345's), drawn
-/// as the level's people ([`people`]): on their scripts' clips, hopping
-/// where their scripts move them and biting a hero beside them. Walked,
-/// the reveal's turn of its Chompy toward its mark never finishes and the
-/// reveal holds the hero for good (openspec AS.385); unwalked, a creature's
-/// `turn to` turns it at once.
+/// The five Ice Chompies of the first room's set (`Setup_001_Enemies`),
+/// which the reveal's trigger waits on, by name: listed with the exit and
+/// walked as [`WAY`]'s (openspec AS.345). The reveal turns its Chompy to
+/// its mark and plays its freeze attack; then all five wake to the hero,
+/// chase him and breathe ice on him.
 pub const REVEAL_FOES: [&str; 5] = [
     "Enemy_Chompy_Ice(2)",
     "Enemy_Chompy_Ice(3)",
@@ -57,22 +67,36 @@ pub const REVEAL_FOES: [&str; 5] = [
     "Enemy_Chompy_Ice(40)",
 ];
 
-/// [`REVEAL_FOES`] on 208, drawn as the level's people are (unwalked, on
-/// their scripts' clips: the TV draws an unwalked creature no other way),
-/// nothing on any other level.
-pub fn people(level: &str) -> &'static [&'static str] {
-    match level {
-        LEVEL => &REVEAL_FOES,
-        _ => &[],
-    }
-}
-
 /// [`EXIT`] and [`REVEAL_FOES`] on 208 alone: another level's `brick`
 /// templates are its own.
 pub fn exit(level: &str) -> impl Iterator<Item = &'static str> {
     let on = level == LEVEL;
     EXIT.iter().chain(&REVEAL_FOES).copied().filter(move |_| on)
 }
+
+/// What fights on level 208 (openspec AS.345), walked as creatures: the
+/// reveal's five Ice Chompies, then Setup_002's controller, its six foes
+/// (`Setup_002_Enemies`) and Noodles' scene at its first gate.
+pub const WAY: Encounter = Encounter {
+    level: LEVEL,
+    placements: &[
+        "Enemy_Chompy_Ice(2)",
+        "Enemy_Chompy_Ice(3)",
+        "Enemy_Chompy_Ice(20)",
+        "Enemy_Chompy_Ice(21)",
+        "Enemy_Chompy_Ice(40)",
+        "Setup_002_Controller",
+        "Enemy_Cyclops_Near(20)",
+        "Enemy_Cyclops_Near(21)",
+        "Enemy_Cyclops_Near(22)",
+        "Enemy_Cyclops_Near(23)",
+        "Enemy_Cyclops_Near(24)",
+        "Enemy_Biclops_Heavy_S2(1)",
+        "IGC_Noodles_FirstGate",
+    ],
+    clones: &[],
+    steered: &[],
+};
 
 #[cfg(test)]
 mod tests {
@@ -83,8 +107,8 @@ mod tests {
 
     /// openspec AS.344: the exit's solids, the wall's bricks and the
     /// reveal's five Chompies are on 208's listing and on no other level's
-    /// (205 holds walls and Chompies of its own, 202 none), and nothing of
-    /// 208's is walked as a fight.
+    /// (205 holds walls and Chompies of its own, 202 none); since AS.345
+    /// the Chompies are walked as [`WAY`]'s, no longer drawn as people.
     #[test]
     fn level_208s_exit_is_on_its_listing_alone() {
         let files = Files::default();
@@ -101,18 +125,42 @@ mod tests {
             }
             assert_eq!(exit(other).count(), 0);
         }
-        assert_eq!(encounters(LEVEL).count(), 0);
-        // Drawn as its people, there alone.
+        // Walked, not drawn as its people (openspec AS.345).
         for name in REVEAL_FOES {
-            assert!(crate::scripts::is_level_person(LEVEL, name), "{name}");
-            assert!(!crate::scripts::is_level_person(
-                "level_205_piratecards",
-                name
-            ));
+            assert!(WAY.placements.contains(&name), "{name}");
+            assert!(!crate::scripts::is_level_person(LEVEL, name), "{name}");
         }
         // The Ice Chompies' own script stays off for the level's others
         // (AS.345's).
         let ice = "C:/tfb/Content/Levels/_Enemies/Chompy_Ice/scripts/S2_Enemy_IceChompy.ai";
         assert!(!on.whitelist.lists("Enemy_Chompy_Ice(1)", ice));
+    }
+
+    /// openspec AS.345: 208's fights are its one encounter, walked there
+    /// alone: every placement of [`WAY`] on its listing and on no other
+    /// level's but where that level names its own (205's Setup_002 shares
+    /// names with 208's).
+    #[test]
+    fn level_208s_fights_are_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        assert_eq!(encounters(LEVEL).collect::<Vec<_>>(), vec![&WAY]);
+        for other in ["level_202", "level_205_piratecards"] {
+            assert!(encounters(other).all(|e| *e != WAY), "{other}");
+            let off = level_config(Mode::Play, &files, 5, other);
+            for name in WAY.placements {
+                assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+                if crate::level_205::WAY.placements.contains(name) && other != "level_202" {
+                    continue;
+                }
+                assert!(
+                    !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
+                    "{name} on {other}"
+                );
+            }
+        }
+        for name in ["Setup_002_Controller", "Enemy_Biclops_Heavy_S2(1)"] {
+            assert!(WAY.placements.contains(&name), "{name}");
+        }
     }
 }

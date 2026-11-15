@@ -1048,6 +1048,15 @@ impl ScriptWorld {
         }
     }
 
+    /// The actor whose point a reference keeps (`placementreference.remembered`
+    /// through it), if `v` is one.
+    fn reference_of(&self, v: Value) -> Option<Handle> {
+        match self.handle(v).and_then(|h| self.objs.get(h)) {
+            Some(Object::Remembered(a) | Object::RememberedVia(a, _)) => Some(a),
+            _ => None,
+        }
+    }
+
     /// The bodies in the seam that are actors (the heroes, the creatures
     /// the engine moves): what the ground finder and the ray caster see
     /// past (AH.18: the original's rays meet the level and the props, and a
@@ -2256,6 +2265,22 @@ impl ScriptWorld {
                     }
                     None => return Err(HostFault::Nothing),
                 };
+                // A reference's own point lifted over the actor it names
+                // is lifted over where that actor stands now (openspec
+                // AS.345): `Calc - Check Path to Target` writes only this,
+                // and kept where the reference was last set, a hero's
+                // point stayed where a cutscene left him and no enemy
+                // could see him past it.
+                let a = match m {
+                    Member::VerticalOffset
+                        if self
+                            .reference_of(r)
+                            .is_some_and(|k| self.actor_of(Some(o)) == Some(k)) =>
+                    {
+                        b
+                    }
+                    _ => a,
+                };
                 let x = float(v)?;
                 let d = a - b;
                 let to = match m {
@@ -3325,7 +3350,11 @@ impl ScriptWorld {
                 Ok(Answer::Done)
             }
             Some(w) => {
+                // Within the reading's 0.01° it lands on the facing asked, as
+                // the steering's last frame of a turn does: a scene measuring
+                // how far off it is reads 0 (openspec AS.385).
                 w.aim = Aim::Still;
+                a.angles.facing = to.rem_euclid(360.0);
                 Ok(Answer::Run {
                     receiver: None,
                     result: None,
@@ -3404,7 +3433,15 @@ impl ScriptWorld {
                 continue;
             };
             let d = p - from;
-            let off = normalized(heading_of(d) - facing).abs();
+            // One standing at the cone's own point is inside it: there's
+            // no heading for it to be off by (openspec AS.345: the Ice
+            // Chompy's battle checks itself, so its bite waited on it
+            // facing north).
+            let off = if d.x.hypot(d.z) <= f32::EPSILON {
+                0.0
+            } else {
+                normalized(heading_of(d) - facing).abs()
+            };
             let feet = (d.length_squared() + f32::MIN_POSITIVE).sqrt() * FEET_PER_METRE;
             let passes = guac_script::compare(code, Value::Float(feet), limit) == Some(true);
             if off <= width * 0.5 && passes {
@@ -5180,6 +5217,60 @@ mod tests {
         let n = w.kept_via.len();
         w.referenced(CELL + 1, Value::Int(3), &mut e);
         assert_eq!(w.kept_via.len(), n);
+    }
+
+    /// The path check of the combat manager's alert (openspec AS.345,
+    /// `Calc - Check Path to Target`) lifts a reference's own point over
+    /// the actor it names, measured from that actor: the point is taken
+    /// from where he stands now, however long ago the reference was set
+    /// to him (a cutscene's), so an enemy's look at him meets him and not
+    /// where he stood. Measured from any other point, it keeps its place
+    /// across the ground as before.
+    #[test]
+    fn a_reference_lifted_over_its_own_actor_follows_him() {
+        const OTHER: Handle = 0x7778;
+        const CELL: u32 = 11;
+        let mut e = bench();
+        let mut w = world();
+        let here = Vec3::new(3.0, 1.0, 4.0);
+        let moved = Vec3::new(-6.0, 2.0, 9.0);
+        w.actors.insert(BALL, ball(here, 0.0));
+        w.actors.insert(OTHER, ball(Vec3::new(1.0, 0.5, 1.0), 0.0));
+        w.referenced(CELL, Value::Entity(BALL), &mut e);
+        let mut a = at(
+            "placementreference",
+            "remembered",
+            Some(Value::Entity(BALL)),
+            None,
+        );
+        a.via = Some(CELL);
+        let kept = w.get_member(&a, Member::Remembered, &mut e).unwrap();
+        w.actors.get_mut(&BALL).unwrap().position = moved;
+        let lift = |w: &mut ScriptWorld, e: &mut Bench, from: Handle, feet: f32| {
+            w.set_member(
+                &at(
+                    "positionmeasurement",
+                    "vertical offset",
+                    Some(kept),
+                    Some(Value::Entity(from)),
+                ),
+                Member::VerticalOffset,
+                Value::Float(feet),
+                e,
+            )
+            .unwrap();
+            w.point(kept, e).unwrap()
+        };
+        let p = lift(&mut w, &mut e, BALL, 3.0);
+        let want = Vec3::new(moved.x, moved.y + 3.0 * METRES_PER_FOOT, moved.z);
+        assert!((p - want).length() < 1e-5, "over where he stands: {p:?}");
+        // From another actor: its place across the ground kept.
+        let p = lift(&mut w, &mut e, OTHER, 3.0);
+        assert!(
+            (p.x - moved.x).abs() < 1e-5 && (p.z - moved.z).abs() < 1e-5,
+            "{p:?}"
+        );
+        assert!((p.y - (0.5 + 3.0 * METRES_PER_FOOT)).abs() < 1e-5, "{p:?}");
     }
 
     /// `system.absolute zero` is the world's origin as a point: what a
@@ -7677,6 +7768,21 @@ mod fight_tests {
         assert!((facings[0] - 12.0).abs() < 1e-3, "{facings:?}");
         assert_eq!(ran, Some(5), "facing it after 5 frames: {facings:?}");
         assert!((w.actor(C1).unwrap().position - at).length() < 0.02);
+        // Within the reading's 0.01° it runs its block landed on the
+        // facing asked, exactly (openspec AS.385: the reveal's turn step
+        // measures what's left of the turn and moves on at 0).
+        w.actors.get_mut(&C1).unwrap().angles.facing = 90.006;
+        assert!(matches!(
+            ask(&mut w, &mut e, &turn(90.0)),
+            Answer::Run { .. }
+        ));
+        assert_eq!(w.actor(C1).unwrap().angles.facing, 90.0);
+        w.actors.get_mut(&C1).unwrap().angles.facing = 0.004;
+        assert!(matches!(
+            ask(&mut w, &mut e, &turn(-0.002)),
+            Answer::Run { .. }
+        ));
+        assert_eq!(w.actor(C1).unwrap().angles.facing, 359.998);
         // Anything the engine doesn't walk turns at once.
         let mut prop = Actor::blank();
         prop.angles.facing = 10.0;
@@ -8101,6 +8207,42 @@ mod fight_tests {
         assert_eq!(
             ask(&mut w, &mut e, &call),
             Answer::Found(vec![Value::Entity(C3), Value::Entity(C2)])
+        );
+    }
+
+    /// openspec AS.345: a target standing at the cone's own point is in
+    /// it whatever the facing (the Ice Chompy's battle checks itself);
+    /// one a hair off it is measured by its heading as before.
+    #[test]
+    fn check_fov_holds_what_stands_at_its_own_point() {
+        let mut e = pit();
+        let mut w = world();
+        w.actors.insert(C1, chompy(Vec3::new(2.0, 0.0, 5.0), 0.0));
+        w.actors.insert(C2, chompy(Vec3::new(2.0, 0.0, 5.01), 0.0));
+        let call = |facing: f32, target: Handle| {
+            op(
+                Class::CheckFov,
+                C1,
+                vec![
+                    ("_RHSfacing", Some(Value::Float(facing))),
+                    ("_RHSfov", Some(Value::Int(30))),
+                    ("_fromLHS", Some(Value::Entity(C1))),
+                    ("_LHS", Some(Value::Entity(target))),
+                    ("_RHS", Some(Value::Int(15))),
+                ],
+                Vec::new(),
+            )
+        };
+        for facing in [0.0, 90.0, 189.0, 300.0] {
+            assert_eq!(
+                ask(&mut w, &mut e, &call(facing, C1)),
+                Answer::Found(vec![Value::Entity(C1)]),
+                "facing {facing}"
+            );
+        }
+        assert_eq!(
+            ask(&mut w, &mut e, &call(189.0, C2)),
+            Answer::Found(Vec::new())
         );
     }
 
