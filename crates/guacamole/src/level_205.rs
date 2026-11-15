@@ -226,6 +226,58 @@ pub fn stretch_1(level: &str) -> &'static [&'static str] {
     }
 }
 
+/// The way on from Setup_002's end toward Setup_003's end (openspec
+/// AS.326), by placement name, listed and never walked; the key gate, the
+/// crane, Setup_003, its house's door and room, Cali and her scene at the
+/// galleon were on the listing already. In order:
+/// - **The key gate.** The channel west of Blobbers' crane is bridged by
+///   its boat turned west, the block pushed off its far end there (AS.325)
+///   the way on to the key gate (`Door_Template(6)`, △), which the card
+///   house's key opens.
+/// - **Setup_003.** Past the gate, a hero inside its combat area's signal
+///   face (`CloseDoor`) closes the gate behind him, takes the crane, the
+///   last block and the start's people off, gives Cali her range and tells
+///   Setup_003's controller its enemies attack: they come out of the house
+///   by the galleon (`Interior_Door(4)`) in parts, twelve of them.
+/// - **Cali at the galleon.** The twelve off, her scene there plays (she
+///   walks onto the dock and points out the gate, the galleon and the chain
+///   pull) and hands her back at her place, where she waits on the galleon
+///   pulled in to the dock by the chain pull, a Giant's feat the TV doesn't
+///   run (AS.371); Setup_003's controller waits on the gate's blowing up
+///   after it.
+///
+/// Left off: the signal face by the gate (`Remove_Part1`), which widens the
+/// co-op camera tether to 95 ft once the gate is open and goes, nothing a
+/// one-player walk meets; and the chain pull's peg (`TitanChainPeg(1)`):
+/// listed, the galleon stood on the peg itself from AS.325's end on (its
+/// start hangs the galleon on the chain, whose node the TV doesn't place),
+/// its hull where Cali walks.
+pub const STRETCH_2: [&str; 1] = ["CloseDoor"];
+
+/// The placements [`STRETCH_2`] lists for the level whose archive is
+/// `level`: none on another level.
+pub fn stretch_2(level: &str) -> &'static [&'static str] {
+    match level {
+        LEVEL => &STRETCH_2,
+        _ => &[],
+    }
+}
+
+/// The clones of [`STRETCH_2`]'s way a scene walks standing on the ground
+/// under each step, as the level's people stand (`ScriptWorld::people`):
+/// the galleon's encounter's Cali, whose body walk stops at the 0.25 m step
+/// onto the dock (stand-in ledger: `scene-walk`).
+pub const STRETCH_2_GROUNDED: [&str; 1] = ["Cali_NPC"];
+
+/// The templates [`STRETCH_2_GROUNDED`] lists for the level whose archive
+/// is `level`: none on another level.
+pub fn stretch_2_grounded(level: &str) -> &'static [&'static str] {
+    match level {
+        LEVEL => &STRETCH_2_GROUNDED,
+        _ => &[],
+    }
+}
+
 /// Who of [`STRETCH_1`] the TV draws as one of the level's people, awake
 /// on his own model: the pirate who runs into the card house.
 pub const STRETCH_1_PEOPLE: [&str; 1] = ["Fake_Card_Pirate_1"];
@@ -559,6 +611,33 @@ mod tests {
         }
         assert!(stretch_1("level_201").is_empty());
         assert!(stretch_1_people("level_201").is_empty());
+    }
+
+    /// openspec AS.326: its way on from Setup_002's end is on 205's listing
+    /// alone, none of it walked as a fight or listed twice over, and its
+    /// grounded clones are 205's alone.
+    #[test]
+    fn level_205s_way_on_from_setup_002s_end_is_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        let off = level_config(Mode::Play, &files, 5, "level_201");
+        for name in STRETCH_2 {
+            assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+            assert!(
+                !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
+                "{name} on 201"
+            );
+            assert!(!WAY.placements.contains(&name), "{name} fights");
+            assert!(!PASSAGE.contains(&name), "{name}");
+            assert!(!STRETCH_1.contains(&name), "{name}");
+            assert!(!listed(LEVEL).any(|n| n == name), "{name}");
+        }
+        for name in ["Remove_Part1", "TitanChainPeg(1)"] {
+            assert!(!on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+        }
+        assert!(stretch_2("level_201").is_empty());
+        assert_eq!(stretch_2_grounded(LEVEL), ["Cali_NPC"]);
+        assert!(stretch_2_grounded("level_201").is_empty());
     }
 
     /// openspec AS.286: its people are on 205's listing and among the TV's

@@ -1411,6 +1411,30 @@ impl ScriptWorld {
         out
     }
 
+    /// The clones a scene walks standing on the ground under each step as
+    /// [`ScriptWorld::people`] stand, by their template's name
+    /// ([`crate::level_205::stretch_2_grounded`]), sorted.
+    pub fn grounded_clones(&self) -> Vec<Handle> {
+        let names = crate::level_205::stretch_2_grounded(self.level.as_deref().unwrap_or_default());
+        if names.is_empty() {
+            return Vec::new();
+        }
+        let mut out: Vec<Handle> = self
+            .actors
+            .iter()
+            .filter(|(_, a)| {
+                a.obj.is_none()
+                    && a.walker.is_none()
+                    && a.template
+                        .and_then(|o| self.templates.get(&o))
+                        .is_some_and(|p| names.contains(&p.name.as_str()))
+            })
+            .map(|(h, _)| *h)
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
     /// Makes each of the first fight's placements in the file linked as
     /// `unit` with movement numbers ([`FIRST_FIGHT`]) a creature the engine
     /// moves ([`ScriptWorld::walk`], openspec AH.18): what the headless
@@ -4285,6 +4309,13 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
         // (openspec AS.325).
         placements.extend(
             crate::level_205::stretch_1(name)
+                .iter()
+                .map(|s| (*s).to_owned()),
+        );
+        // Level 205's way on from Setup_002's end to Setup_003's end
+        // (openspec AS.326).
+        placements.extend(
+            crate::level_205::stretch_2(name)
                 .iter()
                 .map(|s| (*s).to_owned()),
         );
