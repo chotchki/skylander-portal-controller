@@ -285,6 +285,70 @@ pub fn chain_pull(level: &str) -> &'static [&'static str] {
     }
 }
 
+/// The way on from the galleon pulled in to Setup_003's end (openspec
+/// AS.372), by placement name, listed and never walked; the galleon's
+/// cannon (`Push_Block_Template(6)`, one waypoint: a push block that never
+/// moves, the cannon on it), Cali, Setup_003 and its three Cyclopes were on
+/// the listing already. In order:
+/// - **Aboard.** The galleon in, Cali takes the dock's collision off and
+///   wakes the cannon; up onto the deck (the level's own collision where
+///   the galleon docks), a hero within 35 ft of her trigger there
+///   (`CaliTrigger02`, no script) sets her pan to the gate off.
+/// - **The cannon.** △ by it fires its ball along its barrel, south-east
+///   over the bluff toward the gate south of Setup_003's yard
+///   ([`FLAT_SHOTS`]); Cali reads the fire, wakes the coins past the gate
+///   and sets her `pan done`, the gate's blowing up Setup_003's controller
+///   waits on.
+/// - **The gate.** The ball hits the gate's blocker
+///   (`Breakable_Metal_Wall(12)`, `FakeWall.ai`, 55 ft across and unseen,
+///   one of the targets a cannon's ball breaks), which goes 3 s on; its
+///   controller (`ChainedGate_Controller(1)`, `205_PadLock_Controller.ai`)
+///   then blows the gate itself (`Breakable_Metal_Wall(3)`,
+///   `205_FakeWall.ai`: its pieces burst out and it goes) and breaks the
+///   padlock (`Padlock_Target_03`), whose four chains (`Chain_01` to
+///   `_04`) fall with it.
+/// - **Setup_003's last three.** Its Cyclopes m to o react to the blast and
+///   walk their paths through the gate to their markers in the yard;
+///   beaten, the controller goes.
+pub const GALLEON: [&str; 8] = [
+    "Breakable_Metal_Wall(12)",
+    "ChainedGate_Controller(1)",
+    "Breakable_Metal_Wall(3)",
+    "Padlock_Target_03",
+    "Chain_01",
+    "Chain_02",
+    "Chain_03",
+    "Chain_04",
+];
+
+/// The placements [`GALLEON`] lists for the level whose archive is
+/// `level`: none on another level.
+pub fn galleon(level: &str) -> &'static [&'static str] {
+    match level {
+        LEVEL => &GALLEON,
+        _ => &[],
+    }
+}
+
+/// The cannon's ball (openspec AS.372), whose clones fly without falling
+/// until their script sets their gravity (stand-in ledger: `cannon-shot`):
+/// the ball's STARTUP takes its fall off under a check of a variable the VM
+/// reads switched off (guac-script's crate docs, Checks and flows), so it
+/// falls from its 200 ft/s launch onto the bluff between the galleon and
+/// the gate, 3.4 m under its muzzle, where flat it clears the bluff and
+/// meets the gate's blocker. The ball's own later behaviours set its
+/// gravity again once it hits.
+pub const FLAT_SHOTS: [&str; 1] = ["Canon_Ball"];
+
+/// The templates [`FLAT_SHOTS`] lists for the level whose archive is
+/// `level`: none on another level.
+pub fn flat_shots(level: &str) -> &'static [&'static str] {
+    match level {
+        LEVEL => &FLAT_SHOTS,
+        _ => &[],
+    }
+}
+
 /// The clones of [`STRETCH_2`]'s way a scene walks standing on the ground
 /// under each step, as the level's people stand (`ScriptWorld::people`):
 /// the galleon's encounter's Cali, whose body walk stops at the 0.25 m step
@@ -685,6 +749,32 @@ mod tests {
             assert!(!listed(LEVEL).any(|n| n == name), "{name}");
         }
         assert!(chain_pull("level_201").is_empty());
+    }
+
+    /// openspec AS.372: the galleon's gate and its padlock are on 205's
+    /// listing alone, listed once, none of them on an earlier stretch's;
+    /// the cannon's ball flies flat on 205 alone.
+    #[test]
+    fn level_205s_galleon_gate_is_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        let off = level_config(Mode::Play, &files, 5, "level_201");
+        for name in GALLEON {
+            assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+            assert!(
+                !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
+                "{name} on 201"
+            );
+            assert!(!WAY.placements.contains(&name), "{name} fights");
+            assert!(!PASSAGE.contains(&name), "{name}");
+            assert!(!STRETCH_1.contains(&name), "{name}");
+            assert!(!STRETCH_2.contains(&name), "{name}");
+            assert!(!CHAIN_PULL.contains(&name), "{name}");
+            assert!(!listed(LEVEL).any(|n| n == name), "{name}");
+        }
+        assert!(galleon("level_201").is_empty());
+        assert_eq!(flat_shots(LEVEL), ["Canon_Ball"]);
+        assert!(flat_shots("level_201").is_empty());
     }
 
     /// openspec AS.286: its people are on 205's listing and among the TV's

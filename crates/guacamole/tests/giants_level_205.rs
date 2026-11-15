@@ -3561,20 +3561,36 @@ fn hints_up(run: &Run) -> Vec<guac_script::Value> {
 #[ignore = "reads the Giants dump"]
 fn level_205s_galleon_is_pulled_in_by_a_giant_at_its_chain() {
     let AtCali {
+        at: AtSetup002sEnd { stops, .. },
+        started,
+        ..
+    } = on_to_the_galleon_in(Setup {
+        spare: Some(TREE_REX),
+        ..setup()
+    });
+    println!("{:.1} s", started.elapsed().as_secs_f64());
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
+}
+
+/// AS.371's walk on from AS.370's ([`on_to_cali_at_the_galleon`]) on
+/// `setup` (Tree Rex its spare), as
+/// [`level_205s_galleon_is_pulled_in_by_a_giant_at_its_chain`] asserts it:
+/// Eruptor refused at the peg, Tree Rex swapped in pulls the galleon in, it
+/// held at the dock and Cali on past her state 4. Tree Rex is left in.
+fn on_to_the_galleon_in(setup: Setup) -> AtCali {
+    let AtCali {
         at:
             AtSetup002sEnd {
                 mut run,
                 mut stops,
                 mut scenes,
                 mut trail,
-                ..
+                topups,
             },
+        lowest,
         started,
-        ..
-    } = on_to_cali_at_the_galleon(Setup {
-        spare: Some(TREE_REX),
-        ..setup()
-    });
+    } = on_to_cali_at_the_galleon(setup);
     println!(
         "Cali waiting at step {}, {:.1} s; the galleon {:.1} ft off the peg at {}",
         run.steps,
@@ -3710,7 +3726,271 @@ fn level_205s_galleon_is_pulled_in_by_a_giant_at_its_chain() {
     // In for good: the chain holds its pull's end.
     assert!(galleon_off(&run) < DOCKED_FT, "the galleon back out");
     assert!(!hints_up(&run).contains(&need_a_giant), "the hint up still");
-    println!("{:.1} s", started.elapsed().as_secs_f64());
+    AtCali {
+        at: AtSetup002sEnd {
+            run,
+            stops,
+            scenes,
+            trail,
+            topups,
+        },
+        lowest,
+        started,
+    }
+}
+
+/// Every placement of the gate south of Setup_003's yard the cannon blows
+/// (openspec AS.372): its blocker, its controller, the gate, its padlock
+/// and the padlock's four chains (`level_205::GALLEON`).
+const THE_GATE: [&str; 8] = [
+    "Breakable_Metal_Wall(12)",
+    "ChainedGate_Controller(1)",
+    "Breakable_Metal_Wall(3)",
+    "Padlock_Target_03",
+    "Chain_01",
+    "Chain_02",
+    "Chain_03",
+    "Chain_04",
+];
+
+/// Setup_003's last three (its Cyclopes m to o) and the markers in its yard
+/// its controller sets them at.
+const SETUP_003_LAST: [(&str, &str); 3] = [
+    ("Enemy_Cyclops_Near(7)", "Setup_003_Marker_M"),
+    ("Enemy_Cyclops_Near(8)", "Setup_003_Marker_N"),
+    ("Enemy_Cyclops_Near(9)", "Setup_003_Marker_O"),
+];
+
+/// The cannon on the galleon's deck: the clone of the cannon's top its push
+/// block (`Push_Block_Template(6)`) made, by the block.
+fn galleon_cannon(run: &Run) -> Option<guac_script::Handle> {
+    let block = run.at("Push_Block_Template(6)");
+    run.world.clones().into_iter().find(|h| {
+        run.world.name(*h) == "Push_Canon_Art_Top"
+            && run
+                .world
+                .actor(*h)
+                .is_some_and(|a| !a.removed && a.position.distance(block) < 8.0)
+    })
+}
+
+/// A clone's local `name` as an int (a float's whole part), if it has one.
+fn clone_int(run: &Run, h: guac_script::Handle, var: &str) -> Option<i32> {
+    let id = run.vm.placement_of(h)?;
+    match run.vm.value(run.vm.local(id, var)?) {
+        guac_script::Value::Int(i) => Some(i),
+        guac_script::Value::Float(f) => Some(f as i32),
+        _ => None,
+    }
+}
+
+/// openspec AS.372: level 205 on from the galleon pulled in (AS.371's walk,
+/// Tree Rex left in, as a kid who just pulled has him on: the deck's
+/// trigger and the cannon take any hero) to Setup_003's end, each thing by
+/// its own trigger. Up onto the deck to Cali's trigger there, her pan to
+/// the gate plays; △ by the cannon fires it, Cali reads the fire and sets
+/// her `pan done`; its ball flies over the bluff into the gate's blocker,
+/// which goes, and the gate's controller blows the gate into its pieces and
+/// breaks its padlock and chains; Setup_003's last three walk through to
+/// their markers in its yard, and beaten, its controller goes. Nothing
+/// stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_205s_galleon_fires_its_cannon_and_setup_003_ends() {
+    let AtCali {
+        at: AtSetup002sEnd { stops, scenes, .. },
+        lowest,
+        started,
+    } = on_to_setup_003s_end(Setup {
+        spare: Some(TREE_REX),
+        ..setup()
+    });
+    println!(
+        "scenes {scenes:?}; lowest health {lowest:?}; {:.1} s",
+        started.elapsed().as_secs_f64()
+    );
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
+}
+
+/// AS.372's walk on from AS.371's ([`on_to_the_galleon_in`]) on `setup`
+/// (Tree Rex its spare), as
+/// [`level_205s_galleon_fires_its_cannon_and_setup_003_ends`] asserts it,
+/// to Setup_003's controller gone; `lowest` is his lowest health in the
+/// last three's fight.
+fn on_to_setup_003s_end(setup: Setup) -> AtCali {
+    let AtCali {
+        at:
+            AtSetup002sEnd {
+                mut run,
+                mut stops,
+                mut scenes,
+                mut trail,
+                mut topups,
+            },
+        started,
+        ..
+    } = on_to_the_galleon_in(setup);
+    println!(
+        "the galleon in at step {}, {:.1} s; Tree Rex at {}",
+        run.steps,
+        started.elapsed().as_secs_f64(),
+        run.hero().pivot
+    );
+    trail.mark(&run, "galleon-in");
+    assert_eq!(run.toy, TREE_REX.toy, "Tree Rex still in");
+    assert_eq!(local_int(&run, "Cali", "speakerinit"), Some(5));
+    assert_eq!(
+        behaviour(&run, "Setup_003_Controller"),
+        "check if gate has been blown up"
+    );
+    assert!(
+        run.world
+            .actor(run.placed("SpecialDockCollision").0)
+            .is_some_and(|a| a.removed),
+        "the dock's collision on"
+    );
+    for name in THE_GATE {
+        assert_ne!(behaviour(&run, name), "removed", "{name} gone already");
+    }
+    let cannon = galleon_cannon(&run).expect("the galleon's cannon");
+    assert_eq!(
+        run.vm
+            .placement_of(cannon)
+            .and_then(|i| run.vm.behaviour(i)),
+        Some("waiting to shoot")
+    );
+
+    // Up onto the deck to Cali's trigger: her pan to the gate.
+    let deck = run.at("CaliTrigger02");
+    walk_to(&mut run, &mut stops, &mut scenes, &mut trail, deck, 1.5);
+    trail.mark(&run, "deck");
+    let aboard = run.hero().pivot;
+    println!("on the deck at step {} at {aboard}", run.steps);
+    assert!(aboard.y > 30.0, "on the deck, over the dock: {aboard}");
+    let mut stood_in = 0;
+    for _ in 0..1500 {
+        if local_int(&run, "Cali", "speakerinit") == Some(6) {
+            break;
+        }
+        if !scene_step(&mut run, &mut stops, &mut scenes, &mut stood_in) {
+            still(&mut run, &mut stops, [false; 4]);
+        }
+    }
+    println!(
+        "Cali at {:?} at step {}; scenes {scenes:?}",
+        local_int(&run, "Cali", "speakerinit"),
+        run.steps
+    );
+    assert_eq!(
+        local_int(&run, "Cali", "speakerinit"),
+        Some(6),
+        "Cali waiting on the cannon"
+    );
+
+    // △ by the cannon fires it.
+    let at = run.world.actor(cannon).unwrap().position;
+    walk_to(&mut run, &mut stops, &mut scenes, &mut trail, at, 4.0);
+    trail.mark(&run, "cannon");
+    assert!(
+        tap_until(&mut run, &mut stops, 900, &|r| local_int(
+            r, "Cali", "pan done"
+        ) == Some(1)),
+        "the cannon fired: {:?}",
+        clone_int(&run, cannon, "fired cannon")
+    );
+    let fired = run.steps;
+    println!("the cannon fired at step {fired}");
+
+    // Its ball into the gate's blocker; the gate blown, its padlock and
+    // chains broken.
+    let mut gone: Vec<(u32, &str)> = Vec::new();
+    let (mut broke, mut pieces) = (None, 0usize);
+    for _ in 0..900 {
+        still(&mut run, &mut stops, [false; 4]);
+        if broke.is_none() && behaviour(&run, "Breakable_Metal_Wall(3)") == "breaking effect" {
+            broke = Some(run.steps);
+            pieces = clones_near(&run, run.at("Breakable_Metal_Wall(3)"), 12.0)
+                .iter()
+                .filter(|n| n.starts_with("Metal Wall Piece"))
+                .count();
+        }
+        for name in THE_GATE {
+            if behaviour(&run, name) == "removed" && !gone.iter().any(|(_, n)| *n == name) {
+                gone.push((run.steps, name));
+            }
+        }
+        if gone.len() == THE_GATE.len() {
+            break;
+        }
+    }
+    println!("the gate from step {fired}: gone {gone:?}, burst at {broke:?} with {pieces} pieces");
+    assert_eq!(gone.len(), THE_GATE.len(), "the gate stands: {gone:?}");
+    assert_eq!(gone[0].1, "Breakable_Metal_Wall(12)", "the blocker first");
+    assert!(broke.is_some() && pieces > 0, "the gate's pieces: {pieces}");
+    assert_ne!(
+        behaviour(&run, "Setup_003_Controller"),
+        "check if gate has been blown up"
+    );
+    trail.mark(&run, "gate-blown");
+
+    // Setup_003's last three through the gate to their markers.
+    let off = |run: &Run| -> Vec<f32> {
+        SETUP_003_LAST
+            .iter()
+            .map(|(foe, marker)| {
+                let (f, m) = (run.at(foe), run.at(marker));
+                (f.x - m.x).hypot(f.z - m.z)
+            })
+            .collect()
+    };
+    for _ in 0..1500 {
+        if off(&run).iter().all(|d| *d < 2.5) {
+            break;
+        }
+        still(&mut run, &mut stops, [false; 4]);
+    }
+    println!(
+        "the last three at step {} {:?} m off their markers",
+        run.steps,
+        off(&run)
+    );
+    assert!(
+        off(&run).iter().all(|d| *d < 2.5),
+        "the last three short of their markers: {:?}",
+        off(&run)
+    );
+
+    // Beaten, the controller goes.
+    let (_, goal) = run.placed("Setup_003_Marker_N");
+    let last: Vec<&str> = SETUP_003_LAST.iter().map(|(f, _)| *f).collect();
+    let fought = fight(
+        &mut run,
+        &mut stops,
+        "Setup_003_Controller",
+        &last,
+        goal,
+        6000,
+    );
+    scenes.extend(fought.scenes.iter().cloned());
+    topups.extend(fought.topups.iter().copied());
+    trail.0.extend(fought.trail.iter().copied());
+    for (step, n, b) in &fought.log {
+        println!("  {step} {n} {b}");
+    }
+    assert!(fought.ended, "Setup_003's last three: {:?}", fought.log);
+    assert_eq!(behaviour(&run, "Setup_003_Controller"), "removed");
+    println!("Setup_003's end at step {}", run.steps);
+    trail.mark(&run, "setup-003-end");
+    AtCali {
+        at: AtSetup002sEnd {
+            run,
+            stops,
+            scenes,
+            trail,
+            topups,
+        },
+        lowest: fought.lowest,
+        started,
+    }
 }
