@@ -343,11 +343,11 @@ pub fn galleon(level: &str) -> &'static [&'static str] {
 /// - **The lever's wall.** The cannon pushed west along its track and
 ///   fired (△) breaks the metal wall (`Breakable_Metal_Wall(1)`,
 ///   `MetalWall.ai`) between the track and the turntable's lever.
-/// - **The turntable.** Until it turns, the cannon's blocker
-///   (`Cannon_Blocker`, a switch's place in the track's set) stops the
-///   cannon short of it; the lever (`Switch_Controller_template(1)`, △)
-///   tells the turntable (`Switch_Straight_Art_Template(1)`,
-///   `205_FakePlate.ai`) to turn 90°, and the cannon passes over it east.
+/// - **The turntable.** Until it turns, the turntable
+///   (`Switch_Straight_Art_Template(1)`, `205_FakePlate.ai`, a switch in
+///   the track's set) stops the cannon short of it; the lever
+///   (`Switch_Controller_template(1)`, △) tells it to turn 90°, and the
+///   cannon passes over it east.
 /// - **The cell.** Pushed east to the track's end and fired, the cannon
 ///   breaks the jailed pirate's cell's wall (`Breakable_Metal_Wall(5)`);
 ///   his cell's scene plays his breakout, and he offers his card game,
@@ -367,13 +367,14 @@ pub fn galleon(level: &str) -> &'static [&'static str] {
 /// Left off: the signal faces past the blown gate and past the gate
 /// (`Remove_Part2`, `Remove_Part3`), which take the stretch's people and
 /// pieces off behind a hero (the gate's pirate and the cell's scene are
-/// woken by Cali's script already), the third metal wall (`Breakable_Metal_Wall(2)`, off the way) and Setup_004's
+/// woken by Cali's script already), the cannon's blocker
+/// (`Cannon_Blocker`, another switch's place in the track's set, the walk
+/// the same to the step with it listed), the third metal wall (`Breakable_Metal_Wall(2)`, off the way) and Setup_004's
 /// two doors (`Interior_Door(8)`, `(6)`; its controller sets its foes at
 /// their places itself), each walked the same without.
-pub const STRETCH_3: [&str; 5] = [
+pub const STRETCH_3: [&str; 4] = [
     "Switch_Controller_template(1)",
     "Switch_Straight_Art_Template(1)",
-    "Cannon_Blocker",
     "Breakable_Metal_Wall(1)",
     "Breakable_Metal_Wall(5)",
 ];

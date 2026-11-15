@@ -4201,7 +4201,7 @@ fn on_to_setup_004s_end(setup: Setup) -> AtCali {
     trail.mark(&run, "lever-wall");
 
     // Pushed east before the lever, the cannon stops short of the
-    // turntable, its blocker in the track's way.
+    // turntable, unturned in the track's way.
     let b = run.at(PUSH_CANNON);
     walk_near(
         &mut run,
