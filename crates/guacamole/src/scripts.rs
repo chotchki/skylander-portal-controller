@@ -6313,6 +6313,35 @@ mod tests {
         }
     }
 
+    /// openspec AS.345 (stand-in ledger `control-wakes`): a creature a
+    /// script put to sleep (no range, a buffer) wakes as another takes
+    /// control of it, its buffer to 0, the activity rule waking it that
+    /// step; one the engine doesn't walk, or one with a range of its own,
+    /// is left to the rule as it was.
+    #[test]
+    fn a_creature_put_to_sleep_wakes_as_another_takes_control_of_it() {
+        let (mut w, grunt, _) = world();
+        let sleep = |w: &mut ScriptWorld, range: f32| {
+            let a = w.actors.get_mut(&grunt).unwrap();
+            (a.range, a.buffer, a.active) = (range, 1.0, false);
+        };
+        let control = call(Class::Control, Some(Value::Entity(grunt)));
+        // Not walked: left asleep.
+        sleep(&mut w, 0.0);
+        w.op(&control, &mut |_| 0, &mut NoEngine).unwrap();
+        assert_eq!(w.actor(grunt).unwrap().buffer, 1.0);
+        assert!(w.wakes(&[grunt]).is_empty());
+        // A creature: woken.
+        assert!(w.walk(grunt));
+        w.op(&control, &mut |_| 0, &mut NoEngine).unwrap();
+        assert_eq!(w.actor(grunt).unwrap().buffer, 0.0);
+        assert_eq!(w.wakes(&[grunt]), vec![grunt]);
+        // With a range, the rule's as it was.
+        sleep(&mut w, 30.0);
+        w.op(&control, &mut |_| 0, &mut NoEngine).unwrap();
+        assert_eq!(w.actor(grunt).unwrap().buffer, 1.0);
+    }
+
     /// openspec AS.205: a call of the original's pause is noted with its
     /// value and whether it plays sound, and its first write (the game's
     /// time scale) names the placement making it, which runs on through the

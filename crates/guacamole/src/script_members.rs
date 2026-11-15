@@ -2270,12 +2270,16 @@ impl ScriptWorld {
                 // AS.345): `Calc - Check Path to Target` writes only this,
                 // and kept where the reference was last set, a hero's
                 // point stayed where a cutscene left him and no enemy
-                // could see him past it.
+                // could see him past it. On level 208 alone for now: on
+                // every level, 214's third island's enemies notice him and
+                // its fight goes on other steps (stand-in ledger
+                // `lifted-reference`).
                 let a = match m {
                     Member::VerticalOffset
-                        if self
-                            .reference_of(r)
-                            .is_some_and(|k| self.actor_of(Some(o)) == Some(k)) =>
+                        if self.level() == Some(crate::level_208::LEVEL)
+                            && self
+                                .reference_of(r)
+                                .is_some_and(|k| self.actor_of(Some(o)) == Some(k)) =>
                     {
                         b
                     }
@@ -5226,8 +5230,8 @@ mod tests {
 
     /// The path check of the combat manager's alert (openspec AS.345,
     /// `Calc - Check Path to Target`) lifts a reference's own point over
-    /// the actor it names, measured from that actor: the point is taken
-    /// from where he stands now, however long ago the reference was set
+    /// the actor it names, measured from that actor: on level 208 (the
+    /// rule's scope for now) the point is taken from where he stands now, however long ago the reference was set
     /// to him (a cutscene's), so an enemy's look at him meets him and not
     /// where he stood. Measured from any other point, it keeps its place
     /// across the ground as before.
@@ -5266,6 +5270,13 @@ mod tests {
             .unwrap();
             w.point(kept, e).unwrap()
         };
+        // Off level 208 (the rule's scope for now): kept where it was set.
+        let p = lift(&mut w, &mut e, BALL, 3.0);
+        assert!(
+            (p.x - here.x).abs() < 1e-5 && (p.z - here.z).abs() < 1e-5,
+            "{p:?}"
+        );
+        w.set_level(crate::level_208::LEVEL);
         let p = lift(&mut w, &mut e, BALL, 3.0);
         let want = Vec3::new(moved.x, moved.y + 3.0 * METRES_PER_FOOT, moved.z);
         assert!((p - want).length() < 1e-5, "over where he stands: {p:?}");
