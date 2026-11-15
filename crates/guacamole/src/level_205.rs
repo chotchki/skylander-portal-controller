@@ -266,7 +266,9 @@ pub fn stretch_2(level: &str) -> &'static [&'static str] {
 /// The clones of [`STRETCH_2`]'s way a scene walks standing on the ground
 /// under each step, as the level's people stand (`ScriptWorld::people`):
 /// the galleon's encounter's Cali, whose body walk stops at the 0.25 m step
-/// onto the dock (stand-in ledger: `scene-walk`).
+/// onto the dock (stand-in ledger: `scene-walk`). It stands the intro's
+/// Cali too: her walk there within 0.68 m of her body walk's, at the same
+/// place at its end.
 pub const STRETCH_2_GROUNDED: [&str; 1] = ["Cali_NPC"];
 
 /// The templates [`STRETCH_2_GROUNDED`] lists for the level whose archive
