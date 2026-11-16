@@ -306,7 +306,9 @@ fn stream_reads(dir: &Path, stream: &str) -> Result<(), String> {
 /// nothing joining, as before.
 fn card_streams_for(dir: &Path, level_rel: &str) -> Result<Vec<&'static str>, String> {
     let held: Vec<&'static str> = crate::card_game::STREAMS
-        .into_iter()
+        .iter()
+        .chain(crate::card_game::stones())
+        .copied()
         .filter(|a| dir.join(scripts::script_path(a)).is_file())
         .collect();
     if held.is_empty() {

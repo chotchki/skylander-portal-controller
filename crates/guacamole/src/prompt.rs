@@ -183,7 +183,13 @@ fn is_screen(name: &str) -> bool {
 /// nothing shown (the module docs; stand-in ledger: `hub-screens`), a card
 /// game's left for [`quit_card_game`].
 pub fn answer_screen(world: &mut ScriptWorld, name: &str) -> bool {
-    world.card_game_answered |= name.eq_ignore_ascii_case(CARD_GAME);
+    let card_game = name.eq_ignore_ascii_case(CARD_GAME);
+    // A headless run playing the game (openspec AS.366) runs the original's
+    // own start; every TV run answers it here.
+    if card_game && world.card_streams.plays_games() {
+        return false;
+    }
+    world.card_game_answered |= card_game;
     is_screen(name)
 }
 

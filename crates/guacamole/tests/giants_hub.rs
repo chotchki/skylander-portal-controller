@@ -840,7 +840,11 @@ fn every_hub_stages_people_stand_talk_and_stop_the_hero() {
                 // The card game's streams link beside every stage (openspec
                 // AS.364), and the TV's quit asks none of them: no game is
                 // counted won in play (AS.364's review).
-                assert_eq!(run.world.card_streams.units.len(), 3, "{stage}");
+                assert_eq!(
+                    run.world.card_streams.units.len(),
+                    guacamole::card_game::STREAMS.len() + guacamole::card_game::stones().len(),
+                    "{stage}"
+                );
                 assert!(
                     run.world.card_streams.joined.is_empty(),
                     "{stage}: {:?}",
@@ -1508,6 +1512,7 @@ fn the_card_streams_name_no_member_the_tv_lacks_but_the_wii_pair() {
         .card_streams
         .units
         .iter()
+        .filter(|(a, _)| guacamole::card_game::STREAMS.contains(a))
         .map(|(_, u)| *u)
         .collect();
     assert_eq!(units.len(), 3, "{:?}", run.world.card_streams.units);

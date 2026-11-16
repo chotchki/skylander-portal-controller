@@ -2120,27 +2120,12 @@ fn crane(run: &Run) -> f32 {
     facing(run, "Crane(2)").rem_euclid(360.0)
 }
 
-/// openspec AS.325: level 205 from its first yard to Setup_002's end, each
-/// thing on the way worked by its own trigger. Over the crane (AS.283) and
-/// through Setup_001 (AS.305); the five gone, the jump pad below the key
-/// ledge throws him up onto it and he takes the first key; off the ledge
-/// the key opens the door west of the yard; in the market the armored
-/// Chompy's intro plays and its Chompies are fought; at Blobbers' crane the
-/// wheel turns the boat south, the block by it is pushed aboard, the boat
-/// turned west carries it and it's pushed off the far end into the
-/// channel, and turned south again the boat bridges the gap and the block
-/// past it is pushed into the channel there; in Setup_002's yard the
-/// pirate with the key runs into the card house, its door opening for him;
-/// in the house Fangs' intro plays, his game is stood in won (the TV has
-/// no card game, AS.329), his outro plays and the gate before the key
-/// lowers, and the key taken, the gate by the door; carried back to the
-/// yard the key sets Setup_002's fight off, which ends with its
-/// controller. Nothing stops.
-#[test]
-#[ignore = "reads the Giants dump"]
-fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
-    let started = std::time::Instant::now();
-    println!("load at start: {}", load());
+/// Level 205 from its start to the card house's door, as
+/// [`level_205s_way_on_from_the_first_yard_ends_setup_002`] walks it: over
+/// the crane, the first yard fought, the key ledge, the market, the crane's
+/// blocks and Setup_002's yard to where the pirate with the key ran in.
+/// The run, its stops, the scenes seen, the trail and the top-ups.
+fn to_the_card_house() -> (Run, Vec<String>, Vec<(u32, String)>, Trail, Vec<(u32, f32)>) {
     let mut stops = Vec::new();
     let mut run = joined_205(&mut stops);
     let mut scenes = over_the_crane(&mut run, &mut stops);
@@ -2458,6 +2443,31 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
         run.steps
     );
     assert!(woke.is_some(), "Setup_002 woke: {:?}", yard_2.log);
+    (run, stops, scenes, trail, topups)
+}
+
+/// openspec AS.325: level 205 from its first yard to Setup_002's end, each
+/// thing on the way worked by its own trigger. Over the crane (AS.283) and
+/// through Setup_001 (AS.305); the five gone, the jump pad below the key
+/// ledge throws him up onto it and he takes the first key; off the ledge
+/// the key opens the door west of the yard; in the market the armored
+/// Chompy's intro plays and its Chompies are fought; at Blobbers' crane the
+/// wheel turns the boat south, the block by it is pushed aboard, the boat
+/// turned west carries it and it's pushed off the far end into the
+/// channel, and turned south again the boat bridges the gap and the block
+/// past it is pushed into the channel there; in Setup_002's yard the
+/// pirate with the key runs into the card house, its door opening for him;
+/// in the house Fangs' intro plays, his game is stood in won (the TV has
+/// no card game, AS.329), his outro plays and the gate before the key
+/// lowers, and the key taken, the gate by the door; carried back to the
+/// yard the key sets Setup_002's fight off, which ends with its
+/// controller. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, mut stops, mut scenes, mut trail, mut topups) = to_the_card_house();
 
     trail.mark(&run, "card-house");
     // Into the card house: Fangs' intro, his game (stood in won), his
@@ -2510,7 +2520,10 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
     assert_eq!(stood_in, 1, "his game stood in once");
     // The card game's streams link beside 205 (openspec AS.364), and the
     // TV's quit the stand-in turned asked none of them (AS.364's review).
-    assert_eq!(run.world.card_streams.units.len(), 3);
+    assert_eq!(
+        run.world.card_streams.units.len(),
+        guacamole::card_game::STREAMS.len() + guacamole::card_game::stones().len()
+    );
     assert!(
         run.world.card_streams.joined.is_empty(),
         "{:?}",
@@ -3138,7 +3151,10 @@ fn on_to_setup_002s_end_with(setup: Setup) -> AtSetup002sEnd {
     assert_eq!(stood_in, 1, "his game stood in once");
     // The card game's streams link beside 205 (openspec AS.364), and the
     // TV's quit the stand-in turned asked none of them (AS.364's review).
-    assert_eq!(run.world.card_streams.units.len(), 3);
+    assert_eq!(
+        run.world.card_streams.units.len(),
+        guacamole::card_game::STREAMS.len() + guacamole::card_game::stones().len()
+    );
     assert!(
         run.world.card_streams.joined.is_empty(),
         "{:?}",

@@ -167,8 +167,9 @@ guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
 # stop at `Minion.ai` #842, the fall-back's subject since AG.160 modelled the
 # member it stopped on.
 guac-script = { path = "../guac-script", features = ["test-fixtures"] }
-# Turns `unmodel` on for the tests, whose lib is built without `test-hooks`.
-guacamole = { path = ".", features = ["unmodel"] }
+# Turns `unmodel` on for the tests, whose lib is built without `test-hooks`,
+# and `played-card-games`, which only the tests' harness may turn on.
+guacamole = { path = ".", features = ["unmodel", "played-card-games"] }
 # The live GameController check prints the backend's own log lines.
 tracing-subscriber = { workspace = true }
 
@@ -200,6 +201,12 @@ unmodel = ["guac-script/test-fixtures"]
 # --features video-spike --example video_spike` (the TV pass in
 # openspec/backlog.md runs it on the TV, ex-AB.16).
 video-spike = []
+# openspec AS.366: a yes at a card pirate plays the original's own card game
+# on the VM (`card_game::CardStreams::play_games`) where the TV answers it as
+# a quit. Only the disc tests' headless harness turns it on (the
+# dev-dependency below): no binary feature names it, so no release, `cargo
+# run` or `test-hooks` binary holds the switch.
+played-card-games = []
 
 [[example]]
 name = "video_spike"

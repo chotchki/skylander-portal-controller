@@ -1406,7 +1406,13 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
             let bytes = guac_extract::scripts::entry(&usr, &level_archive).expect("the level");
             let igz = Igz::parse(&bytes).unwrap();
             match guacamole::card_game::file_places_a_pirate(&igz).unwrap() {
-                true => guacamole::card_game::STREAMS.to_vec(),
+                // The three streams, then every stone's archives
+                // (openspec AS.366), as the TV's load links them.
+                true => guacamole::card_game::STREAMS
+                    .iter()
+                    .chain(guacamole::card_game::stones())
+                    .copied()
+                    .collect(),
                 false => Vec::new(),
             }
         }
@@ -1585,6 +1591,21 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
         for p in files.placed.iter().filter(|p| p.obj.unit == u) {
             if let Some(model) = &p.model
                 && let Some(pal) = palettes.palettes.iter().find(|x| &x.owner == model)
+            {
+                world.set_palette_of(p.obj, pal);
+            }
+        }
+    }
+    // The card game's streams' and stones' templates' too (openspec AS.366:
+    // the board's attack rig and the stones' models time their clips by
+    // them), read off each archive as the ship parts' are.
+    for (archive, u) in world.card_streams.units.clone() {
+        let Ok(palettes) = levels::palettes(&igzs[u as usize], archive, identity()) else {
+            continue;
+        };
+        for p in files.placed.iter().filter(|p| p.obj.unit == u) {
+            if let Some(model) = &p.model
+                && let Some(pal) = palettes.ir.palettes.iter().find(|x| &x.owner == model)
             {
                 world.set_palette_of(p.obj, pal);
             }
