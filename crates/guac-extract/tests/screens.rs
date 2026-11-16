@@ -8,9 +8,10 @@ use std::path::{Path, PathBuf};
 
 use guac_extract::known::KnownDump;
 use guac_extract::screens::{
-    ARCHIVES, CARD_GAME, CARD_GAME_PART, CARD_STONES_PART, PART, card_stones, path,
+    ARCHIVES, CARD_GAME, CARD_GAME_PART, CARD_PALETTES_PART, CARD_STONES_PART, PART, card_stones,
+    path,
 };
-use guac_extract::stages::{ScriptStage, card_part, screen_part, stone_part};
+use guac_extract::stages::{ScriptStage, card_palette_part, card_part, screen_part, stone_part};
 use guac_extract::{ExtractRoot, IdentityDir, open};
 use guac_formats::iga::builder::IgaBuilder;
 use guac_formats::sfo::builder::SfoBuilder;
@@ -185,4 +186,60 @@ fn the_card_stones_land_by_the_screens_rule() {
         (again.stones.files.written, again.stones.files.kept),
         (0, 3)
     );
+}
+
+/// openspec AS.483: the card game's palettes, one file for every archive's
+/// templates: a dump holding one of the archives writes it and records the
+/// part with it, a second run keeps it, writing nothing; a dump holding none
+/// records the part with no file.
+#[test]
+fn the_card_palettes_land_in_one_file_and_a_second_run_keeps_it() {
+    use guac_extract::intros::IrFormat;
+    let tmp = tempfile::tempdir().unwrap();
+    let stones = card_stones();
+    let dump = dump_with(tmp.path(), |usr| {
+        let bld = IgaBuilder::new().lzma("level.bld", &entry()).build();
+        fs::write(usr.join(&stones[0]), &bld).unwrap();
+    });
+    let mut dir = opened(tmp.path(), &dump);
+    let usr = dump.join("PS3_GAME/USRDIR");
+    let mut st = ScriptStage::default();
+    card_palette_part(&mut dir, &usr, IrFormat::Ron, &mut st).unwrap();
+    assert!(
+        st.card_palettes.read && !st.card_palettes.kept,
+        "{:?}",
+        st.failed
+    );
+    assert_eq!(st.card_palettes.files.written, 1);
+    assert_eq!(
+        st.card_palettes.missing.len(),
+        CARD_GAME.len() + stones.len() - 1
+    );
+    let rel = IrFormat::Ron.card_palettes_path();
+    assert_eq!(dir.manifest().parts[CARD_PALETTES_PART], [rel]);
+    assert!(dir.path().join(rel).is_file());
+    let mut again = ScriptStage::default();
+    card_palette_part(&mut dir, &usr, IrFormat::Ron, &mut again).unwrap();
+    assert!(again.card_palettes.kept && !again.card_palettes.read);
+    assert_eq!(
+        (
+            again.card_palettes.files.written,
+            again.card_palettes.files.kept
+        ),
+        (0, 1)
+    );
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dump = dump_with(tmp.path(), |_| {});
+    let mut dir = opened(tmp.path(), &dump);
+    let mut st = ScriptStage::default();
+    card_palette_part(
+        &mut dir,
+        &dump.join("PS3_GAME/USRDIR"),
+        IrFormat::Ron,
+        &mut st,
+    )
+    .unwrap();
+    assert!(st.card_palettes.read, "{:?}", st.failed);
+    assert!(dir.manifest().parts[CARD_PALETTES_PART].is_empty());
 }

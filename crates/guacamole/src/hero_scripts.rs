@@ -156,6 +156,9 @@ pub(crate) struct ScriptSource {
     layout: Option<Layout>,
     /// The level's placements' palettes by model (openspec AH.27).
     palettes: Vec<guacamole::level_scripts::ScriptPalette>,
+    /// The card game's templates' palettes by model (openspec AS.483), set
+    /// on its streams' placements alone.
+    card_palettes: Vec<guacamole::level_scripts::ScriptPalette>,
     /// The sounds the run's units play (openspec AR.9); none read, none
     /// play.
     sounds: Option<guacamole::sounds::SoundPart>,
@@ -331,6 +334,7 @@ impl ScriptSource {
             left_out: Vec::new(),
             layout: None,
             palettes: Vec::new(),
+            card_palettes: Vec::new(),
             sounds: None,
             interface: None,
             level: guac_extract::levels::LEVELS[0].to_owned(),
@@ -373,6 +377,8 @@ pub(crate) struct Part {
     pub(crate) left_out: Vec<(String, String)>,
     pub(crate) layout: Option<Layout>,
     pub(crate) palettes: Vec<guacamole::level_scripts::ScriptPalette>,
+    /// The card game's templates' palettes (openspec AS.483).
+    pub(crate) card_palettes: Vec<guacamole::level_scripts::ScriptPalette>,
     pub(crate) sounds: Option<guacamole::sounds::SoundPart>,
     /// The original's interface each run starts from (openspec AT.9).
     pub(crate) interface: Option<guacamole::interface_host::InterfacePart>,
@@ -418,6 +424,7 @@ pub(crate) fn install(world: &mut World, part: Part) {
         left_out: part.left_out,
         layout: part.layout,
         palettes: part.palettes,
+        card_palettes: part.card_palettes,
         sounds: part.sounds,
         interface: part.interface,
         level: part.level,
@@ -561,6 +568,17 @@ fn install_from(world: &mut World, source: &ScriptSource) {
         {
             script_world.set_rig(p.obj);
         }
+    }
+    // The card game's templates' (openspec AS.483): the board times its
+    // flips by their clips.
+    if !source.card_palettes.is_empty() {
+        let set = guacamole::level_scripts::set_unit_palettes(
+            &mut script_world,
+            &source.files,
+            &source.card_streams.unit_list(),
+            &source.card_palettes,
+        );
+        info!(set, "the card game's templates' palettes");
     }
     // The level's music waits for its sounds (openspec AR.23).
     hold_music(world, source, level);
@@ -3142,6 +3160,7 @@ mod tests {
                     ],
                     names: vec![String::new(), "Far_Look.ma".into()],
                 }],
+                card_palettes: Vec::new(),
                 sounds: None,
                 interface: None,
                 level: LEVEL.to_owned(),
@@ -3223,6 +3242,7 @@ mod tests {
                     infos: vec![Default::default(); 2],
                     names: vec![String::new(); 2],
                 }],
+                card_palettes: Vec::new(),
                 sounds: None,
                 interface: None,
                 level: LEVEL.to_owned(),
@@ -3243,6 +3263,94 @@ mod tests {
                 .lists("the stream's setup", &script),
             "{script}"
         );
+    }
+
+    /// openspec AS.483: the TV's install gives a card game stream's
+    /// placements the card game's palettes, each slot's length, kind, loop
+    /// and name as a level's (the board times its flips by them), and the
+    /// level's own placements none of them; without the card palettes the
+    /// stream's hold none.
+    #[test]
+    fn the_tvs_install_gives_the_card_streams_placements_their_palettes() {
+        use guac_formats::script::builder::{SMASH_FAR, SMASH_FAR_MODEL};
+        let install_with = |card_palettes: Vec<guacamole::level_scripts::ScriptPalette>| {
+            let tmp = tempfile::tempdir().unwrap();
+            write_smash(tmp.path(), BARREL_AT);
+            let stream = "ship_part_900".to_owned();
+            let to = tmp.path().join(guac_extract::levels::script_path(&stream));
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::copy(
+                tmp.path().join(guac_extract::levels::script_path(LEVEL)),
+                to,
+            )
+            .unwrap();
+            let linked =
+                level_scripts::load_with_streams(tmp.path(), LEVEL, std::slice::from_ref(&stream))
+                    .unwrap();
+            let [unit] = linked.streams[..] else {
+                panic!("{:?}", linked.streams)
+            };
+            let far_in = |u: u16| {
+                linked
+                    .placements
+                    .placed
+                    .iter()
+                    .find(|p| p.name == SMASH_FAR && p.obj.unit == u)
+                    .unwrap()
+                    .obj
+            };
+            let (card_far, level_far) = (far_in(unit), far_in(unit - 1));
+            let mut world = World::new();
+            install(
+                &mut world,
+                Part {
+                    program: Arc::new(linked.program),
+                    files: linked.placements,
+                    order: linked.order,
+                    fighters: linked.fighters,
+                    // The stream linked as the board, not as a ship part.
+                    streams: Vec::new(),
+                    stream_ids: Vec::new(),
+                    card_streams: guacamole::card_game::CardStreams::linked(
+                        &[guacamole::card_game::BOARD],
+                        &[unit],
+                    ),
+                    walkers: Vec::new(),
+                    left_out: Vec::new(),
+                    layout: None,
+                    palettes: Vec::new(),
+                    card_palettes,
+                    sounds: None,
+                    interface: None,
+                    level: LEVEL.to_owned(),
+                    levels: Vec::new(),
+                    extract: None,
+                    interface_keys: Vec::new(),
+                },
+            );
+            (world, card_far, level_far)
+        };
+        let (world, card_far, level_far) =
+            install_with(vec![guacamole::level_scripts::ScriptPalette {
+                owner: SMASH_FAR_MODEL.to_owned(),
+                lengths: vec![0.0, 0.5],
+                infos: vec![
+                    Default::default(),
+                    scripts::ClipInfo {
+                        looping: true,
+                        ..scripts::ClipInfo::of(true, false, false)
+                    },
+                ],
+                names: vec![String::new(), "Flip.ma".into()],
+            }]);
+        let w = world.resource::<ScriptWorld>();
+        assert_eq!(w.palette(card_far), Some(&[0.0, 0.5][..]), "the board's");
+        assert!(w.clip_info(card_far, 1).looping);
+        assert_eq!(w.clip_name(card_far, 1), Some("Flip.ma"));
+        assert_eq!(w.palette(level_far), None, "the level's own: none");
+        let (world, card_far, _) = install_with(Vec::new());
+        let w = world.resource::<ScriptWorld>();
+        assert_eq!(w.palette(card_far), None, "without the part");
     }
 
     /// The TV's install with the interface's part (openspec AT.9, the
@@ -3308,6 +3416,7 @@ mod tests {
                     left_out: Vec::new(),
                     layout: None,
                     palettes: Vec::new(),
+                    card_palettes: Vec::new(),
                     sounds: None,
                     interface,
                     level: LEVEL.to_owned(),

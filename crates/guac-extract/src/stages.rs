@@ -345,6 +345,10 @@ pub struct ScriptStage {
     /// The card game's stones' part (openspec AS.366,
     /// [`crate::screens::CARD_STONES_PART`]), counted the same way.
     pub stones: EntryPart,
+    /// The card game's palettes' part (openspec AS.483,
+    /// [`crate::screens::CARD_PALETTES_PART`]): its one file, read or kept,
+    /// and how many palettes it holds when read this run.
+    pub card_palettes: EntryPart,
     /// Of [`ScriptStage::files`], the script entries' and the spawn
     /// models' (their IR and textures).
     pub script_files: Files,
@@ -1048,6 +1052,7 @@ pub fn script_stage(
     screen_part(dir, &usrdir, &mut stage)?;
     card_part(dir, &usrdir, &mut stage)?;
     stone_part(dir, &usrdir, &mut stage)?;
+    card_palette_part(dir, &usrdir, ir, &mut stage)?;
     send(Event::Scripts { done: 2, total });
     for f in [stage.script_files, stage.spawn_files] {
         stage.files.written += f.written;
@@ -1123,6 +1128,61 @@ pub fn stone_part(dir: &mut IdentityDir, usrdir: &Path, stage: &mut ScriptStage)
         &mut stage.failed,
     )?;
     stage.stones = part;
+    Ok(())
+}
+
+/// The card game's palettes' part (openspec AS.483,
+/// [`crate::screens::card_palettes`]): kept while its file is recorded and
+/// intact, else read off the archives and written, one file; a dump with
+/// none of the archives records the part with no file. An archive that
+/// won't read is the part's failure alone, as the screens' rule has it.
+pub fn card_palette_part(
+    dir: &mut IdentityDir,
+    usrdir: &Path,
+    ir: IrFormat,
+    stage: &mut ScriptStage,
+) -> Result<()> {
+    const NAME: &str = crate::screens::CARD_PALETTES_PART;
+    let mut part = EntryPart::default();
+    let recorded = dir.manifest().parts.get(NAME).cloned();
+    if let Some(files) = recorded
+        && dir.part_holds(NAME, &files)?
+    {
+        count_kept(dir, &files, &mut part.files);
+        part.entries = files.len();
+        part.kept = true;
+        stage.card_palettes = part;
+        return Ok(());
+    }
+    let identity = dir.manifest().identity.clone();
+    match crate::screens::card_palettes(usrdir, identity) {
+        Ok(read) => {
+            let mut files = Vec::new();
+            if let Some(palettes) = &read.palettes {
+                let rel = ir.card_palettes_path();
+                let bytes = ir.encode(palettes, dir, rel)?;
+                put(dir, rel, &bytes, &mut part.files)?;
+                files.push(rel.to_owned());
+                part.entries = palettes.palettes.len();
+            }
+            part.missing = read.missing;
+            dir.record_part(NAME, files)?;
+            part.read = true;
+        }
+        Err((archive, reason)) => {
+            let e = ExtractError::ScriptsUnreadable {
+                part: NAME.to_owned(),
+                archive: archive.clone(),
+                reason,
+            };
+            stage.failed.push(PartFailure {
+                part: NAME.to_owned(),
+                archive,
+                reason: e.to_string(),
+            });
+        }
+    }
+    stage.card_palettes = part;
     Ok(())
 }
 

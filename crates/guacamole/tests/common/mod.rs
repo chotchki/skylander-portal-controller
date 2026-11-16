@@ -1082,6 +1082,21 @@ pub fn clones_drawn(run: &Run, skinned: &[String], name: &str) -> bool {
         })
 }
 
+/// The card game's palettes (openspec AS.483) off the dump by the
+/// extractor's own reader, as the TV reads its part, once a process.
+pub fn card_palettes() -> &'static [guacamole::level_scripts::ScriptPalette] {
+    static READ: std::sync::OnceLock<Vec<guacamole::level_scripts::ScriptPalette>> =
+        std::sync::OnceLock::new();
+    READ.get_or_init(|| {
+        let read =
+            guac_extract::screens::card_palettes(&dump().join("PS3_GAME/USRDIR"), identity())
+                .unwrap_or_else(|(a, e)| panic!("the card game's palettes: {a}: {e}"));
+        read.palettes
+            .map(|p| guacamole::level_scripts::script_palettes(&p))
+            .unwrap_or_default()
+    })
+}
+
 /// Chapter 1's palettes part through the extractor's own reader: what the
 /// TV poses its creatures and skinned clones by.
 pub fn level_palettes() -> guac_ir::palette::LevelPalettes {
@@ -1637,18 +1652,11 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     }
     // The card game's streams' and stones' templates' too (openspec AS.366:
     // the board's attack rig and the stones' models time their clips by
-    // them), read off each archive as the ship parts' are.
-    for (archive, u) in world.card_streams.units.clone() {
-        let Ok(palettes) = levels::palettes(&igzs[u as usize], archive, identity()) else {
-            continue;
-        };
-        for p in files.placed.iter().filter(|p| p.obj.unit == u) {
-            if let Some(model) = &p.model
-                && let Some(pal) = palettes.ir.palettes.iter().find(|x| &x.owner == model)
-            {
-                world.set_palette_of(p.obj, pal);
-            }
-        }
+    // them), read as the extract's part reads them and set as the TV's load
+    // sets them (AS.483): one reader, loops included.
+    if !world.card_streams.units.is_empty() {
+        let units = world.card_streams.unit_list();
+        guacamole::level_scripts::set_unit_palettes(&mut world, &files, &units, card_palettes());
     }
     let spare = setup
         .spare

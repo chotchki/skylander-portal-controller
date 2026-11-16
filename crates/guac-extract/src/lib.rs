@@ -78,11 +78,11 @@ pub const LAYOUT_VERSION: u32 = 4;
 /// The extract-wide parts this build reads (the manifest's `parts`), each
 /// recorded once its files are in: AE.31's upright portraits, AH.2's
 /// progression, AH.22's palettes, script entries and spawn models, AS.53's
-/// screen scripts, AS.364's card game scripts, AS.366's card game stones, AH.50's attach nodes, AH.87's emitters, AR.5's sounds,
+/// screen scripts, AS.364's card game scripts, AS.366's card game stones, AS.483's card game palettes, AH.50's attach nodes, AH.87's emitters, AR.5's sounds,
 /// AT.8's interface, AT.30's models, AU.37's spawn rigs, AS.196's random
 /// networks. A start is current only once every one is, so an extract made
 /// before one resumes for it alone.
-pub const PARTS: [&str; 15] = [
+pub const PARTS: [&str; 16] = [
     roster::PORTRAITS,
     progression::PART,
     models::PART,
@@ -94,6 +94,7 @@ pub const PARTS: [&str; 15] = [
     screens::PART,
     screens::CARD_GAME_PART,
     screens::CARD_STONES_PART,
+    screens::CARD_PALETTES_PART,
     models::NODES,
     particles::PART,
     sounds::PART,

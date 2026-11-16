@@ -256,17 +256,19 @@ impl Player {
 /// first roll's landing sets the chosen move to the list's first *stone*
 /// (`best ai moves/first/card`), a structure of another definition than the
 /// move the reference holds, which the VM's set reference refuses
-/// (guac-script's crate docs, Variables, structures and sets): nothing is
-/// chosen and the next tick attempts again. So an attempt that leaves no
-/// move chosen is a landed first roll, and a pick's last attempt took the
-/// list's second (the second roll landed) or its last.
+/// (guac-script's crate docs, Variables, structures and sets; openspec
+/// AS.480): nothing is chosen and the next tick attempts again. So an
+/// attempt that leaves no move chosen is a landed first roll, and a pick's
+/// last attempt took the list's second (the second roll landed) or its
+/// last; the list's first is never played, which [`Picks::played`] counts.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Picks {
     /// Every attempt, and those whose first roll landed.
     pub attempts: u32,
     pub first_landed: u32,
-    /// Of the picks over a full list (three moves): the second taken, the
-    /// last taken.
+    /// Of the picks over a full list (three moves): the first taken, the
+    /// second taken, the last taken.
+    pub first: u32,
     pub second: u32,
     pub last: u32,
     /// Each pick: its step, its list's length, the taken one's place in it
@@ -305,6 +307,7 @@ impl Picks {
             self.trace.push((run.steps, list.len(), at, self.tries));
             if list.len() == 3 && self.tries > 0 {
                 match at {
+                    Some(0) => self.first += 1,
                     Some(1) => self.second += 1,
                     Some(2) => self.last += 1,
                     _ => {}
@@ -328,9 +331,17 @@ impl Picks {
         100.0 * f64::from(self.second) / f64::from((self.second + self.last).max(1))
     }
 
-    /// The full lists' picks.
+    /// The full lists' picks but the first's (the second roll's draws).
     pub fn count(&self) -> u32 {
         self.second + self.last
+    }
+
+    /// The full lists' picks played: the first's, the second's and the
+    /// last's shares, percent (openspec AS.480: the reading gives the first
+    /// none, the second the call's second chance, the last the rest).
+    pub fn played(&self) -> [f64; 3] {
+        let all = f64::from((self.first + self.second + self.last).max(1));
+        [self.first, self.second, self.last].map(|n| 100.0 * f64::from(n) / all)
     }
 }
 
@@ -479,38 +490,68 @@ pub fn streams_running(run: &Run) -> Vec<String> {
     out
 }
 
-/// The hero put back after a game, as the portal reloads him (openspec
-/// AS.366): the board loads as the portal's replacement character stream,
-/// so the game's start takes his minion off (`Portal - Load Replacement
-/// Character Stream` exits his figure) and the board's teardown asks for
-/// his character again (`Portal - Restore Minigame Stream from Character`,
-/// a `character/` load); the harness answers that load as it answers a
-/// figure put back on the portal, his file unloaded and joined again by the
-/// TV's join, his entry beam ([`Run::deactivate`], [`Run::enter`]), once no
-/// scene holds the player
-/// (the restore's load answered after the game's quit or win scene). The TV's swap does the same on a
-/// figure's return; that the TV reloads him after a card game is AS.367's.
-/// Whether he was put back this step.
+/// The hero put back after a game (openspec AS.481): the board loads as the
+/// portal's replacement character stream, so the game's start takes his
+/// minion off, and its teardown asks for his character again; once that's
+/// owed ([`guacamole::card_game::hero_owed`]: no scene holding the
+/// players) the harness answers it as the TV's swap answers a figure
+/// put back on the portal, his file unloaded and joined again
+/// ([`Run::deactivate`], [`Run::join`]). His minion then runs the spawn
+/// sequence a join runs (under designer control until its clip ends,
+/// [`free`]). Whether he was put back this step.
 pub fn hero_back(run: &mut Run) -> bool {
     let off = run.minion.is_some_and(|m| run.vm.removed(m));
-    let asked = run
-        .world
-        .streams
-        .iter()
-        .rev()
-        .take(2)
-        .any(|s| s.as_deref() == Some("character/"));
-    // Answered once no scene holds the player, as the engine's load takes
-    // its time: a minion joined under the game's quit scene stays as that
-    // scene left the players it held (disabled).
-    let held = super::cutscene_name(run).is_some() || guacamole::anchors::scene_holds(&run.vm);
-    if !off || !asked || held || board(run).is_some() {
+    if !guacamole::card_game::hero_owed(&run.vm, &run.world, off) {
         return false;
     }
     let _ = run.deactivate();
     run.join()
         .unwrap_or_else(|h| panic!("his join after the game: {h}"));
+    run.world.card_streams.hero_returned();
     true
+}
+
+/// Steps until his minion's spawn sequence has let him go (his behaviour
+/// past `disabled`: `Portal - Minion Spawn Sequence` holds a joined minion
+/// under designer control while his spawn clip plays), at most `cap`; the
+/// stops on the way. Whether he's free.
+pub fn free(run: &mut Run, cap: u32, stops: &mut Vec<guac_script::Halt>) -> bool {
+    for _ in 0..cap {
+        // A minion just joined has no behaviour until his first tick, where
+        // his spawn sequence's hold begins: he's free once he has one
+        // past it (the review's: read as free at the join, the first
+        // heading lost 52 of its steps to the hold).
+        if run.minion.is_some_and(|m| {
+            !run.vm.removed(m) && run.vm.behaviour(m).is_some_and(|b| b != "disabled")
+        }) {
+            return true;
+        }
+        stops.extend(run.step_play().unwrap());
+    }
+    false
+}
+
+/// A full stick held on each of eight headings in turn, `steps` steps
+/// each, from where he stands: each heading's distance walked. A spot is
+/// the walk's to leave once one heading leaves it (a stick held into a
+/// wall or a pirate walks nothing).
+pub fn walk_off(run: &mut Run, steps: u32, stops: &mut Vec<guac_script::Halt>) -> Vec<f32> {
+    let mut out = Vec::new();
+    for k in 0..8 {
+        let a = k as f32 * std::f32::consts::FRAC_PI_4;
+        let from = run.hero().pivot;
+        for _ in 0..steps {
+            run.bench.pads[0] = guacamole::script_engine::Pad {
+                stick: guac_motion::stick::Stick::new(a.sin(), a.cos()),
+                actions: [false; 4],
+                connected: true,
+            };
+            stops.extend(run.step_play().unwrap());
+        }
+        out.push(run.hero().pivot.distance(from));
+    }
+    run.bench.pads[0] = guacamole::script_engine::Pad::default();
+    out
 }
 
 /// The board's two chances as the pirate's call set them, read off its

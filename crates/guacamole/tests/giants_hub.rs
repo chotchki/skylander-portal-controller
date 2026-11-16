@@ -1586,10 +1586,17 @@ struct Played {
     after: std::collections::BTreeMap<String, String>,
     pirate: Option<String>,
     steps: u32,
+    /// His spawn sequence over after the run ([`cards::free`]).
+    free: bool,
+    /// The farthest a full stick walked him, of eight headings
+    /// ([`cards::walk_off`]).
     moved: f32,
     streams: Vec<Option<String>>,
     /// How many times the hero was put back after a game ([`cards::hero_back`]).
     backs: u32,
+    /// Whether one was while a scene held the players (openspec AS.481:
+    /// the original's portal delays a character's entry until it ends).
+    held_back: bool,
     /// The board's two chances as his call set them (`best move - 1 %`,
     /// `best move - 2 %`), read off the first game.
     chances: Option<(i32, i32)>,
@@ -1667,6 +1674,8 @@ fn dreadbeards_games(plans: &[(Plan, u32)], cap: u32) -> Played {
     let debug = std::env::var_os("AS366_DEBUG").is_some();
     let mut declined: Option<u32> = None;
     let mut backs = 0;
+    // Whether he was put back while a scene held the players.
+    let mut held_back = false;
     let mut chances = None;
     let mut dbg_pirate: Option<String> = None;
     // The last game's end (or the start): a run with no game over in
@@ -1727,6 +1736,7 @@ fn dreadbeards_games(plans: &[(Plan, u32)], cap: u32) -> Played {
         }
         if cards::hero_back(&mut run) {
             backs += 1;
+            held_back |= guacamole::anchors::scene_holds(&run.vm);
         }
         let now = cards::board(&run);
         let pirate = run.vm.behaviour(id).map(str::to_owned);
@@ -1821,6 +1831,7 @@ fn dreadbeards_games(plans: &[(Plan, u32)], cap: u32) -> Played {
         stops.extend(run.step_play().unwrap());
         if cards::hero_back(&mut run) {
             backs += 1;
+            held_back |= guacamole::anchors::scene_holds(&run.vm);
         }
     }
     let after = cards::leftovers(&run);
@@ -1887,19 +1898,14 @@ fn dreadbeards_games(plans: &[(Plan, u32)], cap: u32) -> Played {
     }
     let pirate = run.vm.behaviour(id).map(str::to_owned);
     let running = cards::streams_running(&run);
-    // Free to walk, where the game's over and his scene let him go.
-    let from = run.hero().pivot;
-    for _ in 0..150 {
-        run.bench.pads[0] = guacamole::script_engine::Pad {
-            stick: guac_motion::stick::Stick::new(0.0, 1.0),
-            actions: [false; 4],
-            connected: true,
-        };
-        stops.extend(run.step_play().unwrap());
-    }
-    let moved = run.hero().pivot.distance(from);
+    // Free to walk, where the game's over and his scene let him go: his
+    // spawn sequence over (openspec AS.481), a full stick on each of eight
+    // headings, 150 steps each.
+    let free = cards::free(&mut run, 300, &mut stops);
+    let walks = cards::walk_off(&mut run, 150, &mut stops);
+    let moved = walks.iter().copied().fold(0.0, f32::max);
     println!(
-        "Dreadbeard's games: {games:?}; rolls: first landed {} of {} ({:.1}%), second {:.1}% of {}; longest unpressed stay {:?}; {} stops; running after {running:?}; moved {moved:.1}; steps {}",
+        "Dreadbeard's games: {games:?}; rolls: first landed {} of {} ({:.1}%), second {:.1}% of {}; longest unpressed stay {:?}; {} stops; running after {running:?}; free {free}, walked {walks:.1?}; steps {}",
         picks.first_landed,
         picks.attempts,
         picks.first(),
@@ -1919,9 +1925,11 @@ fn dreadbeards_games(plans: &[(Plan, u32)], cap: u32) -> Played {
         after,
         pirate,
         steps: run.steps,
+        free,
         moved,
         streams: run.world.streams.iter().cloned().collect(),
         backs,
+        held_back,
         chances,
     }
 }
@@ -1997,6 +2005,14 @@ fn dreadbeards_game_quit_lost_and_won_each_end_in_his_own_next_behaviour() {
         played.backs, 2,
         "the hero put back after the quit and the win"
     );
+    // After the win he's back but held (openspec AS.481): his pirate's `wait
+    // for loot theatrics` puts every minion under designer control each
+    // tick until the loot's reports are done, AS.368's, so his walk after
+    // a win is AS.520's. After a quit he walks
+    // ([`a_quit_game_leaves_the_hub_as_a_declined_question_does`]).
+    assert!(!played.free, "held by his loot's wait");
+    assert!(!played.held_back, "put back under a scene");
+    assert!(played.moved < 0.5, "walked {:.1}", played.moved);
     // No behaviour of the board's, the player's own waits aside, outstays
     // the game's own longest (the stone's 3D presentation and the flips).
     let (longest, stay) = played.stays.longest_unpressed().expect("a stay");
@@ -2092,8 +2108,9 @@ fn a_seeded_game_replays_to_the_step_and_a_second_plays_the_same() {
 /// of the full lists' picks), no board behaviour but the player's own waits
 /// past [`STAY_CAP`], nothing stopped. By default the gate's short run:
 /// [`SHORT_GAMES`] games, each roll's share within [`SHORT_POINTS`] of the
-/// call's chance (seeded, so the same every run: 294 of 444 first rolls,
-/// 66.2%, and 83 of 120 second, 69.2%; 90 s alone at load 7 to 8). The
+/// call's chance (seeded, so the same every run: 325 of 475 first rolls,
+/// 68.4%, and 84 of 120 second, 70.0%, the full lists' picks played 0, 84
+/// and 36; 83 s alone at load 2.4 to 2.8, openspec AS.480). The
 /// box's 1,000 games, within 5 points, only when `AS366_GAMES=1000` asks
 /// (about an hour a third: run as three processes by `AS366_FROM` and
 /// `AS366_GAMES`, their counts summed; 300 games or more are held to 5
@@ -2136,6 +2153,7 @@ fn dreadbeards_rolls_over_a_thousand_seeded_games() {
         played += done;
         picks.attempts += p.picks.attempts;
         picks.first_landed += p.picks.first_landed;
+        picks.first += p.picks.first;
         picks.second += p.picks.second;
         picks.last += p.picks.last;
         for (b, n) in &p.stays.longest {
@@ -2176,6 +2194,27 @@ fn dreadbeards_rolls_over_a_thousand_seeded_games() {
         "second roll {:.1}% against {second}",
         picks.second()
     );
+    // The picks played (openspec AS.480): the first never (its roll writes
+    // the first move's stone, refused, guac-script's crate docs), the second
+    // at the second roll's chance, the last the rest.
+    let shares = picks.played();
+    println!(
+        "played over {} full lists: first {} ({:.1}%), second {} ({:.1}%), last {} ({:.1}%)",
+        picks.first + picks.second + picks.last,
+        picks.first,
+        shares[0],
+        picks.second,
+        shares[1],
+        picks.last,
+        shares[2]
+    );
+    let reading = [0.0, f64::from(second), 100.0 - f64::from(second)];
+    for (k, (got, want)) in shares.iter().zip(reading).enumerate() {
+        assert!(
+            (got - want).abs() <= points,
+            "pick {k}: {got:.1}% against the reading's {want}"
+        );
+    }
     let worst = longest
         .iter()
         .filter(|(b, _)| !b.starts_with("player turn") && !b.contains("tutorial"))
@@ -2238,14 +2277,16 @@ fn a_quit_game_leaves_the_hub_as_a_declined_question_does() {
         println!("before the yes and after the game: {d}");
     }
     assert!(quit.running.is_empty(), "{:?}", quit.running);
-    // The hero put back by the harness comes back under designer control
-    // (his new description's state, `Minion - setup post descriptions`)
-    // and doesn't walk: his reload after a game is AS.481's. After a no he
-    // walks.
+    // Put back after the game (openspec AS.481), his minion runs a join's
+    // spawn sequence, under designer control until its clip ends, then
+    // walks off as after a no: over 3 units in 150 steps.
     println!(
         "walked: {:.1} after the game, {:.1} after a no",
         quit.moved, no.moved
     );
+    assert!(quit.free && no.free);
+    assert!(!quit.held_back, "put back under the quit's scene");
+    assert!(quit.moved > 3.0, "walked {:.1} after the game", quit.moved);
     assert!(no.moved > 3.0);
     // What differs is the hero's own: put back after the game, he's a new
     // entity the camera follows (its target and the def it picked where he

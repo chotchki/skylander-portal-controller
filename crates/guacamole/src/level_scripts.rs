@@ -108,6 +108,53 @@ pub fn palettes_with_streams(
     Ok(palettes)
 }
 
+/// The card game's templates' palettes off the extract at `dir` (openspec
+/// AS.483, [`guac_extract::screens::CARD_PALETTES_PART`]), each with its
+/// lengths, kinds, loops and names as [`level_palettes`] reads a level's.
+/// Why not when the part's file isn't there or doesn't read.
+pub fn card_palettes(dir: &Path, ir: IrFormat) -> Result<Vec<ScriptPalette>, String> {
+    let rel = ir.card_palettes_path();
+    let bytes = std::fs::read(dir.join(rel)).map_err(|e| format!("{rel}: {e}"))?;
+    let p: guac_ir::palette::LevelPalettes = match ir {
+        IrFormat::Ron => std::str::from_utf8(&bytes)
+            .map_err(|e| e.to_string())
+            .and_then(|t| guac_ir::from_ron(t).map_err(|e| e.to_string())),
+        IrFormat::Postcard => guac_ir::from_postcard(&bytes).map_err(|e| e.to_string()),
+    }
+    .map_err(|e| format!("{rel}: {e}"))?;
+    Ok(script_palettes(&p))
+}
+
+/// `p`'s palettes as the scripts' world takes them, each with its loops.
+pub fn script_palettes(p: &guac_ir::palette::LevelPalettes) -> Vec<ScriptPalette> {
+    p.palettes
+        .iter()
+        .map(|palette| ScriptPalette::of(palette, p.loops_of(&palette.owner)))
+        .collect()
+}
+
+/// Each placement of `units` whose model one of `palettes` names given it
+/// ([`crate::scripts::ScriptWorld::set_script_palette`]): the card game's
+/// streams' and stones' templates on the TV's load and in the headless runs
+/// alike (openspec AS.483). How many were set.
+pub fn set_unit_palettes(
+    world: &mut crate::scripts::ScriptWorld,
+    files: &crate::scripts::Files,
+    units: &[u16],
+    palettes: &[ScriptPalette],
+) -> usize {
+    let mut set = 0;
+    for p in files.placed.iter().filter(|p| units.contains(&p.obj.unit)) {
+        if let Some(model) = &p.model
+            && let Some(palette) = palettes.iter().find(|x| &x.owner == model)
+        {
+            world.set_script_palette(p.obj, palette);
+            set += 1;
+        }
+    }
+    set
+}
+
 /// What `load_file`'s skinned spawns play off the extract (openspec AU.37):
 /// his beast's or his knives' palette, read when he's placed as the rest of
 /// his spawns are ([`crate::scripts::ScriptWorld::set_rigs`]). Why not when
@@ -207,6 +254,11 @@ pub struct Linked {
     /// why not: [`load`] leaves them unread, the level's load reads them
     /// beside.
     pub palettes: Result<Vec<ScriptPalette>, String>,
+    /// The card game's templates' palettes ([`card_palettes`], openspec
+    /// AS.483), kept apart from the level's: they're set on the card game's
+    /// streams' placements alone ([`set_unit_palettes`]). Empty where the
+    /// level links no card stream or the part doesn't read.
+    pub card_palettes: Vec<ScriptPalette>,
     /// The sounds part for the linked units ([`crate::sounds::load`],
     /// openspec AR.9): [`load`] leaves it unread, the level's load reads it
     /// beside.
@@ -497,6 +549,7 @@ fn link(dir: &Path, level: &str, streams: &[String]) -> Result<Linked, String> {
         left_out: list.left_out,
         layout: Err("not read".into()),
         palettes: Err("not read".into()),
+        card_palettes: Vec::new(),
         sounds: None,
         interface_keys,
         interface_imports,

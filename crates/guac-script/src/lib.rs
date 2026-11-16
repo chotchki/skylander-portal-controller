@@ -440,6 +440,18 @@
 //!   read its dialogue's data as Norticus' animation's and never started
 //!   it). An untyped side, or one naming a class, takes what it read; an
 //!   object against a class isn't checked here.
+//!   The card game's opponent meets it once a roll (openspec AS.480): its
+//!   best-move roll sets `chosen ai move`, typed as `Card Game - AI Move`,
+//!   to `best ai moves/first/card`, a path that reads to the first move's
+//!   stone (a `Card Game - Board Object`), its edit type the move (each set
+//!   reference's edit type is its left side's type); refused, nothing is
+//!   chosen and the next tick rolls again, so the opponent never plays the
+//!   list's first. It rests on the rule, whose reading covers this case (the
+//!   op compares the read structure's definition name with the edit type's
+//!   and writes nothing on a mismatch, the old value not kept), and on the
+//!   disc: a board object has no `card` field, so a stone kept there would
+//!   leave the move reading its stone and square as nothing on every landed
+//!   roll. No recording shows it; an RPCS3 game would.
 //! - A set is an ordered list. Combine codes: 0 adds if absent (a set's
 //!   members in order, or copied whole into an empty set), 1 removes one
 //!   occurrence of each, 2 intersects, 3 replaces, 4 appends with duplicates,
