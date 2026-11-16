@@ -113,17 +113,13 @@ fn global(vm: &Vm, name: &str) -> Option<Value> {
     vm.global_peek(g).map(|v| vm.value(v))
 }
 
-/// The box the run waits on: the one noted, while [`DIALOG`] holds the
-/// box made for its collectible, its prompt the first of the strings its
+/// The box the run waits on: the one noted, while [`DIALOG`] holds a box
+/// (only [`CREATE`] sets it, so the box is the one noted), its prompt the first of the strings its
 /// body put up (a set the VM keeps while the box stands). Gone the step a
 /// press takes it off.
 pub fn up(vm: &Vm, world: &ScriptWorld) -> Option<Collected> {
     let c = world.collected.as_ref()?;
-    let dialog = global(vm, DIALOG).filter(|d| *d != Value::Null)?;
-    let made_for = vm.field(dialog, "collectible").map(|f| vm.value(f));
-    if made_for != Some(c.collectible) {
-        return None;
-    }
+    global(vm, DIALOG).filter(|d| *d != Value::Null)?;
     let mut c = c.clone();
     let first = c
         .prompt_strings

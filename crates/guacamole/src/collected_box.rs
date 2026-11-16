@@ -1,7 +1,7 @@
-//! A collected item's box over the level (openspec AS.441; stand-in ledger:
-//! `collected-box`): while the scripts hold the level on the box a pickup
-//! made ([`guacamole::collected`]), the TV shows what the box says: its
-//! title, the item's name and its Continue prompt, read off the call the
+//! A collected item's box over the level, ours (openspec AS.441;
+//! stand-in ledger: `collected-box`): while the scripts hold the level on
+//! the box a pickup made ([`guacamole::collected`]), the TV shows what the
+//! box says: its title, the item's name and its Continue prompt, read off the call the
 //! scripts made, in `global.bld`'s bitmap font on a box of the clean text
 //! box's colour where the extract's interface part holds the font, the
 //! TV's own look without it.
