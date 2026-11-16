@@ -41,6 +41,38 @@ pub const CARD_GAME: [&str; 3] = [
     "misc/ui_cardgame_handselect_streaming.bld",
 ];
 
+/// The card game's stones (openspec AS.366): two archives a stone, loaded
+/// as its game needs them. Its deck (`character/cardgame_deck_NNN`), named
+/// in the board's load string for every stone either hand holds, is a
+/// header script defining the stone for the game (`System - Card Game -
+/// Card Header`) beside its model; its asset (`misc/cardgame_card_NNN`),
+/// asked as the stone is played, defines what the board shows of it. Their
+/// own part, so an extract that already holds [`CARD_GAME_PART`] takes it at
+/// its next pick.
+pub const CARD_STONES_PART: &str = "card game stones";
+
+/// How many stones the disc defines (`Init Setup - Define Card`'s calls),
+/// numbered from 0.
+pub const CARD_STONE_COUNT: usize = 82;
+
+/// Stone `n`'s deck archive.
+pub fn card_deck(n: usize) -> String {
+    format!("character/cardgame_deck_{n:03}.bld")
+}
+
+/// Stone `n`'s asset archive.
+pub fn card_asset(n: usize) -> String {
+    format!("misc/cardgame_card_{n:03}.bld")
+}
+
+/// Every stone's deck, then every stone's asset, in their numbers' order.
+pub fn card_stones() -> Vec<String> {
+    (0..CARD_STONE_COUNT)
+        .map(card_deck)
+        .chain((0..CARD_STONE_COUNT).map(card_asset))
+        .collect()
+}
+
 /// Where each archive's entry goes: `scripts/<stem>.igz`, as the scripts
 /// part's do, so the interface's model finds its record by the same rule.
 pub fn path(archive: &str) -> String {
@@ -104,6 +136,23 @@ mod tests {
             ]
         );
         assert!(!paths.contains(&path(ARCHIVES[0])));
+    }
+
+    /// The stones' entries sit by the same rule, numbered as the board's
+    /// load strings name them, none on another part's place.
+    #[test]
+    fn the_card_stones_entries_sit_by_their_numbers() {
+        let stones = card_stones();
+        assert_eq!(stones.len(), 2 * CARD_STONE_COUNT);
+        assert_eq!(stones[0], "character/cardgame_deck_000.bld");
+        assert_eq!(path(&stones[81]), "scripts/cardgame_deck_081.igz");
+        assert_eq!(stones[82], "misc/cardgame_card_000.bld");
+        assert_eq!(path(&stones[163]), "scripts/cardgame_card_081.igz");
+        let others: Vec<String> = CARD_GAME.iter().chain(&ARCHIVES).map(|a| path(a)).collect();
+        let mut paths: Vec<String> = stones.iter().map(|d| path(d)).collect();
+        assert!(paths.iter().all(|p| !others.contains(p)));
+        paths.dedup();
+        assert_eq!(paths.len(), stones.len());
     }
 
     /// A dump without the archive lists it and reads nothing else; one

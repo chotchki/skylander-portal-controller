@@ -545,7 +545,7 @@ pub struct ScriptWorld {
     /// Where the last step's get-out carried each player getting out of a
     /// turret (openspec AS.189, [`crate::turret::carry_out`]).
     pub(crate) turret_carried: Vec<(Handle, Vec3)>,
-    load_level: Value,
+    pub(crate) load_level: Value,
     /// The levels the scripts asked for, as each step took them.
     pub requests: Vec<Value>,
     /// The disc's levels by archive name (openspec AS.15): a request whose
@@ -1389,6 +1389,18 @@ impl ScriptWorld {
             }
         }
         out
+    }
+
+    /// Whether `h` is a placement the card game's streams hold as a
+    /// template (file state 5) rather than as a live placement.
+    pub(crate) fn card_stream_template(&self, h: Handle) -> bool {
+        const TEMPLATE: u32 = 5;
+        self.actors
+            .get(&h)
+            .and_then(|a| a.obj)
+            .filter(|o| self.card_streams.units.iter().any(|(_, u)| *u == o.unit))
+            .and_then(|o| self.templates.get(&o))
+            .is_some_and(|p| p.activity_state == TEMPLATE)
     }
 
     /// The level placement named `name` in the file linked as `unit`, by
@@ -2525,6 +2537,11 @@ impl ScriptWorld {
                 }
                 match (first, target) {
                     (_, Some(h)) if self.actors.get(&h).is_some_and(|k| k.removed) => Answer::Skip,
+                    // A card game stream's template (openspec AS.366: the
+                    // board's `CardGameManager`) is no live placement to
+                    // control: the block is skipped, so the script spawns
+                    // its clone from it, as the original's controller does.
+                    (_, Some(h)) if self.card_stream_template(h) => Answer::Skip,
                     (Some(v), _) if self.sprite_removed(v) => Answer::Skip,
                     (Some(v), Some(_)) => Answer::Run {
                         receiver: Some(v),

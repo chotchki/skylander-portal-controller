@@ -460,6 +460,7 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     // AS.364's: the card game's part recorded, the synthetic dump holding
     // none of its archives, each named.
     assert!(m.parts[guac_extract::screens::CARD_GAME_PART].is_empty());
+    assert!(m.parts[guac_extract::screens::CARD_STONES_PART].is_empty());
     assert_eq!(
         done.scripts.cards.missing.len(),
         guac_extract::screens::CARD_GAME.len()

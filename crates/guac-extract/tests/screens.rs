@@ -7,8 +7,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use guac_extract::known::KnownDump;
-use guac_extract::screens::{ARCHIVES, CARD_GAME, CARD_GAME_PART, PART, path};
-use guac_extract::stages::{ScriptStage, card_part, screen_part};
+use guac_extract::screens::{
+    ARCHIVES, CARD_GAME, CARD_GAME_PART, CARD_STONES_PART, PART, card_stones, path,
+};
+use guac_extract::stages::{ScriptStage, card_part, screen_part, stone_part};
 use guac_extract::{ExtractRoot, IdentityDir, open};
 use guac_formats::iga::builder::IgaBuilder;
 use guac_formats::sfo::builder::SfoBuilder;
@@ -146,4 +148,41 @@ fn the_card_games_entries_land_by_the_screens_rule() {
     card_part(&mut dir, &usr, &mut again).unwrap();
     assert!(again.cards.kept && !again.cards.read);
     assert_eq!((again.cards.files.written, again.cards.files.kept), (0, 2));
+}
+
+/// openspec AS.366: the stones' decks and assets, a part of their own by the screens'
+/// rule: the archives the dump holds land raw at their stems' entries, the
+/// rest named as missing; the card game's three streams' part untouched; a
+/// second run keeps it, writing nothing.
+#[test]
+fn the_card_stones_land_by_the_screens_rule() {
+    let tmp = tempfile::tempdir().unwrap();
+    let stones = card_stones();
+    let dump = dump_with(tmp.path(), |usr| {
+        let bld = IgaBuilder::new().lzma("level.bld", &entry()).build();
+        fs::create_dir_all(usr.join("character")).unwrap();
+        for d in &stones[..3] {
+            fs::write(usr.join(d), &bld).unwrap();
+        }
+    });
+    let mut dir = opened(tmp.path(), &dump);
+    let usr = dump.join("PS3_GAME/USRDIR");
+    let mut st = ScriptStage::default();
+    stone_part(&mut dir, &usr, &mut st).unwrap();
+    assert!(st.stones.read && !st.stones.kept, "{:?}", st.failed);
+    assert_eq!((st.stones.entries, st.stones.files.written), (3, 3));
+    assert_eq!(st.stones.missing.len(), stones.len() - 3);
+    let rels: Vec<String> = stones[..3].iter().map(|a| path(a)).collect();
+    assert_eq!(dir.manifest().parts[CARD_STONES_PART], rels);
+    for rel in &rels {
+        assert_eq!(fs::read(dir.path().join(rel)).unwrap(), entry(), "raw");
+    }
+    assert!(!dir.manifest().parts.contains_key(CARD_GAME_PART));
+    let mut again = ScriptStage::default();
+    stone_part(&mut dir, &usr, &mut again).unwrap();
+    assert!(again.stones.kept && !again.stones.read);
+    assert_eq!(
+        (again.stones.files.written, again.stones.files.kept),
+        (0, 3)
+    );
 }

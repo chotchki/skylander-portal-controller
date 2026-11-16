@@ -342,6 +342,9 @@ pub struct ScriptStage {
     /// The card game's part (openspec AS.364, [`crate::screens::CARD_GAME`]),
     /// counted the same way.
     pub cards: EntryPart,
+    /// The card game's stones' part (openspec AS.366,
+    /// [`crate::screens::CARD_STONES_PART`]), counted the same way.
+    pub stones: EntryPart,
     /// Of [`ScriptStage::files`], the script entries' and the spawn
     /// models' (their IR and textures).
     pub script_files: Files,
@@ -1044,6 +1047,7 @@ pub fn script_stage(
     }
     screen_part(dir, &usrdir, &mut stage)?;
     card_part(dir, &usrdir, &mut stage)?;
+    stone_part(dir, &usrdir, &mut stage)?;
     send(Event::Scripts { done: 2, total });
     for f in [stage.script_files, stage.spawn_files] {
         stage.files.written += f.written;
@@ -1101,6 +1105,24 @@ pub fn card_part(dir: &mut IdentityDir, usrdir: &Path, stage: &mut ScriptStage) 
         &mut stage.failed,
     )?;
     stage.cards = part;
+    Ok(())
+}
+
+/// The card game's stones' part (openspec AS.366,
+/// [`crate::screens::card_stones`]), by the screens' rule.
+pub fn stone_part(dir: &mut IdentityDir, usrdir: &Path, stage: &mut ScriptStage) -> Result<()> {
+    let stones = crate::screens::card_stones();
+    let archives: Vec<&str> = stones.iter().map(String::as_str).collect();
+    let mut part = EntryPart::default();
+    entry_part(
+        dir,
+        usrdir,
+        crate::screens::CARD_STONES_PART,
+        &archives,
+        &mut part,
+        &mut stage.failed,
+    )?;
+    stage.stones = part;
     Ok(())
 }
 

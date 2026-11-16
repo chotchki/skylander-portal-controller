@@ -595,6 +595,7 @@ pub fn step(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<Option<Ended>, 
     if crate::prompt::quit_card_game(vm, host.world) {
         info!("a card game the TV doesn't draw: quit");
     }
+    crate::card_game::step(vm, host)?;
     if crate::treasure::answer_hat_load(vm, host)? {
         info!("a hat's stream the TV doesn't read: its outfit registered empty");
     }

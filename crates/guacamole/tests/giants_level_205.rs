@@ -1890,7 +1890,9 @@ impl Trail {
 
 /// Cutscenes waited out, a prompt's question answered yes as the TV's modal
 /// answers it, and Fangs' game stood in won (`level_205::card_house_stand_in`)
-/// before the step: whether the step was the scene's.
+/// before the step, but in a run that plays card games, whose quit must stay
+/// a quit (the as-cards-game review: the stand-in turned a played quit into
+/// a win and opened the gate): whether the step was the scene's.
 fn scene_step(
     run: &mut Run,
     stops: &mut Vec<String>,
@@ -1903,7 +1905,9 @@ fn scene_step(
                 .unwrap_or_else(|h| panic!("the answer: {h}"))
         );
     }
-    if guacamole::level_205::card_house_stand_in(&mut run.vm, &mut run.world, LEVEL) {
+    if !run.world.card_streams.plays_games()
+        && guacamole::level_205::card_house_stand_in(&mut run.vm, &mut run.world, LEVEL)
+    {
         *stood_in += 1;
     }
     if let Some(cs) = cutscene_name(run) {
@@ -2120,27 +2124,25 @@ fn crane(run: &Run) -> f32 {
     facing(run, "Crane(2)").rem_euclid(360.0)
 }
 
-/// openspec AS.325: level 205 from its first yard to Setup_002's end, each
-/// thing on the way worked by its own trigger. Over the crane (AS.283) and
-/// through Setup_001 (AS.305); the five gone, the jump pad below the key
-/// ledge throws him up onto it and he takes the first key; off the ledge
-/// the key opens the door west of the yard; in the market the armored
-/// Chompy's intro plays and its Chompies are fought; at Blobbers' crane the
-/// wheel turns the boat south, the block by it is pushed aboard, the boat
-/// turned west carries it and it's pushed off the far end into the
-/// channel, and turned south again the boat bridges the gap and the block
-/// past it is pushed into the channel there; in Setup_002's yard the
-/// pirate with the key runs into the card house, its door opening for him;
-/// in the house Fangs' intro plays, his game is stood in won (the TV has
-/// no card game, AS.329), his outro plays and the gate before the key
-/// lowers, and the key taken, the gate by the door; carried back to the
-/// yard the key sets Setup_002's fight off, which ends with its
-/// controller. Nothing stops.
-#[test]
-#[ignore = "reads the Giants dump"]
-fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
-    let started = std::time::Instant::now();
-    println!("load at start: {}", load());
+/// Whether the hero carries a key (its pickup grabbed by the player).
+fn key_held(run: &Run) -> bool {
+    run.world.clones().into_iter().any(|h| {
+        run.world.name(h) == "Key Pickup"
+            && run.world.actor(h).is_some_and(|a| !a.removed)
+            && run
+                .vm
+                .placement_of(h)
+                .and_then(|i| run.vm.behaviour(i))
+                .is_some_and(|b| b == "grabbed by player")
+    })
+}
+
+/// Level 205 from its start to the card house's door, as
+/// [`level_205s_way_on_from_the_first_yard_ends_setup_002`] walks it: over
+/// the crane, the first yard fought, the key ledge, the market, the crane's
+/// blocks and Setup_002's yard to where the pirate with the key ran in.
+/// The run, its stops, the scenes seen, the trail and the top-ups.
+fn to_the_card_house() -> AtTheCardHouse {
     let mut stops = Vec::new();
     let mut run = joined_205(&mut stops);
     let mut scenes = over_the_crane(&mut run, &mut stops);
@@ -2203,17 +2205,6 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
     println!("thrown from {below:.2} up to {ledge} at step {}", run.steps);
     assert!(ledge.y > below + 3.0, "up on the ledge: {ledge}");
     trail.mark(&run, "ledge");
-    let key_held = |run: &Run| {
-        run.world.clones().into_iter().any(|h| {
-            run.world.name(h) == "Key Pickup"
-                && run.world.actor(h).is_some_and(|a| !a.removed)
-                && run
-                    .vm
-                    .placement_of(h)
-                    .and_then(|i| run.vm.behaviour(i))
-                    .is_some_and(|b| b == "grabbed by player")
-        })
-    };
     assert!(key_held(&run), "the first key taken");
 
     // Off the ledge to the door west of the yard: △ turns the key and it
@@ -2458,6 +2449,52 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
         run.steps
     );
     assert!(woke.is_some(), "Setup_002 woke: {:?}", yard_2.log);
+    AtTheCardHouse {
+        run,
+        stops,
+        scenes,
+        trail,
+        topups,
+    }
+}
+
+/// [`to_the_card_house`]'s run where it ends.
+struct AtTheCardHouse {
+    run: Run,
+    stops: Vec<String>,
+    scenes: Vec<(u32, String)>,
+    trail: Trail,
+    topups: Vec<(u32, f32)>,
+}
+
+/// openspec AS.325: level 205 from its first yard to Setup_002's end, each
+/// thing on the way worked by its own trigger. Over the crane (AS.283) and
+/// through Setup_001 (AS.305); the five gone, the jump pad below the key
+/// ledge throws him up onto it and he takes the first key; off the ledge
+/// the key opens the door west of the yard; in the market the armored
+/// Chompy's intro plays and its Chompies are fought; at Blobbers' crane the
+/// wheel turns the boat south, the block by it is pushed aboard, the boat
+/// turned west carries it and it's pushed off the far end into the
+/// channel, and turned south again the boat bridges the gap and the block
+/// past it is pushed into the channel there; in Setup_002's yard the
+/// pirate with the key runs into the card house, its door opening for him;
+/// in the house Fangs' intro plays, his game is stood in won (the TV has
+/// no card game, AS.329), his outro plays and the gate before the key
+/// lowers, and the key taken, the gate by the door; carried back to the
+/// yard the key sets Setup_002's fight off, which ends with its
+/// controller. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let AtTheCardHouse {
+        mut run,
+        mut stops,
+        mut scenes,
+        mut trail,
+        mut topups,
+    } = to_the_card_house();
 
     trail.mark(&run, "card-house");
     // Into the card house: Fangs' intro, his game (stood in won), his
@@ -2510,7 +2547,10 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
     assert_eq!(stood_in, 1, "his game stood in once");
     // The card game's streams link beside 205 (openspec AS.364), and the
     // TV's quit the stand-in turned asked none of them (AS.364's review).
-    assert_eq!(run.world.card_streams.units.len(), 3);
+    assert_eq!(
+        run.world.card_streams.units.len(),
+        guacamole::card_game::STREAMS.len() + guacamole::card_game::stones().len()
+    );
     assert!(
         run.world.card_streams.joined.is_empty(),
         "{:?}",
@@ -3138,7 +3178,10 @@ fn on_to_setup_002s_end_with(setup: Setup) -> AtSetup002sEnd {
     assert_eq!(stood_in, 1, "his game stood in once");
     // The card game's streams link beside 205 (openspec AS.364), and the
     // TV's quit the stand-in turned asked none of them (AS.364's review).
-    assert_eq!(run.world.card_streams.units.len(), 3);
+    assert_eq!(
+        run.world.card_streams.units.len(),
+        guacamole::card_game::STREAMS.len() + guacamole::card_game::stones().len()
+    );
     assert!(
         run.world.card_streams.joined.is_empty(),
         "{:?}",
@@ -4545,4 +4588,448 @@ fn on_to_setup_004s_end(setup: Setup) -> AtCali {
         lowest,
         started,
     }
+}
+
+/// What Fangs' played games came to ([`fangs_games`]).
+struct FangsPlayed {
+    /// Each game's end: its start and end steps, the board's last
+    /// behaviour, Fangs' and his scene's behaviour then.
+    games: Vec<(u32, u32, Option<String>, String, String)>,
+    picks: cards::Picks,
+    stays: cards::Stays,
+    stops: Vec<String>,
+    chances: Option<(i32, i32)>,
+    running: Vec<String>,
+    backs: u32,
+    /// [`cards::leftovers`] as his first question comes up (before the yes)
+    /// and at the run's end.
+    before: std::collections::BTreeMap<String, String>,
+    after: std::collections::BTreeMap<String, String>,
+    /// How often the TV's stand-in turned his game won: never, in a run
+    /// that plays them.
+    stood_in: u32,
+    run: Run,
+}
+
+/// Level 205 walked to the card house ([`to_the_card_house`]), in a run that
+/// plays the card game (`CardStreams::play_games`), into the house and to
+/// Fangs, his talk pressed and each question answered yes as the TV's modal
+/// answers it; each of `plans` a game, a quit by the board's own confirm at
+/// the player's first pick, else played by its policy to the board's
+/// report, accepted; seeded as the board starts. Over when `over` says so
+/// of the run after a game's end, or after `cap` steps.
+fn fangs_games(
+    plans: &[(Option<cards::Policy>, u32)],
+    cap: u32,
+    over: &dyn Fn(&Run) -> bool,
+) -> FangsPlayed {
+    let AtTheCardHouse {
+        mut run,
+        mut stops,
+        mut scenes,
+        ..
+    } = to_the_card_house();
+    run.world.card_streams.play_games();
+    for _ in 0..600 {
+        if run.hero().pivot.y < -300.0 {
+            break;
+        }
+        run.bench.view = (38.7f32 - run.hero().pivot.x)
+            .atan2(51.2 - run.hero().pivot.z)
+            .to_degrees();
+        step(&mut run, &mut stops, Stick::new(0.0, 1.0), [false; 4]);
+    }
+    assert!(run.hero().pivot.y < -300.0, "in the card house");
+    // Where his intro's walk ends (the 205 suite's), and beside him for a
+    // talk after a game (his first question is his intro scene's).
+    let mut by_fangs = Vec3::new(377.0, -304.4, 288.3);
+    let (_, fangs_at) = run.placed(guacamole::level_205::CARD_HOUSE_PIRATE);
+    let debug = std::env::var_os("AS366_DEBUG").is_some();
+    let (mut picks, mut stays) = (cards::Picks::default(), cards::Stays::default());
+    let mut player = cards::Player::new(cards::Policy::Naive);
+    let mut games: Vec<(u32, u32, Option<String>, String, String)> = Vec::new();
+    let (mut was, mut last_board, mut quit_sent) = (None::<String>, None::<String>, false);
+    let (mut chances, mut backs, mut ended_at) = (None, 0, None::<u32>);
+    let mut dbg = String::new();
+    let mut stuck = false;
+    let mut before = None;
+    let mut stood_in = 0;
+    let start = run.steps;
+    // The last game's end (or the start): a run with no game over in
+    // [`STALL`] steps is a stuck board and ends there.
+    let mut last_end = start;
+    while run.steps - start < cap && run.steps - last_end < STALL {
+        let on = games.iter().position(|g| g.1 == 0);
+        let plan = plans.get(on.unwrap_or(games.len())).copied();
+        let board = cards::board(&run);
+        if board.is_some() {
+            player.policy = plan.and_then(|p| p.0).unwrap_or(cards::Policy::Naive);
+            run.bench.pads[0] = player.pad(&run);
+            stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+        } else if cutscene_name(&run).as_deref() == Some("Casino Prompt") {
+            // His prompt after a game waits for the talk button.
+            let press = plan.is_some() && run.steps.is_multiple_of(20);
+            still(&mut run, &mut stops, [false, false, false, press]);
+        } else {
+            if before.is_none() && guacamole::prompt::up(&run.vm, &run.world).is_some() {
+                before = Some(cards::leftovers(&run));
+            }
+            if !scene_step(&mut run, &mut stops, &mut scenes, &mut stood_in) {
+                let me = run.hero().pivot;
+                let (dx, dz) = (by_fangs.x - me.x, by_fangs.z - me.z);
+                if dx.hypot(dz) < 1.0 {
+                    let press = plan.is_some() && run.steps.is_multiple_of(20);
+                    still(&mut run, &mut stops, [false, false, false, press]);
+                } else {
+                    run.bench.view = dx.atan2(dz).to_degrees();
+                    step(&mut run, &mut stops, Stick::new(0.0, 1.0), [false; 4]);
+                }
+            }
+        }
+        picks.note(&run);
+        stays.note(&run);
+        if chances.is_none() {
+            chances = cards::chances(&run);
+        }
+        if cards::hero_back(&mut run) {
+            backs += 1;
+        }
+        let now = cards::board(&run);
+        let fangs = behaviour(&run, guacamole::level_205::CARD_HOUSE_PIRATE);
+        let scene = behaviour(&run, "CardPirate_Casino_Cine");
+        if debug && ended_at.is_some() && run.steps.is_multiple_of(50) && run.steps < 14_500 {
+            println!(
+                "AS366 step {} prompt {:?} page {:?} hero {} to {by_fangs} {:.1} m, minion {:?} removed {:?}, cutscene {:?}",
+                run.steps,
+                guacamole::prompt::up(&run.vm, &run.world).map(|p| p.text),
+                guacamole::card_game::page_up(&run.vm).map(|p| p.2),
+                run.hero().pivot,
+                run.hero().pivot.distance(by_fangs),
+                run.minion,
+                run.minion.map(|m| run.vm.removed(m)),
+                cutscene_name(&run)
+            );
+        }
+        if debug {
+            let line = format!("{fangs} / {scene} / {now:?}");
+            if line != dbg {
+                println!("AS366 step {} {line}", run.steps);
+                dbg = line;
+            }
+        }
+        // A game's end: the board gone (a quit, a win) or a loss's replay.
+        if let Some(i) = on {
+            let replay =
+                was.as_deref() == Some(cards::LOST) && now.as_deref() == Some(cards::GAME_START);
+            if (was.is_some() && now.is_none()) || replay {
+                games[i].1 = run.steps;
+                last_end = run.steps;
+                games[i].2 = last_board.clone();
+                games[i].3 = fangs.clone();
+                games[i].4 = scene.clone();
+                ended_at = Some(run.steps);
+                by_fangs = fangs_at + Vec3::new(1.5, 0.0, 0.0);
+            }
+        }
+        if now.as_deref() == Some(cards::GAME_START)
+            && was.as_deref() != now.as_deref()
+            && let Some(&(_, seed)) = plans.get(games.len())
+        {
+            cards::seed(&mut run, seed);
+            games.push((run.steps, 0, None, String::new(), String::new()));
+            quit_sent = false;
+        }
+        if games.last().is_some_and(|g| g.1 == 0)
+            && plans[games.len() - 1].0.is_none()
+            && now.as_deref() == Some(cards::PICK_STONE)
+            && !quit_sent
+        {
+            quit_sent = run
+                .with_host(guacamole::card_game::quit)
+                .unwrap_or_else(|h| panic!("the quit: {h}"));
+        }
+        // A quit or a win ends what a run can play: no replay follows.
+        let unreplayed = was.is_some() && now.is_none();
+        if now.is_some() {
+            last_board.clone_from(&now);
+        }
+        was = now;
+        if unreplayed {
+            stuck = true;
+        }
+        if stuck && ended_at.is_some_and(|e| run.steps > e + 120) && over(&run) {
+            break;
+        }
+        if games.len() == plans.len()
+            && games.iter().all(|g| g.1 > 0)
+            && ended_at.is_some_and(|e| run.steps > e + 120)
+            && over(&run)
+        {
+            break;
+        }
+    }
+    // His and his scene's next behaviours, 120 steps on.
+    if let Some(g) = games.last_mut() {
+        g.3 = behaviour(&run, guacamole::level_205::CARD_HOUSE_PIRATE);
+        g.4 = behaviour(&run, "CardPirate_Casino_Cine");
+    }
+    let running = cards::streams_running(&run);
+    let after = cards::leftovers(&run);
+    println!(
+        "Fangs' games: {games:?}; chances {chances:?}; rolls: first landed {} of {} ({:.1}%), second {} of {} ({:.1}%); longest unpressed stay {:?}; {} stops; running {running:?}; put back {backs}; steps {}",
+        picks.first_landed,
+        picks.attempts,
+        picks.first(),
+        picks.second,
+        picks.count(),
+        picks.second(),
+        stays.longest_unpressed(),
+        stops.len(),
+        run.steps
+    );
+    FangsPlayed {
+        games,
+        picks,
+        stays,
+        stops,
+        chances,
+        running,
+        backs,
+        before: before.unwrap_or_default(),
+        after,
+        stood_in,
+        run,
+    }
+}
+
+/// The steps a played run may go without a game over before it's called
+/// stuck and ends (a game is about 3,900): a broken board fails its test
+/// in minutes rather than at the run's cap.
+const STALL: u32 = 20_000;
+
+/// One of Fangs' games on its own run: `plan` from `seed`, over 120 steps
+/// after its end (a quit or a win: the board gone; a loss: the replay's
+/// start). His card house scene starts his game itself, and after one it
+/// takes his talk for its own prompt line, so each game is a run of its own.
+fn fangs_game(plan: Option<cards::Policy>, seed: u32, over: &dyn Fn(&Run) -> bool) -> FangsPlayed {
+    let p = fangs_games(&[(plan, seed)], 30_000, over);
+    for g in &p.games {
+        println!("game {g:?}, {} steps", g.1 - g.0);
+    }
+    assert_eq!(p.games.len(), 1, "{:?}", p.games);
+    assert!(p.stops.is_empty(), "{:#?}", p.stops);
+    assert_eq!(p.chances, Some((1, 100)), "his call's chances");
+    assert_eq!(p.stood_in, 0, "a played game is never stood in won");
+    let (longest, stay) = p.stays.longest_unpressed().expect("a stay");
+    assert!(stay <= STAY_CAP, "{longest}: {stay} steps");
+    p
+}
+
+/// The longest any board behaviour but the player's own waits may last
+/// (the hub's, `giants_hub::STAY_CAP`).
+const STAY_CAP: u32 = 600;
+
+/// openspec AS.366: Fangs' card game in the card house played on the VM,
+/// headless (3 by 3, his call's 1 and 100), quit at the player's first pick
+/// through the board's own confirm: he goes on to his quit scene and
+/// `wait for player`, the board down and the hero put back. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn fangs_game_quit_ends_in_his_wait_for_player() {
+    println!("load at start: {}", load());
+    let p = fangs_game(None, FANGS_SEEDS[0], &|r| {
+        behaviour(r, guacamole::level_205::CARD_HOUSE_PIRATE) == "wait for player"
+            && !r.minion.is_some_and(|m| r.vm.removed(m))
+    });
+    let g = &p.games[0];
+    assert_eq!(
+        g.2.as_deref(),
+        Some(cards::PICK_STONE),
+        "quit at the first pick"
+    );
+    let fangs = behaviour(&p.run, guacamole::level_205::CARD_HOUSE_PIRATE);
+    println!(
+        "after: Fangs {fangs}, scene {}",
+        behaviour(&p.run, "CardPirate_Casino_Cine")
+    );
+    assert_eq!(fangs, "wait for player");
+    // A quit wins nothing: the flag a won game's theatrics end on stays
+    // down, so his scene plays no outro and the gate before the key stays
+    // up, its killer asleep (the as-cards-game review: a stand-in left on
+    // turned this quit into a win and the gate went).
+    assert_eq!(
+        global(&p.run, "CardTheatricsDone"),
+        Some(guac_script::Value::Int(0))
+    );
+    let (killer, _) = p.run.placed("Gate_Killer");
+    let killer = p.run.vm.placement_of(killer).expect("the gate's killer");
+    assert!(
+        !p.run.vm.removed(killer) && p.run.vm.asleep(killer),
+        "the gate's killer woke or went after a quit"
+    );
+    // What the board's set-up took, given back: the game systems' minigame
+    // data and pause menu, the level's atmospheric zone, the portal's locks
+    // and minigame mode, the camera's enable; what differs is his and his
+    // scene's own and the hero's (put back after the game).
+    let diff = cards::differ(&p.before, &p.after);
+    for d in &diff {
+        println!("before the yes and after the game: {d}");
+    }
+    let given_back = [
+        "Game Systems.",
+        "level control data.atmospheric zone",
+        "portal control data.disallow joining",
+        "portal control data.current mode",
+        "camera control data.disabled",
+        "System Update Controls.",
+    ];
+    let kept: Vec<&String> = diff
+        .iter()
+        .filter(|d| given_back.iter().any(|k| d.starts_with(k)) && !d.contains("timer"))
+        .collect();
+    assert!(kept.is_empty(), "{kept:#?}");
+    assert!(p.running.is_empty(), "{:?}", p.running);
+    assert_eq!(p.backs, 1);
+    println!("load at end: {}", load());
+}
+
+/// openspec AS.366: Fangs' game lost by a naive player: the report's accept
+/// is the replay, the board's next game. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn fangs_game_lost_ends_in_the_replay() {
+    println!("load at start: {}", load());
+    let p = fangs_game(Some(cards::Policy::Weak), FANGS_SEEDS[1], &|_| true);
+    let g = &p.games[0];
+    assert_eq!(g.2.as_deref(), Some(cards::LOST), "{g:?}");
+    assert!(cards::board(&p.run).is_some(), "the replay on");
+    assert_eq!(
+        behaviour(&p.run, guacamole::level_205::CARD_HOUSE_PIRATE),
+        "play the game"
+    );
+    println!("load at end: {}", load());
+}
+
+/// openspec AS.366: Fangs' game won by a strong player: the board's won
+/// report accepted, the board down, and he goes on to his loot. Nothing
+/// stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn fangs_game_won_ends_in_his_loot() {
+    println!("load at start: {}", load());
+    let p = fangs_game(Some(cards::Policy::Strong), FANGS_SEEDS[2], &|_| true);
+    let g = &p.games[0];
+    assert_eq!(g.2.as_deref(), Some(cards::WON), "{g:?}");
+    assert!(g.3.starts_with("wait for loot"), "{g:?}");
+    println!("load at end: {}", load());
+}
+
+/// The steps a run of the rolls' test may take a game, about five
+/// times a game's own.
+const GAME_STEPS: u32 = 20_000;
+
+/// The gate's short run of [`fangs_rolls_over_a_thousand_seeded_games`]:
+/// three games, whose walk to the card house is most of its time.
+const SHORT_GAMES: u32 = 3;
+
+/// The seeds of Fangs' three games: the quit's, the loss's, the win's.
+const FANGS_SEEDS: [u32; 3] = [1, 2, 4];
+
+/// openspec AS.366: the opponent's rolls over seeded games against Fangs
+/// (from seed 1000, a weak player's games, each loss's replay the next, a
+/// run walked to the card house again after a win): each roll's share
+/// within 5 points of his call's chance for it, 1 and 100
+/// ([`cards::Picks`]), no board behaviour but the player's own waits past
+/// [`STAY_CAP`], nothing stopped. By default the gate's short run,
+/// [`SHORT_GAMES`] games on one walk to the house (seeded, so the same every
+/// run); the box's 1,000 only when `AS366_GAMES=1000` asks (about 90
+/// minutes a third: run as three processes by `AS366_FROM` and
+/// `AS366_GAMES`, their counts summed). His chances are 1 and 100, so 5
+/// points holds over any count.
+#[test]
+#[ignore = "reads the Giants dump; 3 games, 1,000 by AS366_GAMES"]
+fn fangs_rolls_over_a_thousand_seeded_games() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let from: u32 = std::env::var("AS366_FROM").map_or(0, |v| v.parse().unwrap());
+    let games: u32 =
+        from + std::env::var("AS366_GAMES").map_or(SHORT_GAMES, |v| v.parse::<u32>().unwrap());
+    let mut picks = cards::Picks::default();
+    let mut longest: std::collections::BTreeMap<String, u32> = Default::default();
+    let (mut played, mut runs, mut won) = (from, 0, 0);
+    let mut stops = Vec::new();
+    while played < games {
+        let plans: Vec<(Option<cards::Policy>, u32)> = (played..games)
+            .map(|i| (Some(cards::Policy::Weak), 1000 + i))
+            .collect();
+        // A board stuck mid-game ends its run and fails on the run with no
+        // game over, as the hub's does.
+        let cap = GAME_STEPS.saturating_mul(plans.len() as u32);
+        let p = fangs_games(&plans, cap, &|_| true);
+        runs += 1;
+        let done = p.games.iter().filter(|g| g.1 > 0).count() as u32;
+        assert!(done > 0, "a run with no game over: {:?}", p.games);
+        won += p
+            .games
+            .iter()
+            .filter(|g| g.2.as_deref() == Some(cards::WON))
+            .count();
+        played += done;
+        assert_eq!(p.chances, Some((1, 100)), "his call's chances");
+        picks.attempts += p.picks.attempts;
+        picks.first_landed += p.picks.first_landed;
+        picks.second += p.picks.second;
+        picks.last += p.picks.last;
+        for (b, n) in &p.stays.longest {
+            let e = longest.entry(b.clone()).or_default();
+            *e = (*e).max(*n);
+        }
+        stops.extend(p.stops);
+        println!(
+            "after {} games ({runs} runs, {won} won): first {:.1}% of {}, second {:.1}% of {}; {:.0} s, load {}",
+            played - from,
+            picks.first(),
+            picks.attempts,
+            picks.second(),
+            picks.count(),
+            started.elapsed().as_secs_f64(),
+            load()
+        );
+    }
+    println!(
+        "seeds {} to {}: first landed {} of {}, second {} of {} (last {}); stays {longest:?}",
+        1000 + from,
+        999 + games,
+        picks.first_landed,
+        picks.attempts,
+        picks.second,
+        picks.count(),
+        picks.last
+    );
+    // A game that never reached the opponent's pick fails here, not on a
+    // share of nothing.
+    assert!(picks.attempts > 0 && picks.count() > 0, "{picks:?}");
+    assert!(
+        (picks.first() - 1.0).abs() <= 5.0,
+        "first {:.1}%",
+        picks.first()
+    );
+    assert!(
+        (picks.second() - 100.0).abs() <= 5.0,
+        "second {:.1}%",
+        picks.second()
+    );
+    let worst = longest
+        .iter()
+        .filter(|(b, _)| !b.starts_with("player turn") && !b.contains("tutorial"))
+        .max_by_key(|(_, n)| **n);
+    println!("longest unpressed stay over the games: {worst:?}");
+    assert!(worst.is_some_and(|(_, n)| *n <= STAY_CAP), "{worst:?}");
+    assert!(stops.is_empty(), "{:#?}", &stops[..stops.len().min(10)]);
+    println!(
+        "{} games in {runs} runs, {:.0} s, load at end: {}",
+        played - from,
+        started.elapsed().as_secs_f64(),
+        load()
+    );
 }

@@ -192,8 +192,10 @@ fn an_asked_stream_joins_its_running_placements_once_while_they_run() {
 /// The streams' running placements are listed and nothing of the level's
 /// own changes: one with a script of its own by its script, one sharing its
 /// script with the level's by its name, one sharing both left off (a hub's
-/// `Menu_MoreInfo`), an asleep one left off; the level's placements read as
-/// they did without the streams.
+/// `Menu_MoreInfo`); an asleep one with a script of its own listed by it
+/// (openspec AS.366: the board's manager, which its controller spawns), one
+/// sharing its script left off; the level's placements read as they did
+/// without the streams.
 #[test]
 fn the_streams_list_their_own_and_nothing_of_the_levels() {
     let at = |unit, index| Obj { unit, index };
@@ -208,6 +210,7 @@ fn the_streams_list_their_own_and_nothing_of_the_levels() {
         Placed::named(at(6, 1), "2dSpritesStream_Startup", Some(shared), 4),
         Placed::named(at(8, 2), "Menu_MoreInfo", Some(more), 4),
         Placed::named(at(7, 1), "Asleep", Some("C:/a/Sleeper.ai"), 5),
+        Placed::named(at(7, 2), "AsleepShared", Some(shared), 5),
     ];
     let files = Files {
         placed: level.iter().chain(&streams).cloned().collect(),
@@ -229,7 +232,7 @@ fn the_streams_list_their_own_and_nothing_of_the_levels() {
         .iter()
         .map(|p| with.whitelist.lists(&p.name, p.script.as_deref().unwrap()))
         .collect();
-    assert_eq!(listed, [true, true, false, false]);
+    assert_eq!(listed, [true, true, false, true, false]);
     let Whitelist::Only {
         placements,
         scripts,
@@ -241,6 +244,162 @@ fn the_streams_list_their_own_and_nothing_of_the_levels() {
     assert_eq!(placements, &["2dSpritesStream_Startup".to_owned()]);
     assert_eq!(
         scripts,
-        &["CardPirate_Template.ai".to_owned(), own.to_owned()]
+        &[
+            "CardPirate_Template.ai".to_owned(),
+            own.to_owned(),
+            "C:/a/Sleeper.ai".to_owned()
+        ]
+    );
+}
+
+/// openspec AS.366: a request's archives: the board's load string names the
+/// hands' decks after its stem, each once, before the board; a stone's
+/// asset is asked alone; any other text asks none.
+#[test]
+fn a_request_names_the_stones_it_loads_before_its_stream() {
+    assert_eq!(
+        asked_all(
+            "character/CardGame_Streaming+cardgame_deck_006+cardgame_deck_001+CARDGAME_DECK_006"
+        ),
+        [
+            "character/cardgame_deck_006.bld",
+            "character/cardgame_deck_001.bld",
+            BOARD
+        ]
+    );
+    assert_eq!(
+        asked_all("misc/cardgame_card_013"),
+        ["misc/cardgame_card_013.bld"]
+    );
+    assert_eq!(asked_all("misc/CardGame_2dSprites_Streamed"), [SPRITES]);
+    for none in [
+        "character/",
+        "debug/debug",
+        "misc/cardgame_card_082",
+        "cardgame_deck_5",
+        "",
+    ] {
+        assert!(asked_all(none).is_empty(), "{none:?}");
+    }
+    assert_eq!(stones().len(), 164);
+    assert!(is_misc(HAND_SELECT) && is_misc(SPRITES) && !is_misc(BOARD));
+    for empty in ["misc/", "MISC", "misc\\"] {
+        assert!(empties_misc(empty), "{empty:?}");
+    }
+    for not in ["misc/CardGame_2dSprites_Streamed", "character/", ""] {
+        assert!(!empties_misc(not), "{not:?}");
+    }
+}
+
+/// openspec AS.366: a stone loaded again (the next game's board names its
+/// deck again) starts its header again, where a stream still running joins
+/// nothing new: the stone's STARTUP is what defines it.
+#[test]
+fn a_stone_asked_again_starts_again() {
+    let (program, files, handles) = stream();
+    let deck = stones()[0];
+    let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+    world.card_streams = CardStreams::linked(&[deck], &[0]);
+    let mut config = Config::new(Mode::Strict);
+    config.whitelist = Whitelist::only(&[], &["CardArt_Streamed_Startup.ai"]);
+    let mut vm = Vm::new(program, config);
+    assert!(
+        world
+            .card_streams
+            .take_request(Some("character/CardGame_Streaming+cardgame_deck_000"))
+    );
+    let first = join_asked(&mut vm, &mut world);
+    assert_eq!(first.len(), 1);
+    assert!(
+        world
+            .card_streams
+            .take_request(Some("character/CardGame_Streaming+cardgame_deck_000"))
+    );
+    let again = join_asked(&mut vm, &mut world);
+    assert_eq!(again.len(), 1, "started again");
+    assert!(vm.removed(first[0]), "the first taken off");
+    assert_ne!(again[0], first[0]);
+}
+
+/// openspec AS.366: `control` of a card stream's template (the board's
+/// `CardGameManager`, file state 5) skips its block, so the controller
+/// spawns the manager from it; a stream's live placement and a level's own
+/// template are controlled as before.
+#[test]
+fn a_card_streams_template_is_no_placement_to_control() {
+    let at = |unit, index| Obj { unit, index };
+    let files = Files {
+        placed: vec![
+            Placed::named(at(7, 1), "CardGameManager", Some("C:/a/Manager.ai"), 5),
+            Placed::named(at(7, 2), "Controller", Some("C:/a/Setup.ai"), 4),
+            Placed::named(at(5, 1), "LevelTemplate", Some("C:/a/T.ai"), 5),
+        ],
+        ..Files::default()
+    };
+    let handles = HashMap::from([(at(7, 1), 0x40), (at(7, 2), 0x41), (at(5, 1), 0x42)]);
+    let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+    world.card_streams = CardStreams::linked(&[BOARD], &[7]);
+    let control = |h: u64| guac_script::OpCall {
+        placement: 1,
+        receiver: Value::Entity(1),
+        class: Class::Control,
+        operands: vec![("_LHS", Some(Value::Entity(h)))],
+        words: Vec::new(),
+        sets: Vec::new(),
+    };
+    let answer = |w: &mut ScriptWorld, h| {
+        w.op(&control(h), &mut |_| 0, &mut crate::script_engine::NoEngine)
+            .unwrap()
+    };
+    assert!(matches!(
+        answer(&mut world, 0x40),
+        guac_script::Answer::Skip
+    ));
+    assert!(matches!(
+        answer(&mut world, 0x41),
+        guac_script::Answer::Run { .. }
+    ));
+    assert!(matches!(
+        answer(&mut world, 0x42),
+        guac_script::Answer::Run { .. }
+    ));
+    world.card_streams = CardStreams::default();
+    assert!(
+        matches!(answer(&mut world, 0x40), guac_script::Answer::Run { .. }),
+        "without the streams linked, as before"
+    );
+}
+
+/// openspec AS.366: the switch that plays the game. A run without it (every
+/// TV run) answers `Card Game - Start Card Game` with nothing shown and
+/// owes its pirate the quit; one that plays games leaves the start to the
+/// original's script and owes nothing. Other screens answer either way.
+#[test]
+fn only_a_run_that_plays_card_games_runs_the_start() {
+    let files = Files::default();
+    let handles = HashMap::new();
+    let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+    assert!(!world.card_streams.plays_games());
+    assert!(crate::prompt::answer_screen(
+        &mut world,
+        "Card Game - Start Card Game"
+    ));
+    assert!(world.card_game_answered, "the quit owed");
+    world.card_game_answered = false;
+    world.card_streams.play_games();
+    assert!(world.card_streams.plays_games());
+    assert!(!crate::prompt::answer_screen(
+        &mut world,
+        "Card Game - Start Card Game"
+    ));
+    assert!(!world.card_game_answered, "no quit owed");
+    assert!(crate::prompt::answer_screen(
+        &mut world,
+        "System - Store UI - Show Menu"
+    ));
+    let fresh = CardStreams::fresh(&world.card_streams);
+    assert!(
+        fresh.plays_games(),
+        "a new run of the same source plays them too"
     );
 }
