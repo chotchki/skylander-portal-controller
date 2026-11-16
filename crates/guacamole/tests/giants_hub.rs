@@ -471,7 +471,7 @@ fn hub_stage_1s_way_on_is_cali_then_flynn_into_level_201() {
 
 /// The AS.125 review: Cali's challenge question answered yes by one player
 /// asks for her challenges' screen, which the TV answers with nothing
-/// shown, then pauses the game at 0 until that screen's stream reads
+/// shown and a line in the log (AS.453, once), then pauses the game at 0 until that screen's stream reads
 /// unloaded, so the portal rests meanwhile: a step, the stream never asked
 /// for, and the portal answers again, never left deaf on the hub. Nothing
 /// stops.
@@ -514,6 +514,13 @@ fn calis_yes_leaves_the_portal_answering() {
         rested.last()
     );
     assert!(!rested.is_empty(), "her yes paused the game");
+    // openspec AS.453: her yes asked for the Heroic Challenges, logged as
+    // not built, once (Flynn's yes asked for no screen).
+    assert_eq!(
+        run.world.unbuilt,
+        [guacamole::prompt::UNBUILT[2].1],
+        "what her yes asked for"
+    );
     assert!(!portal_suspended(&run.vm), "the portal answers again");
     assert!(rested.len() < 60, "rested {} steps", rested.len());
     // The rest her pause made went with it (openspec AS.205).

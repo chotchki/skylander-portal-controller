@@ -14,6 +14,7 @@ pub mod card_game;
 pub mod census;
 pub mod chapter_1;
 pub mod character;
+pub mod collected;
 pub mod creature_models;
 pub mod figure;
 pub mod frame;

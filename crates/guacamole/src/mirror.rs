@@ -136,6 +136,9 @@ pub struct TvSnapshot {
     /// A dialogue's yes-or-no question (openspec AU.6): the one up, as the
     /// modal draws it, and those answered; none before one is asked.
     pub prompt: Option<crate::yes_no::PromptsShot>,
+    /// A collected item's box the scripts hold the level on (openspec
+    /// AS.441): its strings by name, the lines drawn; none while none is.
+    pub collected: Option<crate::collected_box::CollectedShot>,
     /// The particles of what the scripts spawn (openspec AH.87): systems
     /// and particles alive, quads drawn, the emitters drawing; none without
     /// them.
@@ -1332,7 +1335,10 @@ fn mirror_tv(
         DefeatShots,
         Option<Res<crate::emitters::ParticleReport>>,
         Option<Res<crate::sound_player::SoundReport>>,
-        crate::yes_no::PromptShots,
+        (
+            crate::yes_no::PromptShots,
+            crate::collected_box::CollectedShots,
+        ),
     ),
     (warm, level, prepare, arrival, movies, story): (
         Option<Res<Warm>>,
@@ -1392,7 +1398,8 @@ fn mirror_tv(
         entry: entry.as_deref().filter(|e| e.shown()).map(DevEntry::shot),
         hud: hud.shot(),
         defeat: defeat.shot(),
-        prompt: prompt.shot(),
+        prompt: prompt.0.shot(),
+        collected: prompt.1.shot(),
         particles: particles.map(|p| p.clone()),
         sounds: sounds.map(|s| s.clone()),
         watch: watch.shot(),
