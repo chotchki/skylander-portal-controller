@@ -249,6 +249,8 @@ struct PhoneAsk {
 pub(crate) struct FlagAsks {
     on: Arc<AtomicBool>,
     asks: Arc<Mutex<Vec<PhoneAsk>>>,
+    /// Key presses posted (`POST /api/_test/flag/key`), not yet fed in.
+    keys: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl FlagAsks {
@@ -282,6 +284,9 @@ struct FlagBody {
     note: String,
 }
 
+/// `POST /api/_test/flag/key` feeds Bevy a press of [`FLAG_KEY`] and its
+/// release the frame after, as the window's key would arrive, for a run
+/// with nobody at the keyboard (202; 409 with flags off).
 /// `GET /api/_test/flag` answers `{"on": bool}`: whether this TV takes
 /// flags (its folder made); the phone shows its field only on a yes, and a
 /// build without the route (the product, a plain guacamole) answers none.
@@ -292,33 +297,50 @@ struct FlagBody {
 /// off, 400 for any other body, 503 when the TV took nothing in 5 s.
 pub(crate) fn routes<S: Clone + Send + Sync + 'static>(asks: &FlagAsks) -> axum::Router<S> {
     use axum::http::StatusCode;
-    let (get, post) = (asks.clone(), asks.clone());
-    axum::Router::new().route(
-        "/api/_test/flag",
-        axum::routing::get(move || {
-            let on = get.on();
-            async move { axum::Json(serde_json::json!({ "on": on })) }
-        })
-        .post(move |body: Result<axum::Json<FlagBody>, JsonRejection>| {
-            let asks = post.clone();
-            async move {
-                let Ok(axum::Json(body)) = body else {
-                    return StatusCode::BAD_REQUEST.into_response();
-                };
-                if body.note.len() > NOTE_MAX {
-                    return StatusCode::BAD_REQUEST.into_response();
+    let (get, post, key) = (asks.clone(), asks.clone(), asks.clone());
+    axum::Router::new()
+        .route(
+            "/api/_test/flag/key",
+            axum::routing::post(move || {
+                let on = key.on();
+                if on {
+                    key.keys.fetch_add(1, Ordering::Relaxed);
                 }
-                if !asks.on() {
-                    return StatusCode::CONFLICT.into_response();
+                async move {
+                    if on {
+                        StatusCode::ACCEPTED
+                    } else {
+                        StatusCode::CONFLICT
+                    }
                 }
-                let rx = asks.push(body.note);
-                match tokio::time::timeout(PHONE_WAIT, rx).await {
-                    Ok(Ok(taken)) => (StatusCode::CREATED, axum::Json(taken)).into_response(),
-                    _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+            }),
+        )
+        .route(
+            "/api/_test/flag",
+            axum::routing::get(move || {
+                let on = get.on();
+                async move { axum::Json(serde_json::json!({ "on": on })) }
+            })
+            .post(move |body: Result<axum::Json<FlagBody>, JsonRejection>| {
+                let asks = post.clone();
+                async move {
+                    let Ok(axum::Json(body)) = body else {
+                        return StatusCode::BAD_REQUEST.into_response();
+                    };
+                    if body.note.len() > NOTE_MAX {
+                        return StatusCode::BAD_REQUEST.into_response();
+                    }
+                    if !asks.on() {
+                        return StatusCode::CONFLICT.into_response();
+                    }
+                    let rx = asks.push(body.note);
+                    match tokio::time::timeout(PHONE_WAIT, rx).await {
+                        Ok(Ok(taken)) => (StatusCode::CREATED, axum::Json(taken)).into_response(),
+                        _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+                    }
                 }
-            }
-        }),
-    )
+            }),
+        )
 }
 
 use axum::response::IntoResponse;
@@ -350,6 +372,10 @@ impl Plugin for Flags {
         })
         .insert_resource(self.asks.clone())
         .init_resource::<FlagsTaken>()
+        .add_systems(
+            PreUpdate,
+            feed_posted_keys.before(bevy::input::InputSystems),
+        )
         .add_systems(Last, take_flags);
     }
 }
@@ -374,7 +400,11 @@ pub(crate) struct ActorShot {
     pub distance: Option<f32>,
     pub in_reach: bool,
     pub in_view: bool,
-    /// Something of it drew this frame; none for an actor with no entity.
+    /// Something of it is shown (not hidden: its model's on, wherever the
+    /// camera looks), and something of it drew this frame (the renderer's
+    /// own read, so off-screen is false); none for an actor with no entity
+    /// and nothing drawing it.
+    pub shown: Option<bool>,
     pub drawn: Option<bool>,
     /// The clips playing on it: palette slot, seconds in, length (s at
     /// 100 %), rate (percent) and looping.
@@ -409,7 +439,7 @@ pub(crate) fn actors_near(
     vm: Option<&guac_script::Vm>,
     hero: Option<Vec3>,
     view: impl Fn(Vec3) -> Option<([f32; 2], f32)>,
-    drawn: impl Fn(u64) -> Option<bool>,
+    drawn: impl Fn(u64) -> Option<(bool, bool)>,
 ) -> Vec<ActorShot> {
     let mut out: Vec<ActorShot> = world
         .actors()
@@ -448,7 +478,8 @@ pub(crate) fn actors_near(
                 distance,
                 in_reach,
                 in_view,
-                drawn: drawn(h),
+                shown: drawn(h).map(|d| d.0),
+                drawn: drawn(h).map(|d| d.1),
                 clips: world
                     .sequences()
                     .iter()
@@ -534,8 +565,18 @@ struct CaptureReads<'w, 's> {
         ),
         Or<(With<FollowCamera>, With<LevelCamera>)>,
     >,
-    visible: Query<'w, 's, (&'static ViewVisibility, Option<&'static Children>)>,
+    visible: Query<
+        'w,
+        's,
+        (
+            &'static InheritedVisibility,
+            &'static ViewVisibility,
+            Option<&'static Children>,
+        ),
+    >,
     tv_target: Query<'w, 's, &'static RenderTarget, With<TvCamera>>,
+    level: Option<Res<'w, crate::level::Level>>,
+    creatures: Query<'w, 's, (Entity, &'static crate::creatures::DrawnCreature)>,
 }
 
 impl CaptureReads<'_, '_> {
@@ -551,17 +592,56 @@ impl CaptureReads<'_, '_> {
             .max_by_key(|(c, ..)| c.order)
     }
 
-    /// The entity under `h` or something under it drew this frame.
-    fn drawn(&self, h: u64) -> Option<bool> {
-        let e = Entity::try_from_bits(h)?;
-        self.visible.get(e).ok()?;
-        let mut stack = vec![(e, 0u8)];
+    /// What draws each actor apart from its own entity: a creature's model
+    /// (its own root), a file prop's (under the level's root), by handle.
+    fn draws(&self) -> std::collections::HashMap<u64, Vec<Entity>> {
+        let mut out: std::collections::HashMap<u64, Vec<Entity>> = Default::default();
+        for (e, c) in &self.creatures {
+            out.entry(c.actor).or_default().push(e);
+        }
+        let unit = self.source.as_deref().and_then(|s| s.level_unit());
+        if let (Some(level), Some(world), Some(unit)) =
+            (self.level.as_deref(), self.world.as_deref(), unit)
+        {
+            for (object, e) in level.prop_draws() {
+                let obj = guac_script::Obj {
+                    unit,
+                    index: object,
+                };
+                if let Some(h) = world.handles().get(&obj) {
+                    out.entry(*h).or_default().push(e);
+                }
+            }
+        }
+        out
+    }
+
+    /// Whether something of `h` is shown and whether it drew this frame:
+    /// its entity, what [`Self::draws`] lists for it, or anything under
+    /// them; none when it has no entity and nothing draws it.
+    fn drawn(
+        &self,
+        h: u64,
+        draws: &std::collections::HashMap<u64, Vec<Entity>>,
+    ) -> Option<(bool, bool)> {
+        let own = Entity::try_from_bits(h).filter(|e| self.visible.get(*e).is_ok());
+        let mut stack: Vec<(Entity, u8)> = own
+            .into_iter()
+            .chain(draws.get(&h).into_iter().flatten().copied())
+            .map(|e| (e, 0))
+            .collect();
+        if stack.is_empty() {
+            return None;
+        }
+        let (mut shown, mut drawn) = (false, false);
         while let Some((e, depth)) = stack.pop() {
-            let Ok((v, children)) = self.visible.get(e) else {
+            let Ok((inherited, view, children)) = self.visible.get(e) else {
                 continue;
             };
-            if v.get() {
-                return Some(true);
+            shown |= inherited.get();
+            drawn |= view.get();
+            if shown && drawn {
+                break;
             }
             if depth < 6
                 && let Some(children) = children
@@ -569,7 +649,7 @@ impl CaptureReads<'_, '_> {
                 stack.extend(children.iter().map(|c| (c, depth + 1)));
             }
         }
-        Some(false)
+        Some((shown, drawn))
     }
 
     /// Everything but the frame, as `capture.json` holds it.
@@ -610,6 +690,7 @@ impl CaptureReads<'_, '_> {
             },
         });
         let hero = self.hero();
+        let draws = self.draws();
         let actors = self.world.as_deref().map(|w| {
             let vm = self.runtime.as_deref().map(|r| &r.vm);
             let cam = self.camera();
@@ -623,7 +704,7 @@ impl CaptureReads<'_, '_> {
                     // Reversed depth: in front of the eye is z in (0, 1].
                     (ndc.z > 0.0).then(|| ([ndc.x, ndc.y], t.translation().distance(p)))
                 },
-                |h| self.drawn(h),
+                |h| self.drawn(h, &draws),
             )
         });
         let scene = match (self.runtime.as_deref(), self.world.as_deref()) {
@@ -711,6 +792,36 @@ impl CaptureReads<'_, '_> {
             _ => Screenshot::primary_window(),
         }
     }
+}
+
+/// A posted key press into Bevy's keyboard stream, its release the frame
+/// after: what winit hands Bevy for the window's key.
+fn feed_posted_keys(
+    asks: Option<Res<FlagAsks>>,
+    window: Query<Entity, With<bevy::window::PrimaryWindow>>,
+    mut keys: MessageWriter<bevy::input::keyboard::KeyboardInput>,
+    mut down: Local<bool>,
+) {
+    use bevy::input::ButtonState;
+    let Some(asks) = asks else {
+        return;
+    };
+    let state = if *down {
+        ButtonState::Released
+    } else if asks.keys.swap(0, Ordering::Relaxed) > 0 {
+        ButtonState::Pressed
+    } else {
+        return;
+    };
+    *down = state == ButtonState::Pressed;
+    keys.write(bevy::input::keyboard::KeyboardInput {
+        key_code: FLAG_KEY,
+        logical_key: bevy::input::keyboard::Key::Character("f".into()),
+        state,
+        text: None,
+        repeat: false,
+        window: window.iter().next().unwrap_or(Entity::PLACEHOLDER),
+    });
 }
 
 /// The key, the capture buttons and the phone's asks, this frame.
@@ -1105,6 +1216,75 @@ mod tests {
         app.update();
         assert!(!late.try_recv().unwrap().joined);
         assert_eq!(folders(&dir).len(), 4);
+
+        // The posted key: Bevy's keyboard stream takes it as the window's
+        // key, one capture, and its release the frame after.
+        press(&mut app, false);
+        app.update();
+        asks.keys.fetch_add(1, Ordering::Relaxed);
+        app.update();
+        let now = folders(&dir);
+        assert_eq!(now.len(), 5, "{now:?}");
+        assert_eq!(now.iter().filter(|f| f.ends_with("Z-key")).count(), 3);
+        app.update();
+        assert!(
+            !app.world()
+                .resource::<ButtonInput<KeyCode>>()
+                .pressed(FLAG_KEY),
+            "released the frame after"
+        );
+        assert_eq!(folders(&dir).len(), 5);
+    }
+
+    /// A capture's actors: the fight's creature in reach, read off the
+    /// scripts' world with its script's behaviour, and shown by its own
+    /// model's entity (a creature draws on a root of its own, not under its
+    /// actor), not shown once that model is hidden.
+    #[test]
+    fn a_creature_in_reach_reads_shown_by_its_own_model() {
+        use bevy::ecs::system::RunSystemOnce;
+        use guac_formats::script::builder::FIGHT_CREATURE;
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _) = crate::test_support::play::fight_app(tmp.path(), None);
+        for _ in 0..10 {
+            app.update();
+        }
+        let creature = |app: &mut App| {
+            let j = app
+                .world_mut()
+                .run_system_once(|r: CaptureReads| r.json(&Source::Key, SystemTime::now(), ""))
+                .unwrap();
+            j["actors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|a| a["name"] == FIGHT_CREATURE)
+                .cloned()
+                .unwrap_or_else(|| panic!("no creature in {}", j["actors"]))
+        };
+        let model = {
+            let w = app.world_mut();
+            let mut q = w.query_filtered::<Entity, With<crate::creatures::DrawnCreature>>();
+            q.single(w).unwrap()
+        };
+        // No renderer here to propagate it: the model's root set as the
+        // visibility pass would leave it, shown and then hidden.
+        app.world_mut()
+            .entity_mut(model)
+            .insert(InheritedVisibility::VISIBLE);
+        let c = creature(&mut app);
+        assert_eq!(c["in_reach"], true, "{c}");
+        assert_eq!(c["state"], "awake", "{c}");
+        assert!(c["behaviour"].is_string(), "{c}");
+        assert_eq!(
+            (c["shown"].as_bool(), c["drawn"].as_bool()),
+            (Some(true), Some(false)),
+            "{c}"
+        );
+        app.world_mut()
+            .entity_mut(model)
+            .insert(InheritedVisibility::HIDDEN);
+        assert_eq!(creature(&mut app)["shown"], false);
     }
 
     /// The route: on or off as set; a post with flags off is a 409 and

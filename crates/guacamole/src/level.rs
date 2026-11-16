@@ -1268,6 +1268,16 @@ pub(crate) struct ByActors<'a> {
 }
 
 impl StandingProps {
+    /// Each prop that draws: its object in `level.bld` and the entity its
+    /// model hangs under (AS.440's capture reads whether it drew).
+    pub(crate) fn draws(&self) -> Vec<(u32, Entity)> {
+        self.props
+            .iter()
+            .zip(&self.draws)
+            .filter_map(|(p, d)| d.map(|d| (p.object, d)))
+            .collect()
+    }
+
     fn new(
         walk: &mut Walk,
         models: &[Vec<(usize, u16)>],
@@ -1792,6 +1802,14 @@ impl Level {
         r.props = self.stage.loaded().map(|l| l.props.report().clone());
         r.asked = self.asked.clone();
         r
+    }
+
+    /// Its props' draws ([`StandingProps::draws`]); none before the
+    /// renderer has it.
+    pub(crate) fn prop_draws(&self) -> Vec<(u32, Entity)> {
+        self.stage
+            .loaded()
+            .map_or_else(Vec::new, |l| l.props.draws())
     }
 
     /// The level, once the renderer has it.
