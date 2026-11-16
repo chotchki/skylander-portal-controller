@@ -534,6 +534,7 @@ impl Run {
 
         self.pose_hands();
         self.bench.place_bodies(&self.world);
+        self.census_clips();
         Ok(())
     }
 
@@ -1952,6 +1953,67 @@ impl Lines {
                 v.ended = Some(e.ended);
             }
         }
+    }
+}
+
+/// One clip a watched actor played over a run (openspec AS.442): the steps
+/// it was seen playing, how far it advanced in all (seconds of clip, its
+/// rounds counted whole), how many times it went round past its end, and
+/// the cutscene up when it was first seen.
+#[derive(Debug, Clone, Default)]
+pub struct Watched {
+    pub steps: u32,
+    pub advanced: f32,
+    pub rounds: u32,
+    pub scene: Option<String>,
+}
+
+/// What the named actors play over a run, by actor and clip name (openspec
+/// AS.442): [`ClipWatch::record`] once a step.
+#[derive(Debug, Default)]
+pub struct ClipWatch {
+    pub clips: BTreeMap<(String, String), Watched>,
+    last: HashMap<usize, f32>,
+}
+
+impl ClipWatch {
+    /// Each clip playing on an actor named in `actors` this step, by its
+    /// name in its model's palette.
+    pub fn record(&mut self, run: &Run, actors: &[&str]) {
+        let scene = guacamole::level_end::scene_up(&run.vm).map(|u| u.cutscene);
+        for (i, s) in run.world.sequences().iter().enumerate() {
+            let actor = run.world.name(s.actor);
+            if !s.plays() || !actors.contains(&actor.as_str()) {
+                self.last.remove(&i);
+                continue;
+            }
+            let Some(clip) = run.world.sequence_clip_name(s) else {
+                continue;
+            };
+            let w = self.clips.entry((actor, clip.to_owned())).or_default();
+            w.steps += 1;
+            if w.scene.is_none() {
+                w.scene.clone_from(&scene);
+            }
+            // Round past its end: from its last tenth of a second to its
+            // first; any other step back is a start again, not a round.
+            if let Some(&before) = self.last.get(&i) {
+                if s.time >= before {
+                    w.advanced += s.time - before;
+                } else if before > s.length - 0.1 && s.time < 0.1 {
+                    w.rounds += 1;
+                    w.advanced += s.length - before + s.time;
+                }
+            }
+            self.last.insert(i, s.time);
+        }
+    }
+
+    pub fn get(&self, actor: &str, clip: &str) -> Watched {
+        self.clips
+            .get(&(actor.to_owned(), clip.to_owned()))
+            .cloned()
+            .unwrap_or_default()
     }
 }
 

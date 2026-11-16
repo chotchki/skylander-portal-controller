@@ -294,9 +294,11 @@ fn level_214s_final_island_carries_him_hung_on_its_rigs() {
     let mut rode = 0;
     let mut bodied = 0;
     let mut sizes = std::collections::BTreeMap::new();
+    let mut watch = ClipWatch::default();
     for k in 0..6000u32 {
         let expect = fly(&mut run, k);
         still(&mut run, &mut stops, [false; 4]);
+        watch.record(&run, &["214_RFP_MoneyBags"]);
         if let Some((i, n)) = scene_of(&run) {
             assert_eq!(n, 9, "its nine scenes");
             if scenes.last().is_none_or(|(at, _)| *at != i) {
@@ -347,6 +349,15 @@ fn level_214s_final_island_carries_him_hung_on_its_rigs() {
         !sizes.is_empty() && sizes.values().all(|s| (*s - 120.0).abs() < 1e-3),
         "MoneyBags at 120 %: {sizes:?}"
     );
+    // openspec AS.442's place 2: the scene asks his talk, then his idle at
+    // once, which takes the talk's place (one whole clip at a time) and
+    // goes round past its 4.5 s (the palette marks it looping; on 2.0 it
+    // played once).
+    for ((actor, clip), w) in &watch.clips {
+        println!("{actor} {clip}: {w:?}");
+    }
+    let idle = watch.get("214_RFP_MoneyBags", "Banker_Idle.ma");
+    assert!(idle.rounds >= 1 && idle.advanced > 4.5, "{idle:?}");
     assert!(stops.is_empty(), "{stops:#?}");
     println!(
         "{:.1} s; load at end: {}",
@@ -771,10 +782,12 @@ fn level_214s_third_island_is_walked_to_its_end() {
     let mut scenes = Vec::new();
     let mut outro_sizes = std::collections::BTreeMap::new();
     let mut part_runs = false;
+    let mut watch = ClipWatch::default();
     for k in 0..8000u32 {
         let cs = cutscene_name(&run);
         let taking = cs.is_none() && !gone(&run, part) && k % 20 < 2;
         still(&mut run, &mut stops, [taking, false, false, false]);
+        watch.record(&run, &["Flynn_NPC", "Cali_NPC"]);
         if let Some((i, n)) = scene_of(&run)
             && scenes.last() != Some(&i)
         {
@@ -800,6 +813,12 @@ fn level_214s_third_island_is_walked_to_its_end() {
         run.steps
     );
     assert_eq!(scenes, (0..7).collect::<Vec<_>>());
+    // openspec AS.442's place 3: Cali's talk in the outro round past its 7 s
+    // (the palette marks it looping; on 2.0 it played once).
+    let talk = watch.get("Cali_NPC", "AdventureGirl_Talkv00.ma");
+    println!("the outro's Cali talk: {talk:?}");
+    assert_eq!(talk.scene.as_deref(), Some("214 Outro IGC"));
+    assert!(talk.rounds >= 1 && talk.advanced > 7.0, "{talk:?}");
     assert_eq!(outro_sizes.get("Flynn_NPC"), Some(&130.0));
     assert_eq!(outro_sizes.get("Cali_NPC"), Some(&110.0));
     assert!(part_runs, "the outro's ship part made its body");

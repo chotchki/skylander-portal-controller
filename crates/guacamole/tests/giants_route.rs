@@ -1879,6 +1879,7 @@ fn the_pit_intro_voices_norticus_line_and_waits_on_it() {
         p.lines.voices
     );
     let out = p.out.1 - p.out.0;
+    println!("the pit's intro: 'cutscene out' {out} steps (AH.8: 449)");
     assert!((430..=455).contains(&out), "AH.8: 449; ours {out}");
 }
 
