@@ -7,8 +7,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use guac_extract::known::KnownDump;
-use guac_extract::screens::{ARCHIVES, PART, path};
-use guac_extract::stages::{ScriptStage, screen_part};
+use guac_extract::screens::{ARCHIVES, CARD_GAME, CARD_GAME_PART, PART, path};
+use guac_extract::stages::{ScriptStage, card_part, screen_part};
 use guac_extract::{ExtractRoot, IdentityDir, open};
 use guac_formats::iga::builder::IgaBuilder;
 use guac_formats::sfo::builder::SfoBuilder;
@@ -18,6 +18,7 @@ fn dump_with(tmp: &Path, edit: impl FnOnce(&Path)) -> PathBuf {
     let dump = tmp.join("dump");
     let usr = dump.join("PS3_GAME/USRDIR");
     fs::create_dir_all(usr.join("misc")).unwrap();
+    fs::create_dir_all(usr.join("character")).unwrap();
     fs::write(
         dump.join("PS3_GAME/PARAM.SFO"),
         SfoBuilder::disc_game("BLUS30968", "01.00", "01.00").build(),
@@ -110,4 +111,39 @@ fn a_missing_archive_is_named_and_a_broken_one_leaves_the_part_unrecorded() {
         (PART, ARCHIVES[0])
     );
     assert!(!dir.manifest().parts.contains_key(PART));
+}
+
+/// openspec AS.364: the card game's part, by the screens' rule: the two
+/// archives the dump holds land raw at their stems' entries and the part
+/// records them, the one it lacks named; the screens' part is untouched,
+/// and a second run keeps the card part, writing nothing.
+#[test]
+fn the_card_games_entries_land_by_the_screens_rule() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dump = dump_with(tmp.path(), |usr| {
+        let bld = IgaBuilder::new().lzma("level.bld", &entry()).build();
+        for a in &CARD_GAME[..2] {
+            fs::write(usr.join(a), &bld).unwrap();
+        }
+    });
+    let mut dir = opened(tmp.path(), &dump);
+    let usr = dump.join("PS3_GAME/USRDIR");
+    let mut st = ScriptStage::default();
+    card_part(&mut dir, &usr, &mut st).unwrap();
+    assert!(st.cards.read && !st.cards.kept, "{:?}", st.failed);
+    assert_eq!((st.cards.entries, st.cards.files.written), (2, 2));
+    assert_eq!(
+        st.cards.missing,
+        [(CARD_GAME[2].to_owned(), "not on the dump".to_owned())]
+    );
+    let rels: Vec<String> = CARD_GAME[..2].iter().map(|a| path(a)).collect();
+    assert_eq!(dir.manifest().parts[CARD_GAME_PART], rels);
+    for rel in &rels {
+        assert_eq!(fs::read(dir.path().join(rel)).unwrap(), entry(), "raw");
+    }
+    assert!(!dir.manifest().parts.contains_key(PART), "the screens' own");
+    let mut again = ScriptStage::default();
+    card_part(&mut dir, &usr, &mut again).unwrap();
+    assert!(again.cards.kept && !again.cards.read);
+    assert_eq!((again.cards.files.written, again.cards.files.kept), (0, 2));
 }

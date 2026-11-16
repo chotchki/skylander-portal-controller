@@ -339,6 +339,9 @@ pub struct ScriptStage {
     pub screens: usize,
     pub screens_missing: Vec<(String, String)>,
     pub screen_files: Files,
+    /// The card game's part (openspec AS.364, [`crate::screens::CARD_GAME`]),
+    /// counted the same way.
+    pub cards: EntryPart,
     /// Of [`ScriptStage::files`], the script entries' and the spawn
     /// models' (their IR and textures).
     pub script_files: Files,
@@ -1040,6 +1043,7 @@ pub fn script_stage(
         }
     }
     screen_part(dir, &usrdir, &mut stage)?;
+    card_part(dir, &usrdir, &mut stage)?;
     send(Event::Scripts { done: 2, total });
     for f in [stage.script_files, stage.spawn_files] {
         stage.files.written += f.written;
@@ -1050,41 +1054,95 @@ pub fn script_stage(
     Ok(stage)
 }
 
+/// A part of archives' raw script entries ([`crate::screens`]' rule), as a
+/// run left it: read this run, or kept; its entries written or kept, the
+/// archives the dump lacks with why, and its files.
+#[derive(Debug, Default, Clone)]
+pub struct EntryPart {
+    pub read: bool,
+    pub kept: bool,
+    pub entries: usize,
+    pub missing: Vec<(String, String)>,
+    pub files: Files,
+}
+
 /// The screens' part (AS.53, [`crate::screens`]): kept while it's recorded
 /// with every file it names intact (an archive the dump lacks recorded as
 /// none), else each archive's entry read, checked and written, and the part
 /// recorded; one that won't read is the part's failure alone.
 pub fn screen_part(dir: &mut IdentityDir, usrdir: &Path, stage: &mut ScriptStage) -> Result<()> {
-    let recorded = dir.manifest().parts.get(crate::screens::PART).cloned();
+    let mut part = EntryPart::default();
+    entry_part(
+        dir,
+        usrdir,
+        crate::screens::PART,
+        &crate::screens::ARCHIVES,
+        &mut part,
+        &mut stage.failed,
+    )?;
+    stage.screens_read = part.read;
+    stage.screens_kept = part.kept;
+    stage.screens = part.entries;
+    stage.screens_missing = part.missing;
+    stage.screen_files = part.files;
+    Ok(())
+}
+
+/// The card game's part (openspec AS.364, [`crate::screens::CARD_GAME`]),
+/// by the screens' rule.
+pub fn card_part(dir: &mut IdentityDir, usrdir: &Path, stage: &mut ScriptStage) -> Result<()> {
+    let mut part = EntryPart::default();
+    entry_part(
+        dir,
+        usrdir,
+        crate::screens::CARD_GAME_PART,
+        &crate::screens::CARD_GAME,
+        &mut part,
+        &mut stage.failed,
+    )?;
+    stage.cards = part;
+    Ok(())
+}
+
+/// [`screen_part`]'s rule for `name`'s part over `archives`.
+fn entry_part(
+    dir: &mut IdentityDir,
+    usrdir: &Path,
+    name: &str,
+    archives: &[&str],
+    part: &mut EntryPart,
+    failed: &mut Vec<PartFailure>,
+) -> Result<()> {
+    let recorded = dir.manifest().parts.get(name).cloned();
     if let Some(files) = recorded
-        && dir.part_holds(crate::screens::PART, &files)?
+        && dir.part_holds(name, &files)?
     {
-        count_kept(dir, &files, &mut stage.screen_files);
-        stage.screens = files.len();
-        stage.screens_kept = true;
+        count_kept(dir, &files, &mut part.files);
+        part.entries = files.len();
+        part.kept = true;
         return Ok(());
     }
-    match crate::screens::read(usrdir) {
+    match crate::screens::read_archives(usrdir, archives) {
         Ok(read) => {
             let mut files = Vec::with_capacity(read.entries.len());
             for (archive, bytes, _) in &read.entries {
                 let rel = crate::screens::path(archive);
-                put(dir, &rel, bytes, &mut stage.screen_files)?;
+                put(dir, &rel, bytes, &mut part.files)?;
                 files.push(rel);
             }
-            stage.screens = files.len();
-            stage.screens_missing = read.missing;
-            dir.record_part(crate::screens::PART, files)?;
-            stage.screens_read = true;
+            part.entries = files.len();
+            part.missing = read.missing;
+            dir.record_part(name, files)?;
+            part.read = true;
         }
         Err((archive, reason)) => {
             let e = ExtractError::ScriptsUnreadable {
-                part: crate::screens::PART.to_owned(),
+                part: name.to_owned(),
                 archive: archive.clone(),
                 reason,
             };
-            stage.failed.push(PartFailure {
-                part: crate::screens::PART.to_owned(),
+            failed.push(PartFailure {
+                part: name.to_owned(),
                 archive,
                 reason: e.to_string(),
             });

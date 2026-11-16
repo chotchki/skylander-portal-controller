@@ -456,6 +456,10 @@ pub struct ScriptWorld {
     pub(crate) viewport: Handle,
     /// What the camera's scripts leave the viewport as (openspec AG.28).
     pub(crate) view: crate::viewport::Viewport,
+    /// What the card game's scripts leave the second camera layer as
+    /// (openspec AS.364, `viewportinfo.alternate viewport`): its field of
+    /// view and far clip, nothing drawn through it yet.
+    pub(crate) alternate_view: crate::viewport::Viewport,
     /// The view handed back at a hero's fall-back, until the next join
     /// (openspec AG.211, [`ScriptWorld::hand_back_view_until_a_join`]).
     pub(crate) view_until_join: bool,
@@ -554,6 +558,9 @@ pub struct ScriptWorld {
     /// The ship part streams the run links and what's been done with them
     /// (openspec AS.157, [`crate::ship_parts`]).
     pub ship_parts: crate::ship_parts::ShipParts,
+    /// The card game's streams the run links and the ones asked for
+    /// (openspec AS.364, [`crate::card_game`]).
+    pub card_streams: crate::card_game::CardStreams,
     /// Whether [`crate::level_end`] skips any cutscene in play as it skips a
     /// listed one: a dev entry's settle on a level with an intro, so its
     /// anchor sets him down past the intro as before AS.81 played it.
@@ -929,6 +936,7 @@ impl ScriptWorld {
             portal: objects[6],
             viewport,
             view: crate::viewport::Viewport::default(),
+            alternate_view: crate::viewport::Viewport::default(),
             view_until_join: false,
             view_asks: Default::default(),
             objs,
@@ -967,6 +975,7 @@ impl ScriptWorld {
             skipped_cutscene: None,
             hat_load_answered: false,
             ship_parts: Default::default(),
+            card_streams: Default::default(),
             skip_cutscenes: false,
             level_end_asked: false,
             level_end_movie: None,
@@ -1639,6 +1648,8 @@ impl ScriptWorld {
                     ?text,
                     "a script asked for a stream (or a level not on the disc): read as loaded, nothing loaded"
                 );
+                // A card game's stream joins the run (openspec AS.364).
+                self.card_streams.take_request(text.as_deref());
                 if self.streams.len() == STREAMS_KEPT {
                     self.streams.pop_front();
                 }
@@ -5513,6 +5524,8 @@ pub fn add_scripted(vm: &mut Vm, world: &mut ScriptWorld) -> Vec<PlacementId> {
             added.push(vm.add_at(h, &p.name, sid, o));
         }
     }
+    // A card game's stream asked for this step (openspec AS.364).
+    added.extend(crate::card_game::join_asked(vm, world));
     added
 }
 
@@ -6571,6 +6584,34 @@ mod tests {
         unlisted.ask_level(v[0]);
         unlisted.end_step();
         assert_eq!(unlisted.level_change(), None);
+    }
+
+    /// openspec AS.364: a stream request naming a card game stream the run
+    /// links is kept to join at the step's end, read as loaded all the
+    /// same; one the run doesn't link, or any other stream, keeps nothing.
+    #[test]
+    fn a_card_game_streams_request_is_kept_to_join() {
+        let level = at("system", "load level", None);
+        let (mut w, v) = world_with_texts(&[
+            "misc/CardGame_2dSprites_Streamed",
+            "misc/UI_CardGame_HandSelect_Streaming",
+            "debug/debug",
+        ]);
+        w.card_streams = crate::card_game::CardStreams::linked(&[crate::card_game::SPRITES], &[7]);
+        for stream in [v[1], v[2]] {
+            w.set(&level, stream, &mut NoEngine).unwrap();
+            w.end_step();
+        }
+        assert!(w.card_streams.pending.is_empty());
+        w.set(&level, v[0], &mut NoEngine).unwrap();
+        w.end_step();
+        assert_eq!(w.card_streams.pending, [crate::card_game::SPRITES]);
+        assert_eq!(
+            w.get(&level, &mut NoEngine),
+            Ok(Value::Null),
+            "read as loaded"
+        );
+        assert_eq!(w.streams.len(), 3);
     }
 
     /// AS.15's review: the TV's level end is never read as a stream. Its

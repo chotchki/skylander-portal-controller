@@ -10,6 +10,7 @@
 pub mod anchors;
 pub mod announcements;
 pub mod atmospherics;
+pub mod card_game;
 pub mod census;
 pub mod chapter_1;
 pub mod character;

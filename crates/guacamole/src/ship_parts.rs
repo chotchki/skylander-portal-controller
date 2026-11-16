@@ -345,7 +345,10 @@ pub fn on_collection(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<Option
 /// The streams' running placements, in the order a file's load adds them
 /// (awake ones first, each in its root list's order), as `(placement,
 /// handle)`.
-fn stream_placements(world: &ScriptWorld, unit: u16) -> Vec<(&Placed, guac_script::Handle)> {
+pub(crate) fn stream_placements(
+    world: &ScriptWorld,
+    unit: u16,
+) -> Vec<(&Placed, guac_script::Handle)> {
     let mut placed: Vec<&Placed> = world
         .templates
         .values()

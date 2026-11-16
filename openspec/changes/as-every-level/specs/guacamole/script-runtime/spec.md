@@ -12,3 +12,10 @@ A script that files its state under its placement's name SHALL find that state a
 #### Scenario: Level 201's first vine bridge
 - **WHEN** the hero has grown level 201's first vine bridge and goes off until its activator sleeps, then comes back
 - **THEN** the finished bridge stands again with one platform and doesn't grow a second time
+
+### Requirement: A card pirate's level loads the card game's streams when asked
+On a level that places a card pirate, the card game's three streams (the reward card's sprites, the board, the hand select) SHALL link beside the level, and a script's request for one SHALL start that stream's running placements, so what the pirate waits on after a game is set up by the stream's own scripts. Nothing of the level's own placements SHALL change for it.
+
+#### Scenario: Dreadbeard's won game on hub stage 2
+- **WHEN** a game against Dreadbeard on hub stage 2 ends won and his loot asks for the reward card's sprites
+- **THEN** the sprite stream's startup sets the reward macro and he passes his wait for the sprites within 60 steps, nothing stopped

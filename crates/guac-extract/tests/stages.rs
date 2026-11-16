@@ -457,6 +457,13 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     // Global's, the fighter's and since AU.1 each walker's.
     assert_eq!(recorded(&m, "spawns/"), 2 + WALKERS);
     assert!(scripts::complete(&m));
+    // AS.364's: the card game's part recorded, the synthetic dump holding
+    // none of its archives, each named.
+    assert!(m.parts[guac_extract::screens::CARD_GAME_PART].is_empty());
+    assert_eq!(
+        done.scripts.cards.missing.len(),
+        guac_extract::screens::CARD_GAME.len()
+    );
     // AH.87's: an archive's emitters each (the builders' place none).
     assert_eq!(recorded(&m, "particles/"), PARTICLE_ARCHIVES);
     assert_eq!(m.parts["particles"].len(), PARTICLE_ARCHIVES);

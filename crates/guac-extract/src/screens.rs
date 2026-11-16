@@ -26,6 +26,21 @@ pub const PART: &str = "screen scripts";
 /// The level's end streams one screen in, the objectives screen.
 pub const ARCHIVES: [&str; 1] = ["misc/ui_objectivesscreen.bld"];
 
+/// The card game's part (openspec AS.364): the three archives a card
+/// pirate's game streams in, their entries beside the screens' by the same
+/// rule. guacamole links them after a level that places a pirate and runs
+/// their placements as a script asks for each; their art and sounds are
+/// other parts' (AS.365).
+pub const CARD_GAME_PART: &str = "card game scripts";
+
+/// The card game's archives: the reward card's sprites, the board and the
+/// hand select.
+pub const CARD_GAME: [&str; 3] = [
+    "misc/cardgame_2dsprites_streamed.bld",
+    "character/cardgame_streaming.bld",
+    "misc/ui_cardgame_handselect_streaming.bld",
+];
+
 /// Where each archive's entry goes: `scripts/<stem>.igz`, as the scripts
 /// part's do, so the interface's model finds its record by the same rule.
 pub fn path(archive: &str) -> String {
@@ -45,8 +60,13 @@ pub struct Read {
 /// [`Read::missing`]; one that's there and won't read is the error, naming
 /// it, and the part doesn't land.
 pub fn read(usrdir: &Path) -> Result<Read, (String, String)> {
+    read_archives(usrdir, &ARCHIVES)
+}
+
+/// [`read`] over `archives`: the card game's part reads [`CARD_GAME`] so.
+pub fn read_archives(usrdir: &Path, archives: &[&str]) -> Result<Read, (String, String)> {
     let mut out = Read::default();
-    for archive in ARCHIVES {
+    for &archive in archives {
         if !usrdir.join(archive).is_file() {
             out.missing
                 .push((archive.to_owned(), "not on the dump".to_owned()));
@@ -68,6 +88,22 @@ mod tests {
     #[test]
     fn the_objectives_screens_entry_sits_beside_the_scripts_parts() {
         assert_eq!(path(ARCHIVES[0]), "scripts/ui_objectivesscreen.igz");
+    }
+
+    /// The card game's entries sit by the same rule, each its own stem, none
+    /// on a screen's place.
+    #[test]
+    fn the_card_games_entries_sit_by_their_stems() {
+        let paths: Vec<String> = CARD_GAME.iter().map(|a| path(a)).collect();
+        assert_eq!(
+            paths,
+            [
+                "scripts/cardgame_2dsprites_streamed.igz",
+                "scripts/cardgame_streaming.igz",
+                "scripts/ui_cardgame_handselect_streaming.igz",
+            ]
+        );
+        assert!(!paths.contains(&path(ARCHIVES[0])));
     }
 
     /// A dump without the archive lists it and reads nothing else; one

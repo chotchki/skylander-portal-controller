@@ -1174,6 +1174,10 @@ pub struct Setup {
     /// Streams left out of those, by archive: as one whose parts didn't
     /// extract is.
     pub streams_left_out: &'static [&'static str],
+    /// The card game's streams left unlinked on a level that places a
+    /// pirate, as an extract without their part has them (openspec AS.364):
+    /// a test's way to set them apart; the TV's load links them.
+    pub no_card_streams: bool,
     /// Another character in Eruptor's place (openspec AS.156: Crusher, the
     /// earth Giant whose attacks break a super hard rock): his file linked
     /// as Eruptor's unit, his scripts listed as the TV lists a walker's
@@ -1394,8 +1398,24 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
         .chain(streams.iter().map(|s| format!("level/{s}.bld")))
         .collect();
     let stream_units: Vec<u16> = (ARCHIVES.len()..archives.len()).map(|u| u as u16).collect();
-    // The spare's file after them (openspec AS.371).
+    // The card game's streams after them on a level that places a pirate,
+    // as the TV's load links them (openspec AS.364).
+    let card_archives: Vec<&'static str> = match setup.no_card_streams {
+        true => Vec::new(),
+        false => {
+            let bytes = guac_extract::scripts::entry(&usr, &level_archive).expect("the level");
+            let igz = Igz::parse(&bytes).unwrap();
+            match guacamole::card_game::file_places_a_pirate(&igz).unwrap() {
+                true => guacamole::card_game::STREAMS.to_vec(),
+                false => Vec::new(),
+            }
+        }
+    };
     let mut archives = archives;
+    let card_start = archives.len();
+    archives.extend(card_archives.iter().map(|a| (*a).to_owned()));
+    let card_units: Vec<u16> = (card_start..archives.len()).map(|u| u as u16).collect();
+    // The spare's file after them (openspec AS.371).
     let spare_unit = setup.spare.map(|c| {
         archives.push(c.archive.to_owned());
         (archives.len() - 1) as u16
@@ -1404,6 +1424,7 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
         .iter()
         .map(|(_, r)| *r)
         .chain(stream_units.iter().map(|_| Role::Other))
+        .chain(card_units.iter().map(|_| Role::Other))
         .chain(spare_unit.iter().map(|_| Role::Other))
         .collect();
     let part: Vec<Vec<u8>> = archives
@@ -1429,6 +1450,7 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     let read: Vec<(u16, &Igz<'_>)> = [1u16, 2, LEVEL, ERUPTOR]
         .iter()
         .chain(&stream_units)
+        .chain(&card_units)
         .chain(&spare_unit)
         .map(|&u| (u, &igzs[u as usize]))
         .collect();
@@ -1444,6 +1466,7 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
         LEVEL,
     );
     config = guacamole::ship_parts::with_streams(config, &files, &stream_units);
+    config = guacamole::card_game::with_streams(config, &files, &card_units);
     if setup.no_music {
         config = scripts::without_music(config);
     }
@@ -1488,6 +1511,7 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     let mut world = ScriptWorld::new(&files, &handles, objects);
     world.set_inert(vm.inert());
     world.ship_parts.units = stream_units;
+    world.card_streams = guacamole::card_game::CardStreams::linked(&card_archives, &card_units);
     world.ship_parts.ids = streams
         .iter()
         .filter_map(|s| guacamole::ship_parts::part_id(s))

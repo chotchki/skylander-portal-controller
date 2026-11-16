@@ -147,6 +147,10 @@ pub struct Linked {
     /// Each stream's part id, in the same order
     /// ([`crate::ship_parts::part_id`]); none for a stream that has none.
     pub stream_ids: Vec<i32>,
+    /// The card game's streams, linked after those on a level that places a
+    /// pirate (openspec AS.364, [`card_streams_for`]): their placements join
+    /// the run as a script asks for each.
+    pub card_streams: crate::card_game::CardStreams,
     /// Each walker's (AG.27: every other modelled character the part holds
     /// an entry of) load file, unit and scripts: his file's placements join
     /// the run the same way, to walk on his own scripts, never to attack.
@@ -293,6 +297,31 @@ fn stream_reads(dir: &Path, stream: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The card game's streams to link with the level whose script part is
+/// `level_rel` in the extract at `dir` (openspec AS.364): every one the
+/// extract holds when the level places a card pirate running, in
+/// [`crate::card_game::STREAMS`]' order; none on any other level, or for
+/// an extract the card scripts' part hasn't reached (an older one resuming,
+/// a dump without the archives), whose pirate's loads read as loaded with
+/// nothing joining, as before.
+fn card_streams_for(dir: &Path, level_rel: &str) -> Result<Vec<&'static str>, String> {
+    let held: Vec<&'static str> = crate::card_game::STREAMS
+        .into_iter()
+        .filter(|a| dir.join(scripts::script_path(a)).is_file())
+        .collect();
+    if held.is_empty() {
+        return Ok(held);
+    }
+    let bytes = std::fs::read(dir.join(level_rel)).map_err(|e| format!("{level_rel}: {e}"))?;
+    let igz = Igz::parse(&bytes).map_err(|e| format!("{level_rel}: {e}"))?;
+    let pirate =
+        crate::card_game::file_places_a_pirate(&igz).map_err(|e| format!("{level_rel}: {e}"))?;
+    Ok(match pirate {
+        true => held,
+        false => Vec::new(),
+    })
+}
+
 /// [`load_with_streams`]'s link, every one of `streams` read.
 fn link(dir: &Path, level: &str, streams: &[String]) -> Result<Linked, String> {
     // The walkers the part was made with (AG.27); none for an extract made
@@ -304,6 +333,15 @@ fn link(dir: &Path, level: &str, streams: &[String]) -> Result<Linked, String> {
         streams
             .iter()
             .map(|s| (levels::script_path(s), Role::Other)),
+    );
+    let stream_end = files.len() as u16;
+    // The card game's streams after them, on a level that places a pirate
+    // (openspec AS.364).
+    let card_archives = card_streams_for(dir, &files[level_unit as usize].0)?;
+    files.extend(
+        card_archives
+            .iter()
+            .map(|a| (scripts::script_path(a), Role::Other)),
     );
     let started = Instant::now();
     let mut entries = Vec::with_capacity(files.len());
@@ -350,7 +388,8 @@ fn link(dir: &Path, level: &str, streams: &[String]) -> Result<Linked, String> {
         unit(&scripts::script_path(roster::INIT_SETUP))?,
         level_unit,
     ];
-    let stream_units: Vec<u16> = (level_unit + 1..files.len() as u16).collect();
+    let stream_units: Vec<u16> = (level_unit + 1..stream_end).collect();
+    let card_units: Vec<u16> = (stream_end..files.len() as u16).collect();
     let fighters: Vec<(String, u16)> = scripts::FIGHTERS
         .iter()
         .map(|f| {
@@ -376,6 +415,7 @@ fn link(dir: &Path, level: &str, streams: &[String]) -> Result<Linked, String> {
         .chain(fighters.iter().map(|(_, u)| *u))
         .chain(walker_units.iter().map(|(_, u)| *u))
         .chain(stream_units.iter().copied())
+        .chain(card_units.iter().copied())
         .map(|u| (u, &parsed[u as usize]))
         .collect();
     let placements = Files::read(&units).map_err(|e| format!("placements: {e}"))?;
@@ -409,6 +449,7 @@ fn link(dir: &Path, level: &str, streams: &[String]) -> Result<Linked, String> {
             .iter()
             .filter_map(|s| crate::ship_parts::part_id(s))
             .collect(),
+        card_streams: crate::card_game::CardStreams::linked(&card_archives, &card_units),
         walkers,
         left_out: list.left_out,
         layout: Err("not read".into()),
@@ -600,6 +641,72 @@ mod tests {
         assert_eq!(linked.stream_ids, [900, 901]);
         let none = load_with_streams(tmp.path(), LEVEL, &["ship_part_999".to_owned()]).unwrap();
         assert!(none.streams.is_empty() && none.stream_ids.is_empty());
+        assert_eq!(none.files, 5);
+    }
+
+    /// openspec AS.364: on a level that places a card pirate running, the
+    /// card game's streams the extract holds link after the level and its
+    /// ship parts, in their order, the start order the level's own; a level
+    /// without one, or an extract without them, links none.
+    #[test]
+    fn a_pirates_level_links_the_card_games_streams_after_its_own() {
+        let tmp = extract();
+        let mut spec = guac_formats::level::builder::stage_sample();
+        spec.skinned_script = Some(
+            "C:/tfb/Content/Levels/Includes/GameElement_CardGame_Sky2/Scripts/CardPirate_Template.ai",
+        );
+        // The sample's skinned placement is asleep behind its one prop; a
+        // second prop before it sets it running.
+        let asleep = guac_formats::level::builder::stage_level(&spec);
+        spec.props.push(spec.props[0].clone());
+        let pirate = guac_formats::level::builder::stage_level(&spec);
+        let plain = load(tmp.path(), LEVEL).unwrap();
+        let path = tmp.path().join(levels::script_path(LEVEL));
+        std::fs::write(&path, &pirate).unwrap();
+        let held = load(tmp.path(), LEVEL).unwrap();
+        assert!(
+            held.card_streams.units.is_empty(),
+            "an extract without them"
+        );
+        let stream = guac_formats::level::builder::stage_level(
+            &guac_formats::level::builder::stage_sample(),
+        );
+        for a in crate::card_game::STREAMS {
+            std::fs::write(tmp.path().join(scripts::script_path(a)), &stream).unwrap();
+        }
+        std::fs::write(&path, &asleep).unwrap();
+        let sleeping = load(tmp.path(), LEVEL).unwrap();
+        assert!(sleeping.card_streams.units.is_empty(), "a pirate asleep");
+        std::fs::write(&path, &pirate).unwrap();
+        let ship = "ship_part_900".to_owned();
+        let ship_path = tmp.path().join(levels::script_path(&ship));
+        std::fs::create_dir_all(ship_path.parent().unwrap()).unwrap();
+        std::fs::write(ship_path, &stream).unwrap();
+        let linked = load_with_streams(tmp.path(), LEVEL, std::slice::from_ref(&ship)).unwrap();
+        assert_eq!(linked.files, 9);
+        assert_eq!(linked.order, plain.order);
+        assert_eq!(linked.streams, [5]);
+        assert_eq!(
+            linked.card_streams.units,
+            crate::card_game::STREAMS
+                .iter()
+                .copied()
+                .zip([6, 7, 8])
+                .collect::<Vec<_>>()
+        );
+        for u in [6u16, 7, 8] {
+            assert!(
+                linked.placements.placed.iter().any(|p| p.obj.unit == u),
+                "unit {u}"
+            );
+        }
+        // The same extract, the level without a pirate: none.
+        let level = guac_formats::level::builder::stage_level(
+            &guac_formats::level::builder::stage_sample(),
+        );
+        std::fs::write(&path, &level).unwrap();
+        let none = load(tmp.path(), LEVEL).unwrap();
+        assert!(none.card_streams.units.is_empty());
         assert_eq!(none.files, 5);
     }
 
