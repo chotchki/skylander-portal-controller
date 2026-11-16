@@ -463,6 +463,9 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     assert!(m.parts[guac_extract::screens::CARD_STONES_PART].is_empty());
     // AS.483's: the card game's palettes, likewise no file.
     assert!(m.parts[guac_extract::screens::CARD_PALETTES_PART].is_empty());
+    // AS.365's: the card game's art, likewise no file.
+    assert!(m.parts[guac_extract::screens::CARD_ART_PART].is_empty());
+    assert!(done.scripts.card_art.read);
     assert_eq!(
         done.scripts.cards.missing.len(),
         guac_extract::screens::CARD_GAME.len()
