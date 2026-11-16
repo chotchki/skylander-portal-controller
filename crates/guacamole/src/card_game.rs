@@ -74,6 +74,13 @@ fn is_misc(archive: &str) -> bool {
     archive.starts_with("misc/")
 }
 
+/// Whether a request's `text` is a misc load naming nothing (`misc/`): the
+/// slot emptied.
+fn empties_misc(text: &str) -> bool {
+    text.trim_end_matches(['/', '\\'])
+        .eq_ignore_ascii_case("misc")
+}
+
 /// Whether `archive` is one of [`stones`].
 fn is_stone(archive: &str) -> bool {
     stones().contains(&archive)
@@ -414,9 +421,10 @@ fn hold_card_particles(vm: &mut Vm, world: &ScriptWorld) -> usize {
 
 /// The misc stream slot (the module docs): the engine holds one misc
 /// stream at a time (the hand select, the reward sprites, a stone's asset),
-/// a misc load replacing the last. A request this step for a linked misc
-/// card stream takes the last one's running placements off and runs their
-/// SHUTDOWNs now, before the step's end joins the new one ([`join_asked`]):
+/// a misc load replacing the last and one naming nothing (`misc/`, a misc
+/// actor's shutdown) emptying it. A request this step for a linked misc
+/// card stream, or for none, takes the last one's running placements off
+/// and runs their SHUTDOWNs now, before the step's end joins the new one ([`join_asked`]):
 /// the hand select's starter closes its menus and gives the pause menu
 /// back so, and asked again (a second game) the hand select starts anew.
 /// How many it took off.
@@ -429,13 +437,15 @@ fn replace_misc(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<usize, Halt
         return Ok(0);
     };
     let streams = &host.world.card_streams;
-    let Some(next) = asked_all(&text)
+    let next = asked_all(&text)
         .into_iter()
-        .find(|a| is_misc(a) && streams.units.iter().any(|(u, _)| u == a))
-    else {
+        .find(|a| is_misc(a) && streams.units.iter().any(|(u, _)| u == a));
+    // A misc load naming nothing (`misc/`, a misc actor's shutdown) empties
+    // the slot.
+    if next.is_none() && !empties_misc(&text) {
         return Ok(0);
-    };
-    let last = host.world.card_streams.misc.replace(next);
+    }
+    let last = std::mem::replace(&mut host.world.card_streams.misc, next);
     let Some(unit) = last.and_then(|l| {
         host.world
             .card_streams

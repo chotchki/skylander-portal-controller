@@ -1963,7 +1963,7 @@ fn a_seeded_game_replays_to_the_step_and_a_second_plays_the_same() {
 }
 
 /// openspec AS.366: the opponent's rolls over 1,000 seeded games on hub
-/// stage 2 (seeds 1000 to 1999, a naive player's games, each loss's replay
+/// stage 2 (seeds 1000 to 1999, a weak player's games, each loss's replay
 /// the next, a run started again after a win): each roll's share within 5
 /// points of the call's chance for it, his call on this stage's 70 and 70
 /// ([`cards::Picks`]: the first roll's landings of its draws, the second's
@@ -1974,11 +1974,16 @@ fn a_seeded_game_replays_to_the_step_and_a_second_plays_the_same() {
 fn dreadbeards_rolls_over_a_thousand_seeded_games() {
     let started = std::time::Instant::now();
     println!("load at start: {}", load());
+    // A share of the seeds by `AS366_FROM` and `AS366_GAMES` (the 1,000 run
+    // as three processes side by side, their counts summed); all of them
+    // by default.
+    let from: u32 = std::env::var("AS366_FROM").map_or(0, |v| v.parse().unwrap());
     let games: u32 = std::env::var("AS366_GAMES").map_or(1000, |v| v.parse().unwrap());
-    let naive = Plan::Play(cards::Policy::Naive);
+    let naive = Plan::Play(cards::Policy::Weak);
     let mut picks = cards::Picks::default();
     let mut longest: std::collections::BTreeMap<String, u32> = Default::default();
-    let (mut played, mut runs, mut won, mut steps) = (0u32, 0, 0, 0u64);
+    let (mut played, mut runs, mut won, mut steps) = (from, 0, 0, 0u64);
+    let games = from + games;
     let mut stops = Vec::new();
     let mut chances = None;
     while played < games {
@@ -2014,7 +2019,16 @@ fn dreadbeards_rolls_over_a_thousand_seeded_games() {
             load()
         );
     }
-    println!("his call's chances: {chances:?}; stays {longest:?}");
+    println!(
+        "seeds {} to {}: first landed {} of {}, second {} of {} (last {}); his call's chances: {chances:?}; stays {longest:?}",
+        1000 + from,
+        999 + games,
+        picks.first_landed,
+        picks.attempts,
+        picks.second,
+        picks.count(),
+        picks.last
+    );
     let (best, second) = chances.expect("his call's chances");
     assert!(
         (picks.first() - f64::from(best)).abs() <= 5.0,
@@ -2034,7 +2048,8 @@ fn dreadbeards_rolls_over_a_thousand_seeded_games() {
     assert!(worst.is_some_and(|(_, n)| *n <= STAY_CAP), "{worst:?}");
     assert!(stops.is_empty(), "{:#?}", &stops[..stops.len().min(10)]);
     println!(
-        "{played} games in {runs} runs, {steps} steps, {:.0} s, load at end: {}",
+        "{} games in {runs} runs, {steps} steps, {:.0} s, load at end: {}",
+        played - from,
         started.elapsed().as_secs_f64(),
         load()
     );

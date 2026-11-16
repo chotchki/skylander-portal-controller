@@ -75,7 +75,8 @@ fn number(run: &Run, v: Value, name: &str) -> f32 {
 }
 
 /// How a player picks: the naive player loses most games against any
-/// opponent, the strong one wins most against a weak one.
+/// opponent, the strong one wins most against a weak one, the weak one
+/// loses nearly every game (a run of replays, each a seeded game).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Policy {
     /// The stone and the square the cursor rests on.
@@ -84,6 +85,9 @@ pub enum Policy {
     /// one where the board's own preview flips most (`cards to flip this
     /// move`, the script's count) taken.
     Strong,
+    /// The stone with the fewest pips, then the square the preview flips
+    /// least.
+    Weak,
 }
 
 /// A player on pad 0: what it holds each step, by what the board waits on.
@@ -162,6 +166,11 @@ impl Player {
                         .enumerate()
                         .max_by(|a, b| pips(a.1).total_cmp(&pips(b.1)))
                         .map(|(i, _)| i as i32),
+                    Policy::Weak => hand
+                        .iter()
+                        .enumerate()
+                        .min_by(|a, b| pips(a.1).total_cmp(&pips(b.1)))
+                        .map(|(i, _)| i as i32),
                 };
                 let at = local(run, m, "card selection index")
                     .and_then(|v| v.as_i32())
@@ -206,7 +215,14 @@ impl Player {
                         .seen
                         .iter()
                         .filter(|(q, _)| free.contains(q))
-                        .max_by_key(|(q, n)| (**n, std::cmp::Reverse(**q)))
+                        .max_by_key(|(q, n)| {
+                            let n = if self.policy == Policy::Weak {
+                                usize::MAX - **n
+                            } else {
+                                **n
+                            };
+                            (n, std::cmp::Reverse(**q))
+                        })
                         .map_or(at, |(q, _)| *q),
                 };
                 let done_looking = unseen.is_none() || self.moves >= 16;
