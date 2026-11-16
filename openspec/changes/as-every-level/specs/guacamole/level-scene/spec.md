@@ -527,7 +527,7 @@ A level's people SHALL stand at rest on the idle their model plays, never in the
 - **THEN** each stands on his idles, arms at his sides, at rest and while he talks
 
 ### Requirement: A scene's people play what their scenes ask
-When a scene or a person's own script plays a clip on a person, the TV SHALL play that clip from its start, going round past its end where its palette entry marks it looping (an idle, a talk, a flight), one whole clip on a person at a time, the person a placement of the level's own file or a clone the scene makes alike.
+When a scene or a person's own script plays a clip on a person, the TV SHALL play that clip from its start, going round past its end where its palette entry marks it looping (an idle, a talk, a flight), one whole clip on a person at a time, the person a placement of the level's own file or a clone the scene makes alike: Flynn's flight idle goes round 6 times through 214's intro, hub Cali's talk runs 15.7 s.
 
 #### Scenario: Flynn's flight in level 214's intro
 - **WHEN** level 214's intro flies Flynn in on the ship

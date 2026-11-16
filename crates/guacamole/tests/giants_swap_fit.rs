@@ -770,11 +770,21 @@ fn chapter_1() {
 #[ignore = "disc"]
 fn level_214() {
     let t = hunt(LEVEL_214);
+    // One set-down no walk reaches since AS.442 (its review, 2026-11-16):
+    // swap 2,134 at step 40,669 of the hunt's one run, among the third
+    // island's barrels, sets Tree Rex 1.3 m inside `Enemy_TreeRex(4)`,
+    // which is eating its Chompy there (`eatchompy`, its body 0.5 m up),
+    // and the search sets him 3.1 m off past `barrel_b_intact(64)` and
+    // `(65)`. On 2.0 the same creature stood on the same spot at that step
+    // in `meleeattack`, 1.05 m in, and the set-down pushed him clear: the
+    // creature's timing over the 40,000 steps moved with AS.442's clip
+    // rules (its idle and run now loop), not the set-down. He walks off
+    // it (no hang). The set-down beside a creature: AS.504.
     check(
         &t,
         Known {
             stuck: 0,
-            unwalked: 0,
+            unwalked: 1,
             leaned: 4,
             hung: 0,
         },

@@ -10199,12 +10199,19 @@ mod animation_tests {
             on.sort_unstable();
             on
         };
-        play(&mut w, &mut e, clips[0]);
+        let idle = play(&mut w, &mut e, clips[0]);
         play(&mut w, &mut e, clips[1]);
         play(&mut w, &mut e, clips[2]);
         assert_eq!(playing(&w), [0, 1, 2], "a partial and an additive leave it");
         play(&mut w, &mut e, clips[3]);
         assert_eq!(playing(&w), [1, 2, 3], "slot 3 takes slot 0's place");
+        // The stopped copy played again by its sequence (a script holding
+        // it), started again rather than made anew: it stops slot 3 too.
+        let n = w.sequences().len();
+        assert_eq!(play(&mut w, &mut e, idle), idle);
+        assert_eq!(w.sequences().len(), n, "no new copy");
+        assert_eq!(playing(&w), [0, 1, 2], "the copy again takes slot 3's");
+        play(&mut w, &mut e, clips[3]);
         play(&mut w, &mut e, clips[0]);
         assert_eq!(playing(&w), [0, 1, 2], "slot 0 again takes slot 3's");
         // Layered (a locomotion's), it's weighted, not whole: slot 0 stays.
