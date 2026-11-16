@@ -1227,3 +1227,53 @@ fn a_levels_transforms_are_baked_and_the_animated_listed() {
     };
     assert!(refused.path.ends_with("fairy_upgrade_gem.mdl"));
 }
+
+/// openspec AS.483: the card game's palettes off its archives by the
+/// levels' rule: the board's archive and a stone's deck each placing the
+/// same skinned model give one palette (its slots' clips, the bite's
+/// length its frames', the lean's loop), named for the card game; the
+/// archives the dump lacks listed; a dump holding none of them has no
+/// palettes to write; one that won't read is the error, by name.
+#[test]
+fn the_card_games_palettes_read_off_its_archives_each_model_once() {
+    use crate::screens::{CARD_GAME, CARD_PALETTES_NAME, card_deck, card_palettes, card_stones};
+    use guac_formats::iga::builder::IgaBuilder;
+    const CHEST: &str = "C:/tfb/Content/Models/Objects/Treasure_Chest.mdl";
+    let mut spec = creature_level(Some("Levels/Elsewhere/s2_enemy_CHOMPY.AI"));
+    spec.skinned.as_mut().unwrap().1.looping = vec![11];
+    let bld = IgaBuilder::new()
+        .lzma("level.bld", &stage_level(&spec))
+        .build();
+    let tmp = tempfile::tempdir().unwrap();
+    let usr = tmp.path();
+    let deck = card_deck(0);
+    for a in [CARD_GAME[1], deck.as_str()] {
+        std::fs::create_dir_all(usr.join(a).parent().unwrap()).unwrap();
+        std::fs::write(usr.join(a), &bld).unwrap();
+    }
+    let read = card_palettes(usr, identity()).unwrap();
+    assert_eq!(
+        read.missing.len(),
+        CARD_GAME.len() + card_stones().len() - 2
+    );
+    let p = read.palettes.expect("the palettes");
+    assert_eq!(p.level, CARD_PALETTES_NAME);
+    let [chest] = &p.palettes[..] else {
+        panic!("{} palettes", p.palettes.len());
+    };
+    assert_eq!(chest.owner, CHEST);
+    // The bite in slot 20: the builder's clip, 8 frames at a 30th.
+    let bite = chest.duration(20).expect("the bite's clip");
+    assert!((bite - 8.0 / 30.0).abs() < 1e-4, "{bite}");
+    assert_eq!(p.loops_of(CHEST), [11]);
+
+    let empty = tempfile::tempdir().unwrap();
+    let none = card_palettes(empty.path(), identity()).unwrap();
+    assert!(none.palettes.is_none());
+    assert_eq!(none.missing.len(), CARD_GAME.len() + card_stones().len());
+
+    std::fs::create_dir_all(usr.join(CARD_GAME[0]).parent().unwrap()).unwrap();
+    std::fs::write(usr.join(CARD_GAME[0]), b"not an archive").unwrap();
+    let (archive, _) = card_palettes(usr, identity()).unwrap_err();
+    assert_eq!(archive, CARD_GAME[0]);
+}

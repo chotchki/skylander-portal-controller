@@ -403,3 +403,25 @@ fn only_a_run_that_plays_card_games_runs_the_start() {
         "a new run of the same source plays them too"
     );
 }
+
+/// openspec AS.481: the hero is owed back once the board's replacement of
+/// him is set and then cleared (its teardown's restore), and only then: a
+/// hero taken off the portal never sets it, so his return stays the swap's;
+/// answered, it's idle until the next game replaces him.
+#[test]
+fn the_restore_is_owed_once_the_replacement_is_set_and_cleared() {
+    let s = Restore::default();
+    assert_eq!(s, Restore::Idle);
+    assert_eq!(s.next(false), Restore::Idle, "no game: nothing owed");
+    let s = s.next(true);
+    assert_eq!(s, Restore::Replaced);
+    assert_eq!(s.next(true), Restore::Replaced, "the game on");
+    let s = s.next(false);
+    assert_eq!(s, Restore::Asked, "the teardown's restore");
+    assert_eq!(s.next(false), Restore::Asked, "owed until answered");
+    let mut streams = CardStreams::default();
+    streams.restore = Restore::Asked;
+    streams.hero_returned();
+    assert_eq!(streams.restore(), Restore::Idle);
+    assert_eq!(streams.restore().next(false), Restore::Idle);
+}

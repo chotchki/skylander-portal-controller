@@ -2153,6 +2153,14 @@ fn receive_level(
                 // With the streams' templates' clips (openspec AS.157): the
                 // engines' own scripts play them.
                 linked.palettes = level_scripts::palettes_with_streams(&dir, &name, &streams, ir);
+                // The card game's templates' clips (openspec AS.483): the
+                // board times its flips by them.
+                if !linked.card_streams.units.is_empty() {
+                    linked.card_palettes = level_scripts::card_palettes(&dir, ir).unwrap_or_else(|why| {
+                        warn!(reason = %why, "the card game's palettes didn't read: its templates' clips play nothing");
+                        Vec::new()
+                    });
+                }
                 // The sounds its units' archives play (openspec AR.9).
                 linked.sounds = Some(guacamole::sounds::load(&dir, ir, &linked.program.units));
                 // The original's interface its scripts write (openspec AT.9).
@@ -2706,6 +2714,7 @@ fn poll_scripts(level: &mut Level, commands: &mut Commands) {
                 left_out,
                 layout,
                 palettes,
+                card_palettes,
                 sounds,
                 interface,
                 levels,
@@ -2747,6 +2756,7 @@ fn poll_scripts(level: &mut Level, commands: &mut Commands) {
                         left_out,
                         layout,
                         palettes,
+                        card_palettes,
                         sounds,
                         interface,
                         level: level_name,

@@ -506,6 +506,16 @@ impl IrFormat {
         )
     }
 
+    /// The card game's templates' palettes (openspec AS.483,
+    /// [`crate::screens::CARD_PALETTES_PART`]),
+    /// `card_game/palettes.<ron|postcard>`.
+    pub fn card_palettes_path(self) -> &'static str {
+        match self {
+            Self::Ron => "card_game/palettes.ron",
+            Self::Postcard => "card_game/palettes.postcard",
+        }
+    }
+
     /// A level's part, `levels/<archive>/<part>.<ron|postcard>` (AG.15).
     pub fn level_path(self, level: &str, part: &str) -> String {
         let ext = match self {

@@ -230,6 +230,40 @@ pub struct CardStreams {
     /// (openspec AS.366, [`CardStreams::play_games`]) in place of the TV's
     /// quit ([`crate::prompt::quit_card_game`]). False on every TV run.
     played: bool,
+    /// Where the portal's replacement of the hero by the board stands
+    /// (openspec AS.481, [`Restore`]), read each step of a played run.
+    restore: Restore,
+}
+
+/// The portal's replacement of the hero by the board (openspec AS.481):
+/// `Portal - Load Replacement Character Stream` takes his minion off and
+/// keeps his loaded data as `portal control data`'s `loaded object for
+/// minigame`; the board's teardown runs `Portal - Restore Minigame Stream
+/// from Character`, which asks for his character's stream again and clears
+/// that field. A field set and then cleared is the restore asked; a hero
+/// taken off the portal never sets it, so his figure's return stays the
+/// swap's.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Restore {
+    /// No replacement since the last restore answered.
+    #[default]
+    Idle,
+    /// The board holds his slot.
+    Replaced,
+    /// The board's teardown asked for him back, not yet answered.
+    Asked,
+}
+
+impl Restore {
+    /// The next state, `replaced` whether the minigame's loaded object is
+    /// set this step.
+    pub fn next(self, replaced: bool) -> Self {
+        match (self, replaced) {
+            (_, true) => Restore::Replaced,
+            (Restore::Replaced, false) => Restore::Asked,
+            (s, false) => s,
+        }
+    }
 }
 
 impl CardStreams {
@@ -268,6 +302,16 @@ impl CardStreams {
     /// Whether a yes plays the game ([`CardStreams::play_games`]).
     pub fn plays_games(&self) -> bool {
         self.played
+    }
+
+    /// Where the board's replacement of the hero stands ([`Restore`]).
+    pub fn restore(&self) -> Restore {
+        self.restore
+    }
+
+    /// The restore answered: his character joined again.
+    pub fn hero_returned(&mut self) {
+        self.restore = Restore::Idle;
     }
 
     /// The units, for the listing.
@@ -339,6 +383,39 @@ pub fn join_asked(vm: &mut Vm, world: &mut ScriptWorld) -> Vec<PlacementId> {
         world.card_streams.joined.push((archive, n));
     }
     added
+}
+
+/// Whether the minigame's loaded object is set (`portal control data`'s
+/// `loaded object for minigame`, [`Restore`]).
+fn replaced(vm: &Vm) -> bool {
+    global(vm, "portal control data")
+        .and_then(|pcd| field(vm, pcd, "loaded object for minigame"))
+        .is_some_and(|v| v != Value::Null)
+}
+
+/// Whether a cutscene is in play or holds the players: `cs control data`'s
+/// current scene, or `Cutscene State`.
+fn scene_on(vm: &Vm) -> bool {
+    global(vm, "cs control data")
+        .and_then(|d| field(vm, d, "current cs"))
+        .is_some_and(|c| c != Value::Null)
+        || crate::anchors::scene_holds(vm)
+}
+
+/// Whether the hero is owed back now (openspec AS.481): the board's
+/// teardown asked for his character again ([`Restore::Asked`]), his minion
+/// is off (`minion_off`) and no scene holds the players. The
+/// original's restore reloads his character's stream and its portal manager
+/// brings his minion in, whose own `Portal - Minion Spawn Sequence` holds
+/// him under designer control while his spawn clip plays and lets him go at
+/// its end; the TV answers it as a figure put back on the portal (its swap:
+/// his file unloaded and joined again), so his minion runs the same
+/// sequence. Answered once no scene holds the players: a minion joined
+/// under the game's quit scene isn't among those its end lets go (stand-in
+/// ledger: `card-restore`). The caller answers it and then calls
+/// [`CardStreams::hero_returned`].
+pub fn hero_owed(vm: &Vm, world: &ScriptWorld, minion_off: bool) -> bool {
+    world.card_streams.restore == Restore::Asked && minion_off && !scene_on(vm)
 }
 
 /// The hand select's page, by its title's name.
@@ -487,6 +564,9 @@ pub fn step(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<bool, Halt> {
     if !host.world.card_streams.played {
         return Ok(false);
     }
+    let now = replaced(vm);
+    let restore = &mut host.world.card_streams.restore;
+    *restore = restore.next(now);
     hold_card_particles(vm, host.world);
     let Some((control, page, title)) = page_up(vm) else {
         return Ok(false);

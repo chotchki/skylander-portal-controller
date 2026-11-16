@@ -479,38 +479,65 @@ pub fn streams_running(run: &Run) -> Vec<String> {
     out
 }
 
-/// The hero put back after a game, as the portal reloads him (openspec
-/// AS.366): the board loads as the portal's replacement character stream,
-/// so the game's start takes his minion off (`Portal - Load Replacement
-/// Character Stream` exits his figure) and the board's teardown asks for
-/// his character again (`Portal - Restore Minigame Stream from Character`,
-/// a `character/` load); the harness answers that load as it answers a
-/// figure put back on the portal, his file unloaded and joined again by the
-/// TV's join, his entry beam ([`Run::deactivate`], [`Run::enter`]), once no
-/// scene holds the player
-/// (the restore's load answered after the game's quit or win scene). The TV's swap does the same on a
-/// figure's return; that the TV reloads him after a card game is AS.367's.
-/// Whether he was put back this step.
+/// The hero put back after a game (openspec AS.481): the board loads as the
+/// portal's replacement character stream, so the game's start takes his
+/// minion off, and its teardown asks for his character again; once that's
+/// owed ([`guacamole::card_game::hero_owed`]: no scene holding the
+/// players) the harness answers it as the TV's swap answers a figure
+/// put back on the portal, his file unloaded and joined again
+/// ([`Run::deactivate`], [`Run::join`]). His minion then runs the spawn
+/// sequence a join runs (under designer control until its clip ends,
+/// [`free`]). Whether he was put back this step.
 pub fn hero_back(run: &mut Run) -> bool {
     let off = run.minion.is_some_and(|m| run.vm.removed(m));
-    let asked = run
-        .world
-        .streams
-        .iter()
-        .rev()
-        .take(2)
-        .any(|s| s.as_deref() == Some("character/"));
-    // Answered once no scene holds the player, as the engine's load takes
-    // its time: a minion joined under the game's quit scene stays as that
-    // scene left the players it held (disabled).
-    let held = super::cutscene_name(run).is_some() || guacamole::anchors::scene_holds(&run.vm);
-    if !off || !asked || held || board(run).is_some() {
+    if !guacamole::card_game::hero_owed(&run.vm, &run.world, off) {
         return false;
     }
     let _ = run.deactivate();
     run.join()
         .unwrap_or_else(|h| panic!("his join after the game: {h}"));
+    run.world.card_streams.hero_returned();
     true
+}
+
+/// Steps until his minion's spawn sequence has let him go (his behaviour
+/// past `disabled`: `Portal - Minion Spawn Sequence` holds a joined minion
+/// under designer control while his spawn clip plays), at most `cap`; the
+/// stops on the way. Whether he's free.
+pub fn free(run: &mut Run, cap: u32, stops: &mut Vec<guac_script::Halt>) -> bool {
+    for _ in 0..cap {
+        if run
+            .minion
+            .is_some_and(|m| !run.vm.removed(m) && run.vm.behaviour(m) != Some("disabled"))
+        {
+            return true;
+        }
+        stops.extend(run.step_play().unwrap());
+    }
+    false
+}
+
+/// A full stick held on each of eight headings in turn, `steps` steps
+/// each, from where he stands: each heading's distance walked. A spot is
+/// the walk's to leave once one heading leaves it (a stick held into a
+/// wall or a pirate walks nothing).
+pub fn walk_off(run: &mut Run, steps: u32, stops: &mut Vec<guac_script::Halt>) -> Vec<f32> {
+    let mut out = Vec::new();
+    for k in 0..8 {
+        let a = k as f32 * std::f32::consts::FRAC_PI_4;
+        let from = run.hero().pivot;
+        for _ in 0..steps {
+            run.bench.pads[0] = guacamole::script_engine::Pad {
+                stick: guac_motion::stick::Stick::new(a.sin(), a.cos()),
+                actions: [false; 4],
+                connected: true,
+            };
+            stops.extend(run.step_play().unwrap());
+        }
+        out.push(run.hero().pivot.distance(from));
+    }
+    run.bench.pads[0] = guacamole::script_engine::Pad::default();
+    out
 }
 
 /// The board's two chances as the pirate's call set them, read off its

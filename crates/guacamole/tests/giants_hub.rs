@@ -1586,6 +1586,10 @@ struct Played {
     after: std::collections::BTreeMap<String, String>,
     pirate: Option<String>,
     steps: u32,
+    /// His spawn sequence over after the run ([`cards::free`]).
+    free: bool,
+    /// The farthest a full stick walked him, of eight headings
+    /// ([`cards::walk_off`]).
     moved: f32,
     streams: Vec<Option<String>>,
     /// How many times the hero was put back after a game ([`cards::hero_back`]).
@@ -1887,19 +1891,14 @@ fn dreadbeards_games(plans: &[(Plan, u32)], cap: u32) -> Played {
     }
     let pirate = run.vm.behaviour(id).map(str::to_owned);
     let running = cards::streams_running(&run);
-    // Free to walk, where the game's over and his scene let him go.
-    let from = run.hero().pivot;
-    for _ in 0..150 {
-        run.bench.pads[0] = guacamole::script_engine::Pad {
-            stick: guac_motion::stick::Stick::new(0.0, 1.0),
-            actions: [false; 4],
-            connected: true,
-        };
-        stops.extend(run.step_play().unwrap());
-    }
-    let moved = run.hero().pivot.distance(from);
+    // Free to walk, where the game's over and his scene let him go: his
+    // spawn sequence over (openspec AS.481), a full stick on each of eight
+    // headings, 150 steps each.
+    let free = cards::free(&mut run, 300, &mut stops);
+    let walks = cards::walk_off(&mut run, 150, &mut stops);
+    let moved = walks.iter().copied().fold(0.0, f32::max);
     println!(
-        "Dreadbeard's games: {games:?}; rolls: first landed {} of {} ({:.1}%), second {:.1}% of {}; longest unpressed stay {:?}; {} stops; running after {running:?}; moved {moved:.1}; steps {}",
+        "Dreadbeard's games: {games:?}; rolls: first landed {} of {} ({:.1}%), second {:.1}% of {}; longest unpressed stay {:?}; {} stops; running after {running:?}; free {free}, walked {walks:.1?}; steps {}",
         picks.first_landed,
         picks.attempts,
         picks.first(),
@@ -1919,6 +1918,7 @@ fn dreadbeards_games(plans: &[(Plan, u32)], cap: u32) -> Played {
         after,
         pirate,
         steps: run.steps,
+        free,
         moved,
         streams: run.world.streams.iter().cloned().collect(),
         backs,
@@ -1997,6 +1997,13 @@ fn dreadbeards_game_quit_lost_and_won_each_end_in_his_own_next_behaviour() {
         played.backs, 2,
         "the hero put back after the quit and the win"
     );
+    // After the win he's back but held (openspec AS.481): his pirate's `wait
+    // for loot theatrics` puts every minion under designer control each
+    // tick until the loot's reports are done, AS.368's, so his walk after
+    // a win is AS.520's. After a quit he walks
+    // ([`a_quit_game_leaves_the_hub_as_a_declined_question_does`]).
+    assert!(!played.free, "held by his loot's wait");
+    assert!(played.moved < 0.5, "walked {:.1}", played.moved);
     // No behaviour of the board's, the player's own waits aside, outstays
     // the game's own longest (the stone's 3D presentation and the flips).
     let (longest, stay) = played.stays.longest_unpressed().expect("a stay");
@@ -2238,14 +2245,15 @@ fn a_quit_game_leaves_the_hub_as_a_declined_question_does() {
         println!("before the yes and after the game: {d}");
     }
     assert!(quit.running.is_empty(), "{:?}", quit.running);
-    // The hero put back by the harness comes back under designer control
-    // (his new description's state, `Minion - setup post descriptions`)
-    // and doesn't walk: his reload after a game is AS.481's. After a no he
-    // walks.
+    // Put back after the game (openspec AS.481), his minion runs a join's
+    // spawn sequence, under designer control until its clip ends, then
+    // walks off as after a no: over 3 units in 150 steps.
     println!(
         "walked: {:.1} after the game, {:.1} after a no",
         quit.moved, no.moved
     );
+    assert!(quit.free && no.free);
+    assert!(quit.moved > 3.0, "walked {:.1} after the game", quit.moved);
     assert!(no.moved > 3.0);
     // What differs is the hero's own: put back after the game, he's a new
     // entity the camera follows (its target and the def it picked where he

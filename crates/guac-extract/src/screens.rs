@@ -73,6 +73,87 @@ pub fn card_stones() -> Vec<String> {
         .collect()
 }
 
+/// The card game's templates' palettes (openspec AS.483): every skinned
+/// model a placement of [`CARD_GAME`]'s and [`card_stones`]' archives names
+/// (the board's attack rig, the stones' models), read by the levels'
+/// palettes rule ([`crate::levels::palettes`]: each slot's clip, its kind
+/// and whether it loops), one file for the lot, since the board times its
+/// flips by those clips.
+pub const CARD_PALETTES_PART: &str = "card game palettes";
+
+/// What [`CardPalettes`] names itself, in place of a level.
+pub const CARD_PALETTES_NAME: &str = "card game";
+
+/// [`card_palettes`]' read: the palettes, each owner once, the first
+/// archive's that names it, and each archive the dump lacks with why.
+#[derive(Debug, Default)]
+pub struct CardPalettes {
+    pub palettes: Option<guac_ir::palette::LevelPalettes>,
+    pub missing: Vec<(String, String)>,
+}
+
+/// [`CARD_PALETTES_PART`]'s palettes off the dump at `usrdir`, in
+/// [`CARD_GAME`]'s then [`card_stones`]' order. An archive the dump lacks
+/// is listed; one that's there and won't read is the error, naming it.
+pub fn card_palettes(
+    usrdir: &Path,
+    identity: guac_ir::DumpIdentity,
+) -> Result<CardPalettes, (String, String)> {
+    let stones = card_stones();
+    let archives = CARD_GAME
+        .iter()
+        .copied()
+        .chain(stones.iter().map(String::as_str));
+    let mut out = guac_ir::palette::LevelPalettes {
+        identity: identity.clone(),
+        level: CARD_PALETTES_NAME.to_owned(),
+        palettes: Vec::new(),
+        loops: Vec::new(),
+    };
+    let mut missing = Vec::new();
+    for archive in archives {
+        if !usrdir.join(archive).is_file() {
+            missing.push((archive.to_owned(), "not on the dump".to_owned()));
+            continue;
+        }
+        let read = scripts::entry(usrdir, archive)
+            .and_then(|bytes| {
+                let igz = guac_formats::igz::Igz::parse(&bytes).map_err(|e| e.to_string())?;
+                crate::levels::palettes(&igz, archive, identity.clone())
+            })
+            .map_err(|e| (archive.to_owned(), e))?;
+        let read = read.ir;
+        for palette in &read.palettes {
+            if out.palettes.iter().any(|p| p.owner == palette.owner) {
+                continue;
+            }
+            let slots = read.loops_of(&palette.owner).to_vec();
+            if !slots.is_empty() {
+                out.loops.push(guac_ir::palette::Loops {
+                    owner: palette.owner.clone(),
+                    slots,
+                });
+            }
+            out.palettes.push(palette.clone());
+        }
+    }
+    let any = archives_held(usrdir);
+    Ok(CardPalettes {
+        palettes: any.then_some(out),
+        missing,
+    })
+}
+
+/// Whether the dump holds any of the card game's archives: one with none
+/// (the e2e fixture's) writes no file.
+fn archives_held(usrdir: &Path) -> bool {
+    CARD_GAME
+        .iter()
+        .copied()
+        .chain(card_stones().iter().map(String::as_str))
+        .any(|a| usrdir.join(a).is_file())
+}
+
 /// Where each archive's entry goes: `scripts/<stem>.igz`, as the scripts
 /// part's do, so the interface's model finds its record by the same rule.
 pub fn path(archive: &str) -> String {
