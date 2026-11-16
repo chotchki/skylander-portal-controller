@@ -675,6 +675,9 @@ pub(crate) struct SpawnShot {
     /// him).
     pub facing: f32,
     pub drawn: bool,
+    /// The clips its scripts play on it, by name (openspec AS.461: a
+    /// scene's Flynn and Cali are clones).
+    pub clips: Vec<guacamole::scripts::ClipPlay>,
     #[serde(skip)]
     pub handle: Handle,
 }
@@ -713,6 +716,8 @@ pub(crate) struct CreaturesReport {
     /// The people ([`ScriptWorld::people`]) whose script runs, each as a
     /// creature's reported, with whether it draws now (openspec AU.34).
     pub people: Vec<PersonShot>,
+    /// The cutscene up and its scene, by name (openspec AS.461).
+    pub scene: Option<guacamole::level_end::SceneUp>,
 }
 
 /// One of the people as `/api/_test/tv` reports it.
@@ -725,6 +730,8 @@ pub(crate) struct PersonShot {
     /// name: none for its reference pose (openspec AS.180: a model with no
     /// idle of its own stood so, arms out, until it rested on its slot 0).
     pub posed: Vec<String>,
+    /// The clips its scripts play on it, by name (openspec AS.461).
+    pub clips: Vec<guacamole::scripts::ClipPlay>,
     #[serde(skip)]
     pub handle: Handle,
 }
@@ -818,6 +825,7 @@ pub(crate) fn report(vm: &guac_script::Vm, world: &ScriptWorld) -> CreaturesRepo
                 at: shot(handle)?,
                 drawn: false,
                 posed: Vec::new(),
+                clips: world.clips_on(handle),
                 handle,
             })
         })
@@ -841,6 +849,7 @@ pub(crate) fn report(vm: &guac_script::Vm, world: &ScriptWorld) -> CreaturesRepo
                 at: a.position.to_array(),
                 facing: a.angles.facing,
                 drawn: false,
+                clips: world.clips_on(c),
                 handle: c,
             })
         })
@@ -861,6 +870,7 @@ pub(crate) fn report(vm: &guac_script::Vm, world: &ScriptWorld) -> CreaturesRepo
         orbs_drawn: 0,
         drawn: 0,
         people,
+        scene: guacamole::level_end::scene_up(vm),
     }
 }
 

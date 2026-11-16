@@ -515,7 +515,7 @@ impl W {
             if let Some(model) = &p.model
                 && let Some(pal) = l.palettes.palettes.iter().find(|x| &x.owner == model)
             {
-                world.set_palette_of(p.obj, pal);
+                world.set_palette_with(p.obj, pal, l.palettes.loops_of(model));
             }
         }
         let igz = Igz::parse(&l.level_bytes).unwrap();
@@ -4909,7 +4909,7 @@ fn a_hero_put_in_after_a_fall_back_has_the_scripts_view_again() {
         .and_then(|x| x.template)
         .expect("his minion's template");
     let palette = palette_of(&l.dir, &next);
-    let infos = scripts::clip_infos(&palette);
+    let infos = scripts::clip_infos(&palette, &[]);
     let held: Vec<scripts::ClipInfo> = (0..infos.len() as u32)
         .map(|slot| w.world.clip_info(template, slot))
         .collect();

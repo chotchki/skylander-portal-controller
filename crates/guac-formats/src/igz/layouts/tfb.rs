@@ -360,12 +360,20 @@ impl<'a> Layout<'a> for AnimationInfoList<'a> {
     }
 }
 
-/// `AnimationInfo`: size 0x44, one clip-table entry. Its parents' fields
-/// (0x0C-0x30: script func structs, `Sequence` scalars) aren't read; their
-/// refs stay unfollowed and any other marker there is refused.
+/// `AnimationInfo`: size 0x44, one clip-table entry. Its parents' script
+/// func structs (0x0C-0x14) aren't read; `Sequence`'s scalars are (openspec
+/// AS.442: whether the entry loops), its refs unfollowed and any other
+/// marker there refused.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AnimationInfo<'a> {
     pub name: Option<&'a str>,
+    /// `Sequence._flags`, raw, as a sound's ([`super::sound::flag`]: bit 0
+    /// `sequence.looping`, bit 2 `sequence.allow restart`).
+    pub flags: u32,
+    /// `Sequence._playbackMode`: 0 one way, 1 ping pong.
+    pub playback_mode: u32,
+    /// `Sequence._playbackPercent`: the rate it starts at, 100 its own.
+    pub playback_percent: f32,
     /// Bitfields as `tfbAnimationInfo`'s, without `_statusFieldsSet`.
     pub properties: u32,
     pub media_name: Option<&'a str>,
@@ -377,6 +385,9 @@ pub struct AnimationInfo<'a> {
 
 impl AnimationInfo<'_> {
     pub const NAME: u32 = 0x08;
+    pub const FLAGS: u32 = 0x18;
+    pub const PLAYBACK_MODE: u32 = 0x1C;
+    pub const PLAYBACK_PERCENT: u32 = 0x20;
     pub const PROPERTIES: u32 = 0x30;
     pub const MEDIA_NAME: u32 = 0x34;
     pub const BLEND_FACTOR: u32 = 0x38;
@@ -396,6 +407,9 @@ impl<'a> Layout<'a> for AnimationInfo<'a> {
         }
         Ok(Self {
             name: v.string(Self::NAME, "_name")?,
+            flags: v.u32(Self::FLAGS, "_flags")?,
+            playback_mode: v.u32(Self::PLAYBACK_MODE, "_playbackMode")?,
+            playback_percent: v.f32(Self::PLAYBACK_PERCENT, "_playbackPercent")?,
             properties: v.u32(Self::PROPERTIES, "_properties")?,
             media_name: v.string(Self::MEDIA_NAME, "_mediaName")?,
             blend_factor: v.f32(Self::BLEND_FACTOR, "_blendFactor")?,

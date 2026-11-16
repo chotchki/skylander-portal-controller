@@ -37,17 +37,38 @@ pub fn figure_layout(dir: &Path, ir: IrFormat) -> Result<Layout, String> {
     Layout::of(&p)
 }
 
+/// A level's palette as the scripts' world takes it for the placements
+/// naming its model: each slot's clip length at 100 % (0 where a slot holds
+/// no clip, openspec AH.27), its animation info, the looping bit among it
+/// (AS.442), and its clip's name (AS.461), as the headless runs set them
+/// ([`crate::scripts::ScriptWorld::set_palette_with`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScriptPalette {
+    /// The model's path, as its placements name it.
+    pub owner: String,
+    pub lengths: Vec<f32>,
+    pub infos: Vec<crate::scripts::ClipInfo>,
+    pub names: Vec<String>,
+}
+
+impl ScriptPalette {
+    /// `palette` with `loops` its looping slots.
+    pub fn of(palette: &guac_ir::palette::Palette, loops: &[u16]) -> Self {
+        Self {
+            owner: palette.owner.clone(),
+            lengths: lengths(palette),
+            infos: crate::scripts::clip_infos(palette, loops),
+            names: clip_names(palette),
+        }
+    }
+}
+
 /// Each animation palette the extract's level palettes part holds (AH.22:
 /// every slot of every model a placement of the level names), by its
-/// model's path, as each slot's clip length at 100 %, 0 where a slot holds
-/// no clip (openspec AH.27: what the TV sets for the level's placements, as
-/// the headless runs set them). Why not when the part isn't there or is
-/// another dump's or level's.
-pub fn level_palettes(
-    dir: &Path,
-    level: &str,
-    ir: IrFormat,
-) -> Result<Vec<(String, Vec<f32>)>, String> {
+/// model's path ([`ScriptPalette`]: what the TV sets for the level's
+/// placements, as the headless runs set them). Why not when the part isn't
+/// there or is another dump's or level's.
+pub fn level_palettes(dir: &Path, level: &str, ir: IrFormat) -> Result<Vec<ScriptPalette>, String> {
     let rel = levels::part_path(ir, level, levels::PALETTES);
     let bytes = std::fs::read(dir.join(&rel)).map_err(|e| format!("{rel}: {e}"))?;
     let p: guac_ir::palette::LevelPalettes = match ir {
@@ -62,7 +83,7 @@ pub fn level_palettes(
     }
     Ok(p.palettes
         .iter()
-        .map(|palette| (palette.owner.clone(), lengths(palette)))
+        .map(|palette| ScriptPalette::of(palette, p.loops_of(&palette.owner)))
         .collect())
 }
 
@@ -74,7 +95,7 @@ pub fn palettes_with_streams(
     level: &str,
     streams: &[String],
     ir: IrFormat,
-) -> Result<Vec<(String, Vec<f32>)>, String> {
+) -> Result<Vec<ScriptPalette>, String> {
     let mut palettes = level_palettes(dir, level, ir)?;
     for s in streams {
         match level_palettes(dir, s, ir) {
@@ -110,6 +131,26 @@ pub fn spawn_rigs(
         return Err(format!("{rel} holds {}'s rigs", r.archive));
     }
     Ok(r)
+}
+
+/// Each slot's clip's name as its palette names it, a random network's
+/// first clip's (the one [`guac_ir::palette::Palette::clip_at`] plays),
+/// empty where a slot holds none (openspec AS.461).
+pub fn clip_names(palette: &guac_ir::palette::Palette) -> Vec<String> {
+    use guac_ir::palette::SlotEntry;
+    let mut out = vec![String::new(); usize::from(palette.slots)];
+    for e in &palette.entries {
+        let name = match &e.entry {
+            SlotEntry::Clip { clip, .. } => Some(&clip.name),
+            SlotEntry::Blocks { clip, .. } => Some(&clip.name),
+            SlotEntry::Random { choices } => choices.first().map(|c| &c.clip.name),
+            SlotEntry::Network => None,
+        };
+        if let (Some(n), Some(o)) = (name, out.get_mut(usize::from(e.slot))) {
+            n.clone_into(o);
+        }
+    }
+    out
 }
 
 /// Each slot's clip length at 100 %, 0 where a slot holds no clip; a clip
@@ -165,7 +206,7 @@ pub struct Linked {
     /// The level's placements' palettes by model ([`level_palettes`]), or
     /// why not: [`load`] leaves them unread, the level's load reads them
     /// beside.
-    pub palettes: Result<Vec<(String, Vec<f32>)>, String>,
+    pub palettes: Result<Vec<ScriptPalette>, String>,
     /// The sounds part for the linked units ([`crate::sounds::load`],
     /// openspec AR.9): [`load`] leaves it unread, the level's load reads it
     /// beside.
@@ -734,6 +775,10 @@ mod tests {
             tracks: Vec::new(),
         };
         let palettes = LevelPalettes {
+            loops: vec![guac_ir::palette::Loops {
+                owner: "C:/x/Coin.mdl".into(),
+                slots: vec![1, 2],
+            }],
             identity: identity.clone(),
             level: LEVEL.into(),
             palettes: vec![Palette {
@@ -758,14 +803,19 @@ mod tests {
         let path = tmp.path().join(&rel);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, guac_ir::to_ron(&palettes).unwrap()).unwrap();
-        assert_eq!(
-            level_palettes(tmp.path(), LEVEL, ir).unwrap(),
-            [("C:/x/Coin.mdl".to_owned(), vec![0.0, 0.5, 0.0])]
-        );
+        let read = level_palettes(tmp.path(), LEVEL, ir).unwrap();
+        assert_eq!(read.len(), 1);
+        assert_eq!(read[0].owner, "C:/x/Coin.mdl");
+        assert_eq!(read[0].lengths, [0.0, 0.5, 0.0]);
+        assert_eq!(read[0].names, ["", "Coin_Spin.ma", ""]);
+        // Its slot 1 loops as the part holds it (openspec AS.442); slot 2,
+        // which holds no clip, keeps the bit too, slot 0 none.
+        let looping: Vec<bool> = read[0].infos.iter().map(|i| i.looping).collect();
+        assert_eq!(looping, [false, true, true]);
         // Another level's, where level 212's should be: past the first
         // run's levels, under the name its rule carries (openspec AS.54).
         let past = levels::part_path(ir, "level_212", levels::PALETTES);
-        assert_eq!(past, "levels/level_212/palettes.v4.ron");
+        assert_eq!(past, "levels/level_212/palettes.v5.ron");
         let other = tmp.path().join(&past);
         std::fs::create_dir_all(other.parent().unwrap()).unwrap();
         std::fs::copy(&path, &other).unwrap();
@@ -789,7 +839,7 @@ mod tests {
             ir,
         )
         .unwrap();
-        let owners: Vec<&str> = both.iter().map(|(o, _)| o.as_str()).collect();
+        let owners: Vec<&str> = both.iter().map(|p| p.owner.as_str()).collect();
         assert_eq!(owners, ["C:/x/Coin.mdl", "C:/x/Engine.mdl"]);
     }
 

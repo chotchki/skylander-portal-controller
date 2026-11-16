@@ -400,6 +400,20 @@ pub fn without_random_networks(mut palette: Palette) -> Palette {
     palette
 }
 
+/// The slots of `hero`'s animation set whose entry loops (openspec AS.442,
+/// its `sequence.looping` bit), in slot order.
+pub fn looping_slots(hero: &guac_formats::igz::layouts::Hero<'_>) -> Vec<u16> {
+    use guac_formats::igz::layouts::sound_flag::LOOPING;
+    hero.clip_slots
+        .iter()
+        .enumerate()
+        .filter_map(|(slot, info)| {
+            let entry = hero.clips.get(&(*info)?)?;
+            (entry.info.flags & LOOPING != 0).then(|| u16::try_from(slot).ok())?
+        })
+        .collect()
+}
+
 /// Every filled slot of `hero`'s animation set as a palette (AH.22): each
 /// clip on `skeleton`'s joints with how it blends, a network as one (a
 /// random network's clips among it, AS.180), and a slot that won't play

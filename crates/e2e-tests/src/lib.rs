@@ -2021,6 +2021,7 @@ fn write_level(dir: &mut guac_extract::IdentityDir, entry: LevelEntry) -> Result
     dir.write_output(&rel, &entry)?;
     dir.record_level_part(&level, guac_extract::levels::SCRIPT, vec![rel])?;
     let palettes = guac_ir::palette::LevelPalettes {
+        loops: Vec::new(),
         identity,
         level: level.clone(),
         palettes: Vec::new(),

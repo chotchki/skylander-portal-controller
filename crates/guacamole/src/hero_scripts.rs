@@ -155,7 +155,7 @@ pub(crate) struct ScriptSource {
     /// them out by, and then no figure reaches his scripts.
     layout: Option<Layout>,
     /// The level's placements' palettes by model (openspec AH.27).
-    palettes: Vec<(String, Vec<f32>)>,
+    palettes: Vec<guacamole::level_scripts::ScriptPalette>,
     /// The sounds the run's units play (openspec AR.9); none read, none
     /// play.
     sounds: Option<guacamole::sounds::SoundPart>,
@@ -372,7 +372,7 @@ pub(crate) struct Part {
     pub(crate) walkers: Vec<WalkerScripts>,
     pub(crate) left_out: Vec<(String, String)>,
     pub(crate) layout: Option<Layout>,
-    pub(crate) palettes: Vec<(String, Vec<f32>)>,
+    pub(crate) palettes: Vec<guacamole::level_scripts::ScriptPalette>,
     pub(crate) sounds: Option<guacamole::sounds::SoundPart>,
     /// The original's interface each run starts from (openspec AT.9).
     pub(crate) interface: Option<guacamole::interface_host::InterfacePart>,
@@ -547,10 +547,13 @@ fn install_from(world: &mut World, source: &ScriptSource) {
         .iter()
         .filter(|p| p.obj.unit == level || source.streams.contains(&p.obj.unit))
     {
+        // Its lengths, kinds, loops and names, as the headless runs set
+        // them (openspec AS.442: the TV set the lengths alone, so a
+        // person's additive look clips were laid over as whole poses).
         if let Some(model) = &p.model
-            && let Some((_, lengths)) = source.palettes.iter().find(|(owner, _)| owner == model)
+            && let Some(palette) = source.palettes.iter().find(|x| &x.owner == model)
         {
-            script_world.set_palette(p.obj, lengths.clone());
+            script_world.set_script_palette(p.obj, palette);
         }
         if p.model
             .as_deref()
@@ -3128,7 +3131,12 @@ mod tests {
                 walkers: Vec::new(),
                 left_out: Vec::new(),
                 layout: None,
-                palettes: vec![(SMASH_FAR_MODEL.to_owned(), vec![0.0, 0.5])],
+                palettes: vec![guacamole::level_scripts::ScriptPalette {
+                    owner: SMASH_FAR_MODEL.to_owned(),
+                    lengths: vec![0.0, 0.5],
+                    infos: vec![Default::default(); 2],
+                    names: vec![String::new(); 2],
+                }],
                 sounds: None,
                 interface: None,
                 level: LEVEL.to_owned(),
@@ -3195,7 +3203,12 @@ mod tests {
                 walkers: Vec::new(),
                 left_out: Vec::new(),
                 layout: None,
-                palettes: vec![(SMASH_FAR_MODEL.to_owned(), vec![0.0, 0.5])],
+                palettes: vec![guacamole::level_scripts::ScriptPalette {
+                    owner: SMASH_FAR_MODEL.to_owned(),
+                    lengths: vec![0.0, 0.5],
+                    infos: vec![Default::default(); 2],
+                    names: vec![String::new(); 2],
+                }],
                 sounds: None,
                 interface: None,
                 level: LEVEL.to_owned(),

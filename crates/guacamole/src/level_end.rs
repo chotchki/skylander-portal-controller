@@ -246,6 +246,31 @@ fn cutscene(vm: &Vm) -> Option<(Value, String, f32)> {
     Some((current, name, time))
 }
 
+/// The cutscene up and its scene, as a report names them (openspec AS.461):
+/// the cutscene's macro's name, the scene in play's index among its
+/// definition's scenes and how many there are (none between two).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct SceneUp {
+    pub cutscene: String,
+    pub scene: Option<usize>,
+    pub scenes: Option<usize>,
+}
+
+/// The cutscene in play and its scene ([`SceneUp`]); none outside one.
+pub fn scene_up(vm: &Vm) -> Option<SceneUp> {
+    let (current, cutscene, _) = cutscene(vm)?;
+    let index = (|| {
+        let scenes = vm.set(vm.field(vm.field(current, "cutscene definition")?, "scenes")?)?;
+        let this = vm.field(vm.field(current, "cur scene data")?, "scene definition")?;
+        Some((scenes.iter().position(|s| *s == this), scenes.len()))
+    })();
+    Some(SceneUp {
+        cutscene,
+        scene: index.and_then(|(i, _)| i),
+        scenes: index.map(|(_, n)| n),
+    })
+}
+
 /// `level progression data`, once something has made it.
 fn progression(vm: &Vm) -> Option<Value> {
     vm.global_peek(vm.program().global_named("level progression data")?)

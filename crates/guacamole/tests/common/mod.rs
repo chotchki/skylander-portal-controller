@@ -1574,7 +1574,7 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
         if let Some(model) = &p.model
             && let Some(pal) = palettes.palettes.iter().find(|x| &x.owner == model)
         {
-            world.set_palette_of(p.obj, pal);
+            world.set_palette_with(p.obj, pal, palettes.loops_of(model));
         }
     }
     // The streams' templates' too (openspec AS.157: the engines turn).
@@ -1586,7 +1586,7 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
             if let Some(model) = &p.model
                 && let Some(pal) = palettes.palettes.iter().find(|x| &x.owner == model)
             {
-                world.set_palette_of(p.obj, pal);
+                world.set_palette_with(p.obj, pal, palettes.loops_of(model));
             }
         }
     }

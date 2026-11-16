@@ -402,6 +402,9 @@ pub struct PaletteSlot<'a> {
     /// The entry's `_name` and its label (`_mediaName`).
     pub name: Option<&'a str>,
     pub label: Option<&'a str>,
+    /// The entry's `sequence.looping` bit (openspec AS.442): a play of the
+    /// slot goes round again at its end, as an idle or a talk does.
+    pub looping: bool,
     /// `None` for an entry wrapping no `tfbPhysicsAnimation`: an animation
     /// network, or nothing.
     pub clip: Option<PaletteClip<'a>>,
@@ -454,6 +457,7 @@ pub fn palette_slot<'a>(
         info,
         name: entry.info.name,
         label: entry.info.media_name,
+        looping: entry.info.flags & crate::igz::layouts::sound_flag::LOOPING != 0,
         clip,
         choices,
     };

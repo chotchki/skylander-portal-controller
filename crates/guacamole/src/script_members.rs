@@ -1545,7 +1545,9 @@ impl ScriptWorld {
                 };
                 let (info, state) = self.clip_flags(template, slot);
                 match m {
-                    Member::SeqLooping => Value::Int(i32::from(state.looping.unwrap_or(false))),
+                    Member::SeqLooping => {
+                        Value::Int(i32::from(state.looping.unwrap_or(info.looping)))
+                    }
                     Member::Blend => Value::Float(state.blend.unwrap_or(FULL_BLEND)),
                     Member::IsLayered => Value::Int(i32::from(
                         state.layered.unwrap_or(info.layered) || info.kind != ClipInfo::BASE,
@@ -2725,7 +2727,8 @@ impl ScriptWorld {
             return self.start_again(i, actor);
         }
         let length = self.length_of(template);
-        // A clip's own looping, weight and layered bit (AH.49).
+        // A clip's own looping, weight and layered bit (AH.49), its looping
+        // the palette entry's where no script wrote it (AS.442).
         let (info, state) = match self.object(Some(template)) {
             Some(Object::Clip { template, slot }) => self.clip_flags(template, slot),
             _ => (ClipInfo::default(), ClipState::default()),
@@ -2736,7 +2739,7 @@ impl ScriptWorld {
             length,
             time: 0.0,
             rate: 100.0,
-            looping: state.looping.unwrap_or(false),
+            looping: state.looping.unwrap_or(info.looping),
             stopped: false,
             done: false,
             blend: state.blend.unwrap_or(FULL_BLEND),

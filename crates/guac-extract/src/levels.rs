@@ -243,18 +243,19 @@ pub const PLAYED: [&str; 10] = [
 /// held none of its creatures, v3 (AS.78) reads a clip past one Havok block
 /// (level 214's intro's 15 s camera shot) where v2 refused it, v4 (AS.180)
 /// a random animation network's clips (level 214's Rob and its card pirate
-/// at rest) where v3 kept none. The first run's levels' rule has its own
-/// ([`PALETTES_FIRST_RUN`]).
-pub const PALETTES_PAST_FIRST_RUN: u32 = 4;
+/// at rest) where v3 kept none, v5 (AS.442) which of each palette's slots
+/// loop, where v4 played every clip once. The first run's levels' rule has
+/// its own ([`PALETTES_FIRST_RUN`]).
+pub const PALETTES_PAST_FIRST_RUN: u32 = 5;
 
 /// Chapter 1's palettes part's rule (since openspec AU.33 every skinned
 /// model a placement names, as past the first run's levels, for the way past
 /// its first fight; the whitelist's before; since AS.180 a random network's
-/// clips, its Mabu's talk and a Chompy's hurt), which its file's name
-/// carries, `palettes.v5.<ron|postcard>`, so an extract written under an
-/// older rule reads chapter 1's palettes again, and nothing else, on its
-/// next start.
-pub const PALETTES_FIRST_RUN: u32 = 5;
+/// clips, its Mabu's talk and a Chompy's hurt; since AS.442 which slots
+/// loop), which its file's name carries, `palettes.v6.<ron|postcard>`, so
+/// an extract written under an older rule reads chapter 1's palettes again,
+/// and nothing else, on its next start.
+pub const PALETTES_FIRST_RUN: u32 = 6;
 
 /// Where the cinematics' camera rigs' models sit: an animator camera's
 /// `anim owner` places one (openspec AS.78).
@@ -314,7 +315,8 @@ pub fn complete(m: &Manifest) -> bool {
 /// to read again (openspec AS.52: chapter 1's palettes recorded as
 /// `palettes.<ext>` before its rule's `palettes.v2`, AS.78 `palettes.v2`
 /// before `palettes.v3`, AS.180 a level's `v3` before `v4` and chapter 1's
-/// `v4` before `v5`). Any other part is
+/// `v4` before `v5`, AS.442 a level's `v4` before `v5` and chapter 1's `v5`
+/// before `v6`). Any other part is
 /// held once it's recorded.
 fn holds_current(level: &str, part: &str, files: &[String]) -> bool {
     if part != PALETTES {
@@ -1077,6 +1079,7 @@ pub fn palettes(
         creatures.insert(model, info.info.name.unwrap_or_default());
     }
     let mut palettes = Vec::new();
+    let mut loops = Vec::new();
     for (model, path) in creatures {
         let Ok(hero) = Hero::read(igz, model) else {
             continue;
@@ -1089,12 +1092,20 @@ pub fn palettes(
             path,
             identity.clone(),
         ));
+        let slots = models::looping_slots(&hero);
+        if !slots.is_empty() {
+            loops.push(guac_ir::palette::Loops {
+                owner: path.to_owned(),
+                slots,
+            });
+        }
     }
     Ok(Read {
         ir: LevelPalettes {
             identity,
             level: level.to_owned(),
             palettes,
+            loops,
         },
         textures: Vec::new(),
     })

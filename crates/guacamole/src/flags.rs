@@ -431,6 +431,9 @@ pub(crate) struct ActorShot {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct ClipShot {
+    /// Its name in its model's palette (openspec AS.461); none where the TV
+    /// holds no names for it.
+    pub name: Option<String>,
     pub slot: u32,
     pub time: f32,
     pub length: f32,
@@ -503,7 +506,8 @@ pub(crate) fn actors_near(
                     .iter()
                     .filter(|s| s.actor == h && s.plays())
                     .filter_map(|s| {
-                        world.clip_of(s).map(|(_, slot)| ClipShot {
+                        world.clip_of(s).map(|(template, slot)| ClipShot {
+                            name: world.clip_name(template, slot).map(str::to_owned),
                             slot,
                             time: s.time,
                             length: s.length,

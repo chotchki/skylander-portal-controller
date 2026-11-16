@@ -111,6 +111,29 @@ pub struct LevelPalettes {
     pub identity: DumpIdentity,
     pub level: String,
     pub palettes: Vec<Palette>,
+    /// Each palette's slots whose entry loops (openspec AS.442), by owner:
+    /// a play of one goes round again at its end (a person's idle, talk or
+    /// flight). Kept beside the palettes, as a per-character file holds the
+    /// same [`Palette`] an older build reads.
+    pub loops: Vec<Loops>,
+}
+
+/// The slots of `owner`'s palette whose entry loops, in slot order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Loops {
+    pub owner: String,
+    pub slots: Vec<u16>,
+}
+
+impl LevelPalettes {
+    /// The looping slots of the palette `owner` names; none for a palette
+    /// with none, or none held.
+    pub fn loops_of(&self, owner: &str) -> &[u16] {
+        self.loops
+            .iter()
+            .find(|l| l.owner == owner)
+            .map_or(&[], |l| l.slots.as_slice())
+    }
 }
 
 /// A character's random networks (openspec AS.196): each slot of his
@@ -350,6 +373,10 @@ mod tests {
             p
         );
         let level = LevelPalettes {
+            loops: vec![Loops {
+                owner: p.owner.clone(),
+                slots: vec![0, 20],
+            }],
             identity: p.identity.clone(),
             level: "level_213_tutotial".into(),
             palettes: vec![p.clone(), p],
@@ -362,6 +389,24 @@ mod tests {
             from_postcard::<LevelPalettes>(&to_postcard(&level).unwrap()).unwrap(),
             level
         );
+    }
+
+    /// openspec AS.442: a palette's looping slots by its owner, none for
+    /// an owner the level holds none of.
+    #[test]
+    fn a_levels_loops_are_found_by_owner() {
+        let p = palette();
+        let level = LevelPalettes {
+            loops: vec![Loops {
+                owner: p.owner.clone(),
+                slots: vec![0, 9],
+            }],
+            identity: p.identity.clone(),
+            level: "level_213_tutotial".into(),
+            palettes: vec![p.clone()],
+        };
+        assert_eq!(level.loops_of(&p.owner), [0, 9]);
+        assert!(level.loops_of("C:/x/Other.mdl").is_empty());
     }
 
     #[test]

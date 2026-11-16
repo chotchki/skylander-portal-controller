@@ -504,6 +504,8 @@ pub struct ScriptWorld {
     /// by slot (openspec AH.49): a template given none reads every slot a
     /// base clip with no layered bit.
     pub(crate) clip_info: HashMap<Obj, Vec<ClipInfo>>,
+    /// Each template's palette's clip names by slot (openspec AS.461).
+    clip_names: HashMap<Obj, Vec<String>>,
     /// What the scripts wrote on a palette slot's clip itself (openspec
     /// AH.49): a sequence started from it starts with these.
     pub(crate) clip_state: HashMap<(Obj, u32), ClipState>,
@@ -841,6 +843,10 @@ pub struct ClipInfo {
     pub kind: u8,
     /// The wrapper's layered flag as stored: the layered bit's start.
     pub layered: bool,
+    /// The entry's `sequence.looping` bit (openspec AS.442): a sequence
+    /// started from it goes round again at its end unless a script wrote
+    /// the clip's looping, as a person's idle, talk or flight does.
+    pub looping: bool,
 }
 
 impl ClipInfo {
@@ -857,14 +863,25 @@ impl ClipInfo {
         } else {
             Self::BASE
         };
-        Self { kind, layered }
+        Self {
+            kind,
+            layered,
+            looping: false,
+        }
     }
 }
 
 /// Each slot's animation info in `palette`, a base clip with no layered bit
-/// where a slot holds no clip.
-pub fn clip_infos(palette: &guac_ir::palette::Palette) -> Vec<ClipInfo> {
+/// where a slot holds no clip; the slots `loops` names looping (openspec
+/// AS.442: a level's palettes part holds them, [`guac_ir::palette::LevelPalettes::loops_of`]),
+/// a random network's among them.
+pub fn clip_infos(palette: &guac_ir::palette::Palette, loops: &[u16]) -> Vec<ClipInfo> {
     let mut out = vec![ClipInfo::default(); usize::from(palette.slots)];
+    for &slot in loops {
+        if let Some(i) = out.get_mut(usize::from(slot)) {
+            i.looping = true;
+        }
+    }
     for e in &palette.entries {
         use guac_ir::palette::SlotEntry;
         if let SlotEntry::Clip {
@@ -881,10 +898,28 @@ pub fn clip_infos(palette: &guac_ir::palette::Palette) -> Vec<ClipInfo> {
         } = &e.entry
             && let Some(i) = out.get_mut(usize::from(e.slot))
         {
-            *i = ClipInfo::of(*additive, *partial, *layered);
+            *i = ClipInfo {
+                looping: i.looping,
+                ..ClipInfo::of(*additive, *partial, *layered)
+            };
         }
     }
     out
+}
+
+/// A clip playing on an actor as a report reads it (openspec AS.461): its
+/// name in its model's palette (none where the TV holds no names for it),
+/// its slot, seconds in, length at 100 %, rate (percent), whether it loops
+/// and its kind ([`ClipInfo::kind`]).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ClipPlay {
+    pub name: Option<String>,
+    pub slot: u32,
+    pub time: f32,
+    pub length: f32,
+    pub rate: f32,
+    pub looping: bool,
+    pub kind: u8,
 }
 
 /// What the scripts wrote on a palette slot's clip (openspec AH.49), each
@@ -958,6 +993,7 @@ impl ScriptWorld {
             unbuilt: Vec::new(),
             collected: None,
             clip_info: HashMap::new(),
+            clip_names: HashMap::new(),
             clip_state: HashMap::new(),
             hero_templates: HashMap::new(),
             nodes: HashMap::new(),
@@ -1880,8 +1916,79 @@ impl ScriptWorld {
     /// length ([`ScriptWorld::set_palette`]) and its animation info
     /// ([`ScriptWorld::set_clip_info`]).
     pub fn set_palette_of(&mut self, template: Obj, palette: &guac_ir::palette::Palette) {
+        self.set_palette_with(template, palette, &[]);
+    }
+
+    /// [`ScriptWorld::set_palette_of`] for a level's palette (openspec
+    /// AS.442): the slots `loops` names start looping, and each slot's clip
+    /// is named ([`ScriptWorld::clip_name`]).
+    pub fn set_palette_with(
+        &mut self,
+        template: Obj,
+        palette: &guac_ir::palette::Palette,
+        loops: &[u16],
+    ) {
         self.set_palette(template, crate::level_scripts::lengths(palette));
-        self.set_clip_info(template, clip_infos(palette));
+        self.set_clip_info(template, clip_infos(palette, loops));
+        self.set_clip_names(template, crate::level_scripts::clip_names(palette));
+    }
+
+    /// A level's palette for `template`'s clones and itself, as
+    /// [`ScriptWorld::set_palette_with`] sets one (openspec AS.442).
+    pub fn set_script_palette(
+        &mut self,
+        template: Obj,
+        palette: &crate::level_scripts::ScriptPalette,
+    ) {
+        self.set_palette(template, palette.lengths.clone());
+        self.set_clip_info(template, palette.infos.clone());
+        self.set_clip_names(template, palette.names.clone());
+    }
+
+    /// Each palette slot's clip's name for `template`'s clones and itself,
+    /// empty where a slot holds none (openspec AS.461).
+    pub fn set_clip_names(&mut self, template: Obj, names: Vec<String>) {
+        self.clip_names.insert(template, names);
+    }
+
+    /// The name of the clip in `slot` of `template`'s palette, as its model's
+    /// palette names it (a random network's first, the one the TV plays):
+    /// none where the slot holds none or no names were set (openspec AS.461:
+    /// what a capture says a scene's actor plays).
+    pub fn clip_name(&self, template: Obj, slot: u32) -> Option<&str> {
+        self.clip_names
+            .get(&template)?
+            .get(slot as usize)
+            .map(String::as_str)
+            .filter(|n| !n.is_empty())
+    }
+
+    /// The name of the clip sequence `s` plays ([`ScriptWorld::clip_name`]).
+    pub fn sequence_clip_name(&self, s: &Sequence) -> Option<&str> {
+        let (template, slot) = self.clip_of(s)?;
+        self.clip_name(template, slot)
+    }
+
+    /// The clips playing on `h` (openspec AS.461), oldest first: each
+    /// sequence of a palette clip on it that hasn't played out or been
+    /// stopped, additive ones among them, by its name and slot.
+    pub fn clips_on(&self, h: Handle) -> Vec<ClipPlay> {
+        self.sequences
+            .iter()
+            .filter(|s| s.actor == h && s.plays())
+            .filter_map(|s| {
+                let (template, slot) = self.clip_of(s)?;
+                Some(ClipPlay {
+                    name: self.clip_name(template, slot).map(str::to_owned),
+                    slot,
+                    time: s.time,
+                    length: s.length,
+                    rate: s.rate,
+                    looping: s.looping,
+                    kind: s.kind,
+                })
+            })
+            .collect()
     }
 
     /// `rigs`' palettes for the templates of `unit` (a character's own file)

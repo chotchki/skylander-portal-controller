@@ -716,6 +716,7 @@ pub(crate) fn write_creature_model(dir: &std::path::Path) {
         }],
     };
     let palettes = LevelPalettes {
+        loops: Vec::new(),
         identity: crate::test_support::turntable::identity(),
         level: crate::test_support::hero_scripts::LEVEL.into(),
         palettes: vec![Palette {
