@@ -2099,8 +2099,9 @@ fn a_seeded_game_replays_to_the_step_and_a_second_plays_the_same() {
 /// of the full lists' picks), no board behaviour but the player's own waits
 /// past [`STAY_CAP`], nothing stopped. By default the gate's short run:
 /// [`SHORT_GAMES`] games, each roll's share within [`SHORT_POINTS`] of the
-/// call's chance (seeded, so the same every run: 294 of 444 first rolls,
-/// 66.2%, and 83 of 120 second, 69.2%; 90 s alone at load 7 to 8). The
+/// call's chance (seeded, so the same every run: 325 of 475 first rolls,
+/// 68.4%, and 84 of 120 second, 70.0%, the full lists' picks played 0, 84
+/// and 36; 83 s alone at load 2.4 to 2.8, openspec AS.480). The
 /// box's 1,000 games, within 5 points, only when `AS366_GAMES=1000` asks
 /// (about an hour a third: run as three processes by `AS366_FROM` and
 /// `AS366_GAMES`, their counts summed; 300 games or more are held to 5
@@ -2143,6 +2144,7 @@ fn dreadbeards_rolls_over_a_thousand_seeded_games() {
         played += done;
         picks.attempts += p.picks.attempts;
         picks.first_landed += p.picks.first_landed;
+        picks.first += p.picks.first;
         picks.second += p.picks.second;
         picks.last += p.picks.last;
         for (b, n) in &p.stays.longest {
@@ -2183,6 +2185,27 @@ fn dreadbeards_rolls_over_a_thousand_seeded_games() {
         "second roll {:.1}% against {second}",
         picks.second()
     );
+    // The picks played (openspec AS.480): the first never (its roll writes
+    // the first move's stone, refused, guac-script's crate docs), the second
+    // at the second roll's chance, the last the rest.
+    let shares = picks.played();
+    println!(
+        "played over {} full lists: first {} ({:.1}%), second {} ({:.1}%), last {} ({:.1}%)",
+        picks.first + picks.second + picks.last,
+        picks.first,
+        shares[0],
+        picks.second,
+        shares[1],
+        picks.last,
+        shares[2]
+    );
+    let reading = [0.0, f64::from(second), 100.0 - f64::from(second)];
+    for (k, (got, want)) in shares.iter().zip(reading).enumerate() {
+        assert!(
+            (got - want).abs() <= points,
+            "pick {k}: {got:.1}% against the reading's {want}"
+        );
+    }
     let worst = longest
         .iter()
         .filter(|(b, _)| !b.starts_with("player turn") && !b.contains("tutorial"))

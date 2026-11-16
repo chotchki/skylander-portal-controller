@@ -256,17 +256,19 @@ impl Player {
 /// first roll's landing sets the chosen move to the list's first *stone*
 /// (`best ai moves/first/card`), a structure of another definition than the
 /// move the reference holds, which the VM's set reference refuses
-/// (guac-script's crate docs, Variables, structures and sets): nothing is
-/// chosen and the next tick attempts again. So an attempt that leaves no
-/// move chosen is a landed first roll, and a pick's last attempt took the
-/// list's second (the second roll landed) or its last.
+/// (guac-script's crate docs, Variables, structures and sets; openspec
+/// AS.480): nothing is chosen and the next tick attempts again. So an
+/// attempt that leaves no move chosen is a landed first roll, and a pick's
+/// last attempt took the list's second (the second roll landed) or its
+/// last; the list's first is never played, which [`Picks::played`] counts.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Picks {
     /// Every attempt, and those whose first roll landed.
     pub attempts: u32,
     pub first_landed: u32,
-    /// Of the picks over a full list (three moves): the second taken, the
-    /// last taken.
+    /// Of the picks over a full list (three moves): the first taken, the
+    /// second taken, the last taken.
+    pub first: u32,
     pub second: u32,
     pub last: u32,
     /// Each pick: its step, its list's length, the taken one's place in it
@@ -305,6 +307,7 @@ impl Picks {
             self.trace.push((run.steps, list.len(), at, self.tries));
             if list.len() == 3 && self.tries > 0 {
                 match at {
+                    Some(0) => self.first += 1,
                     Some(1) => self.second += 1,
                     Some(2) => self.last += 1,
                     _ => {}
@@ -328,9 +331,17 @@ impl Picks {
         100.0 * f64::from(self.second) / f64::from((self.second + self.last).max(1))
     }
 
-    /// The full lists' picks.
+    /// The full lists' picks but the first's (the second roll's draws).
     pub fn count(&self) -> u32 {
         self.second + self.last
+    }
+
+    /// The full lists' picks played: the first's, the second's and the
+    /// last's shares, percent (openspec AS.480: the reading gives the first
+    /// none, the second the call's second chance, the last the rest).
+    pub fn played(&self) -> [f64; 3] {
+        let all = f64::from((self.first + self.second + self.last).max(1));
+        [self.first, self.second, self.last].map(|n| 100.0 * f64::from(n) / all)
     }
 }
 

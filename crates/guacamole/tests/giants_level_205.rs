@@ -4978,6 +4978,7 @@ fn fangs_rolls_over_a_thousand_seeded_games() {
         assert_eq!(p.chances, Some((1, 100)), "his call's chances");
         picks.attempts += p.picks.attempts;
         picks.first_landed += p.picks.first_landed;
+        picks.first += p.picks.first;
         picks.second += p.picks.second;
         picks.last += p.picks.last;
         for (b, n) in &p.stays.longest {
@@ -5019,6 +5020,9 @@ fn fangs_rolls_over_a_thousand_seeded_games() {
         "second {:.1}%",
         picks.second()
     );
+    // The first never played (openspec AS.480).
+    println!("played: {:?} of the full lists", picks.played());
+    assert_eq!(picks.first, 0, "the first played");
     let worst = longest
         .iter()
         .filter(|(b, _)| !b.starts_with("player turn") && !b.contains("tutorial"))
