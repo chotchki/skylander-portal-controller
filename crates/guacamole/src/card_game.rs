@@ -393,29 +393,21 @@ fn replaced(vm: &Vm) -> bool {
         .is_some_and(|v| v != Value::Null)
 }
 
-/// Whether a cutscene is in play or holds the players: `cs control data`'s
-/// current scene, or `Cutscene State`.
-fn scene_on(vm: &Vm) -> bool {
-    global(vm, "cs control data")
-        .and_then(|d| field(vm, d, "current cs"))
-        .is_some_and(|c| c != Value::Null)
-        || crate::anchors::scene_holds(vm)
-}
-
 /// Whether the hero is owed back now (openspec AS.481): the board's
 /// teardown asked for his character again ([`Restore::Asked`]), his minion
-/// is off (`minion_off`) and no scene holds the players. The
-/// original's restore reloads his character's stream and its portal manager
-/// brings his minion in, whose own `Portal - Minion Spawn Sequence` holds
-/// him under designer control while his spawn clip plays and lets him go at
-/// its end; the TV answers it as a figure put back on the portal (its swap:
-/// his file unloaded and joined again), so his minion runs the same
-/// sequence. Answered once no scene holds the players: a minion joined
-/// under the game's quit scene isn't among those its end lets go (stand-in
+/// is off (`minion_off`) and no scene holds the players (`Cutscene State`).
+/// The original's restore reloads his character's stream and its portal
+/// manager brings his minion in, delaying a character's entry while
+/// `Cutscene State` holds (its `delay entry because of cutscene`, the game's
+/// quit and win scenes); his minion's own `Portal - Minion Spawn Sequence`
+/// then holds him under designer control while his spawn clip plays and
+/// lets him go at its end. The TV answers it as a figure put back on the
+/// portal (its swap: his file unloaded and joined again), so his minion
+/// runs the same sequence; the stream's load time is ours, none (stand-in
 /// ledger: `card-restore`). The caller answers it and then calls
 /// [`CardStreams::hero_returned`].
 pub fn hero_owed(vm: &Vm, world: &ScriptWorld, minion_off: bool) -> bool {
-    world.card_streams.restore == Restore::Asked && minion_off && !scene_on(vm)
+    world.card_streams.restore == Restore::Asked && minion_off && !crate::anchors::scene_holds(vm)
 }
 
 /// The hand select's page, by its title's name.

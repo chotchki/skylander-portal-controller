@@ -1594,6 +1594,9 @@ struct Played {
     streams: Vec<Option<String>>,
     /// How many times the hero was put back after a game ([`cards::hero_back`]).
     backs: u32,
+    /// Whether one was while a scene held the players (openspec AS.481:
+    /// the original's portal delays a character's entry until it ends).
+    held_back: bool,
     /// The board's two chances as his call set them (`best move - 1 %`,
     /// `best move - 2 %`), read off the first game.
     chances: Option<(i32, i32)>,
@@ -1671,6 +1674,8 @@ fn dreadbeards_games(plans: &[(Plan, u32)], cap: u32) -> Played {
     let debug = std::env::var_os("AS366_DEBUG").is_some();
     let mut declined: Option<u32> = None;
     let mut backs = 0;
+    // Whether he was put back while a scene held the players.
+    let mut held_back = false;
     let mut chances = None;
     let mut dbg_pirate: Option<String> = None;
     // The last game's end (or the start): a run with no game over in
@@ -1731,6 +1736,7 @@ fn dreadbeards_games(plans: &[(Plan, u32)], cap: u32) -> Played {
         }
         if cards::hero_back(&mut run) {
             backs += 1;
+            held_back |= guacamole::anchors::scene_holds(&run.vm);
         }
         let now = cards::board(&run);
         let pirate = run.vm.behaviour(id).map(str::to_owned);
@@ -1825,6 +1831,7 @@ fn dreadbeards_games(plans: &[(Plan, u32)], cap: u32) -> Played {
         stops.extend(run.step_play().unwrap());
         if cards::hero_back(&mut run) {
             backs += 1;
+            held_back |= guacamole::anchors::scene_holds(&run.vm);
         }
     }
     let after = cards::leftovers(&run);
@@ -1922,6 +1929,7 @@ fn dreadbeards_games(plans: &[(Plan, u32)], cap: u32) -> Played {
         moved,
         streams: run.world.streams.iter().cloned().collect(),
         backs,
+        held_back,
         chances,
     }
 }
@@ -2003,6 +2011,7 @@ fn dreadbeards_game_quit_lost_and_won_each_end_in_his_own_next_behaviour() {
     // a win is AS.520's. After a quit he walks
     // ([`a_quit_game_leaves_the_hub_as_a_declined_question_does`]).
     assert!(!played.free, "held by his loot's wait");
+    assert!(!played.held_back, "put back under a scene");
     assert!(played.moved < 0.5, "walked {:.1}", played.moved);
     // No behaviour of the board's, the player's own waits aside, outstays
     // the game's own longest (the stone's 3D presentation and the flips).
@@ -2276,6 +2285,7 @@ fn a_quit_game_leaves_the_hub_as_a_declined_question_does() {
         quit.moved, no.moved
     );
     assert!(quit.free && no.free);
+    assert!(!quit.held_back, "put back under the quit's scene");
     assert!(quit.moved > 3.0, "walked {:.1} after the game", quit.moved);
     assert!(no.moved > 3.0);
     // What differs is the hero's own: put back after the game, he's a new
