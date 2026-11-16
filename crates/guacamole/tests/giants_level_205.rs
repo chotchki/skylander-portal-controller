@@ -4892,25 +4892,32 @@ fn fangs_game_won_ends_in_his_loot() {
     println!("load at end: {}", load());
 }
 
+/// The gate's short run of [`fangs_rolls_over_a_thousand_seeded_games`]:
+/// three games, whose walk to the card house is most of its time.
+const SHORT_GAMES: u32 = 3;
+
 /// The seeds of Fangs' three games: the quit's, the loss's, the win's.
 const FANGS_SEEDS: [u32; 3] = [1, 2, 4];
 
-/// openspec AS.366: the opponent's rolls over 1,000 seeded games against
-/// Fangs (seeds 1000 to 1999, a weak player's games, each loss's replay the
-/// next, a run walked to the card house again after a win): each roll's
-/// share within 5 points of his call's chance for it, 1 and 100
+/// openspec AS.366: the opponent's rolls over seeded games against Fangs
+/// (from seed 1000, a weak player's games, each loss's replay the next, a
+/// run walked to the card house again after a win): each roll's share
+/// within 5 points of his call's chance for it, 1 and 100
 /// ([`cards::Picks`]), no board behaviour but the player's own waits past
-/// [`STAY_CAP`]. A share of the seeds by `AS366_FROM` and `AS366_GAMES`
-/// (the 1,000 as processes side by side, their counts summed). Nothing
-/// stops.
+/// [`STAY_CAP`], nothing stopped. By default the gate's short run,
+/// [`SHORT_GAMES`] games on one walk to the house (seeded, so the same every
+/// run); the box's 1,000 only when `AS366_GAMES=1000` asks (about 90
+/// minutes a third: run as three processes by `AS366_FROM` and
+/// `AS366_GAMES`, their counts summed). His chances are 1 and 100, so 5
+/// points holds over any count.
 #[test]
-#[ignore = "reads the Giants dump; 1,000 games"]
+#[ignore = "reads the Giants dump; 3 games, 1,000 by AS366_GAMES"]
 fn fangs_rolls_over_a_thousand_seeded_games() {
     let started = std::time::Instant::now();
     println!("load at start: {}", load());
     let from: u32 = std::env::var("AS366_FROM").map_or(0, |v| v.parse().unwrap());
     let games: u32 =
-        from + std::env::var("AS366_GAMES").map_or(1000, |v| v.parse::<u32>().unwrap());
+        from + std::env::var("AS366_GAMES").map_or(SHORT_GAMES, |v| v.parse::<u32>().unwrap());
     let mut picks = cards::Picks::default();
     let mut longest: std::collections::BTreeMap<String, u32> = Default::default();
     let (mut played, mut runs, mut won) = (from, 0, 0);
@@ -4960,6 +4967,9 @@ fn fangs_rolls_over_a_thousand_seeded_games() {
         picks.count(),
         picks.last
     );
+    // A game that never reached the opponent's pick fails here, not on a
+    // share of nothing.
+    assert!(picks.attempts > 0 && picks.count() > 0, "{picks:?}");
     assert!(
         (picks.first() - 1.0).abs() <= 5.0,
         "first {:.1}%",

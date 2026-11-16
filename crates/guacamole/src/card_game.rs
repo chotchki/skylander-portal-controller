@@ -229,7 +229,7 @@ pub struct CardStreams {
     /// Whether a yes at a pirate plays the original's own game on the VM
     /// (openspec AS.366, [`CardStreams::play_games`]) in place of the TV's
     /// quit ([`crate::prompt::quit_card_game`]). False on every TV run.
-    pub(crate) played: bool,
+    played: bool,
 }
 
 impl CardStreams {

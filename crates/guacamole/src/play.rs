@@ -1091,8 +1091,8 @@ impl Play {
         self.inside.as_ref().map(|i| i.camera)
     }
 
-    /// The hero's entity, while he's in the level: the walk's shots'.
-    #[cfg(any(test, feature = "dev-tools"))]
+    /// The hero's entity, while he's in the level: the walk's shots' and
+    /// the capture button's (`flags.rs`, in every build).
     pub(crate) fn hero(&self) -> Option<Entity> {
         self.on_stage().map(|h| h.hero)
     }
