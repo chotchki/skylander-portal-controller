@@ -243,3 +243,150 @@ fn the_card_palettes_land_in_one_file_and_a_second_run_keeps_it() {
     assert!(st.card_palettes.read, "{:?}", st.failed);
     assert!(dir.manifest().parts[CARD_PALETTES_PART].is_empty());
 }
+
+/// A dump holding `global.bld` and `bootstrap.bld` (the sounds' exports),
+/// a stone's deck whose `level.bld` places models (the levels' stage
+/// sample: a static and a skinned model read, one refused) and a stone's
+/// asset whose `level.bld` holds the sound builder's sample.
+fn art_dump(tmp: &Path) -> PathBuf {
+    use guac_formats::exports::builder::{bootstrap, names, rooted};
+    let stones = card_stones();
+    dump_with(tmp, |usr| {
+        fs::create_dir_all(usr.join("permanent")).unwrap();
+        let one = |level: &[u8]| IgaBuilder::new().lzma("level.bld", level).build();
+        fs::write(usr.join("permanent/bootstrap.bld"), one(&bootstrap())).unwrap();
+        fs::write(
+            usr.join("permanent/global.bld"),
+            one(&rooted(&names("global", 24), &[])),
+        )
+        .unwrap();
+        let models = guac_formats::level::builder::stage_level(
+            &guac_formats::level::builder::stage_sample(),
+        );
+        fs::write(usr.join(&stones[0]), one(&models)).unwrap();
+        let sounds = guac_formats::sound::builder::sample().bytes;
+        fs::write(usr.join(&stones[82]), one(&sounds)).unwrap();
+    })
+}
+
+/// openspec AS.365: the card game's art by the readers the rest of the
+/// extract uses: the deck's models as the levels' props (one refused, by
+/// name, in the record), the asset's sounds where the TV's sound book looks
+/// for its stem and its interface record in the part's own folder (the
+/// deck's is the interface part's); the rest named as missing; a second
+/// run keeps it, writing nothing; a dump with none records no file.
+#[test]
+fn the_card_art_lands_by_the_extracts_own_readers_and_a_second_run_keeps_it() {
+    use guac_extract::intros::IrFormat;
+    use guac_extract::screens::{
+        CARD_ART_PART, CARD_ART_RECORD, CardArtRecord, card_interface_path, card_model_path,
+    };
+    use guac_extract::stages::card_art_part;
+    let tmp = tempfile::tempdir().unwrap();
+    let stones = card_stones();
+    let dump = art_dump(tmp.path());
+    let mut dir = opened(tmp.path(), &dump);
+    let usr = dump.join("PS3_GAME/USRDIR");
+    let mut st = ScriptStage::default();
+    card_art_part(&mut dir, &usr, IrFormat::Ron, &mut st).unwrap();
+    let art = &st.card_art;
+    assert!(art.read && !art.kept, "{:?}", st.failed);
+    assert_eq!(art.archives, 2);
+    assert_eq!(art.missing.len(), CARD_GAME.len() + stones.len() - 2);
+    assert_eq!(art.models, 2, "the gourd and the chest");
+    assert_eq!(art.interfaces, 1, "the asset's alone");
+    assert!(art.sounds > 0 && art.textures > 0);
+    assert_eq!(
+        art.refused
+            .iter()
+            .filter(|(what, _)| what.contains("model ") && what.contains("fairy_upgrade_gem"))
+            .count(),
+        1,
+        "{:?}",
+        art.refused
+    );
+    let files = &dir.manifest().parts[CARD_ART_PART];
+    let model = card_model_path(IrFormat::Ron, &stones[0]);
+    let iface = card_interface_path(IrFormat::Ron, &stones[82]);
+    let sound = guac_extract::sounds::path(IrFormat::Ron, &stones[82]);
+    for rel in [&model, &iface, &sound] {
+        assert!(files.contains(rel), "{rel} in {files:?}");
+        assert!(dir.path().join(rel).is_file(), "{rel}");
+    }
+    assert_eq!(sound, "sounds/cardgame_card_000.ron");
+    assert!(!files.contains(&card_interface_path(IrFormat::Ron, &stones[0])));
+    assert!(
+        !files.contains(&guac_extract::sounds::path(IrFormat::Ron, &stones[0])),
+        "a deck with no sound writes none"
+    );
+    assert!(files.iter().any(|f| f.starts_with("textures/")));
+    assert!(files.iter().any(|f| f.starts_with("audio/sounds/")));
+    let models: guac_ir::spawn::SpawnModels = IrFormat::Ron.decode(&dir, &model).unwrap();
+    assert_eq!(models.props.len(), 2);
+    let record: CardArtRecord =
+        serde_json::from_slice(&fs::read(dir.path().join(CARD_ART_RECORD)).unwrap()).unwrap();
+    assert_eq!(record.archives.len(), 2);
+    assert_eq!(record.archives[0].archive, stones[0]);
+    assert_eq!(record.archives[0].refused.len(), 1);
+    assert_eq!(record.archives[1].images, Some(0));
+    assert!(!record.archives[1].sounds.is_empty());
+
+    let written = st.card_art.files.written;
+    let mut again = ScriptStage::default();
+    card_art_part(&mut dir, &usr, IrFormat::Ron, &mut again).unwrap();
+    assert!(again.card_art.kept && !again.card_art.read);
+    assert_eq!(
+        (again.card_art.files.written, again.card_art.files.kept),
+        (0, written)
+    );
+
+    // An interface record of another shape isn't current: the part reads
+    // again (AT.27's rule).
+    let mut stale = dir.manifest().parts[CARD_ART_PART].clone();
+    let at = stale.iter().position(|f| *f == iface).unwrap();
+    stale[at] = iface.replace(".v", ".v0");
+    dir.record_part(CARD_ART_PART, stale).unwrap();
+    let mut third = ScriptStage::default();
+    card_art_part(&mut dir, &usr, IrFormat::Ron, &mut third).unwrap();
+    assert!(third.card_art.read && !third.card_art.kept);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dump = dump_with(tmp.path(), |_| {});
+    let mut dir = opened(tmp.path(), &dump);
+    let mut st = ScriptStage::default();
+    card_art_part(
+        &mut dir,
+        &dump.join("PS3_GAME/USRDIR"),
+        IrFormat::Ron,
+        &mut st,
+    )
+    .unwrap();
+    assert!(st.card_art.read, "{:?}", st.failed);
+    assert!(dir.manifest().parts[CARD_ART_PART].is_empty());
+}
+
+/// An art archive that's there and won't unpack is the part's failure
+/// alone, by name, and the part isn't recorded.
+#[test]
+fn a_card_art_archive_that_wont_read_fails_its_part_alone() {
+    use guac_extract::intros::IrFormat;
+    use guac_extract::screens::CARD_ART_PART;
+    use guac_extract::stages::card_art_part;
+    let tmp = tempfile::tempdir().unwrap();
+    let stones = card_stones();
+    let dump = art_dump(tmp.path());
+    let usr = dump.join("PS3_GAME/USRDIR");
+    fs::write(usr.join(&stones[1]), b"not an archive").unwrap();
+    let mut dir = opened(tmp.path(), &dump);
+    let mut st = ScriptStage::default();
+    card_art_part(&mut dir, &usr, IrFormat::Ron, &mut st).unwrap();
+    let [f] = &st.failed[..] else {
+        panic!("{:?}", st.failed)
+    };
+    assert_eq!(
+        (f.part.as_str(), f.archive.as_str()),
+        (CARD_ART_PART, stones[1].as_str())
+    );
+    assert!(!st.card_art.read);
+    assert!(!dir.manifest().parts.contains_key(CARD_ART_PART));
+}
