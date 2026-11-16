@@ -347,7 +347,7 @@ fn a_card_streams_template_is_no_placement_to_control() {
         words: Vec::new(),
         sets: Vec::new(),
     };
-    let mut answer = |w: &mut ScriptWorld, h| {
+    let answer = |w: &mut ScriptWorld, h| {
         w.op(&control(h), &mut |_| 0, &mut crate::script_engine::NoEngine)
             .unwrap()
     };

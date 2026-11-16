@@ -2138,7 +2138,7 @@ fn key_held(run: &Run) -> bool {
 /// the crane, the first yard fought, the key ledge, the market, the crane's
 /// blocks and Setup_002's yard to where the pirate with the key ran in.
 /// The run, its stops, the scenes seen, the trail and the top-ups.
-fn to_the_card_house() -> (Run, Vec<String>, Vec<(u32, String)>, Trail, Vec<(u32, f32)>) {
+fn to_the_card_house() -> AtTheCardHouse {
     let mut stops = Vec::new();
     let mut run = joined_205(&mut stops);
     let mut scenes = over_the_crane(&mut run, &mut stops);
@@ -2445,7 +2445,22 @@ fn to_the_card_house() -> (Run, Vec<String>, Vec<(u32, String)>, Trail, Vec<(u32
         run.steps
     );
     assert!(woke.is_some(), "Setup_002 woke: {:?}", yard_2.log);
-    (run, stops, scenes, trail, topups)
+    AtTheCardHouse {
+        run,
+        stops,
+        scenes,
+        trail,
+        topups,
+    }
+}
+
+/// [`to_the_card_house`]'s run where it ends.
+struct AtTheCardHouse {
+    run: Run,
+    stops: Vec<String>,
+    scenes: Vec<(u32, String)>,
+    trail: Trail,
+    topups: Vec<(u32, f32)>,
 }
 
 /// openspec AS.325: level 205 from its first yard to Setup_002's end, each
@@ -2469,7 +2484,13 @@ fn to_the_card_house() -> (Run, Vec<String>, Vec<(u32, String)>, Trail, Vec<(u32
 fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
     let started = std::time::Instant::now();
     println!("load at start: {}", load());
-    let (mut run, mut stops, mut scenes, mut trail, mut topups) = to_the_card_house();
+    let AtTheCardHouse {
+        mut run,
+        mut stops,
+        mut scenes,
+        mut trail,
+        mut topups,
+    } = to_the_card_house();
 
     trail.mark(&run, "card-house");
     // Into the card house: Fangs' intro, his game (stood in won), his
@@ -4595,7 +4616,12 @@ fn fangs_games(
     cap: u32,
     over: &dyn Fn(&Run) -> bool,
 ) -> FangsPlayed {
-    let (mut run, mut stops, mut scenes, _trail, _topups) = to_the_card_house();
+    let AtTheCardHouse {
+        mut run,
+        mut stops,
+        mut scenes,
+        ..
+    } = to_the_card_house();
     run.world.card_streams.play_games();
     for _ in 0..600 {
         if run.hero().pivot.y < -300.0 {

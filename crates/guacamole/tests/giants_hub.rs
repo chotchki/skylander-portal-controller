@@ -1794,7 +1794,6 @@ fn dreadbeards_games(plans: &[(Plan, u32)], cap: u32) -> Played {
             .last()
             .is_some_and(|g| g.ended > 0 && g.pirate.as_deref() == Some("wait for loot theatrics"))
         {
-            was_board = now;
             break;
         }
         was_board = now;
