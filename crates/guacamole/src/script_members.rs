@@ -10650,6 +10650,12 @@ mod copy_tests {
                 },
             );
         });
+        // His walk layered, as his locomotion lays it (openspec AS.442: a
+        // whole clip takes the place of the whole one playing), so his idle
+        // plays beside it.
+        let mut infos = crate::scripts::clip_infos(&crate::picks::tests::palette(), &[]);
+        infos[1].layered = true;
+        r.world.set_clip_info(ME, infos);
         let (me, other) = (r.me, r.other);
         let plays = |r: &Run, actor| -> Vec<bool> {
             r.copies(actor, 1).iter().map(|(_, s)| s.plays()).collect()
