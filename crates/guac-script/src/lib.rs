@@ -446,10 +446,12 @@
 //!   stone (a `Card Game - Board Object`), its edit type the move (each set
 //!   reference's edit type is its left side's type); refused, nothing is
 //!   chosen and the next tick rolls again, so the opponent never plays the
-//!   list's first. It rests on the rule and on the disc: a board object has
-//!   no `card` field, so a stone kept there would leave the move reading its
-//!   stone and square as nothing on every landed roll. No recording shows
-//!   it; an RPCS3 game would.
+//!   list's first. It rests on the rule, whose reading covers this case (the
+//!   op compares the read structure's definition name with the edit type's
+//!   and writes nothing on a mismatch, the old value not kept), and on the
+//!   disc: a board object has no `card` field, so a stone kept there would
+//!   leave the move reading its stone and square as nothing on every landed
+//!   roll. No recording shows it; an RPCS3 game would.
 //! - A set is an ordered list. Combine codes: 0 adds if absent (a set's
 //!   members in order, or copied whole into an empty set), 1 removes one
 //!   occurrence of each, 2 intersects, 3 replaces, 4 appends with duplicates,

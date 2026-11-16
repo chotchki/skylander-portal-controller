@@ -517,10 +517,13 @@ pub fn hero_back(run: &mut Run) -> bool {
 /// stops on the way. Whether he's free.
 pub fn free(run: &mut Run, cap: u32, stops: &mut Vec<guac_script::Halt>) -> bool {
     for _ in 0..cap {
-        if run
-            .minion
-            .is_some_and(|m| !run.vm.removed(m) && run.vm.behaviour(m) != Some("disabled"))
-        {
+        // A minion just joined has no behaviour until his first tick, where
+        // his spawn sequence's hold begins: he's free once he has one
+        // past it (the review's: read as free at the join, the first
+        // heading lost 52 of its steps to the hold).
+        if run.minion.is_some_and(|m| {
+            !run.vm.removed(m) && run.vm.behaviour(m).is_some_and(|b| b != "disabled")
+        }) {
             return true;
         }
         stops.extend(run.step_play().unwrap());
