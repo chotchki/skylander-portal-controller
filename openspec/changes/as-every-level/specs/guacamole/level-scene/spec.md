@@ -526,6 +526,17 @@ A level's people SHALL stand at rest on the idle their model plays, never in the
 - **WHEN** a hero walks into the workshop or the pub and talks to Rob or the card pirate
 - **THEN** each stands on his idles, arms at his sides, at rest and while he talks
 
+### Requirement: A scene's people play what their scenes ask
+When a scene or a person's own script plays a clip on a person, the TV SHALL play that clip from its start, going round past its end where its palette entry marks it looping (an idle, a talk, a flight), one whole clip on a person at a time, the person a placement of the level's own file or a clone the scene makes alike.
+
+#### Scenario: Flynn's flight in level 214's intro
+- **WHEN** level 214's intro flies Flynn in on the ship
+- **THEN** his flight idle goes round through the flight, never his standing idle in the air
+
+#### Scenario: Cali's talk on the hub
+- **WHEN** a player talks to Cali on hub stage 1 and her intro plays
+- **THEN** her talk plays on her through the talk, round past its 7 s
+
 ### Requirement: A scene's jump flies to its landing
 When a scene jumps one of a level's people to a waypoint, the TV SHALL fly him on the jump's own arc, up and then down under his gravity through whatever is in the way until his landing's height, then bring him down on the ground there, never under it: level 201's practice pit's last scene jumps Brock off the yard to the landing 3.4 m below.
 
