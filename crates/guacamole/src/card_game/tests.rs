@@ -419,8 +419,10 @@ fn the_restore_is_owed_once_the_replacement_is_set_and_cleared() {
     let s = s.next(false);
     assert_eq!(s, Restore::Asked, "the teardown's restore");
     assert_eq!(s.next(false), Restore::Asked, "owed until answered");
-    let mut streams = CardStreams::default();
-    streams.restore = Restore::Asked;
+    let mut streams = CardStreams {
+        restore: Restore::Asked,
+        ..CardStreams::default()
+    };
     streams.hero_returned();
     assert_eq!(streams.restore(), Restore::Idle);
     assert_eq!(streams.restore().next(false), Restore::Idle);
