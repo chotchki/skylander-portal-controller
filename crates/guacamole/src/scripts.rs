@@ -537,7 +537,7 @@ pub struct ScriptWorld {
     /// Where the last step's get-out carried each player getting out of a
     /// turret (openspec AS.189, [`crate::turret::carry_out`]).
     pub(crate) turret_carried: Vec<(Handle, Vec3)>,
-    load_level: Value,
+    pub(crate) load_level: Value,
     /// The levels the scripts asked for, as each step took them.
     pub requests: Vec<Value>,
     /// The disc's levels by archive name (openspec AS.15): a request whose

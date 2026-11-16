@@ -69,6 +69,11 @@ pub fn stones() -> &'static [&'static str] {
     })
 }
 
+/// Whether `archive` loads as a misc stream (its folder): one at a time.
+fn is_misc(archive: &str) -> bool {
+    archive.starts_with("misc/")
+}
+
 /// Whether `archive` is one of [`stones`].
 fn is_stone(archive: &str) -> bool {
     stones().contains(&archive)
@@ -212,6 +217,8 @@ pub struct CardStreams {
     pub(crate) pending: Vec<&'static str>,
     /// Every join taken, by archive, with how many placements it added.
     pub joined: Vec<(&'static str, usize)>,
+    /// The misc stream joined last: the one a misc load replaces.
+    pub(crate) misc: Option<&'static str>,
     /// Whether a yes at a pirate plays the original's own game on the VM
     /// (openspec AS.366, [`CardStreams::play_games`]) in place of the TV's
     /// quit ([`crate::prompt::quit_card_game`]). False on every TV run.
@@ -405,6 +412,59 @@ fn hold_card_particles(vm: &mut Vm, world: &ScriptWorld) -> usize {
     held
 }
 
+/// The misc stream slot (the module docs): the engine holds one misc
+/// stream at a time (the hand select, the reward sprites, a stone's asset),
+/// a misc load replacing the last. A request this step for a linked misc
+/// card stream takes the last one's running placements off and runs their
+/// SHUTDOWNs now, before the step's end joins the new one ([`join_asked`]):
+/// the hand select's starter closes its menus and gives the pause menu
+/// back so, and asked again (a second game) the hand select starts anew.
+/// How many it took off.
+fn replace_misc(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<usize, Halt> {
+    let load = host.world.load_level;
+    if load == Value::Null {
+        return Ok(0);
+    }
+    let Some(text) = host.world.text_of(load) else {
+        return Ok(0);
+    };
+    let streams = &host.world.card_streams;
+    let Some(next) = asked_all(&text)
+        .into_iter()
+        .find(|a| is_misc(a) && streams.units.iter().any(|(u, _)| u == a))
+    else {
+        return Ok(0);
+    };
+    let last = host.world.card_streams.misc.replace(next);
+    let Some(unit) = last.and_then(|l| {
+        host.world
+            .card_streams
+            .units
+            .iter()
+            .find(|(a, _)| *a == l)
+            .map(|(_, u)| *u)
+    }) else {
+        return Ok(0);
+    };
+    let off: Vec<_> = crate::ship_parts::stream_placements(host.world, unit)
+        .into_iter()
+        .map(|(_, h)| h)
+        .filter(|h| vm.placement_of(*h).is_some_and(|id| !vm.removed(id)))
+        .collect();
+    for &h in &off {
+        vm.remove(h);
+    }
+    if !off.is_empty() {
+        info!(
+            stream = last,
+            taken_off = off.len(),
+            "a misc load replaced the last card game stream"
+        );
+        vm.shut_down(host)?;
+    }
+    Ok(off.len())
+}
+
 /// One step's answers for a played card game (openspec AS.366), after the
 /// walk as the level end's are; nothing on a run that doesn't play them
 /// ([`CardStreams::play_games`]). The hand select's page, once open, is
@@ -413,6 +473,7 @@ fn hold_card_particles(vm: &mut Vm, world: &ScriptWorld) -> usize {
 /// it played; the game's particles are held to their disable time
 /// ([`hold_card_particles`]). Whether the hand select was answered.
 pub fn step(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<bool, Halt> {
+    replace_misc(vm, host)?;
     if !host.world.card_streams.played {
         return Ok(false);
     }

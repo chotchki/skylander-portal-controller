@@ -1562,3 +1562,480 @@ fn the_card_streams_name_no_member_the_tv_lacks_but_the_wii_pair() {
     wii.sort();
     assert_eq!(lacking_ids, wii, "{lacking:?}");
 }
+
+/// What a played game on hub stage 2 came to ([`dreadbeards_games`]): each
+/// game's end (the step, the manager's last behaviour and the pirate's next
+/// one), the opponent's rolls, the behaviours' stays, every stop, the card
+/// streams still running after, and the leftovers before the yes and after
+/// the run's last game.
+#[derive(Debug)]
+struct Played {
+    games: Vec<Game>,
+    picks: cards::Picks,
+    stays: cards::Stays,
+    stops: Vec<guac_script::Halt>,
+    running: Vec<String>,
+    before: std::collections::BTreeMap<String, String>,
+    after: std::collections::BTreeMap<String, String>,
+    pirate: Option<String>,
+    steps: u32,
+    moved: f32,
+    streams: Vec<Option<String>>,
+    /// How many times the hero was put back after a game ([`cards::hero_back`]).
+    backs: u32,
+    /// The board's two chances as his call set them (`best move - 1 %`,
+    /// `best move - 2 %`), read off the first game.
+    chances: Option<(i32, i32)>,
+}
+
+/// One game's end.
+#[derive(Debug, Clone, PartialEq)]
+struct Game {
+    seed: u32,
+    started: u32,
+    ended: u32,
+    board: Option<String>,
+    pirate: Option<String>,
+}
+
+/// How a game is played and when it's over ([`dreadbeards_games`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Plan {
+    /// Played by `policy` to the board's report, accepted: a loss ends in
+    /// the replay (the board's next game), a win in his loot.
+    Play(cards::Policy),
+    /// Quit through the board's own confirm at the player's first pick.
+    Quit,
+}
+
+/// Hub stage 2's intro played, the hero set by Dreadbeard, his talk button
+/// pressed until his question and a yes answered as the TV's modal answers
+/// it, in a run that plays the card game (`CardStreams::play_games`); each
+/// of `plans` a game, seeded from its seed as the board starts it
+/// ([`cards::seed`]); a quit game's next is asked for with another yes. The
+/// run ends when the last game is over: a loss at the replay's start, a win
+/// at his `wait for loot theatrics` (AS.368's), a quit at his `wait for
+/// player`; then a full stick for 150 steps (when he's free to walk).
+fn dreadbeards_games(plans: &[(Plan, u32)], cap: u32) -> Played {
+    let (stage, intro) = STAGES[1];
+    let (mut run, _found) = run_on_level(Mode::Play, stage, setup(&[]));
+    run.world.card_streams.play_games();
+    let mut stops = Vec::new();
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap());
+    }
+    run.join().unwrap();
+    let intro = run.placement(intro);
+    while !run.vm.removed(intro) {
+        assert!(run.steps < 3600, "the intro's end");
+        stops.extend(run.step_play().unwrap());
+    }
+    for _ in 0..30 {
+        stops.extend(run.step_play().unwrap());
+    }
+    let id = run.placement("Dreadbeard");
+    let at = guac_motion::seam::Vec3::from_array(
+        run.files
+            .placed
+            .iter()
+            .find(|p| p.obj.unit == LEVEL && p.name == "Dreadbeard")
+            .expect("his placement")
+            .position,
+    ) + guac_motion::seam::Vec3::new(1.5, 0.5, 1.5);
+    run.put(at, 0.0);
+    for _ in 0..10 {
+        stops.extend(run.step_play().unwrap());
+    }
+    let before = cards::leftovers(&run);
+    let (mut picks, mut stays) = (cards::Picks::default(), cards::Stays::default());
+    let mut games: Vec<Game> = Vec::new();
+    let mut player = cards::Player::new(cards::Policy::Naive);
+    let (mut read, mut asked, mut quit_sent) = (0, false, false);
+    let mut was_board: Option<String> = None;
+    let mut last_board: Option<String> = None;
+    let start = run.steps;
+    let debug = std::env::var_os("AS366_DEBUG").is_some();
+    let mut backs = 0;
+    let mut chances = None;
+    let mut dbg_pirate: Option<String> = None;
+    while run.steps - start < cap {
+        // The game on, else the next one asked for.
+        let on = games.iter().position(|g| g.ended == 0);
+        let Some(&(plan, _)) = plans.get(on.unwrap_or(games.len())) else {
+            break;
+        };
+        if on.is_none() && !asked {
+            let press = cutscene_name(&run).is_none() && run.steps.is_multiple_of(20);
+            talk_button(&mut run, press);
+        } else if let Plan::Play(policy) = plan {
+            player.policy = policy;
+            let pad = player.pad(&run);
+            run.bench.pads[0] = pad;
+        } else {
+            talk_button(&mut run, false);
+        }
+        stops.extend(run.step_play().unwrap());
+        if let Some(p) = guacamole::prompt::up(&run.vm, &run.world) {
+            read += 1;
+            if read >= READING {
+                read = 0;
+                let answered = run
+                    .with_host(|vm, host| guacamole::prompt::answer(vm, host, &p, true))
+                    .unwrap_or_else(|h| panic!("the answer: {h}"));
+                assert!(answered);
+                asked = true;
+                if debug {
+                    println!("AS366 step {} yes", run.steps);
+                }
+            }
+        }
+        if debug {
+            let b = run.vm.behaviour(id).map(str::to_owned);
+            if b != dbg_pirate {
+                println!(
+                    "AS366 step {} pirate {b:?} board {:?} streams {:?} menu {:?}",
+                    run.steps,
+                    cards::board(&run),
+                    run.world.streams.back(),
+                    guacamole::card_game::page_up(&run.vm).map(|p| p.2)
+                );
+                dbg_pirate = b;
+            }
+        }
+        picks.note(&run);
+        stays.note(&run);
+        if chances.is_none() {
+            chances = cards::chances(&run);
+        }
+        if cards::hero_back(&mut run) {
+            backs += 1;
+        }
+        let now = cards::board(&run);
+        let pirate = run.vm.behaviour(id).map(str::to_owned);
+        // The game on over: a quit at his wait for the player, a win at his
+        // loot's wait, a loss at the replay's start.
+        if let Some(i) = on {
+            let over = match plan {
+                Plan::Quit => pirate.as_deref() == Some("wait for player"),
+                Plan::Play(_) => {
+                    pirate.as_deref() == Some("wait for loot theatrics")
+                        || (was_board.as_deref() == Some(cards::LOST)
+                            && now.as_deref() == Some(cards::GAME_START))
+                }
+            };
+            if over {
+                let g = &mut games[i];
+                g.ended = run.steps;
+                g.board = last_board.clone();
+                g.pirate = pirate.clone();
+                // A quit's next game is asked for again, the hero set by
+                // him again as a talk sets him; a loss's replay starts on
+                // its own.
+                asked = !matches!(plan, Plan::Quit);
+                if !asked {
+                    run.put(at, 0.0);
+                }
+            }
+        }
+        // A game's start, seeded: the first, each replay and each asked again.
+        if now.as_deref() == Some(cards::GAME_START)
+            && was_board.as_deref() != now.as_deref()
+            && let Some(&(_, seed)) = plans.get(games.len())
+        {
+            cards::seed(&mut run, seed);
+            games.push(Game {
+                seed,
+                started: run.steps,
+                ended: 0,
+                board: None,
+                pirate: None,
+            });
+            quit_sent = false;
+        }
+        if games.last().is_some_and(|g| g.ended == 0)
+            && matches!(plans[games.len() - 1].0, Plan::Quit)
+            && now.as_deref() == Some(cards::PICK_STONE)
+            && !quit_sent
+        {
+            quit_sent = run
+                .with_host(guacamole::card_game::quit)
+                .unwrap_or_else(|h| panic!("the quit: {h}"));
+        }
+        if now.is_some() {
+            last_board.clone_from(&now);
+        }
+        // A win ends the pirate's games: his loot waits on AS.368's
+        // theatrics, so nothing after it can start.
+        if games
+            .last()
+            .is_some_and(|g| g.ended > 0 && g.pirate.as_deref() == Some("wait for loot theatrics"))
+        {
+            was_board = now;
+            break;
+        }
+        was_board = now;
+        if games.len() == plans.len() && games.iter().all(|g| g.ended > 0) {
+            break;
+        }
+    }
+    talk_button(&mut run, false);
+    let after = cards::leftovers(&run);
+    let pirate = run.vm.behaviour(id).map(str::to_owned);
+    let running = cards::streams_running(&run);
+    // Free to walk, where the game's over and his scene let him go.
+    let from = run.hero().pivot;
+    for _ in 0..150 {
+        run.bench.pads[0] = guacamole::script_engine::Pad {
+            stick: guac_motion::stick::Stick::new(0.0, 1.0),
+            actions: [false; 4],
+            connected: true,
+        };
+        stops.extend(run.step_play().unwrap());
+    }
+    let moved = run.hero().pivot.distance(from);
+    println!(
+        "Dreadbeard's games: {games:?}; rolls: first landed {} of {} ({:.1}%), second {:.1}% of {}; longest unpressed stay {:?}; {} stops; running after {running:?}; moved {moved:.1}; steps {}",
+        picks.first_landed,
+        picks.attempts,
+        picks.first(),
+        picks.second(),
+        picks.count(),
+        stays.longest_unpressed(),
+        stops.len(),
+        run.steps
+    );
+    Played {
+        games,
+        picks,
+        stays,
+        stops,
+        running,
+        before,
+        after,
+        pirate,
+        steps: run.steps,
+        moved,
+        streams: run.world.streams.iter().cloned().collect(),
+        backs,
+        chances,
+    }
+}
+
+/// The seeds of [`dreadbeards_game_quit_lost_and_won_each_end_in_his_own_next_behaviour`]'s
+/// three games: the quit's, the naive player's loss and the strong
+/// player's win (each found by playing; a seed's game is the same to the
+/// step from the same start).
+const DREADBEARDS_SEEDS: [u32; 3] = [1, 2, 4];
+
+/// openspec AS.366: Dreadbeard's card game played on the VM, headless, on
+/// hub stage 2 (3 by 3, his call's chances), three games in one run: quit
+/// at the first pick through the board's own confirm, which ends in his
+/// quit scene and `wait for player`; asked again and lost by a naive player,
+/// whose report's accept ends in the replay (the board's next game); that
+/// replay won by a strong player, which ends in his loot's `wait for loot
+/// theatrics` (AS.368's). The hand the hand select's own recommended-hand
+/// macro chose, the cursor and accept by pad 0, the flips, the opponent and
+/// the end the scripts'. Nothing stops, no card stream's placement but a
+/// stone's runs after, and he walks once the game's over.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn dreadbeards_game_quit_lost_and_won_each_end_in_his_own_next_behaviour() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let seeds: Vec<u32> = std::env::var("AS366_SEEDS").map_or(DREADBEARDS_SEEDS.to_vec(), |v| {
+        v.split(',').map(|s| s.parse().unwrap()).collect()
+    });
+    let played = dreadbeards_games(
+        &[
+            (Plan::Quit, seeds[0]),
+            (Plan::Play(cards::Policy::Naive), seeds[1]),
+            (Plan::Play(cards::Policy::Strong), seeds[2]),
+        ],
+        40_000,
+    );
+    for g in &played.games {
+        println!("game {g:?}, {} steps", g.ended - g.started);
+    }
+    for d in cards::differ(&played.before, &played.after) {
+        println!("left: {d}");
+    }
+    println!(
+        "streams asked: {:?}; put back {}",
+        played.streams, played.backs
+    );
+    assert_eq!(played.games.len(), 3, "{:?}", played.games);
+    let [quit, lost, won] = [&played.games[0], &played.games[1], &played.games[2]];
+    assert_eq!(quit.pirate.as_deref(), Some("wait for player"), "{quit:?}");
+    assert_eq!(lost.board.as_deref(), Some(cards::LOST), "{lost:?}");
+    assert_eq!(won.board.as_deref(), Some(cards::WON), "{won:?}");
+    assert_eq!(
+        won.pirate.as_deref(),
+        Some("wait for loot theatrics"),
+        "{won:?}"
+    );
+    assert_eq!(played.pirate.as_deref(), Some("wait for loot theatrics"));
+    assert!(played.stops.is_empty(), "{:#?}", played.stops);
+    // The board and the hand select down; the reward card's sprites, which
+    // his loot's theatrics wait on (AS.368's), up.
+    assert_eq!(
+        played.running,
+        ["2dSpritesStream_Startup", "CardArt_Macros"],
+        "{:?}",
+        played.running
+    );
+    assert_eq!(
+        played.backs, 2,
+        "the hero put back after the quit and the win"
+    );
+    // No behaviour of the board's, the player's own waits aside, outstays
+    // the game's own longest (the stone's 3D presentation and the flips).
+    let (longest, stay) = played.stays.longest_unpressed().expect("a stay");
+    println!(
+        "longest unpressed stay: {longest} {stay} steps; all {:?}",
+        played.stays.longest
+    );
+    assert!(stay <= STAY_CAP, "{longest}: {stay} steps");
+    println!(
+        "{:.1} s, {} steps, load at end: {}",
+        started.elapsed().as_secs_f64(),
+        played.steps,
+        load()
+    );
+}
+
+/// The longest any board behaviour but the player's own waits may last
+/// (openspec AS.366): no recording of a card game exists to bound it by, so
+/// the bound is the game's own, its slowest stay seen over the 1,000 seeded
+/// games ([`dreadbeards_rolls_over_a_thousand_seeded_games`]).
+const STAY_CAP: u32 = 600;
+
+/// openspec AS.366: a game is seeded by the run's draws restarted from its
+/// seed as the board starts it ([`cards::seed`]), so the same seed from the
+/// same start replays it to the step: two runs of hub stage 2, each a naive
+/// player's game from seed 7, the board's every behaviour at the same step
+/// and the opponent's every pick the same; and a second game after a quit,
+/// seeded 7 too, plays the same as the first, step for step from its own
+/// start.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_seeded_game_replays_to_the_step_and_a_second_plays_the_same() {
+    println!("load at start: {}", load());
+    let naive = Plan::Play(cards::Policy::Naive);
+    let a = dreadbeards_games(&[(naive, 7)], 20_000);
+    let b = dreadbeards_games(&[(naive, 7)], 20_000);
+    assert_eq!(a.games, b.games);
+    assert_eq!(a.stays.order, b.stays.order);
+    assert_eq!(a.picks.trace, b.picks.trace);
+    assert!(!a.picks.trace.is_empty());
+    let second = dreadbeards_games(&[(Plan::Quit, 1), (naive, 7)], 20_000);
+    assert_eq!(second.games.len(), 2, "{:?}", second.games);
+    let (first, again) = (&a.games[0], &second.games[1]);
+    assert_eq!(first.board, again.board);
+    let relative = |p: &Played, g: &Game| -> Vec<(u32, String)> {
+        p.stays
+            .order
+            .iter()
+            .filter(|(at, _)| *at >= g.started && *at <= g.ended)
+            .map(|(at, b)| (at - g.started, b.clone()))
+            .collect()
+    };
+    assert_eq!(relative(&a, first), relative(&second, again));
+    let picks = |p: &Played, g: &Game| -> Vec<(u32, usize, Option<usize>, u32)> {
+        p.picks
+            .trace
+            .iter()
+            .filter(|t| t.0 >= g.started && t.0 <= g.ended)
+            .map(|t| (t.0 - g.started, t.1, t.2, t.3))
+            .collect()
+    };
+    assert_eq!(picks(&a, first), picks(&second, again));
+    for p in [&a, &b, &second] {
+        assert!(p.stops.is_empty(), "{:#?}", p.stops);
+    }
+    println!(
+        "seed 7: {:?}, {} picks, {} steps; again after a quit from step {}",
+        first.board,
+        a.picks.trace.len(),
+        first.ended - first.started,
+        again.started
+    );
+    println!("load at end: {}", load());
+}
+
+/// openspec AS.366: the opponent's rolls over 1,000 seeded games on hub
+/// stage 2 (seeds 1000 to 1999, a naive player's games, each loss's replay
+/// the next, a run started again after a win): each roll's share within 5
+/// points of the call's chance for it, his call on this stage's 70 and 70
+/// ([`cards::Picks`]: the first roll's landings of its draws, the second's
+/// of the full lists' picks), and no board behaviour but the player's own
+/// waits past [`STAY_CAP`]. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump; 1,000 games"]
+fn dreadbeards_rolls_over_a_thousand_seeded_games() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let games: u32 = std::env::var("AS366_GAMES").map_or(1000, |v| v.parse().unwrap());
+    let naive = Plan::Play(cards::Policy::Naive);
+    let mut picks = cards::Picks::default();
+    let mut longest: std::collections::BTreeMap<String, u32> = Default::default();
+    let (mut played, mut runs, mut won, mut steps) = (0u32, 0, 0, 0u64);
+    let mut stops = Vec::new();
+    let mut chances = None;
+    while played < games {
+        let plans: Vec<(Plan, u32)> = (played..games).map(|i| (naive, 1000 + i)).collect();
+        let p = dreadbeards_games(&plans, u32::MAX);
+        runs += 1;
+        steps += u64::from(p.steps);
+        let done = p.games.iter().filter(|g| g.ended > 0).count() as u32;
+        assert!(done > 0, "a run with no game over: {:?}", p.games);
+        won += p
+            .games
+            .iter()
+            .filter(|g| g.board.as_deref() == Some(cards::WON))
+            .count() as u32;
+        played += done;
+        picks.attempts += p.picks.attempts;
+        picks.first_landed += p.picks.first_landed;
+        picks.second += p.picks.second;
+        picks.last += p.picks.last;
+        for (b, n) in &p.stays.longest {
+            let e = longest.entry(b.clone()).or_default();
+            *e = (*e).max(*n);
+        }
+        stops.extend(p.stops);
+        chances = chances.or(p.chances);
+        println!(
+            "after {played} games ({runs} runs, {won} won): first {:.1}% of {}, second {:.1}% of {}; {:.0} s, load {}",
+            picks.first(),
+            picks.attempts,
+            picks.second(),
+            picks.count(),
+            started.elapsed().as_secs_f64(),
+            load()
+        );
+    }
+    println!("his call's chances: {chances:?}; stays {longest:?}");
+    let (best, second) = chances.expect("his call's chances");
+    assert!(
+        (picks.first() - f64::from(best)).abs() <= 5.0,
+        "first roll {:.1}% against {best}",
+        picks.first()
+    );
+    assert!(
+        (picks.second() - f64::from(second)).abs() <= 5.0,
+        "second roll {:.1}% against {second}",
+        picks.second()
+    );
+    let worst = longest
+        .iter()
+        .filter(|(b, _)| !b.starts_with("player turn") && !b.contains("tutorial"))
+        .max_by_key(|(_, n)| **n);
+    println!("longest unpressed stay over the games: {worst:?}");
+    assert!(worst.is_some_and(|(_, n)| *n <= STAY_CAP), "{worst:?}");
+    assert!(stops.is_empty(), "{:#?}", &stops[..stops.len().min(10)]);
+    println!(
+        "{played} games in {runs} runs, {steps} steps, {:.0} s, load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
