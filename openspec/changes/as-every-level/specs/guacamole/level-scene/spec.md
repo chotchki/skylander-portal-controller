@@ -509,7 +509,7 @@ Past level 214's earth wall a Giant's attacks SHALL break the super hard rocks, 
 - **THEN** his attacks, the area's bomb and its key take him to the hat box, which gives its hat
 
 ### Requirement: What hangs on someone taken off
-When a level's scripts take off an actor something hangs on, a hat, a tool, a lid or an effect, the TV SHALL draw nothing of what hangs on him, nor of what hangs on that, while he's off, and SHALL draw it on him again if he's put back. What hangs on him stays in the level for its scripts: chapter 1's outro takes its three Mabu off with their beanies 2.2 m up on them.
+When a level's scripts take off an actor something hangs on, a hat, a tool, a lid or an effect, the TV SHALL draw nothing of what hangs on him, nor of what hangs on that, while he's off, and SHALL draw it on him again if he's put back; a camera shot's rig taken off at its end leaves what rode it drawn where it stands. Chapter 1's outro takes its three Mabu off with their beanies 2.2 m up on them.
 
 #### Scenario: Chapter 1's outro
 - **WHEN** chapter 1's outro ends and takes its three Mabu off
@@ -518,6 +518,21 @@ When a level's scripts take off an actor something hangs on, a hat, a tool, a li
 #### Scenario: A bomb thrown
 - **WHEN** a hero throws level 214's workshop bomb at its wall and it bursts
 - **THEN** nothing of the bomb stays drawn where it was
+
+#### Scenario: The sail's ship on the second island
+- **WHEN** level 214's sail sets its ship on the second island's dock and its last shot's rig is taken off
+- **THEN** the ship stays drawn there with Flynn on its deck
+
+### Requirement: A ship's parts ride it
+What a script hangs on an actor itself SHALL be drawn turned as that actor is, its own turn on top, and what hangs on a node of an unposed model SHALL stand where the model's whole turn puts the node, so a ship's masthead, roof, engine and oars, and the people on its deck, stay on it as it flies, banks and docks. A landing pod's own script SHALL make its base, plank, propeller and wheel.
+
+#### Scenario: Level 214's intro
+- **WHEN** the intro flies the ship in and docks it
+- **THEN** every part it carries draws within 5 cm of where the hull's frame puts it, and Flynn's and Cali's feet stand on its deck
+
+#### Scenario: Level 201's intro
+- **WHEN** the intro flies the landing pod in
+- **THEN** its base, plank, propeller and wheel fly with it and Flynn and Cali stand on its base
 
 ### Requirement: A person rests on its own idle
 A level's people SHALL stand at rest on the idle their model plays, never in their bind pose. Where that idle is a set of clips the original picks among, the TV SHALL play the set's clips: level 214's Rob in the workshop and the card pirate in the pub rest on their three idles.

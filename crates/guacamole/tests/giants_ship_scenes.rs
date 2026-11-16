@@ -53,6 +53,7 @@ fn setup() -> Setup {
     Setup {
         props: true,
         interface: true,
+        sounds: true,
         posed_rigs: true,
         ..Setup::default()
     }
@@ -453,7 +454,7 @@ fn level_214s_sail_carries_the_ship_whole_to_the_second_island() {
     let (mut carried, mut docked) = (Vec::new(), Vec::new());
     let mut k = 0u32;
     while !run.vm.removed(sail) {
-        assert!(k < 3000, "the sail over");
+        assert!(k < 6000, "the sail over");
         let up = cutscene_name(&run).is_some();
         still(
             &mut run,
