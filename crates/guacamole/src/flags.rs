@@ -87,6 +87,19 @@ const ACTORS_MAX: usize = 400;
 /// A note's longest, in bytes.
 pub(crate) const NOTE_MAX: usize = 4000;
 
+/// The phone asks waiting for the TV at once; one past it is a 429, so a
+/// flood (a stuck client, two phones) can't stack captures onto a frame.
+pub(crate) const ASKS_MAX: usize = 4;
+
+/// A note is text: a control character other than a line break or a tab
+/// is refused (400), so nothing but text reaches `note.txt`.
+pub(crate) fn note_ok(note: &str) -> bool {
+    note.len() <= NOTE_MAX
+        && !note
+            .chars()
+            .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+}
+
 /// How long the phone's request waits for the TV to take its capture.
 const PHONE_WAIT: Duration = Duration::from_secs(5);
 
@@ -262,13 +275,15 @@ impl FlagAsks {
         self.on.load(Ordering::Relaxed)
     }
 
-    fn push(&self, note: String) -> oneshot::Receiver<Taken> {
+    /// Queues a phone's ask, or none with [`ASKS_MAX`] already waiting.
+    fn push(&self, note: String) -> Option<oneshot::Receiver<Taken>> {
+        let mut asks = self.asks.lock().unwrap_or_else(|e| e.into_inner());
+        if asks.len() >= ASKS_MAX {
+            return None;
+        }
         let (reply, rx) = oneshot::channel();
-        self.asks
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(PhoneAsk { note, reply });
-        rx
+        asks.push(PhoneAsk { note, reply });
+        Some(rx)
     }
 
     fn take(&self) -> Vec<PhoneAsk> {
@@ -291,10 +306,11 @@ struct FlagBody {
 /// flags (its folder made); the phone shows its field only on a yes, and a
 /// build without the route (the product, a plain guacamole) answers none.
 /// `POST /api/_test/flag` (`{"note": ".."}`, the note optional, at most
-/// [`NOTE_MAX`] bytes) takes a capture on the TV's next frame, or joins the
+/// [`NOTE_MAX`] bytes, no control character but a line break or a tab) takes a capture on the TV's next frame, or joins the
 /// last one by [`joins`]' rule, and answers 201 with `{"folder": name,
 /// "joined": bool}` once its folder and JSON are written; 409 with flags
-/// off, 400 for any other body, 503 when the TV took nothing in 5 s.
+/// off, 400 for any other body, 429 with [`ASKS_MAX`] asks already waiting,
+/// 503 when the TV took nothing in 5 s (a folder it couldn't make included).
 pub(crate) fn routes<S: Clone + Send + Sync + 'static>(asks: &FlagAsks) -> axum::Router<S> {
     use axum::http::StatusCode;
     let (get, post, key) = (asks.clone(), asks.clone(), asks.clone());
@@ -327,13 +343,15 @@ pub(crate) fn routes<S: Clone + Send + Sync + 'static>(asks: &FlagAsks) -> axum:
                     let Ok(axum::Json(body)) = body else {
                         return StatusCode::BAD_REQUEST.into_response();
                     };
-                    if body.note.len() > NOTE_MAX {
+                    if !note_ok(&body.note) {
                         return StatusCode::BAD_REQUEST.into_response();
                     }
                     if !asks.on() {
                         return StatusCode::CONFLICT.into_response();
                     }
-                    let rx = asks.push(body.note);
+                    let Some(rx) = asks.push(body.note) else {
+                        return StatusCode::TOO_MANY_REQUESTS.into_response();
+                    };
                     match tokio::time::timeout(PHONE_WAIT, rx).await {
                         Ok(Ok(taken)) => (StatusCode::CREATED, axum::Json(taken)).into_response(),
                         _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
@@ -1167,7 +1185,7 @@ mod tests {
         app.update();
         assert_eq!(folders(&dir).len(), 1);
 
-        let mut joined = asks.push("the ship is missing".into());
+        let mut joined = asks.push("the ship is missing".into()).unwrap();
         app.update();
         assert_eq!(
             joined.try_recv().unwrap(),
@@ -1180,7 +1198,7 @@ mod tests {
         assert!(note.ends_with("] the ship is missing\n"), "{note}");
         assert_eq!(folders(&dir).len(), 1, "joined, no new folder");
 
-        let mut own = asks.push("double swords".into());
+        let mut own = asks.push("double swords".into()).unwrap();
         app.update();
         let taken = own.try_recv().unwrap();
         assert!(
@@ -1212,7 +1230,7 @@ mod tests {
             .as_mut()
             .unwrap()
             .at -= JOIN_WINDOW + Duration::from_secs(1);
-        let mut late = asks.push("late".into());
+        let mut late = asks.push("late".into()).unwrap();
         app.update();
         assert!(!late.try_recv().unwrap().joined);
         assert_eq!(folders(&dir).len(), 4);
@@ -1234,6 +1252,42 @@ mod tests {
             "released the frame after"
         );
         assert_eq!(folders(&dir).len(), 5);
+    }
+
+    /// A folder that can't be written (a full disk, a folder gone read-only)
+    /// costs the capture and nothing else: no panic, the phone's ask let go
+    /// (its route answers 503), the TV's frames going on.
+    #[cfg(unix)]
+    #[test]
+    fn a_capture_that_cant_be_written_plays_on() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("flags");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let asks = FlagAsks::default();
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::input::InputPlugin))
+            .insert_resource(TvMirror::default())
+            .add_plugins(Flags {
+                dir: dir.clone(),
+                log_dir: tmp.path().join("no-logs"),
+                asks: asks.clone(),
+            });
+        app.update();
+        asks.keys.fetch_add(1, Ordering::Relaxed);
+        let mut ask = asks.push("a note".into()).unwrap();
+        app.update();
+        assert!(
+            matches!(ask.try_recv(), Err(oneshot::error::TryRecvError::Closed)),
+            "the ask let go"
+        );
+        assert!(app.world().resource::<FlagState>().last.is_none());
+        for _ in 0..3 {
+            app.update();
+        }
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
     }
 
     /// A capture's actors: the fight's creature in reach, read off the
@@ -1339,9 +1393,26 @@ mod tests {
         asks.set_on(true);
         assert_eq!(get().await, serde_json::json!({"on": true}));
         let long = format!(r#"{{"note":"{}"}}"#, "x".repeat(NOTE_MAX + 1));
-        for bad in [long.as_str(), r#"{"note":3}"#, r#"{"text":"x"}"#, "flag"] {
+        for bad in [
+            long.as_str(),
+            r#"{"note":3}"#,
+            r#"{"text":"x"}"#,
+            "flag",
+            r#"{"note":"a\u0000b"}"#,
+            r#"{"note":"\u001b[2J"}"#,
+            r#"{"note":"a\u0085b"}"#,
+        ] {
             assert_eq!(post(bad.into()).await.0, 400, "{bad}");
         }
+        assert!(asks.take().is_empty(), "a refused body queues nothing");
+        assert!(note_ok("two lines\r\nand\ta tab, ünïcode ✓"));
+        // A flood: ASKS_MAX wait for the TV, the next is refused at once.
+        let held: Vec<_> = (0..ASKS_MAX)
+            .map(|_| asks.push("x".into()).unwrap())
+            .collect();
+        assert_eq!(post(r#"{"note":"one more"}"#.into()).await.0, 429);
+        assert_eq!(asks.take().len(), ASKS_MAX);
+        drop(held);
         let answer = asks.clone();
         let tv = tokio::spawn(async move {
             loop {

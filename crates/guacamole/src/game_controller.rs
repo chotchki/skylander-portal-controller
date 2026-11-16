@@ -1201,6 +1201,20 @@ mod tests {
         assert!(!plain.pad(1).share_asked, "left to macOS");
     }
 
+    /// The app's pad source asks Share off only in a `test-hooks` build
+    /// (AS.440's flags): the build the workspace's tests run, on default
+    /// features, leaves the screenshot gesture to macOS.
+    #[test]
+    fn install_claims_share_only_in_a_test_hooks_build() {
+        let fake = Fake::default();
+        let mut app = App::new();
+        install(&mut app, Box::new(fake.clone()));
+        fake.connect(1, "Switch Pro Controller");
+        let mut pads = app.world_mut().remove_non_send::<GcPads>().unwrap();
+        polled(&mut pads, &mut entities());
+        assert_eq!(fake.pad(1).share_asked, cfg!(feature = "test-hooks"));
+    }
+
     /// A pad on an OS without the queue is read once a frame: what it holds
     /// as the frame reads it, nothing repeated.
     #[test]
