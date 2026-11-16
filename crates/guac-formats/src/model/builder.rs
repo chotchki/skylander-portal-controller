@@ -190,6 +190,9 @@ pub struct CharacterSpec {
     /// Whether those props' techniques name an effect of the file's own, as
     /// `global.bld`'s models do (openspec AH.39), rather than import one.
     pub own_effects: bool,
+    /// The slots whose entry's `Sequence._flags` carries the looping bit
+    /// (openspec AS.442), slot 0 the idle's.
+    pub looping: Vec<usize>,
 }
 
 /// The image an attachment prop's material binds as its colour map.
@@ -375,6 +378,7 @@ pub fn sample() -> CharacterSpec {
         ],
         scripts: None,
         own_effects: false,
+        looping: Vec::new(),
     }
 }
 
@@ -791,6 +795,14 @@ pub(crate) fn character_in(b: &mut IgzBuilder, blocks: u8, spec: &CharacterSpec)
             None,
         ));
     }
+    let loops = |b: &mut IgzBuilder, slot: usize, e: Location| {
+        if spec.looping.contains(&slot) {
+            b.put_u32(at(e, 0x18), crate::igz::layouts::sound_flag::LOOPING);
+        }
+    };
+    if let Some(e) = slots[0] {
+        loops(b, 0, e);
+    }
     for s in &spec.slots {
         let e = entry(
             b,
@@ -800,6 +812,7 @@ pub(crate) fn character_in(b: &mut IgzBuilder, blocks: u8, spec: &CharacterSpec)
             &format!("Models/Characters/Eruptor/{}", s.file),
             s.label,
         );
+        loops(b, s.slot, e);
         if s.clip.is_none() && !s.network.is_empty() {
             // A physicsRandomAnimationNetwork: its sub-animations' list at
             // 0x28, its params' vector at 0x2C (count, then the rows).

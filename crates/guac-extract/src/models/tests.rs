@@ -1029,3 +1029,20 @@ fn the_palette_keeps_every_slot_the_locomotion_leaves_out() {
     // A slot that can't play leaves the model, the hero and the rest.
     assert!(e.hero.is_ok());
 }
+
+/// openspec AS.442: the slots whose entry carries the looping bit, the
+/// idle's and a network's among them, in slot order; none on a set with
+/// none.
+#[test]
+fn the_looping_slots_are_the_entries_with_the_bit() {
+    let mut spec = fighter();
+    spec.looping = vec![41, 0, 20];
+    let bytes = character(&spec);
+    let igz = Igz::parse(&bytes).unwrap();
+    let portal = fmodel::in_play(&igz, fmodel::portal_model(&igz).unwrap(), "009_Eruptor").unwrap();
+    assert_eq!(looping_slots(&portal.hero), [0, 20, 41]);
+    let bytes = character(&fighter());
+    let igz = Igz::parse(&bytes).unwrap();
+    let portal = fmodel::in_play(&igz, fmodel::portal_model(&igz).unwrap(), "009_Eruptor").unwrap();
+    assert!(looping_slots(&portal.hero).is_empty());
+}

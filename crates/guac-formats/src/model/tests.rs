@@ -251,6 +251,28 @@ fn palette(spec: &CharacterSpec) -> Vec<Result<Option<PaletteSlot<'static>>, For
         .collect()
 }
 
+/// openspec AS.442: an entry's `Sequence._flags` looping bit reads as the
+/// slot's looping, set on the idle and the throw, clear on the lean and on
+/// the network's entry.
+#[test]
+fn an_entrys_looping_bit_reads_with_its_slot() {
+    let mut spec = palette_sample();
+    spec.looping = vec![0, 20];
+    let read = palette(&spec);
+    let looping = |slot: usize| {
+        read[slot]
+            .as_ref()
+            .unwrap()
+            .as_ref()
+            .map(|s| s.looping)
+            .unwrap()
+    };
+    assert!(looping(0) && looping(20));
+    assert!(!looping(12) && !looping(7));
+    let none = palette(&palette_sample());
+    assert!(none.iter().flatten().flatten().all(|s| !s.looping));
+}
+
 #[test]
 fn the_palette_reads_every_slot_whatever_it_holds() {
     let read = palette(&palette_sample());

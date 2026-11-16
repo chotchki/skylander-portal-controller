@@ -403,6 +403,7 @@ fn spawn_models_naming_their_files_own_effects_read_through_its_exports() {
     .unwrap();
     let own_bytes: &'static [u8] = Vec::leak(model::character(&model::CharacterSpec {
         own_effects: true,
+        looping: Vec::new(),
         ..model::attached()
     }));
     let igz = Igz::parse(own_bytes).unwrap();
