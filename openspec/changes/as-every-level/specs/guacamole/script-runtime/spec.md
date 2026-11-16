@@ -30,3 +30,24 @@ A yes at a card pirate in a run built to play card games SHALL run the original'
 #### Scenario: A seeded game replays
 - **WHEN** two runs play a game from the same seed and the same start
 - **THEN** the board's every behaviour and the opponent's every pick come at the same steps
+
+### Requirement: The hero returns after a card game
+Once a card game's teardown asks for the hero's character again and no scene holds the players, he SHALL come back as a figure put back on the portal does, his own spawn sequence letting him go at its end.
+
+#### Scenario: Dreadbeard's game quit
+- **WHEN** a game on hub stage 2 is quit at its first pick and his quit scene ends
+- **THEN** the hero is back, put back after the scene, and a full stick walks him over 3 units in 150 steps, nothing stopped
+
+### Requirement: The card game's templates play their clips
+The extract SHALL hold the card game's streams' and stones' templates' palettes, read by the levels' palettes rule, and a level that links the card game SHALL give those templates their clips' lengths, kinds, loops and names, so the board's flips time by them.
+
+#### Scenario: A card stream's template on the TV's load
+- **WHEN** the TV installs a level whose card stream places a template naming a model the card palettes hold
+- **THEN** that template has the palette's lengths, loops and names, and the level's own placements none of them
+
+### Requirement: The card game's opponent picks as its scripts read
+The opponent's best-move roll writes the first move's stone into the move it chooses, which the typed set reference refuses, so the opponent SHALL never play the best move: the second at its call's second chance, else the last.
+
+#### Scenario: A thousand games against Dreadbeard
+- **WHEN** 1,000 seeded games are played against hub stage 2's Dreadbeard, his chances 70 and 70
+- **THEN** of the full lists' picks the first is played none, the second within 5 points of 70% and the last within 5 points of 30%
