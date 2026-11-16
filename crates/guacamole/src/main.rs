@@ -15,6 +15,7 @@ mod card_motion;
 mod card_view;
 mod cards;
 mod cli;
+mod collected_box;
 mod completion;
 mod creatures;
 mod darkness;
@@ -580,6 +581,8 @@ fn run_tv(
             darkness::DarknessPlugin,
             // AU.6: a dialogue's yes-or-no question over the level.
             yes_no::YesNoPlugin,
+            // AS.441: a collected item's box over the level.
+            collected_box::CollectedBoxPlugin,
         ),
         // The figures' progress (AH.1) and, AS.38, AU.3, AU.4: the host's
         // story save, resumed and kept.

@@ -1061,3 +1061,207 @@ fn level_201s_intro_hands_him_over_and_he_walks() {
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
 }
+
+/// A ship part's pickup, step by step (openspec AS.441): when the part
+/// took him (`Active_Collectable` set), when its collected box went up,
+/// when South was pressed on it and when the box went, and the box as the
+/// scripts made it.
+struct Pickup {
+    touched: u32,
+    up: u32,
+    pressed: u32,
+    taken_off: u32,
+    collected: guacamole::collected::Collected,
+}
+
+/// The rise the part's camera turns round before its box (`rise slider`,
+/// 3.68 s), less the half second left on it when the box is made, in
+/// 60 Hz steps.
+const RISE_TO_BOX: f64 = (3.68 - 0.5) * 60.0;
+
+/// The hold no press ends: the box's wait has no timer of its own.
+const UNPRESSED: u32 = 900;
+
+/// Stood at `name`, nothing pressed: the part takes him, its box goes up
+/// and stays up `UNPRESSED` steps with the part still there; then one
+/// press of South takes it off and the part goes.
+fn pick_up(run: &mut Run, stops: &mut Vec<String>, name: &str) -> Pickup {
+    let part = run.placed(name).0;
+    let mut touched = None;
+    let mut up = None;
+    for _ in 0..900 {
+        still(run, stops, [false; 4]);
+        if touched.is_none() && global(run, "Active_Collectable").is_some_and(|v| v != Value::Null)
+        {
+            touched = Some(run.steps);
+        }
+        if guacamole::collected::up(&run.vm, &run.world).is_some() {
+            up = Some(run.steps);
+            break;
+        }
+    }
+    let touched = touched.unwrap_or_else(|| panic!("{name} never took him"));
+    let up = up.unwrap_or_else(|| panic!("{name}'s box never went up"));
+    for _ in 0..UNPRESSED {
+        still(run, stops, [false; 4]);
+        assert!(
+            guacamole::collected::up(&run.vm, &run.world).is_some(),
+            "{name}'s box went with nothing pressed at {}",
+            run.steps
+        );
+        assert!(!gone(run, part), "{name} went with nothing pressed");
+    }
+    let collected = guacamole::collected::up(&run.vm, &run.world).expect("up");
+    let pressed = run.steps + 1;
+    let mut taken_off = None;
+    for k in 0..60 {
+        still(run, stops, [k < 2, false, false, false]);
+        if guacamole::collected::up(&run.vm, &run.world).is_none() {
+            taken_off = Some(run.steps);
+            break;
+        }
+    }
+    let taken_off = taken_off.unwrap_or_else(|| panic!("{name}'s box stayed past a press"));
+    assert!(gone(run, part), "{name} gone with its box");
+    println!(
+        "{name}: took him at {touched}, its box up at {up} ({:.2} s on), South at {pressed}, the box off at {taken_off}; kind {}, strings {:?}",
+        f64::from(up - touched) / 60.0,
+        collected.kind,
+        [
+            collected.title.name.as_deref(),
+            collected.description.name.as_deref(),
+            collected.prompt.as_ref().and_then(|w| w.name.as_deref()),
+        ]
+    );
+    Pickup {
+        touched,
+        up,
+        pressed,
+        taken_off,
+        collected,
+    }
+}
+
+/// The box's strings by their objects' names (the disc's text never in the
+/// tree): its title the ship parts', `item` the part's own, its prompt the
+/// Continue one; each read.
+fn assert_box(p: &Pickup, item: &str) {
+    let c = &p.collected;
+    assert_eq!(c.kind, 1, "a ship part's box");
+    assert_eq!(c.title.name.as_deref(), Some("Ship part"));
+    assert_eq!(c.description.name.as_deref(), Some(item));
+    assert_eq!(
+        c.prompt.as_ref().and_then(|w| w.name.as_deref()),
+        Some("ButtonPrompt_Continue_(Accept)")
+    );
+    for (what, w) in [
+        ("title", Some(&c.title)),
+        ("item", Some(&c.description)),
+        ("prompt", c.prompt.as_ref()),
+    ] {
+        assert!(
+            w.and_then(|w| w.text.as_deref())
+                .is_some_and(|t| !t.is_empty()),
+            "the {what} read"
+        );
+    }
+    let rise = f64::from(p.up - p.touched);
+    assert!(
+        (rise - RISE_TO_BOX).abs() <= 6.0,
+        "the box {rise} steps after the touch, the rise {RISE_TO_BOX:.0}"
+    );
+    assert!(
+        p.taken_off <= p.pressed + 2,
+        "South at {}, the box off at {}",
+        p.pressed,
+        p.taken_off
+    );
+}
+
+/// After a part's box: what its SHUTDOWN wakes skipped by △ as a kid
+/// would, then the stick walks him on.
+fn walks_on_after(run: &mut Run, stops: &mut Vec<String>, name: &str) -> f32 {
+    let mut quiet = 0;
+    for k in 0..6000u32 {
+        let cs = cutscene_name(run);
+        quiet = if cs.is_none() { quiet + 1 } else { 0 };
+        if quiet > 240 {
+            break;
+        }
+        fly(run, k);
+        still(
+            run,
+            stops,
+            [false, false, false, cs.is_some() && k % 20 == 10],
+        );
+    }
+    let at = run.hero().pivot;
+    for _ in 0..240 {
+        step(run, stops, Stick::new(0.0, 1.0), [false; 4]);
+    }
+    let moved = run.hero().pivot.distance(at);
+    println!("{name}: walked {moved:.2} m from {at} after its scenes");
+    assert!(
+        !guacamole::scripts::player_hud_hidden(&run.vm),
+        "{name}: the HUD back"
+    );
+    moved
+}
+
+/// openspec AS.441: each of level 214's three ship parts holds the level on
+/// its collected box: up the rise's 3.18 s after the part takes him, it
+/// stays with nothing pressed (the box's wait has no timer) and goes on
+/// the press of South, the part with it, the box's title, the part's name
+/// and its Continue prompt read by name. After the first two the scene
+/// each wakes, skipped, hands him back to the stick; the third's outro
+/// starts. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_ship_parts_hold_on_their_box_until_a_press() {
+    println!("load at start: {}", load());
+    // The first, on the first island.
+    let (mut run, _found) = run_on_level(Mode::Play, LEVEL_214, setup());
+    let mut stops = Vec::new();
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    stops.extend(skip_214s_intro(&mut run).iter().map(ToString::to_string));
+    for _ in 0..60 {
+        still(&mut run, &mut stops, [false; 4]);
+    }
+    let (_, at) = run.placed("Ship_part_1(1)");
+    run.put(at, 0.0);
+    let first = pick_up(&mut run, &mut stops, "Ship_part_1(1)");
+    assert_box(&first, "Musical Device");
+    let moved = walks_on_after(&mut run, &mut stops, "Ship_part_1(1)");
+    assert!(moved > 1.0, "the stick back after the first: {moved}");
+    assert!(stops.is_empty(), "{stops:#?}");
+    // The second, woken as its teleporter wakes it.
+    let (mut run, mut stops) = by_the_second_part(setup());
+    let second = pick_up(&mut run, &mut stops, "Ship_part_2(1)");
+    assert_box(&second, "Refridgerator");
+    let moved = walks_on_after(&mut run, &mut stops, "Ship_part_2(1)");
+    assert!(moved > 1.0, "the stick back after the second: {moved}");
+    assert!(stops.is_empty(), "{stops:#?}");
+    // The third, woken by hand where it stands past the second gate.
+    let (part, at) = run.placed("Ship_part_3");
+    assert!(run.world.wake(part) || !gone(&run, part));
+    run.put(at, 0.0);
+    let third = pick_up(&mut run, &mut stops, "Ship_part_3");
+    assert_box(&third, "Blender");
+    let mut outro = None;
+    for _ in 0..240 {
+        still(&mut run, &mut stops, [false; 4]);
+        if let Some(cs) = cutscene_name(&run) {
+            outro = Some((run.steps, cs));
+            break;
+        }
+    }
+    println!("after the third: {outro:?}; load at end: {}", load());
+    let (at_step, _) = outro
+        .clone()
+        .expect("the outro starts after the third part");
+    assert!(at_step <= third.taken_off + 120, "{outro:?}");
+    assert!(stops.is_empty(), "{stops:#?}");
+}

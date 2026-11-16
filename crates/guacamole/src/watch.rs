@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
-use guac_script::{Value, Vm};
+use guac_script::{Handle, Value, Vm};
 use guacamole::anchors::{self, Equivalence};
 use guacamole::scripts::{ScriptRuntime, ScriptWorld};
 use serde::{Deserialize, Serialize};
@@ -106,20 +106,25 @@ pub(crate) struct WatchShot {
     /// `Cutscene State` as the run holds it; none until something made it.
     pub cutscene_state: Option<i32>,
     /// The members of the `Minions` set in its order, each as `name
-    /// (removed) at x,y,z` (openspec AS.224).
+    /// (removed) at x,y,z` (openspec AS.224), the seated hero at his
+    /// pivot (the as-ship-parts review).
     pub minions: Vec<String>,
 }
 
 /// Each name in `names` off `vm` and `world`, the level's file linked as
-/// `level`, with decision 17's list and `Cutscene State`.
+/// `level`, with decision 17's list and `Cutscene State`. `seated` is the
+/// joined hero's handle, read at `hero`'s pivot: his actor's own place is
+/// where he joined, since the scripts read him off the engine.
 pub(crate) fn read(
     vm: &Vm,
     world: &ScriptWorld,
     level: u16,
     names: &[String],
     hero: Option<(Vec3, f32)>,
+    seated: Option<Handle>,
     figure: Option<(u32, u32)>,
 ) -> WatchShot {
+    let seat = seated.zip(hero.map(|(at, _)| at));
     let placements = names
         .iter()
         .map(|name| {
@@ -156,7 +161,7 @@ pub(crate) fn read(
                 player: vm
                     .placement_of(h)
                     .and_then(|id| vm.local(id, "player"))
-                    .map(|v| describe(vm, world, v)),
+                    .map(|v| describe(vm, world, v, seat)),
                 timer: vm.placement_of(h).and_then(|id| vm.active_seconds(id)),
                 player_ref_timer: vm
                     .placement_of(h)
@@ -179,7 +184,7 @@ pub(crate) fn read(
         .global_named("Minions")
         .and_then(|g| vm.global_peek(g))
         .and_then(|v| vm.set(v))
-        .map(|s| s.iter().map(|m| describe(vm, world, *m)).collect())
+        .map(|s| s.iter().map(|m| describe(vm, world, *m, seat)).collect())
         .unwrap_or_default();
     WatchShot {
         placements,
@@ -190,17 +195,20 @@ pub(crate) fn read(
 }
 
 /// An actor a script holds as `name (removed) at x,y,z`.
-fn describe(vm: &Vm, world: &ScriptWorld, v: Value) -> String {
+fn describe(vm: &Vm, world: &ScriptWorld, v: Value, seat: Option<(Handle, Vec3)>) -> String {
     match vm.value(v) {
         Value::Entity(h) => match world.actor(h) {
-            Some(a) => format!(
-                "{}{} at {:.1},{:.1},{:.1}",
-                world.name(h),
-                if a.removed { " (removed)" } else { "" },
-                a.position.x,
-                a.position.y,
-                a.position.z
-            ),
+            Some(a) => {
+                let at = seat.filter(|(s, _)| *s == h).map_or(a.position, |(_, p)| p);
+                format!(
+                    "{}{} at {:.1},{:.1},{:.1}",
+                    world.name(h),
+                    if a.removed { " (removed)" } else { "" },
+                    at.x,
+                    at.y,
+                    at.z
+                )
+            }
             None => format!("{h:#x} (no actor)"),
         },
         other => format!("{other:?}"),
@@ -232,6 +240,10 @@ impl WatchShots<'_, '_> {
             .iter()
             .find(|(r, _)| matches!(r.join, Join::Joined(_)));
         let hero = joined.map(|(_, b)| (b.hero.pivot, b.hero.facing));
+        let seated = joined.and_then(|(r, _)| match r.join {
+            Join::Joined(id) => rt.vm.handle_of(id),
+            _ => None,
+        });
         let figure = joined.and_then(|(r, _)| {
             self.earning
                 .as_deref()?
@@ -240,7 +252,7 @@ impl WatchShots<'_, '_> {
                 .as_ref()
                 .map(|e| (e.progress.xp, e.progress.gold))
         });
-        Some(read(&rt.vm, world, level, &names, hero, figure))
+        Some(read(&rt.vm, world, level, &names, hero, seated, figure))
     }
 }
 
@@ -307,7 +319,15 @@ mod tests {
             .expect("the creature");
         let names = [FIGHT_CREATURE.to_owned(), "No_Such_Placement".to_owned()];
         let hero = (Vec3::new(1.0, 2.0, 3.0), 370.0);
-        let shot = read(&rt.vm, world, level, &names, Some(hero), Some((7, 11)));
+        let shot = read(
+            &rt.vm,
+            world,
+            level,
+            &names,
+            Some(hero),
+            None,
+            Some((7, 11)),
+        );
         let c = &shot.placements[0];
         assert_eq!(c.name, FIGHT_CREATURE);
         let a = world.actor(h).unwrap();
@@ -391,6 +411,31 @@ mod tests {
         assert_eq!(shot(&mut app), None, "cleared");
     }
 
+    /// The as-ship-parts review: the joined hero in `Minions` reads at his
+    /// pivot, not at his actor's own place (where he joined, which the
+    /// scripts never read for a hero); anyone else at the actor's.
+    #[test]
+    fn the_seated_hero_reads_at_his_pivot() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _) = fight_app(tmp.path(), None);
+        app.update();
+        let (_, h) = placement_named(&app, FIGHT_CREATURE);
+        let w = app.world();
+        let (vm, world) = (
+            &w.resource::<ScriptRuntime>().vm,
+            w.resource::<ScriptWorld>(),
+        );
+        let own = world.actor(h).unwrap().position;
+        let pivot = own + Vec3::new(40.0, 5.0, -30.0);
+        let at = |p: Vec3| format!("at {:.1},{:.1},{:.1}", p.x, p.y, p.z);
+        let seated = describe(vm, world, Value::Entity(h), Some((h, pivot)));
+        assert!(seated.ends_with(&at(pivot)), "{seated}");
+        let other = describe(vm, world, Value::Entity(h), Some((h ^ 1, pivot)));
+        assert!(other.ends_with(&at(own)), "{other}");
+        let none = describe(vm, world, Value::Entity(h), None);
+        assert!(none.ends_with(&at(own)), "{none}");
+    }
+
     /// Once a placement is taken off it reads `gone`.
     #[test]
     fn a_placement_taken_off_reads_gone() {
@@ -406,6 +451,7 @@ mod tests {
             w.resource::<ScriptWorld>(),
             level,
             &[FIGHT_CREATURE.to_owned()],
+            None,
             None,
             None,
         );

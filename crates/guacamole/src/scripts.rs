@@ -494,6 +494,12 @@ pub struct ScriptWorld {
     /// A card game answered with nothing shown, its pirate still to be told
     /// it's quit (openspec AU.34: [`crate::prompt::quit_card_game`]).
     pub(crate) card_game_answered: bool,
+    /// What each yes asked for that the TV hasn't built, in order (openspec
+    /// AS.453: [`crate::prompt::UNBUILT`]), one a yes.
+    pub unbuilt: Vec<&'static str>,
+    /// The collected item's box the scripts made last, as its call bound it
+    /// (openspec AS.441: [`crate::collected`]).
+    pub collected: Option<crate::collected::Collected>,
     /// Each template's palette's animation info as its file holds it, slot
     /// by slot (openspec AH.49): a template given none reads every slot a
     /// base clip with no layered bit.
@@ -949,6 +955,8 @@ impl ScriptWorld {
             rig_held: Vec::new(),
             rig_holder: None,
             card_game_answered: false,
+            unbuilt: Vec::new(),
+            collected: None,
             clip_info: HashMap::new(),
             clip_state: HashMap::new(),
             hero_templates: HashMap::new(),
@@ -2763,6 +2771,8 @@ impl Host for WorldHost<'_, '_> {
     }
     fn answer(&mut self, name: &str, args: &[(&str, Value)]) -> bool {
         note_pause(self.world, name, args);
+        crate::collected::note(self.world, name, args);
+        crate::collected::note_prompt(self.world, name, args);
         crate::prompt::answer_screen(self.world, name)
             || crate::interiors::answer(self.world, name, args)
     }
@@ -2918,6 +2928,10 @@ pub fn hero_config(mode: Mode) -> Config {
     c.answered.push(crate::interiors::WARP.to_owned());
     // Each pause's maker noted, its body run (openspec AS.205).
     c.answered.push(PAUSE.to_owned());
+    // A collected item's box and its prompt noted, their bodies run
+    // (openspec AS.441).
+    c.answered.push(crate::collected::CREATE.to_owned());
+    c.answered.push(crate::collected::PROMPT.to_owned());
     c.answered
         .extend(crate::prompt::SCREENS.iter().map(|s| (*s).to_owned()));
     c

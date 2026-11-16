@@ -66,6 +66,16 @@ pub const SCREENS: [&str; 4] = [
     "Card Game - Start Card Game",
 ];
 
+/// What each of [`SCREENS`] would open, as its line in the log names it
+/// (openspec AS.453): a yes to it writes that it isn't built yet, once a
+/// yes, and the talk ends as before with nothing on the screen.
+pub const UNBUILT: [(&str, &str); 4] = [
+    (SCREENS[0], "the stores (Auric's, Hatterson's)"),
+    (SCREENS[1], "the arenas (Brock's)"),
+    (SCREENS[2], "the Heroic Challenges (Cali's)"),
+    (SCREENS[3], "the card game (Dreadbeard's)"),
+];
+
 /// The card game among [`SCREENS`], whose pirate waits on its end.
 const CARD_GAME: &str = "Card Game - Start Card Game";
 /// The pirate's variable the card game ends by writing, and what a game
@@ -190,6 +200,13 @@ pub fn answer_screen(world: &mut ScriptWorld, name: &str) -> bool {
         return false;
     }
     world.card_game_answered |= card_game;
+    if let Some((_, what)) = UNBUILT.iter().find(|(s, _)| name.eq_ignore_ascii_case(s)) {
+        tracing::info!(
+            screen = name,
+            "a yes asks for {what}, not built yet: the talk ends with nothing shown"
+        );
+        world.unbuilt.push(what);
+    }
     is_screen(name)
 }
 
@@ -695,6 +712,64 @@ mod tests {
         assert_eq!(win(&vm), Some(Value::Int(0)));
     }
 
+    /// The log's lines while `f` runs.
+    fn logged(f: impl FnOnce()) -> Vec<String> {
+        use std::sync::Mutex;
+        #[derive(Clone, Default)]
+        struct Buf(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for Buf {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let buf = Buf::default();
+        let out = buf.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(move || out.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, f);
+        let text = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+        text.lines().map(str::to_owned).collect()
+    }
+
+    /// openspec AS.453: a yes asking for one of the hub's screens the TV
+    /// hasn't built writes one line naming it (Cali's Heroic Challenges,
+    /// the stores, the arenas, the card game), once a yes; anything else
+    /// writes none.
+    #[test]
+    fn a_yes_to_a_screen_not_built_logs_it_once() {
+        let mut world = ScriptWorld::new(&Files::default(), &HashMap::new(), [1, 2, 3, 4, 5, 6, 7]);
+        let lines = logged(|| {
+            assert!(!answer_screen(&mut world, "Some Other Macro"));
+            assert!(answer_screen(&mut world, &SCREENS[2].to_ascii_lowercase()));
+        });
+        assert_eq!(world.unbuilt, [UNBUILT[2].1]);
+        let named: Vec<&String> = lines
+            .iter()
+            .filter(|l| l.contains("not built yet"))
+            .collect();
+        assert_eq!(named.len(), 1, "{lines:?}");
+        assert!(named[0].contains("Heroic Challenges"), "{lines:?}");
+        for (screen, what) in UNBUILT {
+            world.unbuilt.clear();
+            let lines = logged(|| assert!(answer_screen(&mut world, screen)));
+            assert_eq!(world.unbuilt, [what], "{screen}");
+            assert_eq!(
+                lines
+                    .iter()
+                    .filter(|l| l.contains(what) && l.contains("not built yet"))
+                    .count(),
+                1,
+                "{screen}: {lines:?}"
+            );
+        }
+    }
+
     /// openspec AU.34: the screens a yes on the hub calls for are answered
     /// (any case, as the VM's names come), and nothing else is.
     #[test]
@@ -704,6 +779,8 @@ mod tests {
             assert!(is_screen(&s.to_ascii_lowercase()), "{s}");
         }
         assert!(SCREENS.contains(&CARD_GAME));
+        // openspec AS.453: each named, in the order of the screens.
+        assert_eq!(UNBUILT.map(|(s, _)| s), SCREENS);
         assert!(!is_screen("Portal - Warp Player to Location"));
         assert!(!is_screen(""));
     }

@@ -604,3 +604,17 @@ An Elf Lobber's volley SHALL be three arrows, one at its target and two up to 20
 #### Scenario: A hero standing under a volley
 - **WHEN** an Elf Lobber looses volleys at a hero standing still
 - **THEN** each first arrow falls from 80 ft over his feet, lands there and hurts him, and every arrow is gone 1.5 s after it lands
+
+### Requirement: A pickup's box says what it waits on
+While a pickup's scripts hold the level on their collected box (level 214's ship parts), the TV SHALL show the box's title, the item's name and its Continue prompt over the held level, and the hold SHALL end where the scripts' own wait ends: a joined player's fresh accept press, with no timer of its own.
+
+#### Scenario: A ship part picked up
+- **WHEN** a hero reaches one of level 214's ship parts and nothing is pressed
+- **THEN** the box shows the part's name about 3.2 s after it takes him and stays until South is pressed, then goes with the part
+
+### Requirement: A yes to a screen the TV lacks is logged
+A yes on the hub to a screen the TV hasn't built (the Heroic Challenges, the stores, the arenas, the card game) SHALL end the talk with nothing on the screen and write one log line naming what isn't built.
+
+#### Scenario: Cali's Heroic Challenges
+- **WHEN** a player answers yes to Cali's challenge question
+- **THEN** the talk ends and the log names the Heroic Challenges as not built, once
