@@ -1669,7 +1669,10 @@ fn dreadbeards_games(plans: &[(Plan, u32)], cap: u32) -> Played {
     let mut backs = 0;
     let mut chances = None;
     let mut dbg_pirate: Option<String> = None;
-    while run.steps - start < cap {
+    // The last game's end (or the start): a run with no game over in
+    // [`STALL`] steps is a stuck board and ends there.
+    let mut last_end = start;
+    while run.steps - start < cap && run.steps - last_end < STALL {
         // The game on, else the next one asked for.
         let on = games.iter().position(|g| g.ended == 0);
         let Some(&(plan, _)) = plans.get(on.unwrap_or(games.len())) else {
@@ -1741,6 +1744,7 @@ fn dreadbeards_games(plans: &[(Plan, u32)], cap: u32) -> Played {
             if over {
                 let g = &mut games[i];
                 g.ended = run.steps;
+                last_end = run.steps;
                 g.board = last_board.clone();
                 g.pirate = pirate.clone();
                 // A quit's next game is asked for again, the hero set by
@@ -1921,6 +1925,11 @@ fn dreadbeards_games(plans: &[(Plan, u32)], cap: u32) -> Played {
         chances,
     }
 }
+
+/// The steps a played run may go without a game over before it's called
+/// stuck and ends (a game is about 3,900): a broken board fails its test
+/// in minutes rather than at the run's cap.
+const STALL: u32 = 20_000;
 
 /// The seeds of [`dreadbeards_game_quit_lost_and_won_each_end_in_his_own_next_behaviour`]'s
 /// three games: the quit's, the naive player's loss and the strong

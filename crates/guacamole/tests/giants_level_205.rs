@@ -4655,7 +4655,10 @@ fn fangs_games(
     let mut before = None;
     let mut stood_in = 0;
     let start = run.steps;
-    while run.steps - start < cap {
+    // The last game's end (or the start): a run with no game over in
+    // [`STALL`] steps is a stuck board and ends there.
+    let mut last_end = start;
+    while run.steps - start < cap && run.steps - last_end < STALL {
         let on = games.iter().position(|g| g.1 == 0);
         let plan = plans.get(on.unwrap_or(games.len())).copied();
         let board = cards::board(&run);
@@ -4720,6 +4723,7 @@ fn fangs_games(
                 was.as_deref() == Some(cards::LOST) && now.as_deref() == Some(cards::GAME_START);
             if (was.is_some() && now.is_none()) || replay {
                 games[i].1 = run.steps;
+                last_end = run.steps;
                 games[i].2 = last_board.clone();
                 games[i].3 = fangs.clone();
                 games[i].4 = scene.clone();
@@ -4797,6 +4801,11 @@ fn fangs_games(
         run,
     }
 }
+
+/// The steps a played run may go without a game over before it's called
+/// stuck and ends (a game is about 3,900): a broken board fails its test
+/// in minutes rather than at the run's cap.
+const STALL: u32 = 20_000;
 
 /// One of Fangs' games on its own run: `plan` from `seed`, over 120 steps
 /// after its end (a quit or a win: the board gone; a loss: the replay's
