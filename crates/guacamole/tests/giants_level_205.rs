@@ -2508,6 +2508,14 @@ fn level_205s_way_on_from_the_first_yard_ends_setup_002() {
         behaviour(&run, "Spike_Gate_Wooden_Template(2)")
     );
     assert_eq!(stood_in, 1, "his game stood in once");
+    // The card game's streams link beside 205 (openspec AS.364), and the
+    // TV's quit the stand-in turned asked none of them (AS.364's review).
+    assert_eq!(run.world.card_streams.units.len(), 3);
+    assert!(
+        run.world.card_streams.joined.is_empty(),
+        "{:?}",
+        run.world.card_streams.joined
+    );
     assert_eq!(behaviour(&run, "Gate_Killer"), "removed");
     for scene in ["Casino Pirate Intro", "Casino Pirate Outro"] {
         assert!(
@@ -3128,6 +3136,14 @@ fn on_to_setup_002s_end_with(setup: Setup) -> AtSetup002sEnd {
         behaviour(&run, "Spike_Gate_Wooden_Template(2)")
     );
     assert_eq!(stood_in, 1, "his game stood in once");
+    // The card game's streams link beside 205 (openspec AS.364), and the
+    // TV's quit the stand-in turned asked none of them (AS.364's review).
+    assert_eq!(run.world.card_streams.units.len(), 3);
+    assert!(
+        run.world.card_streams.joined.is_empty(),
+        "{:?}",
+        run.world.card_streams.joined
+    );
     assert_eq!(behaviour(&run, "Gate_Killer"), "removed");
     for scene in ["Casino Pirate Intro", "Casino Pirate Outro"] {
         assert!(

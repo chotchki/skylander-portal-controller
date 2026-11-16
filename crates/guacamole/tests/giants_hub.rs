@@ -837,6 +837,15 @@ fn every_hub_stages_people_stand_talk_and_stop_the_hero() {
                     assert!(again.cutscene.is_some(), "{stage}: {again:?}");
                     assert!(again.ended.is_some(), "{stage}: {again:?}");
                 }
+                // The card game's streams link beside every stage (openspec
+                // AS.364), and the TV's quit asks none of them: no game is
+                // counted won in play (AS.364's review).
+                assert_eq!(run.world.card_streams.units.len(), 3, "{stage}");
+                assert!(
+                    run.world.card_streams.joined.is_empty(),
+                    "{stage}: {:?}",
+                    run.world.card_streams.joined
+                );
             }
         }
         let branch = global(&run, "CutsceneMenu_LastPickedBranch");
