@@ -892,5 +892,10 @@ pub(crate) fn write_art_model(dir: &std::path::Path) {
         }],
         refused: Vec::new(),
     });
+    // Its slot's entry loops (openspec AS.442), as a person's idle does.
+    palettes.loops.push(guac_ir::palette::Loops {
+        owner: FIGHT_ART_MODEL.into(),
+        slots: vec![FIGHT_ART_SLOT as u16],
+    });
     std::fs::write(dir.join(rel), guac_ir::to_ron(&palettes).unwrap()).unwrap();
 }

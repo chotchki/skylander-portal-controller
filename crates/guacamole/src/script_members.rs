@@ -2505,16 +2505,9 @@ impl ScriptWorld {
                     let t = w.template_of(h)?;
                     w.palettes.get(&t).map(|p| (t, p.len()))
                 };
-                let scene = self.is_game_systems(at.placement);
                 let told = self
                     .actor_of(Some(self.told))
-                    .filter(|&h| {
-                        h != at.placement
-                            && self
-                                .actors
-                                .get(&h)
-                                .is_some_and(|a| a.obj.is_none() || !scene)
-                    })
+                    .filter(|&h| h != at.placement && self.actors.contains_key(&h))
                     .and_then(|h| of(self, h));
                 let lengths = told.or_else(|| of(self, at.placement));
                 match lengths {
@@ -2687,11 +2680,38 @@ impl ScriptWorld {
         s.actor = actor;
         s.restart();
         self.restarts.push(i as u32);
+        self.whole_replaces(i);
         // A sound's copy started over is a new play (openspec AR.9).
         self.sound_restarted(i as u32);
         Answer::Run {
             receiver: None,
             result: Some(self.objs.value(Object::Sequence(i as u32))),
+        }
+    }
+
+    /// A whole clip's start (openspec AS.442, AH.204's first rule; stand-in
+    /// ledger: `whole-clip`): the sequence at `i`, a base clip neither
+    /// layered nor partial nor additive, takes the place of the whole clip
+    /// already playing on its actor, which is stopped, so one whole clip
+    /// plays on an actor at a time; a looping one (an idle, a talk, a walk)
+    /// no longer goes on under the next. Any other start changes nothing.
+    fn whole_replaces(&mut self, i: usize) {
+        let whole = |w: &Self, s: &Sequence| {
+            s.kind == ClipInfo::BASE && !s.layered && w.clip_of(s).is_some()
+        };
+        let Some(new) = self.sequences.get(i) else {
+            return;
+        };
+        if !whole(self, new) {
+            return;
+        }
+        let actor = new.actor;
+        let old = (0..self.sequences.len()).find(|&j| {
+            let s = &self.sequences[j];
+            j != i && s.actor == actor && s.plays() && whole(self, s)
+        });
+        if let Some(j) = old {
+            self.sequences[j].stopped = true;
         }
     }
 
@@ -2749,6 +2769,7 @@ impl ScriptWorld {
             ping_pong: false,
             back: false,
         });
+        self.whole_replaces(self.sequences.len() - 1);
         let s = self
             .objs
             .value(Object::Sequence((self.sequences.len() - 1) as u32));
@@ -9689,7 +9710,8 @@ mod animation_tests {
     /// cutscene's game systems' placement starting an animation on each of
     /// its clones; the enemy system's queue a jump's clips on its enemy),
     /// never its own again, and nothing outside a tell; a file's placement
-    /// the game systems tell reads nothing yet (AS.80).
+    /// the game systems tell reads its own too (AS.442: hub Cali's talk,
+    /// where AS.80 read nothing).
     #[test]
     fn a_static_palette_under_a_tell_is_the_told_actors_with_none_of_its_own() {
         const SYSTEMS: Handle = 0x6100_0040;
@@ -9740,9 +9762,9 @@ mod animation_tests {
         assert_eq!(w.elements(&static_palette, &mut e).unwrap(), clips);
         w.told = Value::Entity(FILES);
         assert_eq!(
-            w.elements(&static_palette, &mut e),
-            Err(HostFault::Nothing),
-            "a file's placement the game systems tell: nothing yet"
+            w.elements(&static_palette, &mut e).unwrap(),
+            clips,
+            "a file's placement the game systems tell: its own"
         );
         let enemies = Access {
             placement: ENEMIES,
@@ -10163,6 +10185,94 @@ mod animation_tests {
         play(&mut w, &mut e, clips[2]);
         let s = w.sequences().last().unwrap().clone();
         assert!(!s.weighted() && !s.laid_over());
+    }
+
+    /// openspec AS.442 (AH.204's first rule): a whole clip started on an
+    /// actor stops the whole one playing on him; a partial or additive one
+    /// leaves it, as does one with its layered bit set; a whole one stopped
+    /// so starts again when played again, stopping the other.
+    #[test]
+    fn a_whole_clip_takes_the_place_of_the_whole_one_playing() {
+        let (mut w, mut e) = (world(), pit());
+        let clips = palette(&mut w);
+        let mut infos = vec![ClipInfo::of(false, false, false); 4];
+        infos[1] = ClipInfo::of(false, true, false);
+        infos[2] = ClipInfo::of(true, false, false);
+        infos.iter_mut().for_each(|i| i.looping = true);
+        w.set_clip_info(TEMPLATE, infos);
+        let playing = |w: &ScriptWorld| -> Vec<u32> {
+            let mut on: Vec<u32> = w
+                .sequences()
+                .iter()
+                .filter(|s| s.plays())
+                .filter_map(|s| w.clip_of(s).map(|(_, slot)| slot))
+                .collect();
+            on.sort_unstable();
+            on
+        };
+        play(&mut w, &mut e, clips[0]);
+        play(&mut w, &mut e, clips[1]);
+        play(&mut w, &mut e, clips[2]);
+        assert_eq!(playing(&w), [0, 1, 2], "a partial and an additive leave it");
+        play(&mut w, &mut e, clips[3]);
+        assert_eq!(playing(&w), [1, 2, 3], "slot 3 takes slot 0's place");
+        play(&mut w, &mut e, clips[0]);
+        assert_eq!(playing(&w), [0, 1, 2], "slot 0 again takes slot 3's");
+        // Layered (a locomotion's), it's weighted, not whole: slot 0 stays.
+        w.set(
+            &on(clips[3], "animationinfo", "is layered"),
+            Value::Int(1),
+            &mut e,
+        )
+        .unwrap();
+        play(&mut w, &mut e, clips[3]);
+        assert_eq!(playing(&w), [0, 1, 2, 3]);
+    }
+
+    /// openspec AS.442: a play of a clip its palette entry marks looping (a
+    /// person's idle, talk or flight) starts a looping sequence, which goes
+    /// round again past its end where an unmarked clip's plays once; a
+    /// script's write of the clip's looping wins over the entry's, and the
+    /// clip reads the entry's where none was written.
+    #[test]
+    fn a_clip_its_entry_marks_looping_plays_round_again() {
+        let (mut w, mut e) = (world(), pit());
+        let clips = palette(&mut w);
+        // Slot 0 whole, the others partial, so none takes another's place.
+        let mut infos = vec![ClipInfo::of(false, true, false); 4];
+        infos[0] = ClipInfo::of(false, false, false);
+        infos[0].looping = true;
+        infos[3].looping = true;
+        w.set_clip_info(TEMPLATE, infos);
+        assert_eq!(
+            w.get(&on(clips[0], "sequence", "looping"), &mut e).unwrap(),
+            Value::Int(1)
+        );
+        assert_eq!(
+            w.get(&on(clips[1], "sequence", "looping"), &mut e).unwrap(),
+            Value::Int(0)
+        );
+        // Slot 3's looping written off before it plays.
+        w.set(&on(clips[3], "sequence", "looping"), Value::Int(0), &mut e)
+            .unwrap();
+        for c in [clips[0], clips[1], clips[3]] {
+            play(&mut w, &mut e, c);
+        }
+        let n = w.sequences().len();
+        let looping: Vec<bool> = w.sequences()[n - 3..].iter().map(|s| s.looping).collect();
+        assert_eq!(looping, [true, false, false]);
+        // 1.2 s on: the idle (1 s) is 0.2 s into its second round; the
+        // others (0.5 s and 0.4 s) are done.
+        for _ in 0..6 {
+            for s in w.sequences.iter_mut() {
+                s.advance(0.2);
+            }
+        }
+        let [idle, throw, lean] = [n - 3, n - 2, n - 1].map(|i| w.sequences()[i].clone());
+        assert!(idle.plays(), "{idle:?}");
+        assert!((idle.time - 0.2).abs() < 1e-4, "{}", idle.time);
+        assert!(!throw.plays() && throw.done, "{throw:?}");
+        assert!(!lean.plays() && lean.done, "{lean:?}");
     }
 }
 

@@ -3131,11 +3131,19 @@ mod tests {
                 walkers: Vec::new(),
                 left_out: Vec::new(),
                 layout: None,
+                // Slot 1 an additive clip whose entry loops (openspec
+                // AS.442: a person's look, a talk).
                 palettes: vec![guacamole::level_scripts::ScriptPalette {
                     owner: SMASH_FAR_MODEL.to_owned(),
                     lengths: vec![0.0, 0.5],
-                    infos: vec![Default::default(); 2],
-                    names: vec![String::new(); 2],
+                    infos: vec![
+                        Default::default(),
+                        scripts::ClipInfo {
+                            looping: true,
+                            ..scripts::ClipInfo::of(true, false, false)
+                        },
+                    ],
+                    names: vec![String::new(), "Far_Look.ma".into()],
                 }],
                 sounds: None,
                 interface: None,
@@ -3149,6 +3157,15 @@ mod tests {
         assert_eq!(w.level(), Some(LEVEL), "whose own people its are (AS.176)");
         assert_eq!(w.palette(far), Some(&[0.0, 0.5][..]));
         assert_eq!(w.palette(near), None);
+        // Its kinds, loops and names as the headless runs set them (AS.442:
+        // the TV set the lengths alone, so its additive clips read base).
+        let info = w.clip_info(far, 1);
+        assert_eq!(
+            (info.kind, info.looping),
+            (scripts::ClipInfo::ADDITIVE, true)
+        );
+        assert_eq!(w.clip_name(far, 1), Some("Far_Look.ma"));
+        assert_eq!(w.clip_name(far, 0), None);
         let rt = world.resource::<ScriptRuntime>();
         let h = w.handles()[&setup];
         assert!(!rt.vm.inert().contains(&h), "the setup runs");

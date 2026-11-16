@@ -602,7 +602,43 @@ impl Run {
         self.bench.place_bodies(&self.world);
         self.census_surfaces();
         self.census_hangs();
+        self.census_clips();
         Ok(stopped)
+    }
+
+    /// `GUAC_CLIP_CENSUS`'s lines (openspec AS.442): each clip a script
+    /// started this step on an actor not the hero (a new copy or one started
+    /// again), with the cutscene and scene up, the clip's name in its
+    /// model's palette, its slot, kind and whether it loops.
+    fn census_clips(&mut self) {
+        thread_local! {
+            static SINCE: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+        }
+        if std::env::var_os("GUAC_CLIP_CENSUS").is_none() {
+            return;
+        }
+        let since = SINCE.with(std::cell::Cell::get);
+        let started = self.world.started_since(since);
+        SINCE.with(|c| c.set(self.world.start_count()));
+        let scene = guacamole::level_end::scene_up(&self.vm);
+        for i in started {
+            let s = &self.world.sequences()[i];
+            if s.actor == self.hero || self.world.clip_of(s).is_none() {
+                continue;
+            }
+            let (_, slot) = self.world.clip_of(s).unwrap();
+            println!(
+                "CLIP step {} scene {:?} actor {} ({:#x}) slot {slot} {:?} kind {} looping {} len {:.2}",
+                self.steps,
+                scene.as_ref().map(|u| (&u.cutscene, u.scene)),
+                self.world.name(s.actor),
+                s.actor,
+                self.world.sequence_clip_name(s),
+                s.kind,
+                s.looping,
+                s.length
+            );
+        }
     }
 
     /// `GUAC_HANG_CENSUS`'s lines (openspec AS.189): each let-go of the

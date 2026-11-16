@@ -1281,6 +1281,28 @@ mod tests {
             top(a).translation.distance(Vec3::from_array(ART_TOP)) < 1e-4
         });
         assert!(ticks(&app) >= FIGHT_ART_PLAY, "posed by its script's clip");
+        // openspec AS.442, AS.461: the report names the clip its script
+        // plays, which its palettes part marks looping, so past its 1 s end
+        // it goes round again, still posing it, where it ended before.
+        let clips = |app: &App| {
+            shot(app)
+                .spawned
+                .into_iter()
+                .find(|s| s.handle == h)
+                .map(|s| s.clips)
+                .unwrap_or_default()
+        };
+        let now = clips(&app);
+        assert_eq!(now.len(), 1, "{now:?}");
+        assert_eq!(now[0].name.as_deref(), Some("MadeUp_Tortoise.ma"));
+        assert!(now[0].looping && now[0].length == 1.0, "{now:?}");
+        until(&mut app, "past half its length", |a| {
+            clips(a).first().is_some_and(|c| c.time > 0.5)
+        });
+        until(&mut app, "round again", |a| {
+            clips(a).first().is_some_and(|c| c.time < 0.5)
+        });
+        assert!(top(&app).translation.distance(Vec3::from_array(ART_TOP)) < 1e-4);
     }
 
     /// AH.138: what hangs on a drawn creature's node rides its joint: hung
