@@ -2658,17 +2658,6 @@ impl ScriptWorld {
         )
     }
 
-    /// Whether `h` is the game systems' placement, on which a cutscene's
-    /// steps run (openspec AS.52), by its script.
-    fn is_game_systems(&self, h: Handle) -> bool {
-        self.actors
-            .get(&h)
-            .and_then(|a| a.obj)
-            .and_then(|o| self.templates.get(&o))
-            .and_then(|p| p.script.as_deref())
-            .is_some_and(|s| s.ends_with("GameSystems.ai"))
-    }
-
     /// A play of the sequence at `i` on `actor` (openspec AH.184): refused
     /// while it plays with time left and no `allow restart` (the op fails
     /// and its block is skipped), else started again from its start, his.
