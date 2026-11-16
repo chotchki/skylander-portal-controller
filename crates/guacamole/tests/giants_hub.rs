@@ -2110,7 +2110,11 @@ fn dreadbeards_rolls_over_a_thousand_seeded_games() {
     let mut chances = None;
     while played < games {
         let plans: Vec<(Plan, u32)> = (played..games).map(|i| (naive, 1000 + i)).collect();
-        let p = dreadbeards_games(&plans, u32::MAX);
+        // A board stuck mid-game ends its run (a game is about 3,900 steps)
+        // and fails on the run with no game over, where an uncapped run
+        // would hold the gate for good.
+        let cap = GAME_STEPS.saturating_mul(plans.len() as u32);
+        let p = dreadbeards_games(&plans, cap);
         runs += 1;
         steps += u64::from(p.steps);
         let done = p.games.iter().filter(|g| g.ended > 0).count() as u32;
@@ -2177,6 +2181,10 @@ fn dreadbeards_rolls_over_a_thousand_seeded_games() {
         load()
     );
 }
+
+/// The steps a run of the rolls' test may take a game, about five
+/// times a game's own.
+const GAME_STEPS: u32 = 20_000;
 
 /// The gate's short run of [`dreadbeards_rolls_over_a_thousand_seeded_games`]:
 /// its games, and how far each roll's share may sit from the call's chance

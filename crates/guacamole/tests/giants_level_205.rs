@@ -1890,7 +1890,9 @@ impl Trail {
 
 /// Cutscenes waited out, a prompt's question answered yes as the TV's modal
 /// answers it, and Fangs' game stood in won (`level_205::card_house_stand_in`)
-/// before the step: whether the step was the scene's.
+/// before the step, but in a run that plays card games, whose quit must stay
+/// a quit (the as-cards-game review: the stand-in turned a played quit into
+/// a win and opened the gate): whether the step was the scene's.
 fn scene_step(
     run: &mut Run,
     stops: &mut Vec<String>,
@@ -1903,7 +1905,9 @@ fn scene_step(
                 .unwrap_or_else(|h| panic!("the answer: {h}"))
         );
     }
-    if guacamole::level_205::card_house_stand_in(&mut run.vm, &mut run.world, LEVEL) {
+    if !run.world.card_streams.plays_games()
+        && guacamole::level_205::card_house_stand_in(&mut run.vm, &mut run.world, LEVEL)
+    {
         *stood_in += 1;
     }
     if let Some(cs) = cutscene_name(run) {
@@ -4601,6 +4605,9 @@ struct FangsPlayed {
     /// and at the run's end.
     before: std::collections::BTreeMap<String, String>,
     after: std::collections::BTreeMap<String, String>,
+    /// How often the TV's stand-in turned his game won: never, in a run
+    /// that plays them.
+    stood_in: u32,
     run: Run,
 }
 
@@ -4646,6 +4653,7 @@ fn fangs_games(
     let mut dbg = String::new();
     let mut stuck = false;
     let mut before = None;
+    let mut stood_in = 0;
     let start = run.steps;
     while run.steps - start < cap {
         let on = games.iter().position(|g| g.1 == 0);
@@ -4663,7 +4671,6 @@ fn fangs_games(
             if before.is_none() && guacamole::prompt::up(&run.vm, &run.world).is_some() {
                 before = Some(cards::leftovers(&run));
             }
-            let mut stood_in = 0;
             if !scene_step(&mut run, &mut stops, &mut scenes, &mut stood_in) {
                 let me = run.hero().pivot;
                 let (dx, dz) = (by_fangs.x - me.x, by_fangs.z - me.z);
@@ -4786,6 +4793,7 @@ fn fangs_games(
         backs,
         before: before.unwrap_or_default(),
         after,
+        stood_in,
         run,
     }
 }
@@ -4802,6 +4810,7 @@ fn fangs_game(plan: Option<cards::Policy>, seed: u32, over: &dyn Fn(&Run) -> boo
     assert_eq!(p.games.len(), 1, "{:?}", p.games);
     assert!(p.stops.is_empty(), "{:#?}", p.stops);
     assert_eq!(p.chances, Some((1, 100)), "his call's chances");
+    assert_eq!(p.stood_in, 0, "a played game is never stood in won");
     let (longest, stay) = p.stays.longest_unpressed().expect("a stay");
     assert!(stay <= STAY_CAP, "{longest}: {stay} steps");
     p
@@ -4835,6 +4844,20 @@ fn fangs_game_quit_ends_in_his_wait_for_player() {
         behaviour(&p.run, "CardPirate_Casino_Cine")
     );
     assert_eq!(fangs, "wait for player");
+    // A quit wins nothing: the flag a won game's theatrics end on stays
+    // down, so his scene plays no outro and the gate before the key stays
+    // up, its killer asleep (the as-cards-game review: a stand-in left on
+    // turned this quit into a win and the gate went).
+    assert_eq!(
+        global(&p.run, "CardTheatricsDone"),
+        Some(guac_script::Value::Int(0))
+    );
+    let (killer, _) = p.run.placed("Gate_Killer");
+    let killer = p.run.vm.placement_of(killer).expect("the gate's killer");
+    assert!(
+        !p.run.vm.removed(killer) && p.run.vm.asleep(killer),
+        "the gate's killer woke or went after a quit"
+    );
     // What the board's set-up took, given back: the game systems' minigame
     // data and pause menu, the level's atmospheric zone, the portal's locks
     // and minigame mode, the camera's enable; what differs is his and his
@@ -4892,6 +4915,10 @@ fn fangs_game_won_ends_in_his_loot() {
     println!("load at end: {}", load());
 }
 
+/// The steps a run of the rolls' test may take a game, about five
+/// times a game's own.
+const GAME_STEPS: u32 = 20_000;
+
 /// The gate's short run of [`fangs_rolls_over_a_thousand_seeded_games`]:
 /// three games, whose walk to the card house is most of its time.
 const SHORT_GAMES: u32 = 3;
@@ -4926,7 +4953,10 @@ fn fangs_rolls_over_a_thousand_seeded_games() {
         let plans: Vec<(Option<cards::Policy>, u32)> = (played..games)
             .map(|i| (Some(cards::Policy::Weak), 1000 + i))
             .collect();
-        let p = fangs_games(&plans, u32::MAX, &|_| true);
+        // A board stuck mid-game ends its run and fails on the run with no
+        // game over, as the hub's does.
+        let cap = GAME_STEPS.saturating_mul(plans.len() as u32);
+        let p = fangs_games(&plans, cap, &|_| true);
         runs += 1;
         let done = p.games.iter().filter(|g| g.1 > 0).count() as u32;
         assert!(done > 0, "a run with no game over: {:?}", p.games);
