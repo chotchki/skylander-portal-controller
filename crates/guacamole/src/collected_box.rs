@@ -399,6 +399,19 @@ mod tests {
         }
         assert!(!start_paused(&app), "Start resumes");
 
+        // The portal holding the level (an alert, an arrival card): the box
+        // steps aside so the alert reads whole, back once it lets go.
+        app.world_mut().resource_mut::<LevelPads>().hold(true);
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(shot(&mut app).map(|s| s.texts), Some(Vec::new()));
+        app.world_mut().resource_mut::<LevelPads>().hold(false);
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(shot(&mut app).map(|s| s.texts.len()), Some(3));
+
         // The level off the TV: the box steps aside, the run's still held.
         app.world_mut().resource_mut::<LevelPads>().hide();
         for _ in 0..3 {
