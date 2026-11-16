@@ -1606,6 +1606,9 @@ enum Plan {
     Play(cards::Policy),
     /// Quit through the board's own confirm at the player's first pick.
     Quit,
+    /// His question answered no: no game, his talk over at his `wait for
+    /// player` (the run a game is set beside).
+    Decline,
 }
 
 /// Hub stage 2's intro played, the hero set by Dreadbeard, his talk button
@@ -1655,6 +1658,7 @@ fn dreadbeards_games(plans: &[(Plan, u32)], cap: u32) -> Played {
     let mut last_board: Option<String> = None;
     let start = run.steps;
     let debug = std::env::var_os("AS366_DEBUG").is_some();
+    let mut declined: Option<u32> = None;
     let mut backs = 0;
     let mut chances = None;
     let mut dbg_pirate: Option<String> = None;
@@ -1679,11 +1683,15 @@ fn dreadbeards_games(plans: &[(Plan, u32)], cap: u32) -> Played {
             read += 1;
             if read >= READING {
                 read = 0;
+                let yes = plan != Plan::Decline;
                 let answered = run
-                    .with_host(|vm, host| guacamole::prompt::answer(vm, host, &p, true))
+                    .with_host(|vm, host| guacamole::prompt::answer(vm, host, &p, yes))
                     .unwrap_or_else(|h| panic!("the answer: {h}"));
                 assert!(answered);
                 asked = true;
+                if !yes {
+                    declined = Some(run.steps);
+                }
                 if debug {
                     println!("AS366 step {} yes", run.steps);
                 }
@@ -1716,7 +1724,7 @@ fn dreadbeards_games(plans: &[(Plan, u32)], cap: u32) -> Played {
         // loot's wait, a loss at the replay's start.
         if let Some(i) = on {
             let over = match plan {
-                Plan::Quit => pirate.as_deref() == Some("wait for player"),
+                Plan::Quit | Plan::Decline => pirate.as_deref() == Some("wait for player"),
                 Plan::Play(_) => {
                     pirate.as_deref() == Some("wait for loot theatrics")
                         || (was_board.as_deref() == Some(cards::LOST)
@@ -1736,6 +1744,22 @@ fn dreadbeards_games(plans: &[(Plan, u32)], cap: u32) -> Played {
                     run.put(at, 0.0);
                 }
             }
+        }
+        // A declined question: a "game" of no board from the answer to his
+        // talk's end.
+        if on.is_none()
+            && plan == Plan::Decline
+            && let Some(at) = declined
+            && pirate.as_deref() == Some("wait for player")
+        {
+            games.push(Game {
+                seed: 0,
+                started: at,
+                ended: run.steps,
+                board: None,
+                pirate: pirate.clone(),
+            });
+            declined = None;
         }
         // A game's start, seeded: the first, each replay and each asked again.
         if now.as_deref() == Some(cards::GAME_START)
@@ -1779,7 +1803,78 @@ fn dreadbeards_games(plans: &[(Plan, u32)], cap: u32) -> Played {
         }
     }
     talk_button(&mut run, false);
+    // His character back once no scene holds him ([`cards::hero_back`]).
+    for _ in 0..1200 {
+        if !run.minion.is_some_and(|m| run.vm.removed(m)) {
+            break;
+        }
+        stops.extend(run.step_play().unwrap());
+        if cards::hero_back(&mut run) {
+            backs += 1;
+        }
+    }
     let after = cards::leftovers(&run);
+    if debug {
+        let m = run.minion;
+        println!(
+            "AS366 after: backs {backs}, minion {m:?} removed {:?} asleep {:?} behaviour {:?} stopped {:?}, hero handle {} actor active {:?}, cutscene {:?}, held {:?} suspended {:?} in order {:?}",
+            m.map(|m| run.vm.removed(m)),
+            m.map(|m| run.vm.asleep(m)),
+            m.and_then(|m| run.vm.behaviour(m)),
+            m.and_then(|m| run.vm.stopped(m).map(ToString::to_string)),
+            run.hero,
+            run.world.actor(run.hero).map(|a| (a.removed, a.range)),
+            cutscene_name(&run),
+            m.map(|m| run.vm.is_held(m)),
+            m.map(|m| run.vm.is_suspended(m)),
+            m.and_then(|m| run.vm.handle_of(m)).map(|h| {
+                let name = run.world.name(h);
+                run.vm
+                    .tick_order()
+                    .iter()
+                    .filter(|(_, n)| *n == name)
+                    .count()
+            })
+        );
+        if let Some(m) = run.minion {
+            let mut last = None;
+            for k in 0..20 {
+                stops.extend(run.step_play().unwrap());
+                let now = (
+                    run.vm.active_seconds(m),
+                    run.vm.behaviour(m).map(str::to_owned),
+                    run.vm.resting(m),
+                    run.vm.is_activator(m),
+                );
+                if last.as_ref() != Some(&now) {
+                    println!(
+                        "AS366 after +{k}: minion active {:?} behaviour {:?} resting {} activator {}",
+                        now.0, now.1, now.2, now.3
+                    );
+                    last = Some(now);
+                }
+            }
+            if let Some(d) = run.vm.local(m, "description").map(|v| run.vm.value(v)) {
+                println!(
+                    "AS366 description {d:?}: {:?}",
+                    run.vm
+                        .fields(d)
+                        .iter()
+                        .filter(|(n, _)| n.contains("state")
+                            || n.contains("disable")
+                            || n.contains("lock"))
+                        .map(|(n, v)| format!("{n}={v:?}"))
+                        .collect::<Vec<_>>()
+                );
+            }
+            let hero = run.hero;
+            println!(
+                "AS366 hero bench {:?}, world actor {:?}",
+                run.bench.heroes.contains_key(&hero),
+                run.world.actor(hero).map(|a| (a.position, a.removed))
+            );
+        }
+    }
     let pirate = run.vm.behaviour(id).map(str::to_owned);
     let running = cards::streams_running(&run);
     // Free to walk, where the game's over and his scene let him go.
@@ -2053,4 +2148,73 @@ fn dreadbeards_rolls_over_a_thousand_seeded_games() {
         started.elapsed().as_secs_f64(),
         load()
     );
+}
+
+/// [`cards::leftovers`] of a run's end with the placements' run numbers off
+/// their names and what runs on its own clock (timers, the camera's shake)
+/// left out: what two runs settled at the same place should agree on.
+fn settled(
+    left: &std::collections::BTreeMap<String, String>,
+) -> std::collections::BTreeMap<String, String> {
+    left.iter()
+        .filter(|(k, _)| !k.contains("timer") && !k.contains("shake"))
+        .map(|(k, v)| (k.split(" #").next().unwrap_or(k).to_owned(), v.clone()))
+        .collect()
+}
+
+/// openspec AS.366: what a game leaves behind. Dreadbeard's game quit at
+/// its first pick, beside a run whose player answers his question no: each
+/// over at his `wait for player`, the scripts' own state of the game
+/// systems, the level, the portal, the music and the camera and every
+/// running placement by its behaviour the same in both (the board's
+/// teardown gave back what its set-up took: the minigame data, the pause
+/// menu, the creatures' and the portal's locks, the atmospheric zone, the
+/// music, the camera), the hero's own marks aside, no card stream's
+/// placement running; after the no a full stick walks him off.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_quit_game_leaves_the_hub_as_a_declined_question_does() {
+    println!("load at start: {}", load());
+    let quit = dreadbeards_games(&[(Plan::Quit, 1)], 20_000);
+    let no = dreadbeards_games(&[(Plan::Decline, 0)], 20_000);
+    assert_eq!(quit.games.len(), 1, "{:?}", quit.games);
+    assert_eq!(no.games.len(), 1, "{:?}", no.games);
+    let diff = cards::differ(&settled(&no.after), &settled(&quit.after));
+    for d in &diff {
+        println!("beside a declined one: {d}");
+    }
+    for d in cards::differ(&settled(&quit.before), &settled(&quit.after)) {
+        println!("before the yes and after the game: {d}");
+    }
+    assert!(quit.running.is_empty(), "{:?}", quit.running);
+    // The hero put back by the harness comes back under designer control
+    // (his new description's state, `Minion - setup post descriptions`)
+    // and doesn't walk: his reload after a game is AS.480's. After a no he
+    // walks.
+    println!(
+        "walked: {:.1} after the game, {:.1} after a no",
+        quit.moved, no.moved
+    );
+    assert!(no.moved > 3.0);
+    // What differs is the hero's own: put back after the game, he's a new
+    // entity the camera follows (its target and the def it picked where he
+    // stands), his minion's behaviour, and the portal's restore of his
+    // stream left its own marks (the reloaded object, the flag no script
+    // reads); and the game's quit scene's camera shot.
+    let his: [&str; 7] = [
+        "camera control data.cam def index",
+        "camera control data.trans plane target actor",
+        "portal control data.loaded object just changed",
+        "portal control data.restore character stream state",
+        "placement 009_Eruptor",
+        "cs control data.cam shot id counter",
+        "cs control data.last cam shot def",
+    ];
+    let other: Vec<&String> = diff
+        .iter()
+        .filter(|d| !his.iter().any(|k| d.starts_with(k)))
+        .collect();
+    assert!(other.is_empty(), "{other:#?}");
+    assert!(quit.stops.is_empty() && no.stops.is_empty());
+    println!("load at end: {}", load());
 }

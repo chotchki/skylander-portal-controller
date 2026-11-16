@@ -395,6 +395,9 @@ pub fn leftovers(run: &Run) -> BTreeMap<String, String> {
         "portal control data",
         "music data",
         "camera control data",
+        "System Update Controls",
+        "UI Systems",
+        "cs control data",
     ] {
         let Some(id) = program.global_named(g) else {
             continue;
@@ -482,14 +485,26 @@ pub fn streams_running(run: &Run) -> Vec<String> {
 /// Character Stream` exits his figure) and the board's teardown asks for
 /// his character again (`Portal - Restore Minigame Stream from Character`,
 /// a `character/` load); the harness answers that load as it answers a
-/// figure put back on the portal, his file unloaded and joined again
-/// ([`Run::deactivate`], [`Run::join`]). The TV's swap does the same on a
+/// figure put back on the portal, his file unloaded and joined again by the
+/// TV's join, his entry beam ([`Run::deactivate`], [`Run::enter`]), once no
+/// scene holds the player
+/// (the restore's load answered after the game's quit or win scene). The TV's swap does the same on a
 /// figure's return; that the TV reloads him after a card game is AS.367's.
 /// Whether he was put back this step.
 pub fn hero_back(run: &mut Run) -> bool {
     let off = run.minion.is_some_and(|m| run.vm.removed(m));
-    let asked = run.world.streams.back() == Some(&Some("character/".to_owned()));
-    if !off || !asked || board(run).is_some() {
+    let asked = run
+        .world
+        .streams
+        .iter()
+        .rev()
+        .take(2)
+        .any(|s| s.as_deref() == Some("character/"));
+    // Answered once no scene holds the player, as the engine's load takes
+    // its time: a minion joined under the game's quit scene stays as that
+    // scene left the players it held (disabled).
+    let held = super::cutscene_name(run).is_some() || guacamole::anchors::scene_holds(&run.vm);
+    if !off || !asked || held || board(run).is_some() {
         return false;
     }
     let _ = run.deactivate();
