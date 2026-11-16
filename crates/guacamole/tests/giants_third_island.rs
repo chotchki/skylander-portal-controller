@@ -1162,7 +1162,7 @@ fn assert_box(p: &Pickup, item: &str) {
         assert!(
             w.and_then(|w| w.text.as_deref())
                 .is_some_and(|t| !t.is_empty()),
-            "the {what} read: {c:?}"
+            "the {what} read"
         );
     }
     let rise = f64::from(p.up - p.touched);
