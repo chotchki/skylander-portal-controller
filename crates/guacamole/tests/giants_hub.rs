@@ -1600,6 +1600,15 @@ struct Played {
     /// The board's two chances as his call set them (`best move - 1 %`,
     /// `best move - 2 %`), read off the first game.
     chances: Option<(i32, i32)>,
+    /// Each card game sound a play started, by its archive's stem and name
+    /// (a run given the card game's book, [`card_book`]).
+    card_plays: std::collections::BTreeSet<(String, String)>,
+    /// Each start of a card game sound the book had nothing playable for,
+    /// by name, with why.
+    card_misses: std::collections::BTreeSet<(String, String)>,
+    /// Each start of one held off by its own limit (its instances on its
+    /// actor or everywhere full): found and playable, the original's rule.
+    card_limited: std::collections::BTreeSet<(String, String)>,
 }
 
 /// One game's end.
@@ -1634,9 +1643,38 @@ enum Plan {
 /// at his `wait for loot theatrics` (AS.368's), a quit at his `wait for
 /// player`; then a full stick for 150 steps (when he's free to walk).
 fn dreadbeards_games(plans: &[(Plan, u32)], cap: u32) -> Played {
+    dreadbeards_games_with(plans, cap, None)
+}
+
+/// [`dreadbeards_games`] with the card game's archives' sounds read by the
+/// TV's own load off the extract at `card_extract` ([`card_book`]) beside
+/// the run's.
+fn dreadbeards_games_with(
+    plans: &[(Plan, u32)],
+    cap: u32,
+    card_extract: Option<&std::path::Path>,
+) -> Played {
     let (stage, intro) = STAGES[1];
     let (mut run, _found) = run_on_level(Mode::Play, stage, setup(&[]));
     run.world.card_streams.play_games();
+    let card_stems: std::collections::HashSet<String> = match card_extract {
+        Some(dir) => {
+            let (book, stems) = card_book(&run, dir).0;
+            let ours = run
+                .world
+                .card_streams
+                .units
+                .iter()
+                .map(|(a, _)| guac_sound::stem(a))
+                .collect();
+            run.world.set_sounds(book, stems);
+            ours
+        }
+        None => Default::default(),
+    };
+    let mut card_plays = std::collections::BTreeSet::new();
+    let mut card_misses = std::collections::BTreeSet::new();
+    let mut card_limited = std::collections::BTreeSet::new();
     let mut stops = Vec::new();
     for _ in 0..2 {
         stops.extend(run.step_play().unwrap());
@@ -1727,6 +1765,20 @@ fn dreadbeards_games(plans: &[(Plan, u32)], cap: u32) -> Played {
                     guacamole::card_game::page_up(&run.vm).map(|p| p.2)
                 );
                 dbg_pirate = b;
+            }
+        }
+        for p in run.world.plays() {
+            if card_stems.contains(&p.id.stem) {
+                card_plays.insert((p.id.stem.clone(), p.name.clone().unwrap_or_default()));
+            }
+        }
+        for r in run.world.sounds_refused() {
+            if card_stems.contains(&r.id.stem) {
+                let line = (r.name.clone().unwrap_or_default(), r.why.clone());
+                match r.why.ends_with(" on its actor") || r.why.ends_with(" everywhere") {
+                    true => card_limited.insert(line),
+                    false => card_misses.insert(line),
+                };
             }
         }
         picks.note(&run);
@@ -1931,6 +1983,9 @@ fn dreadbeards_games(plans: &[(Plan, u32)], cap: u32) -> Played {
         backs,
         held_back,
         chances,
+        card_plays,
+        card_misses,
+        card_limited,
     }
 }
 
@@ -2309,4 +2364,131 @@ fn a_quit_game_leaves_the_hub_as_a_declined_question_does() {
     assert!(other.is_empty(), "{other:#?}");
     assert!(quit.stops.is_empty() && no.stops.is_empty());
     println!("load at end: {}", load());
+}
+
+/// The card game's book for `run` (openspec AS.365): the run's own files
+/// beside the card archives' as the TV's level load reads them
+/// (`guacamole::sounds::load`) off the extract at `dir`, each card unit by
+/// its file there (`scripts/<stem>.igz`); and every sound the dump's card
+/// archives hold, read by guac-extract's own reader, looked up on that book
+/// by its stem and object: how many play, and each that doesn't by name,
+/// with why.
+type Book = (
+    std::sync::Arc<guac_sound::SoundBook>,
+    std::collections::HashMap<u16, String>,
+);
+fn card_book(run: &Run, dir: &std::path::Path) -> (Book, usize, Vec<(String, String)>) {
+    let cards = &run.world.card_streams.units;
+    let len = cards
+        .iter()
+        .map(|(_, u)| *u as usize + 1)
+        .max()
+        .unwrap_or(0);
+    let mut units = vec![String::new(); len];
+    for (a, u) in cards {
+        units[*u as usize] = guac_extract::scripts::script_path(a);
+    }
+    let part = guacamole::sounds::load(dir, guac_extract::intros::IrFormat::Postcard, &units);
+    let mut parts: Vec<guac_ir::sound::Sounds> = Vec::new();
+    let mut stems = std::collections::HashMap::new();
+    if let Some(book) = run.world.sound_book() {
+        parts.extend(book.stems().filter_map(|s| book.file(s).cloned()));
+        stems.extend(run.world.sound_stems().clone());
+    }
+    parts.extend(part.book.stems().filter_map(|s| part.book.file(s).cloned()));
+    stems.extend(part.stems.clone());
+    let book = std::sync::Arc::new(guac_sound::SoundBook::new(parts));
+
+    let usr = dump().join("PS3_GAME/USRDIR");
+    let exports = guac_extract::sounds::exports(&usr).expect("global's exports");
+    let (mut playable, mut misses) = (0, Vec::new());
+    for (archive, unit) in cards {
+        let bld = std::fs::read(usr.join(archive)).unwrap();
+        let arc = std::fs::read(usr.join(archive).with_extension("arc")).ok();
+        let read = guac_extract::sounds::read(archive, &bld, arc.as_deref(), &exports, identity())
+            .unwrap_or_else(|e| panic!("{archive}'s sounds: {e}"));
+        let stem = stems.get(unit).cloned().unwrap_or_default();
+        for s in &read.ir.sounds {
+            let name = s.name.clone().unwrap_or_else(|| format!("#{}", s.object));
+            match book.lookup(&stem, s.object) {
+                guac_sound::Lookup::Playable(_) => playable += 1,
+                guac_sound::Lookup::Silent { why, .. } => {
+                    misses.push((format!("{archive}: {name}"), format!("{why:?}")))
+                }
+                guac_sound::Lookup::Unknown => misses.push((
+                    format!("{archive}: {name}"),
+                    format!("not in the book under {stem:?}"),
+                )),
+            }
+        }
+    }
+    ((book, stems), playable, misses)
+}
+
+/// openspec AS.365: the card game's sounds on the TV's sound book. An
+/// extract holding the art part (made off the dump into a throwaway dir),
+/// the book the TV's level load reads off it over the card streams' and
+/// stones' units: every sound the card archives hold looks up by its stem
+/// and plays (the misses named), and Dreadbeard's game on hub stage 2,
+/// played on that book, starts card game sounds with none the book lacks (a
+/// start its own instance limit holds off was found: the original's rule).
+#[test]
+#[ignore = "reads the Giants dump"]
+fn the_card_games_sounds_look_up_on_the_tvs_book_by_their_stems() {
+    use guac_extract::known::KNOWN_DUMPS;
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let base =
+        std::path::PathBuf::from(env_or_dotenv("GUAC_EXTRACT_DIR").expect("set GUAC_EXTRACT_DIR"));
+    std::fs::create_dir_all(&base).unwrap();
+    let tmp = tempfile::Builder::new()
+        .prefix("as365-card-sounds-")
+        .tempdir_in(&base)
+        .unwrap();
+    let root = guac_extract::ExtractRoot::checked(tmp.path().join("extract")).unwrap();
+    let mut opened =
+        guac_extract::open(&dump(), &root, KNOWN_DUMPS, &|_| {}).expect("the known dump");
+    let usr = dump().join("PS3_GAME/USRDIR");
+    let mut st = guac_extract::stages::ScriptStage::default();
+    guac_extract::stages::card_art_part(
+        &mut opened.dir,
+        &usr,
+        guac_extract::intros::IrFormat::Postcard,
+        &mut st,
+    )
+    .unwrap();
+    assert!(st.failed.is_empty(), "{:?}", st.failed);
+    let dir = opened.dir.path().to_path_buf();
+
+    let (stage, _) = STAGES[1];
+    let (run, _) = run_on_level(Mode::Play, stage, setup(&[]));
+    let linked = run.world.card_streams.units.len();
+    let (_, playable, misses) = card_book(&run, &dir);
+    println!(
+        "{linked} card archives linked; {playable} of their sounds play off the TV's book, misses {misses:?}"
+    );
+    assert_eq!(linked, 3 + 2 * guac_extract::screens::CARD_STONE_COUNT);
+    assert!(misses.is_empty(), "{misses:#?}");
+    assert_eq!(playable, 36 + 10 + guac_extract::screens::CARD_STONE_COUNT);
+    drop(run);
+
+    let played = dreadbeards_games_with(
+        &[(Plan::Play(cards::Policy::Strong), DREADBEARDS_SEEDS[2])],
+        20_000,
+        Some(&dir),
+    );
+    println!(
+        "a game: {:?}; card sounds started {:?}; not in the book {:?}; held by their own limits {:?}",
+        played.games, played.card_plays, played.card_misses, played.card_limited
+    );
+    assert_eq!(played.games.len(), 1, "{:?}", played.games);
+    assert!(played.games[0].ended > 0, "{:?}", played.games);
+    assert!(!played.card_plays.is_empty());
+    assert!(played.card_misses.is_empty(), "{:?}", played.card_misses);
+    assert!(played.stops.is_empty(), "{:#?}", played.stops);
+    println!(
+        "{:.1} s, load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
 }
