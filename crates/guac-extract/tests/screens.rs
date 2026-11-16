@@ -340,11 +340,14 @@ fn the_card_art_lands_by_the_extracts_own_readers_and_a_second_run_keeps_it() {
         (0, written)
     );
 
-    // An interface record of another shape isn't current: the part reads
-    // again (AT.27's rule).
+    // An interface record of another shape isn't current, though every
+    // file the part names is intact: the part reads again (AT.27's rule).
     let mut stale = dir.manifest().parts[CARD_ART_PART].clone();
     let at = stale.iter().position(|f| *f == iface).unwrap();
-    stale[at] = iface.replace(".v", ".v0");
+    let old_shape = iface.replace(".v", ".v0");
+    let bytes = fs::read(dir.path().join(&iface)).unwrap();
+    dir.write_output(&old_shape, &bytes).unwrap();
+    stale[at] = old_shape;
     dir.record_part(CARD_ART_PART, stale).unwrap();
     let mut third = ScriptStage::default();
     card_art_part(&mut dir, &usr, IrFormat::Ron, &mut third).unwrap();
