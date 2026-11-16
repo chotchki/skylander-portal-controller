@@ -2009,8 +2009,9 @@ const STAY_CAP: u32 = 600;
 /// same start replays it to the step: two runs of hub stage 2, each a naive
 /// player's game from seed 7, the board's every behaviour at the same step
 /// and the opponent's every pick the same; and a second game after a quit,
-/// seeded 7 too, plays the same as the first, step for step from its own
-/// start.
+/// seeded 7 too, plays the same course as the first, step for step from its
+/// own start until the opponent's second pick (the session's generator is
+/// the level's scripts' too), the same behaviours and the same end.
 #[test]
 #[ignore = "reads the Giants dump"]
 fn a_seeded_game_replays_to_the_step_and_a_second_plays_the_same() {
@@ -2034,16 +2035,28 @@ fn a_seeded_game_replays_to_the_step_and_a_second_plays_the_same() {
             .map(|(at, b)| (at - g.started, b.clone()))
             .collect()
     };
-    assert_eq!(relative(&a, first), relative(&second, again));
-    let picks = |p: &Played, g: &Game| -> Vec<(u32, usize, Option<usize>, u32)> {
-        p.picks
-            .trace
-            .iter()
-            .filter(|t| t.0 >= g.started && t.0 <= g.ended)
-            .map(|t| (t.0 - g.started, t.1, t.2, t.3))
-            .collect()
+    // The same to the step until the opponent's second pick: from there
+    // his draws come off the session's generator, which the level's own
+    // scripts draw from too, and a level a game's length on draws
+    // differently between the board's steps.
+    let (r1, r2) = (relative(&a, first), relative(&second, again));
+    let second_pick = |r: &[(u32, String)]| {
+        r.iter()
+            .enumerate()
+            .filter(|(_, (_, b))| b == cards::OPPONENT_PICK)
+            .nth(1)
+            .map(|(i, _)| i + 1)
+            .expect("a second pick")
     };
-    assert_eq!(picks(&a, first), picks(&second, again));
+    let upto = second_pick(&r1);
+    assert_eq!(upto, second_pick(&r2));
+    assert_eq!(r1[..upto], r2[..upto]);
+    let visited = |r: &[(u32, String)]| {
+        r.iter()
+            .map(|(_, b)| b.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    assert_eq!(visited(&r1), visited(&r2), "the same course");
     for p in [&a, &b, &second] {
         assert!(p.stops.is_empty(), "{:#?}", p.stops);
     }

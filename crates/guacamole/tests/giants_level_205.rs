@@ -4576,6 +4576,10 @@ struct FangsPlayed {
     chances: Option<(i32, i32)>,
     running: Vec<String>,
     backs: u32,
+    /// [`cards::leftovers`] as his first question comes up (before the yes)
+    /// and at the run's end.
+    before: std::collections::BTreeMap<String, String>,
+    after: std::collections::BTreeMap<String, String>,
     run: Run,
 }
 
@@ -4615,6 +4619,7 @@ fn fangs_games(
     let (mut chances, mut backs, mut ended_at) = (None, 0, None::<u32>);
     let mut dbg = String::new();
     let mut stuck = false;
+    let mut before = None;
     let start = run.steps;
     while run.steps - start < cap {
         let on = games.iter().position(|g| g.1 == 0);
@@ -4629,6 +4634,9 @@ fn fangs_games(
             let press = plan.is_some() && run.steps.is_multiple_of(20);
             still(&mut run, &mut stops, [false, false, false, press]);
         } else {
+            if before.is_none() && guacamole::prompt::up(&run.vm, &run.world).is_some() {
+                before = Some(cards::leftovers(&run));
+            }
             let mut stood_in = 0;
             if !scene_step(&mut run, &mut stops, &mut scenes, &mut stood_in) {
                 let me = run.hero().pivot;
@@ -4729,6 +4737,7 @@ fn fangs_games(
         g.4 = behaviour(&run, "CardPirate_Casino_Cine");
     }
     let running = cards::streams_running(&run);
+    let after = cards::leftovers(&run);
     println!(
         "Fangs' games: {games:?}; chances {chances:?}; rolls: first landed {} of {} ({:.1}%), second {} of {} ({:.1}%); longest unpressed stay {:?}; {} stops; running {running:?}; put back {backs}; steps {}",
         picks.first_landed,
@@ -4749,6 +4758,8 @@ fn fangs_games(
         chances,
         running,
         backs,
+        before: before.unwrap_or_default(),
+        after,
         run,
     }
 }
@@ -4784,6 +4795,7 @@ fn fangs_game_quit_ends_in_his_wait_for_player() {
     println!("load at start: {}", load());
     let p = fangs_game(None, FANGS_SEEDS[0], &|r| {
         behaviour(r, guacamole::level_205::CARD_HOUSE_PIRATE) == "wait for player"
+            && !r.minion.is_some_and(|m| r.vm.removed(m))
     });
     let g = &p.games[0];
     assert_eq!(
@@ -4797,6 +4809,27 @@ fn fangs_game_quit_ends_in_his_wait_for_player() {
         behaviour(&p.run, "CardPirate_Casino_Cine")
     );
     assert_eq!(fangs, "wait for player");
+    // What the board's set-up took, given back: the game systems' minigame
+    // data and pause menu, the level's atmospheric zone, the portal's locks
+    // and minigame mode, the camera's enable; what differs is his and his
+    // scene's own and the hero's (put back after the game).
+    let diff = cards::differ(&p.before, &p.after);
+    for d in &diff {
+        println!("before the yes and after the game: {d}");
+    }
+    let given_back = [
+        "Game Systems.",
+        "level control data.atmospheric zone",
+        "portal control data.disallow joining",
+        "portal control data.current mode",
+        "camera control data.disabled",
+        "System Update Controls.",
+    ];
+    let kept: Vec<&String> = diff
+        .iter()
+        .filter(|d| given_back.iter().any(|k| d.starts_with(k)) && !d.contains("timer"))
+        .collect();
+    assert!(kept.is_empty(), "{kept:#?}");
     assert!(p.running.is_empty(), "{:?}", p.running);
     assert_eq!(p.backs, 1);
     println!("load at end: {}", load());
