@@ -9,9 +9,9 @@
 //!   (`CollectibeDialogBox.ai`): a box on the gameplay container with its
 //!   title, the item's name and the Continue prompt, kept in the global
 //!   `CurrentCollectibleDialog`. One of the system's update macros waits on
-//!   it with no timer: the first joined player's accept button (`action 1`,
+//!   it with no timer: any joined player's accept button (`action 1`,
 //!   South) freshly pressed while the gameplay container shows takes the
-//!   box off; for a part (`collected type` 1) that removes the part, whose
+//!   box off (one held from before doesn't); for a part (`collected type` 1) that removes the part, whose
 //!   SHUTDOWN fades the camera back, ends its cutscene state, completes its
 //!   objective and wakes what comes next (the sail, the flight, the outro).
 //! - **What the TV lacks.** The interface draws none of the box's sprites

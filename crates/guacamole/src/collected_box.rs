@@ -8,7 +8,7 @@
 //!
 //! It draws and takes nothing: the router's pads go to the scripts as
 //! before, and the press that takes the box off is theirs (the system's
-//! update macro reading the first joined player's accept button). It steps
+//! update macro reading a joined player's fresh accept press). It steps
 //! aside under the portal's hold, as the completion screen and the
 //! yes-or-no modal do, so an alert reads whole. Where the original's box
 //! stands and how it slides in is unrecorded; it sits low and centred here
@@ -168,12 +168,15 @@ fn show(
 }
 
 /// The box's lines as drawn: its title, the item's name and its prompt
-/// (the disc's own with the font, which draws its button; ours without).
+/// (the disc's own words with the font, ours without). The prompt's button
+/// is the walking pad's own glyph beside it, as the pause's and the world's
+/// prompts draw it, so the font's PlayStation button heading the disc's
+/// prompt (`<`) is left off.
 pub(crate) fn lines(c: &Collected, art: bool) -> [String; 3] {
     let title = c.title.text.clone().unwrap_or_else(|| UNREAD_TITLE.into());
     let name = c.description.text.clone().unwrap_or_default();
-    let prompt = match c.prompt.as_ref().and_then(|p| p.text.clone()) {
-        Some(p) if art => p,
+    let prompt = match c.prompt.as_ref().and_then(|p| p.text.as_deref()) {
+        Some(p) if art => p.strip_prefix('<').map_or(p, str::trim_start).to_owned(),
         _ => CONTINUE.into(),
     };
     [title, name, prompt]
@@ -221,31 +224,39 @@ fn spawn(
                 BackgroundColor(BOX_FILL),
                 BorderColor::all(theme.gold),
             ))
-            .with_children(|panel| match art {
-                Some(a) => {
-                    bitmap_text(panel, a, &title, TITLE_SIZE, theme.gold_bright);
-                    if !name.is_empty() {
-                        bitmap_text(panel, a, &name, NAME_SIZE, Color::WHITE);
+            .with_children(|panel| {
+                match art {
+                    Some(a) => {
+                        bitmap_text(panel, a, &title, TITLE_SIZE, theme.gold_bright);
+                        if !name.is_empty() {
+                            bitmap_text(panel, a, &name, NAME_SIZE, Color::WHITE);
+                        }
                     }
-                    bitmap_text(panel, a, &prompt_line, PROMPT_SIZE, Color::WHITE);
-                }
-                None => {
-                    panel.spawn(pen.text(&title, Step::Body, Role::Accent));
-                    if !name.is_empty() {
-                        panel.spawn(pen.text(&name, Step::Lg, Role::Primary));
+                    None => {
+                        panel.spawn(pen.text(&title, Step::Body, Role::Accent));
+                        if !name.is_empty() {
+                            panel.spawn(pen.text(&name, Step::Lg, Role::Primary));
+                        }
                     }
-                    panel
-                        .spawn(Node {
-                            flex_direction: FlexDirection::Row,
-                            align_items: AlignItems::Center,
-                            column_gap: px(16),
-                            ..default()
-                        })
-                        .with_children(|line| {
-                            glyph(line, pen, prompt(labels, Face::South));
-                            line.spawn(pen.text(&prompt_line, Step::Body, Role::Primary));
-                        });
                 }
+                panel
+                    .spawn(Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: px(16),
+                        ..default()
+                    })
+                    .with_children(|line| {
+                        glyph(line, pen, prompt(labels, Face::South));
+                        match art {
+                            Some(a) => {
+                                bitmap_text(line, a, &prompt_line, PROMPT_SIZE, Color::WHITE);
+                            }
+                            None => {
+                                line.spawn(pen.text(&prompt_line, Step::Body, Role::Primary));
+                            }
+                        }
+                    });
             });
         })
         .id()
@@ -446,6 +457,49 @@ mod tests {
         assert_eq!(shot(&mut app), None);
     }
 
+    /// The as-ship-parts review: in the disc's font too, the prompt's
+    /// button is the walking pad's own glyph (South on a Switch-labelled
+    /// pad is B), one of it, as the pause draws it.
+    #[test]
+    fn the_boxes_prompt_draws_the_pads_own_button_in_the_discs_font() {
+        use crate::pad::{Labels, Prompt};
+        use crate::pause::PromptGlyph;
+        use bevy::ecs::system::RunSystemOnce;
+        let (mut app, _) = box_app();
+        for (labels, want) in [
+            (Labels::Nintendo, Prompt::Letter("B")),
+            (Labels::Xbox, Prompt::Letter("A")),
+        ] {
+            let root = app
+                .world_mut()
+                .run_system_once(
+                    move |mut commands: Commands, assets: Res<TvAssets>, theme: Res<TvTheme>| {
+                        let pen = Pen::new(&assets, &theme);
+                        let art = Art::for_tests(Default::default());
+                        spawn(&mut commands, &pen, Some(&art), &boxed(9), labels)
+                    },
+                )
+                .unwrap();
+            app.update();
+            let mut q = app.world_mut().query::<(Entity, &PromptGlyph)>();
+            let glyphs: Vec<Prompt> = q
+                .iter(app.world())
+                .filter(|(e, _)| {
+                    app.world()
+                        .entity(*e)
+                        .get::<ChildOf>()
+                        .and_then(|c| app.world().entity(c.parent()).get::<ChildOf>())
+                        .and_then(|c| app.world().entity(c.parent()).get::<ChildOf>())
+                        .is_some_and(|c| c.parent() == root)
+                })
+                .map(|(_, g)| g.0)
+                .collect();
+            assert_eq!(glyphs, [want], "{labels:?}");
+            app.world_mut().entity_mut(root).despawn();
+            app.update();
+        }
+    }
+
     /// A run of no scripts of its own, as the TV installs one (the
     /// yes-or-no modal's tests' own).
     fn a_run() -> ScriptRuntime {
@@ -474,11 +528,12 @@ mod tests {
         }
     }
 
-    /// The lines: an unread title ours, the disc's prompt only in its font.
+    /// The lines: an unread title ours, the disc's prompt only in its font,
+    /// its leading button (the font's PlayStation glyph) left to the pad's.
     #[test]
     fn a_boxes_lines_fall_back_to_ours() {
         let mut c = boxed(1);
-        assert_eq!(lines(&c, true), [TITLE, ITEM, "< go"]);
+        assert_eq!(lines(&c, true), [TITLE, ITEM, "go"]);
         assert_eq!(lines(&c, false), [TITLE, ITEM, CONTINUE]);
         c.title.text = None;
         c.prompt = None;

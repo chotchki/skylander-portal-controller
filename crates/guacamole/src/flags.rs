@@ -37,7 +37,7 @@ use tokio::sync::oneshot;
 use tracing::{error, info, warn};
 
 use crate::hero::{FollowCamera, HeroBody};
-use crate::hero_scripts::{ScriptLog, ScriptSource};
+use crate::hero_scripts::{HeroRun, Join, ScriptLog, ScriptSource};
 use crate::level::LevelCamera;
 use crate::mirror::TvMirror;
 use crate::play::Play;
@@ -571,7 +571,7 @@ struct CaptureReads<'w, 's> {
     runtime: Option<Res<'w, ScriptRuntime>>,
     source: Option<Res<'w, ScriptSource>>,
     play: Option<Res<'w, Play>>,
-    heroes: Query<'w, 's, &'static HeroBody>,
+    heroes: Query<'w, 's, (&'static HeroRun, &'static HeroBody)>,
     cameras: Query<
         'w,
         's,
@@ -600,7 +600,7 @@ struct CaptureReads<'w, 's> {
 impl CaptureReads<'_, '_> {
     fn hero(&self) -> Option<Vec3> {
         let e = self.play.as_deref().and_then(Play::hero)?;
-        self.heroes.get(e).ok().map(|b| b.hero.pivot)
+        self.heroes.get(e).ok().map(|(_, b)| b.hero.pivot)
     }
 
     fn camera(&self) -> Option<(&Camera, &GlobalTransform, &Projection, bool)> {
@@ -731,13 +731,19 @@ impl CaptureReads<'_, '_> {
                     .as_deref()
                     .and_then(|s| s.level_unit())
                     .map(|level| {
-                        let pose = self
+                        let seated = self
                             .play
                             .as_deref()
                             .and_then(Play::hero)
-                            .and_then(|e| self.heroes.get(e).ok())
-                            .map(|b| (b.hero.pivot, b.hero.facing));
-                        let read = crate::watch::read(&rt.vm, w, level, &[], pose, None);
+                            .and_then(|e| self.heroes.get(e).ok());
+                        let pose = seated.map(|(_, b)| (b.hero.pivot, b.hero.facing));
+                        // The joined hero by his pivot, not his actor's
+                        // place, which stays where he joined.
+                        let handle = seated.and_then(|(r, _)| match r.join {
+                            Join::Joined(id) => rt.vm.handle_of(id),
+                            _ => None,
+                        });
+                        let read = crate::watch::read(&rt.vm, w, level, &[], pose, handle, None);
                         serde_json::json!({
                             "cutscene_state": read.cutscene_state,
                             "minions": read.minions,

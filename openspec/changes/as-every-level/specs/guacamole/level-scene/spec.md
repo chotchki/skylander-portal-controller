@@ -606,7 +606,7 @@ An Elf Lobber's volley SHALL be three arrows, one at its target and two up to 20
 - **THEN** each first arrow falls from 80 ft over his feet, lands there and hurts him, and every arrow is gone 1.5 s after it lands
 
 ### Requirement: A pickup's box says what it waits on
-While a pickup's scripts hold the level on their collected box (level 214's ship parts), the TV SHALL show the box's title, the item's name and its Continue prompt over the held level, and the hold SHALL end where the scripts' own wait ends: the first joined player's accept press, with no timer of its own.
+While a pickup's scripts hold the level on their collected box (level 214's ship parts), the TV SHALL show the box's title, the item's name and its Continue prompt over the held level, and the hold SHALL end where the scripts' own wait ends: a joined player's fresh accept press, with no timer of its own.
 
 #### Scenario: A ship part picked up
 - **WHEN** a hero reaches one of level 214's ship parts and nothing is pressed
