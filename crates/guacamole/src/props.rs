@@ -356,11 +356,13 @@ impl LevelProps {
 
 /// Where a prop's actor draws it: its place, its turn (AF.9's Euler angles)
 /// and its scale as the scripts leave them (openspec AG.60: the actor is the
-/// prop's one holder, AH design decision 21).
+/// prop's one holder, AH design decision 21), under the turn of the actor
+/// it hangs on itself (openspec AS.443, [`Actor::carried`]).
 pub fn actor_transform(a: &Actor) -> Transform {
     Transform {
         translation: a.position,
-        rotation: euler([a.angles.tilt, a.angles.facing, a.angles.roll]),
+        rotation: a.carried.unwrap_or(bevy::math::Quat::IDENTITY)
+            * euler([a.angles.tilt, a.angles.facing, a.angles.roll]),
         scale: Vec3::from_array(a.scale) / 100.0,
     }
 }

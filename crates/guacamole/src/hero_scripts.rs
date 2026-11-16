@@ -106,7 +106,7 @@ use guac_ir::palette::Palette;
 use guac_motion::hero::Hero;
 use guac_motion::locomotion::Locomotion;
 use guac_motion::seam::{BodyId, PhysicsSeam};
-use guac_motion::solid::{SolidInfo, euler};
+use guac_motion::solid::SolidInfo;
 use guac_script::{Halt, Handle, Mode, Obj, PlacementId, Program, Value};
 use guacamole::figure::{self, Layout};
 use guacamole::frame::Frame;
@@ -1998,14 +1998,11 @@ pub(crate) struct CloneDrawn {
     pub(crate) attack: bool,
 }
 
-/// Where a clone draws: its actor's place, its turn (AF.9's Euler angles)
-/// and its scale.
+/// Where a clone draws: as a prop's actor draws it
+/// ([`guacamole::props::actor_transform`]: its place, its turn under the
+/// turn of the actor it hangs on itself, openspec AS.443, and its scale).
 pub(crate) fn clone_transform(a: &guacamole::script_engine::Actor) -> Transform {
-    Transform {
-        translation: a.position,
-        rotation: euler([a.angles.tilt, a.angles.facing, a.angles.roll]),
-        scale: Vec3::from_array(a.scale) / 100.0,
-    }
+    guacamole::props::actor_transform(a)
 }
 
 /// A clone's drawn part: a model segment's mesh on its material.

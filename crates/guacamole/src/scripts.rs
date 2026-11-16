@@ -3418,6 +3418,14 @@ pub fn is_hub(level: &str) -> bool {
 /// clips). By name, since the ships' scripts are the hub's too.
 pub const SHIP: [&str; 3] = ["The_Ship_1", "214_Intro_Ship", "Hub_Engine"];
 
+/// The landing pod (openspec AS.443), by script, every tick, on every level
+/// that places one (201's intro and the hub's arrival fly a clone of it):
+/// its STARTUP clones its base, plank, propeller and wheel (`LP_Parts`)
+/// onto its nodes, each by its own id, and its SHUTDOWN takes them off.
+/// Off the listing the pod flew as its mast, sail and wings alone, the
+/// people on it standing on air.
+pub const LANDING_POD_SCRIPTS: [&str; 1] = ["GameElement_LandingPod/Scripts/LandingPod.ai"];
+
 /// The intro placement of the level whose archive is `level`, if the TV
 /// runs one.
 pub fn intro(level: &str) -> Option<&'static str> {
@@ -4163,6 +4171,7 @@ pub fn smash_config(mode: Mode) -> Config {
         scripts.extend(ELEMENTAL_SCRIPTS.iter().map(|s| (*s).to_owned()));
         // Level 214's ship (openspec AS.60).
         placements.extend(SHIP.iter().map(|s| (*s).to_owned()));
+        scripts.extend(LANDING_POD_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(EFFECT_SCRIPTS.iter().map(|s| (*s).to_owned()));
         // The levels' music (openspec AR.16, AS.54): their rolls draw on
         // the session's generator, as the original's do.
@@ -8855,6 +8864,12 @@ mod tests {
             assert!(c.whitelist.lists(name, ships), "{name}");
         }
         assert!(!c.whitelist.lists("Hub_Ship", ships));
+        // AS.443: the landing pod's own script, its clones' with it, on
+        // any level that places one.
+        let pod = "C:/tfb/Content/Levels/Includes/GameElement_LandingPod/Scripts/LandingPod.ai";
+        for name in ["Landing_Pod", "LandingPod", "205_Outro_Landing_Pod"] {
+            assert!(c.whitelist.lists(name, pod), "{name}");
+        }
     }
 
     #[test]

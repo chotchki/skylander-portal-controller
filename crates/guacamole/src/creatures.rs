@@ -252,7 +252,8 @@ fn placed(a: &guacamole::script_engine::Actor) -> Transform {
     }
     Transform {
         translation: a.position,
-        rotation: Quat::from_rotation_y(a.angles.facing.to_radians()),
+        rotation: a.carried.unwrap_or(Quat::IDENTITY)
+            * Quat::from_rotation_y(a.angles.facing.to_radians()),
         scale: Vec3::from_array(a.scale) / 100.0,
     }
 }
@@ -299,10 +300,7 @@ pub(crate) fn creature_nodes(
     let over = playing_clips(c, world);
     let base = base_clips(c, world, seconds);
     let posed = guacamole::hands::posed(&c.model.skeleton, nodes, &base, &over, 1.0);
-    // Drawn turned by `placed`'s rotation; read turned by its facing alone.
-    let drawn = placed(actor).rotation;
-    let facing = Quat::from_rotation_y(actor.angles.facing.to_radians());
-    let own = facing.inverse() * drawn;
+    let own = node_frame(actor);
     let scale = Vec3::from_array(actor.scale) / 100.0;
     Some(
         posed
@@ -313,6 +311,24 @@ pub(crate) fn creature_nodes(
             })
             .collect(),
     )
+}
+
+/// The turn [`creature_nodes`] lays a model's posed nodes in: what's drawn
+/// ([`placed`]'s rotation) past the facing the scripts read its nodes by,
+/// which for one hung on an actor itself is that actor's facing and its own
+/// (openspec AS.76, AS.443: the ship's engine, whose oars ride its nodes).
+fn node_frame(actor: &guacamole::script_engine::Actor) -> Quat {
+    Quat::from_rotation_y(read_facing(actor).to_radians()).inverse() * placed(actor).rotation
+}
+
+/// The facing the scripts read `actor`'s nodes by, degrees
+/// ([`ScriptWorld`]'s, AS.76): its own, on top of the facing of the actor
+/// it hangs on itself.
+fn read_facing(actor: &guacamole::script_engine::Actor) -> f32 {
+    let carried = actor
+        .carried
+        .map_or(0.0, |q| guacamole::script_engine::angles_of(q).facing);
+    carried + actor.angles.facing
 }
 
 /// What hangs on a drawn creature's or skinned clone's node rides it
@@ -674,6 +690,14 @@ pub(crate) struct SpawnShot {
     /// Its facing, degrees (openspec AU.37: what hangs on a hero turns with
     /// him).
     pub facing: f32,
+    /// How it's drawn turned, `[tilt, facing, roll]` degrees: its own turn
+    /// under that of the actor it hangs on itself (openspec AS.443).
+    pub turn: [f32; 3],
+    /// What it hangs on (the actor, or the actor whose node), by name, and
+    /// whether that or what it hangs on was taken off (openspec AS.443,
+    /// AS.186's [`ScriptWorld::hangs_on_nothing`]).
+    pub hung_on: Option<String>,
+    pub on_nothing: bool,
     pub drawn: bool,
     /// The clips its scripts play on it, by name (openspec AS.461: a
     /// scene's Flynn and Cali are clones).
@@ -844,10 +868,22 @@ pub(crate) fn report(vm: &guac_script::Vm, world: &ScriptWorld) -> CreaturesRepo
         .filter(|&c| !world.removed(c))
         .filter_map(|c| {
             let a = world.actor(c)?;
+            let turn =
+                guacamole::script_engine::angles_of(guacamole::props::actor_transform(a).rotation);
+            let hung_on = world
+                .node_owner(a.attach)
+                .or_else(|| match a.attach {
+                    guac_script::Value::Entity(o) if world.actor(o).is_some() => Some(o),
+                    _ => None,
+                })
+                .map(|o| world.name(o));
             Some(SpawnShot {
                 name: world.name(c),
                 at: a.position.to_array(),
                 facing: a.angles.facing,
+                turn: [turn.tilt, turn.facing, turn.roll],
+                hung_on,
+                on_nothing: world.hangs_on_nothing(c),
                 drawn: false,
                 clips: world.clips_on(c),
                 handle: c,
@@ -900,6 +936,31 @@ mod tests {
     use guacamole::scripts::ScriptWorld;
 
     use super::*;
+
+    /// openspec AS.443: a skinned clone hung on an actor itself (the ship's
+    /// engine) lays its posed nodes in the frame that, turned by the facing
+    /// the scripts read its nodes by (the ship's and its own, AS.76), lands
+    /// them where it's drawn: the oars ride the engine as the engine rides
+    /// the ship.
+    #[test]
+    fn a_clone_hung_on_an_actor_poses_its_nodes_where_its_drawn() {
+        let mut a = guacamole::script_engine::Actor::blank();
+        a.angles.facing = 15.0;
+        a.carried = Some(guac_motion::solid::euler([-4.0, 261.0, 1.0]));
+        let read = read_facing(&a);
+        let carried = guacamole::script_engine::angles_of(a.carried.unwrap()).facing;
+        assert!((read - (carried + 15.0)).abs() < 1e-3, "{read}");
+        let lands = Quat::from_rotation_y(read.to_radians()) * node_frame(&a);
+        assert!(lands.dot(placed(&a).rotation).abs() > 1.0 - 1e-6);
+        assert!(
+            placed(&a)
+                .rotation
+                .dot(a.carried.unwrap() * Quat::from_rotation_y(15f32.to_radians()))
+                .abs()
+                > 1.0 - 1e-6,
+            "drawn under the ship's turn"
+        );
+    }
     use crate::dev_entry::{Anchor, Asked, Plan};
     use crate::hero_scripts::ScriptSource;
     use crate::test_support::play::{CREATURE_AT, fight_app, until};
