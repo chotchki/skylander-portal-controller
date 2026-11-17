@@ -556,6 +556,32 @@ fn level_201s_intro_flies_the_landing_pod_whole() {
         parts = parts.max(s.on_nodes.len());
         flight.push(s);
     }
+    // The intro over, its rig taken off: the pod stays drawn where it
+    // landed, its parts on it (the rig rule; on 2.0 it hung on nothing
+    // and drew nowhere).
+    let pod = *clones_named(&run, "Landing_Pod")
+        .last()
+        .expect("the pod kept after the intro");
+    let rig = hung_on(&run, pod).expect("on its rig's node");
+    let mut parked = 0;
+    for _ in 0..120u32 {
+        still(&mut run, &mut stops, [false; 4]);
+        if run.world.actor(rig).is_some_and(|a| a.removed) {
+            assert!(
+                !run.world.hangs_on_nothing(pod),
+                "step {}: the landed pod hangs on nothing, drawn nowhere",
+                run.steps
+            );
+            for part in ["LP_Base", "LP_Plank", "LP_Propeller", "LP_Wheel"] {
+                for h in clones_named(&run, part) {
+                    assert!(!run.world.hangs_on_nothing(h), "{part}");
+                }
+            }
+            parked += 1;
+        }
+    }
+    println!("parked, its rig taken off: {parked} steps of 120");
+    assert!(parked >= 60, "the rig taken off after the intro: {parked}");
     println!("the pod's flight:");
     print(&flight);
     assert_eq!(parts, 4, "its base, plank, propeller and wheel on it");

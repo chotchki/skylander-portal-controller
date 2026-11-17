@@ -524,7 +524,7 @@ When a level's scripts take off an actor something hangs on, a hat, a tool, a li
 - **THEN** the ship stays drawn there with Flynn on its deck
 
 ### Requirement: A ship's parts ride it
-What a script hangs on an actor itself SHALL be drawn turned as that actor is, its own turn on top, and what hangs on a node of an unposed model SHALL stand where the model's whole turn puts the node, so a ship's masthead, roof, engine and oars, and the people on its deck, stay on it as it flies, banks and docks. A landing pod's own script SHALL make its base, plank, propeller and wheel.
+What hangs on an actor itself SHALL draw under that actor's turn, its own on top, unless a script wrote its turn while it hangs (a talk button faced to the camera); what hangs on an unposed model's node SHALL stand where the model's whole turn puts it, so a ship's parts (0.000 m off its frame headless) and the people on its deck stay on it as it flies and docks. A landing pod's own script SHALL make its base, plank, propeller and wheel where an intro flies it.
 
 #### Scenario: Level 214's intro
 - **WHEN** the intro flies the ship in and docks it

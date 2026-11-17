@@ -2025,6 +2025,7 @@ impl ScriptWorld {
                     _ => None,
                 };
                 let a = self.actors.get_mut(&h).ok_or(HostFault::Nothing)?;
+                a.turned |= matches!(m, Member::Facing | Member::Tilt | Member::Roll);
                 match m {
                     Member::Facing => a.angles.facing = x,
                     // One hung from nothing turns by it about its own axis
@@ -2201,6 +2202,12 @@ impl ScriptWorld {
                 }
                 // Hung where it hangs from, no offset yet.
                 if let Some(a) = self.actors.get_mut(&h) {
+                    // Hung somewhere new, a turn written before is its own
+                    // under its new carrier's (`Ships.ai`'s parts, cloned
+                    // and hung; AS.443).
+                    if a.attach != v {
+                        a.turned = false;
+                    }
                     a.attach = v;
                     a.hung = Vec3::ZERO;
                     a.hung_facing = None;
@@ -3979,8 +3986,12 @@ impl ScriptWorld {
             // ship's masthead, roof and engine, cloned at the ship facing 0
             // and hung on it by `Ships.ai`, came apart from the hull as it
             // flew; stand-in ledger `hung-turn`).
+            // A turn a script wrote while it hangs is the one it asked for,
+            // drawn as written, as before AS.443 (the hub's talk button
+            // turned toward the camera each tick; a turret's body aimed).
+            let written = self.actors.get(&h).is_some_and(|a| a.turned);
             let carried = match on_actor {
-                Some(o) if engine.hero(o).is_none() => self.drawn_turn(o, engine),
+                Some(o) if engine.hero(o).is_none() && !written => self.drawn_turn(o, engine),
                 _ => None,
             };
             // Its offset from what it hangs from, in that frame (openspec
@@ -6233,6 +6244,74 @@ mod tests {
             drawn(&w, MAST),
             Quat::from_rotation_y(10f32.to_radians())
         ));
+    }
+
+    /// The as-ship-scenes review (AS.443): a turn a script writes on what
+    /// hangs on an actor itself is drawn as written, not over that actor's
+    /// (the hub's talk button, turned toward the camera each tick, drew
+    /// turned away by its person's facing); a relative turn doesn't count,
+    /// and hung somewhere new it's carried again.
+    #[test]
+    fn a_turn_written_on_what_hangs_is_drawn_as_written() {
+        const PERSON: Handle = 0x6000_0071;
+        const BUTTON: Handle = 0x6000_0072;
+        const OTHER: Handle = 0x6000_0073;
+        let mut e = bench();
+        let mut w = world();
+        let mut person = Actor::blank();
+        person.angles.facing = 36.0;
+        w.actors.insert(PERSON, person);
+        w.actors.insert(OTHER, Actor::blank());
+        let mut button = Actor::blank();
+        button.template = Some(Obj { unit: 9, index: 7 });
+        button.attach = Value::Entity(PERSON);
+        w.actors.insert(BUTTON, button);
+        let drawn = |w: &ScriptWorld| crate::props::actor_transform(&w.actors[&BUTTON]).rotation;
+        let close = |a: Quat, b: Quat| a.dot(b).abs() > 1.0 - 1e-6;
+        w.place_hung(&mut e);
+        assert!(
+            close(drawn(&w), Quat::from_rotation_y(36f32.to_radians())),
+            "unwritten, carried"
+        );
+        let turn = w.objs.value(Object::Facet(BUTTON, Facet::Orientation));
+        let rel = at(
+            "orientationmeasurement",
+            "relative facing",
+            Some(turn),
+            None,
+        );
+        w.set_member(&rel, Member::RelativeFacing, Value::Float(5.0), &mut e)
+            .unwrap();
+        w.place_hung(&mut e);
+        assert!(
+            w.actors[&BUTTON].carried.is_some(),
+            "a relative turn is its own"
+        );
+        let facing = at("orientationmeasurement", "facing", Some(turn), None);
+        w.set_member(&facing, Member::Facing, Value::Float(86.0), &mut e)
+            .unwrap();
+        w.place_hung(&mut e);
+        assert_eq!(w.actors[&BUTTON].carried, None);
+        assert!(
+            close(drawn(&w), Quat::from_rotation_y(86f32.to_radians())),
+            "drawn as written"
+        );
+        // Hung on the same actor again, still as written.
+        let node = at(
+            "abstractplacement",
+            "attach node",
+            Some(Value::Entity(BUTTON)),
+            None,
+        );
+        w.set_member(&node, Member::AttachNode, Value::Entity(PERSON), &mut e)
+            .unwrap();
+        w.place_hung(&mut e);
+        assert_eq!(w.actors[&BUTTON].carried, None, "the same hang");
+        // Hung somewhere new, carried again.
+        w.set_member(&node, Member::AttachNode, Value::Entity(OTHER), &mut e)
+            .unwrap();
+        w.place_hung(&mut e);
+        assert!(w.actors[&BUTTON].carried.is_some(), "hung anew");
     }
 
     /// openspec AS.443: a static model's attach nodes stand where its whole

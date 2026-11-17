@@ -210,6 +210,12 @@ pub struct Actor {
     /// masthead, roof and engine, hung on the ship by `Ships.ai`). None
     /// while it hangs on nothing, a node, a ground or a hero.
     pub carried: Option<Quat>,
+    /// A script wrote its facing, tilt or roll (not a relative turn) since
+    /// it was hung where it hangs: that turn is the one it's drawn by, not
+    /// laid over its carrier's (the as-ship-scenes review, AS.443: the
+    /// hub's talk button, turned toward the camera each tick, drew turned
+    /// away by its person's facing).
+    pub turned: bool,
     /// `actorinfo.controller`.
     pub controller: Value,
     /// Its clones, made from it as a template, in the order made.
@@ -331,6 +337,7 @@ impl Actor {
             hung: Vec3::ZERO,
             hung_facing: None,
             carried: None,
+            turned: false,
             controller: Value::Null,
             clones: Vec::new(),
             parent: Value::Null,
