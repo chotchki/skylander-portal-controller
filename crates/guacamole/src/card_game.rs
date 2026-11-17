@@ -233,6 +233,9 @@ pub struct CardStreams {
     /// Where the portal's replacement of the hero by the board stands
     /// (openspec AS.481, [`Restore`]), read each step of a played run.
     restore: Restore,
+    /// A quit asked of a played game ([`CardStreams::ask_quit`]), answered
+    /// by the next step's [`quit`].
+    quit_asked: bool,
 }
 
 /// The portal's replacement of the hero by the board (openspec AS.481):
@@ -297,6 +300,15 @@ impl CardStreams {
     #[cfg(feature = "played-card-games")]
     pub fn play_games(&mut self) {
         self.played = true;
+    }
+
+    /// The played game quit through the board's own confirm at the next step
+    /// ([`step`], [`quit`]): the lane build's test hook (openspec AS.367's
+    /// first rung), as a player's pause menu would. Feature-gated as
+    /// [`CardStreams::play_games`] is.
+    #[cfg(feature = "played-card-games")]
+    pub fn ask_quit(&mut self) {
+        self.quit_asked = true;
     }
 
     /// Whether a yes plays the game ([`CardStreams::play_games`]).
@@ -555,6 +567,9 @@ pub fn step(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<bool, Halt> {
     replace_misc(vm, host)?;
     if !host.world.card_streams.played {
         return Ok(false);
+    }
+    if std::mem::take(&mut host.world.card_streams.quit_asked) && !quit(vm, host)? {
+        info!("a quit asked with no board up: nothing to quit");
     }
     let now = replaced(vm);
     let restore = &mut host.world.card_streams.restore;

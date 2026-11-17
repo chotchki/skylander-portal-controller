@@ -1609,6 +1609,11 @@ struct Played {
     /// Each start of one held off by its own limit (its instances on its
     /// actor or everywhere full): found and playable, the original's rule.
     card_limited: std::collections::BTreeSet<(String, String)>,
+    /// Each template of a card archive the scripts cloned while a game was
+    /// on, by name, with its model's path (openspec AS.531).
+    card_clones: std::collections::BTreeMap<String, Option<String>>,
+    /// The card archives joined to the run, in order.
+    joined: Vec<String>,
 }
 
 /// One game's end.
@@ -1675,6 +1680,8 @@ fn dreadbeards_games_with(
     let mut card_plays = std::collections::BTreeSet::new();
     let mut card_misses = std::collections::BTreeSet::new();
     let mut card_limited = std::collections::BTreeSet::new();
+    let mut card_clones = std::collections::BTreeMap::new();
+    let card_units = run.world.card_streams.unit_list();
     let mut stops = Vec::new();
     for _ in 0..2 {
         stops.extend(run.step_play().unwrap());
@@ -1779,6 +1786,22 @@ fn dreadbeards_games_with(
                     true => card_limited.insert(line),
                     false => card_misses.insert(line),
                 };
+            }
+        }
+        for h in run.world.clones() {
+            if run.world.removed(h) {
+                continue;
+            }
+            if let Some(p) = run
+                .world
+                .actor(h)
+                .and_then(|a| a.template)
+                .and_then(|t| run.world.template(t))
+                .filter(|p| card_units.contains(&p.obj.unit))
+            {
+                card_clones
+                    .entry(p.name.clone())
+                    .or_insert_with(|| p.model.clone());
             }
         }
         picks.note(&run);
@@ -1986,6 +2009,14 @@ fn dreadbeards_games_with(
         card_plays,
         card_misses,
         card_limited,
+        card_clones,
+        joined: run
+            .world
+            .card_streams
+            .joined
+            .iter()
+            .map(|(a, _)| (*a).to_owned())
+            .collect(),
     }
 }
 
@@ -2423,6 +2454,119 @@ fn card_book(run: &Run, dir: &std::path::Path) -> (Book, usize, Vec<(String, Str
         }
     }
     ((book, stems), playable, misses)
+}
+
+/// openspec AS.531: what a played game's clones draw with is in the art
+/// part. The part made off the dump into a throwaway extract, Dreadbeard's
+/// game on hub stage 2 played to the naive player's loss; every template of
+/// a card archive the scripts cloned while it was on names a model, and
+/// that model is one the TV's draw takes off the joined archives' part (a
+/// static one as a level's spawns draw, a skinned one as its creatures),
+/// so the TV, which reads an archive's models as it joins, draws them all.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_played_games_card_clones_each_draw_off_the_art_part() {
+    use guac_extract::known::KNOWN_DUMPS;
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let base =
+        std::path::PathBuf::from(env_or_dotenv("GUAC_EXTRACT_DIR").expect("set GUAC_EXTRACT_DIR"));
+    std::fs::create_dir_all(&base).unwrap();
+    let tmp = tempfile::Builder::new()
+        .prefix("as531-card-models-")
+        .tempdir_in(&base)
+        .unwrap();
+    let root = guac_extract::ExtractRoot::checked(tmp.path().join("extract")).unwrap();
+    let mut opened =
+        guac_extract::open(&dump(), &root, KNOWN_DUMPS, &|_| {}).expect("the known dump");
+    let usr = dump().join("PS3_GAME/USRDIR");
+    let ir = guac_extract::intros::IrFormat::Postcard;
+    let mut st = guac_extract::stages::ScriptStage::default();
+    guac_extract::stages::card_art_part(&mut opened.dir, &usr, ir, &mut st).unwrap();
+    assert!(st.failed.is_empty(), "{:?}", st.failed);
+    let dir = opened.dir.path().to_path_buf();
+    let identity = opened.dir.manifest().identity.clone();
+
+    let played = dreadbeards_games(
+        &[(Plan::Play(cards::Policy::Naive), DREADBEARDS_SEEDS[1])],
+        20_000,
+    );
+    assert_eq!(played.games.len(), 1, "{:?}", played.games);
+    assert!(played.games[0].ended > 0, "{:?}", played.games);
+    assert!(played.stops.is_empty(), "{:#?}", played.stops);
+    // What the TV draws off each joined archive's part.
+    let mut drawn = std::collections::BTreeSet::new();
+    for archive in &played.joined {
+        let rel = guac_extract::screens::card_model_path(ir, archive);
+        // An archive that places no model (the hand select, the reward
+        // sprites) has no file: nothing of it draws.
+        let Ok(bytes) = std::fs::read(dir.join(&rel)) else {
+            continue;
+        };
+        let spawns: guac_ir::spawn::SpawnModels = guac_ir::from_postcard(&bytes).unwrap();
+        assert_eq!(spawns.identity, identity, "{rel}");
+        drawn.extend(
+            guacamole::props::spawn_models(&spawns)
+                .unwrap()
+                .into_iter()
+                .map(|m| m.path),
+        );
+        drawn.extend(
+            guacamole::creature_models::spawn_models(&spawns, &identity)
+                .into_iter()
+                .map(|(p, _)| p),
+        );
+    }
+    let with_models: Vec<(&String, &String)> = played
+        .card_clones
+        .iter()
+        .filter_map(|(n, m)| Some((n, m.as_ref()?)))
+        .collect();
+    let undrawn: Vec<_> = with_models
+        .iter()
+        .filter(|(_, m)| !drawn.contains(*m))
+        .collect();
+    println!(
+        "{} archives joined, {} models drawn off them; {} card templates cloned, {} with a model: {:?}; with none: {:?}",
+        played.joined.len(),
+        drawn.len(),
+        played.card_clones.len(),
+        with_models.len(),
+        with_models
+            .iter()
+            .map(|(n, m)| format!("{n}={}", m.rsplit('/').next().unwrap_or(m)))
+            .collect::<Vec<_>>(),
+        played
+            .card_clones
+            .iter()
+            .filter(|(_, m)| m.is_none())
+            .map(|(n, _)| n)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        undrawn.is_empty(),
+        "cloned with no model to draw: {undrawn:?}"
+    );
+    // The board, a stone with its pips and face, and a presented creature.
+    for piece in ["cardGrid3x3", "skyStone", "cardStrengthx1", "cardPic_"] {
+        assert!(
+            with_models.iter().any(|(_, m)| m.contains(piece)),
+            "no {piece} cloned"
+        );
+    }
+    assert!(
+        played
+            .joined
+            .iter()
+            .any(|a| a.starts_with("misc/cardgame_card_")),
+        "no stone's asset joined: {:?}",
+        played.joined
+    );
+    println!(
+        "{:.1} s, load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
 }
 
 /// openspec AS.365: the card game's sounds on the TV's sound book. An

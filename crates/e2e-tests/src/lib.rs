@@ -2924,22 +2924,63 @@ pub fn hero_scripts_held(snap: &serde_json::Value, expected: Option<&str>) -> Re
 }
 
 /// Polls the TV every 25 ms until `pred` holds; the snapshot and when it
-/// first held. The error carries the last snapshot.
+/// first held. The error carries the last snapshot. The timeout is a stall's,
+/// not the wall's ([`WarmGrace`]): a poll gap over which the TV sat on its
+/// getting-ready screen with its compiled count growing isn't counted, so a
+/// start warming slowly under load still gets its full wait once it's done.
 pub async fn wait_for_tv(
     base: &str,
     timeout: Duration,
     pred: impl Fn(&serde_json::Value) -> bool,
 ) -> Result<(serde_json::Value, Instant)> {
-    let deadline = Instant::now() + timeout;
+    let mut grace = WarmGrace::new(timeout);
+    let mut last = Instant::now();
     loop {
         let snap = tv(base).await?;
         if pred(&snap) {
             return Ok((snap, Instant::now()));
         }
-        if Instant::now() >= deadline {
-            bail!("TV didn't match within {timeout:?}; last: {snap}");
+        let now = Instant::now();
+        if grace.poll(&snap, now - last) {
+            bail!("TV didn't match within {timeout:?} of a stall; last: {snap}");
         }
+        last = now;
         tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+/// [`wait_for_tv`]'s clock (openspec AS.550): the time a wait has spent, less
+/// every poll gap that ended on the TV's `Preparing` screen with
+/// `prepare.compiled` above the previous poll's. A count that stops growing,
+/// or any other screen, runs the clock as the wall does.
+#[derive(Debug)]
+pub struct WarmGrace {
+    timeout: Duration,
+    spent: Duration,
+    compiled: Option<u64>,
+}
+
+impl WarmGrace {
+    pub fn new(timeout: Duration) -> Self {
+        Self {
+            timeout,
+            spent: Duration::ZERO,
+            compiled: None,
+        }
+    }
+
+    /// Takes the poll's snapshot and the gap since the previous one; true
+    /// once the counted time reaches the timeout.
+    pub fn poll(&mut self, snap: &serde_json::Value, gap: Duration) -> bool {
+        let warming = (snap["screen"] == "Preparing")
+            .then(|| snap["prepare"]["compiled"].as_u64())
+            .flatten();
+        let grew = matches!((self.compiled, warming), (Some(was), Some(now)) if now > was);
+        if !grew {
+            self.spent += gap;
+        }
+        self.compiled = warming;
+        self.spent >= self.timeout
     }
 }
 
@@ -3695,6 +3736,66 @@ mod fixture_tests {
         let tmp = tempfile::tempdir().unwrap();
         if let Err(e) = IntroFixture::build_fighting_in(tmp.path()) {
             panic!("{e:#}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod warm_grace_tests {
+    use super::WarmGrace;
+    use serde_json::json;
+    use std::time::Duration;
+
+    const GAP: Duration = Duration::from_millis(1000);
+
+    fn warming(compiled: u64) -> serde_json::Value {
+        json!({"screen": "Preparing", "prepare": {"state": "compiling", "compiled": compiled, "keys": 402}})
+    }
+
+    /// A count that grows every poll holds the clock however long it takes.
+    #[test]
+    fn a_growing_count_holds_the_clock() {
+        let mut g = WarmGrace::new(Duration::from_secs(10));
+        for i in 0..60 {
+            assert!(!g.poll(&warming(i * 5), GAP), "failed at poll {i}");
+        }
+    }
+
+    /// A count that stops for the timeout fails it: only the first poll (no
+    /// earlier count) and the stalled ones are counted.
+    #[test]
+    fn a_stalled_count_fails() {
+        let mut g = WarmGrace::new(Duration::from_secs(10));
+        for i in 0..20 {
+            assert!(!g.poll(&warming(i * 5), GAP));
+        }
+        // 1 s counted (the first poll); 9 more stalled polls reach 10 s.
+        for i in 0..8 {
+            assert!(!g.poll(&warming(95), GAP), "stall poll {i}");
+        }
+        assert!(
+            g.poll(&warming(95), GAP),
+            "the ninth stalled poll times out"
+        );
+    }
+
+    /// Any screen but Preparing runs the clock, a growing count or not:
+    /// each screen a test waits on, and one with no screen read.
+    #[test]
+    fn another_screen_gets_no_grace() {
+        for screen in [
+            json!("Portal"),
+            json!("Join"),
+            json!("NoGiants"),
+            json!(null),
+        ] {
+            let mut g = WarmGrace::new(Duration::from_secs(10));
+            for i in 0..9 {
+                let snap = json!({"screen": screen, "prepare": {"compiled": i * 5}});
+                assert!(!g.poll(&snap, GAP), "{screen}");
+            }
+            let snap = json!({"screen": screen, "prepare": {"compiled": 100}});
+            assert!(g.poll(&snap, GAP), "{screen} gets no grace");
         }
     }
 }

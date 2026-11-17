@@ -895,14 +895,11 @@ fn read_figure(
 ) -> Result<FigureRead, String> {
     let archive = guac_extract::scripts::character_archive(load_file);
     let (rel, spawns) = read_spawn_part(source, &archive)?;
-    let models = guacamole::props::spawn_models(&spawns).map_err(|e| format!("{rel}: {e}"))?;
     // His skinned spawns: a rigs part that doesn't read leaves them on their
     // idles, what his scripts start on them reading no clip.
     let rigs = guacamole::level_scripts::spawn_rigs(&source.dir, load_file, source.ir)
         .inspect_err(|why| warn!(load_file, reason = %why, "a walker's spawn rigs didn't read"))
         .ok();
-    let creatures = spawn_creatures(&spawns, rigs.as_ref(), &source.identity);
-    let (mut drawn, ranges) = guacamole::props::models_drawn(&models);
     // His emitters, their materials after the models': a file that doesn't
     // read leaves them undrawn, as the level's part does its own.
     let emitters = match read_emitters(source, &archive) {
@@ -912,6 +909,71 @@ fn read_figure(
             Vec::new()
         }
     };
+    read_spawned(source, &rel, &spawns, rigs.as_ref(), emitters, formats)
+}
+
+/// A card game archive's models (openspec AS.531), read as a walker's are
+/// ([`read_figure`]) off the extract's `card game art` part
+/// (`card_game/models/<stem>`), its skinned ones on their palettes off the
+/// `card game palettes` part, so a clone of the board's or a stone's
+/// templates draws as a clone of a level's does. No emitters: the part
+/// holds none.
+fn read_card(
+    source: &LevelSource,
+    archive: &str,
+    formats: CompressedImageFormats,
+) -> Result<FigureRead, String> {
+    let rel = guac_extract::screens::card_model_path(source.ir, archive);
+    let spawns = read_ir::<guac_ir::spawn::SpawnModels>(source.ir, &source.dir.join(&rel))?;
+    if spawns.identity != source.identity {
+        return Err(format!("{rel} is another dump's"));
+    }
+    let rigs = card_rigs(source, archive, &spawns);
+    read_spawned(source, &rel, &spawns, rigs.as_ref(), Vec::new(), formats)
+}
+
+/// The card palettes part's palettes for `spawns`' skinned models, as an
+/// archive's rigs (no attach lists: the part holds palettes only). None
+/// when the part doesn't read: the models stand on their idles.
+fn card_rigs(
+    source: &LevelSource,
+    archive: &str,
+    spawns: &guac_ir::spawn::SpawnModels,
+) -> Option<guac_ir::spawn::SpawnRigs> {
+    let rel = source.ir.card_palettes_path();
+    let all = read_ir::<guac_ir::palette::LevelPalettes>(source.ir, &source.dir.join(rel))
+        .inspect_err(|why| warn!(archive, reason = %why, "the card palettes didn't read"))
+        .ok()?;
+    let rigs = all
+        .palettes
+        .into_iter()
+        .filter(|p| spawns.props.iter().any(|m| m.path == p.owner))
+        .map(|palette| guac_ir::spawn::SpawnRig {
+            palette,
+            nodes: None,
+        })
+        .collect();
+    Some(guac_ir::spawn::SpawnRigs {
+        identity: source.identity.clone(),
+        archive: archive.to_owned(),
+        rigs,
+        refused: Vec::new(),
+    })
+}
+
+/// `spawns` (kept at `rel`) with its `rigs` and `emitters` as the renderer
+/// takes them: a walker's archive or a card game's.
+fn read_spawned(
+    source: &LevelSource,
+    rel: &str,
+    spawns: &guac_ir::spawn::SpawnModels,
+    rigs: Option<&guac_ir::spawn::SpawnRigs>,
+    emitters: Vec<guac_ir::particle::Emitters>,
+    formats: CompressedImageFormats,
+) -> Result<FigureRead, String> {
+    let models = guacamole::props::spawn_models(spawns).map_err(|e| format!("{rel}: {e}"))?;
+    let creatures = spawn_creatures(spawns, rigs, &source.identity);
+    let (mut drawn, ranges) = guacamole::props::models_drawn(&models);
     let (sparks, index) = guacamole::particles::drawn(&emitters);
     let spark_materials = drawn.materials.len();
     drawn.extend_materials(&sparks);
@@ -1111,6 +1173,10 @@ pub(crate) struct LevelReport {
     /// Each walker placed and how far what his attacks draw has got here
     /// (openspec AU.19).
     pub(crate) figures: Vec<(String, &'static str)>,
+    /// Each card game archive whose clones the scripts made and how far its
+    /// models have got here (openspec AS.531): empty on every level until a
+    /// game is played.
+    pub(crate) card_models: Vec<(String, &'static str)>,
     /// `idle` (no level yet), `reading`, `uploading`, `waiting` (on the
     /// renderer and the warm), `ready`, `shown` (the dev entry) or `failed`.
     pub state: String,
@@ -1685,6 +1751,9 @@ pub(crate) struct Level {
     /// Each walker placed, by load file, and how far what his attacks draw
     /// has got in this level (openspec AU.19). Asked again in the next.
     figures: BTreeMap<String, FigureDraws>,
+    /// Each card game archive joined to the run, by its path, and how far its
+    /// models have got in this level (openspec AS.531). Gone with the level.
+    cards: BTreeMap<String, FigureDraws>,
     /// The formats a figure's images are read for, once a load has known.
     formats: Option<CompressedImageFormats>,
 }
@@ -1705,8 +1774,29 @@ impl Level {
             sounds_again: None,
             asked: None,
             figures: BTreeMap::new(),
+            cards: BTreeMap::new(),
             formats: None,
         }
+    }
+
+    /// What card game `archive`'s clones draw (openspec AS.531): its models
+    /// off the `card game art` part, read once its stream or stone joins the
+    /// run, for this level alone. An archive the art part doesn't name is
+    /// ignored.
+    pub(crate) fn ask_card(&mut self, archive: &str) {
+        if guac_extract::screens::card_art_archives()
+            .iter()
+            .any(|a| a == archive)
+        {
+            self.cards
+                .entry(archive.to_owned())
+                .or_insert(FigureDraws::Asked);
+        }
+    }
+
+    /// Whether `archive`'s models were asked for in this level.
+    pub(crate) fn card_asked(&self, archive: &str) -> bool {
+        self.cards.contains_key(archive)
     }
 
     /// What `load_file`'s attacks draw, asked for this level and the next:
@@ -2136,6 +2226,9 @@ fn receive_level(
     for f in level.figures.values_mut() {
         *f = FigureDraws::Asked;
     }
+    // A card game's models are its level's: the next asks its own.
+    level.cards.clear();
+    level.report.card_models.clear();
     let task = {
         let source = source.clone();
         AsyncComputeTaskPool::get().spawn(async move { read_level(&source, formats) })
@@ -2498,7 +2591,7 @@ fn step_level(mut level: ResMut<Level>, mut warm: ResMut<Warm>, mut s: LevelSpaw
 /// then the scripts' clones' to draw. One whose file doesn't read draws
 /// nothing, as a part that doesn't read does, and his join goes on.
 fn step_figures(level: &mut Level, s: &mut LevelSpawner) {
-    if level.figures.is_empty() || level.stage.loaded().is_none() {
+    if (level.figures.is_empty() && level.cards.is_empty()) || level.stage.loaded().is_none() {
         return;
     }
     let (Some(source), Some(formats)) = (level.source.clone(), level.formats) else {
@@ -2509,21 +2602,56 @@ fn step_figures(level: &mut Level, s: &mut LevelSpawner) {
         .iter()
         .map(|(load, f)| (load.clone(), f.name()))
         .collect();
+    level.report.card_models = level
+        .cards
+        .iter()
+        .map(|(archive, f)| (archive.clone(), f.name()))
+        .collect();
     let mut bytes = 0;
-    for (load_file, state) in &mut level.figures {
+    step_draws(
+        &mut level.figures,
+        &mut level.stage,
+        &source,
+        formats,
+        &mut bytes,
+        s,
+        read_figure,
+    );
+    step_draws(
+        &mut level.cards,
+        &mut level.stage,
+        &source,
+        formats,
+        &mut bytes,
+        s,
+        read_card,
+    );
+}
+
+/// [`step_figures`]' walk over one map of asked reads, `read` reading each
+/// on a task, `bytes` this frame's upload so far.
+fn step_draws(
+    draws: &mut BTreeMap<String, FigureDraws>,
+    stage: &mut Stage,
+    source: &LevelSource,
+    formats: CompressedImageFormats,
+    bytes: &mut usize,
+    s: &mut LevelSpawner,
+    read: fn(&LevelSource, &str, CompressedImageFormats) -> Result<FigureRead, String>,
+) {
+    for (load_file, state) in draws.iter_mut() {
         match state {
             FigureDraws::Ready => {}
             FigureDraws::Asked => {
                 let (source, load) = (source.clone(), load_file.clone());
                 *state = FigureDraws::Reading(
-                    AsyncComputeTaskPool::get()
-                        .spawn(async move { read_figure(&source, &load, formats) }),
+                    AsyncComputeTaskPool::get().spawn(async move { read(&source, &load, formats) }),
                 );
             }
             FigureDraws::Reading(task) => match check_ready(task) {
                 None => {}
                 Some(Err(why)) => {
-                    warn!(load_file, reason = %why, "a walker's spawn models didn't read: what his attacks spawn draws nothing");
+                    warn!(load_file, reason = %why, "an archive's spawn models didn't read: what its clones spawn draws nothing");
                     *state = FigureDraws::Ready;
                 }
                 Some(Ok(read)) => {
@@ -2539,12 +2667,12 @@ fn step_figures(level: &mut Level, s: &mut LevelSpawner) {
                 image_handles,
                 mesh_handles,
             } => {
-                while bytes < UPLOAD_BYTES {
+                while *bytes < UPLOAD_BYTES {
                     if let Some((key, image)) = read.images.pop_front() {
-                        bytes += image.data.as_ref().map_or(0, Vec::len);
+                        *bytes += image.data.as_ref().map_or(0, Vec::len);
                         image_handles.push((key, s.images.add(image)));
                     } else if let Some(mesh) = read.meshes.pop_front() {
-                        bytes += mesh_bytes(&mesh);
+                        *bytes += mesh_bytes(&mesh);
                         mesh_handles.push(s.meshes.add(mesh));
                     } else {
                         break;
@@ -2553,12 +2681,12 @@ fn step_figures(level: &mut Level, s: &mut LevelSpawner) {
                 if !read.images.is_empty() || !read.meshes.is_empty() {
                     continue;
                 }
-                if let Some(loaded) = level.stage.loaded_mut() {
+                if let Some(loaded) = stage.loaded_mut() {
                     let drawn = figure_materials(read, image_handles, mesh_handles, loaded, s);
                     info!(
                         load_file,
                         models = drawn,
-                        "a walker's spawn models are in the level"
+                        "an archive's spawn models are in the level"
                     );
                 }
                 *state = FigureDraws::Ready;
@@ -3688,6 +3816,165 @@ mod tests {
     use guacamole::character::warm::MeshShape;
     use guacamole::level_scene::level_lights;
     use std::path::Path;
+
+    /// A card game archive's models (openspec AS.531) read off the art
+    /// part's own place (`card_game/models/<stem>`), as a walker's are: the
+    /// board's static grid among them, another dump's file refused, an
+    /// archive the part doesn't name never asked.
+    #[test]
+    fn a_card_archives_models_read_off_the_art_part() {
+        use guac_ir::spawn::SpawnModels;
+        let tmp = tempfile::tempdir().unwrap();
+        let identity = guac_ir::DumpIdentity {
+            title_id: "BLUS30968".into(),
+            app_ver: "01.00".into(),
+            manifest_hash: Sha256([7; 32]),
+        };
+        let source = LevelSource::chapter_1(tmp.path().into(), IrFormat::Ron, identity.clone());
+        let write = |archive: &str, prop: &str, id: &guac_ir::DumpIdentity| {
+            let path = tmp.path().join(guac_extract::screens::card_model_path(
+                IrFormat::Ron,
+                archive,
+            ));
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let text = guac_ir::to_ron(&SpawnModels {
+                identity: id.clone(),
+                archive: archive.into(),
+                props: vec![guac_ir::level::Prop {
+                    path: prop.into(),
+                    skeleton: None,
+                    materials: Vec::new(),
+                    segments: Vec::new(),
+                    idle: None,
+                }],
+                refused: Vec::new(),
+            });
+            std::fs::write(path, text.unwrap()).unwrap();
+        };
+        let board = guacamole::card_game::BOARD;
+        write(board, "cardGrid3x3.mdl", &identity);
+        let formats = CompressedImageFormats::BC;
+        let read = read_card(&source, board, formats).ok().unwrap();
+        assert_eq!(read.models.len(), 1);
+        assert_eq!(read.models[0].0, "cardGrid3x3.mdl");
+        // The same archive's spawn part (a walker's place) isn't where it reads.
+        assert!(read_figure(&source, board, formats).is_err());
+        // A stone's deck written by another dump.
+        let deck = guac_extract::screens::card_deck(0);
+        let other = guac_ir::DumpIdentity {
+            manifest_hash: Sha256([8; 32]),
+            ..identity.clone()
+        };
+        write(&deck, "cardPic_elfNear.mdl", &other);
+        let why = read_card(&source, &deck, formats).err().unwrap();
+        assert!(why.contains("another dump's"), "{why}");
+        // The palettes part's palette for a model the archive holds is its
+        // rig; another model's isn't.
+        let palette = |owner: &str| guac_ir::palette::Palette {
+            identity: identity.clone(),
+            owner: owner.into(),
+            slots: 0,
+            entries: Vec::new(),
+            refused: Vec::new(),
+        };
+        let palettes = guac_ir::palette::LevelPalettes {
+            identity: identity.clone(),
+            level: "card game".into(),
+            palettes: vec![palette("skyStone.mdl"), palette("cardGrid3x3.mdl")],
+            loops: Vec::new(),
+        };
+        std::fs::write(
+            tmp.path().join(IrFormat::Ron.card_palettes_path()),
+            guac_ir::to_ron(&palettes).unwrap(),
+        )
+        .unwrap();
+        let spawns = read_ir::<SpawnModels>(
+            IrFormat::Ron,
+            &tmp.path()
+                .join(guac_extract::screens::card_model_path(IrFormat::Ron, board)),
+        )
+        .unwrap();
+        let rigs = card_rigs(&source, board, &spawns).expect("the palettes read");
+        assert_eq!(
+            rigs.rigs
+                .iter()
+                .map(|r| r.palette.owner.as_str())
+                .collect::<Vec<_>>(),
+            ["cardGrid3x3.mdl"]
+        );
+        let mut level = Level::new(false);
+        level.ask_card(board);
+        level.ask_card("character/009_Eruptor.bld");
+        assert!(level.card_asked(board));
+        assert!(!level.card_asked("character/009_Eruptor.bld"));
+    }
+
+    /// openspec AS.531 on the dump: the TV's read of the card art part as the
+    /// dump writes it, made into a throwaway extract under
+    /// `GUAC_EXTRACT_DIR` with the card palettes part. Every archive the part
+    /// holds models for reads through [`read_card`] (its identity the
+    /// extract's), the board's grid and stone and a deck's face among them,
+    /// and every skinned model gets its palette off [`card_rigs`] by its
+    /// path, so no stone or creature stands on its idle for want of a name
+    /// match. The synthetic test above holds the rules; this holds them to
+    /// the disc's names.
+    #[test]
+    #[ignore = "reads the Giants dump at GUAC_GIANTS_DUMP and writes under GUAC_EXTRACT_DIR"]
+    fn every_card_archive_on_the_dump_reads_for_the_tv() {
+        use guac_extract::known::KNOWN_DUMPS;
+        fn key(k: &str) -> String {
+            std::env::var(k).unwrap_or_else(|_| panic!("set {k}"))
+        }
+        let started = Instant::now();
+        let dump = PathBuf::from(key("GUAC_GIANTS_DUMP"));
+        let base = PathBuf::from(key("GUAC_EXTRACT_DIR"));
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::Builder::new()
+            .prefix("as531-card-read-")
+            .tempdir_in(&base)
+            .unwrap();
+        let root = guac_extract::ExtractRoot::checked(tmp.path().join("extract")).unwrap();
+        let mut opened = guac_extract::open(&dump, &root, KNOWN_DUMPS, &|_| {}).unwrap();
+        let usr = dump.join("PS3_GAME/USRDIR");
+        let ir = IrFormat::Postcard;
+        let mut st = guac_extract::stages::ScriptStage::default();
+        guac_extract::stages::card_palette_part(&mut opened.dir, &usr, ir, &mut st).unwrap();
+        guac_extract::stages::card_art_part(&mut opened.dir, &usr, ir, &mut st).unwrap();
+        assert!(st.failed.is_empty(), "{:?}", st.failed);
+        let identity = opened.dir.manifest().identity.clone();
+        let source = LevelSource::chapter_1(opened.dir.path().to_path_buf(), ir, identity.clone());
+        let formats = CompressedImageFormats::BC;
+        let (mut archives, mut models, mut skinned, mut with_nodes) = (0, Vec::new(), 0, 0);
+        for archive in guac_extract::screens::card_art_archives() {
+            let rel = guac_extract::screens::card_model_path(ir, &archive);
+            if !source.dir.join(&rel).is_file() {
+                continue;
+            }
+            let read = read_card(&source, &archive, formats)
+                .unwrap_or_else(|why| panic!("{archive}: {why}"));
+            archives += 1;
+            for c in &read.creatures {
+                assert!(c.palette.is_some(), "{archive}: {} has no palette", c.path);
+                skinned += 1;
+                with_nodes += usize::from(c.nodes.is_some());
+            }
+            models.extend(read.models.iter().map(|(p, _)| p.clone()));
+            models.extend(read.creatures.iter().map(|c| c.path.clone()));
+        }
+        println!(
+            "{archives} archives read, {} models, {skinned} skinned (each with its palette, {with_nodes} with attach nodes); {:.1} s",
+            models.len(),
+            started.elapsed().as_secs_f32()
+        );
+        for piece in [
+            "cardGrid3x3.mdl",
+            "skyStone.mdl",
+            "cardStrengthx1.mdl",
+            "cardPic_",
+        ] {
+            assert!(models.iter().any(|m| m.contains(piece)), "no {piece} read");
+        }
+    }
 
     /// AU.19: the spawn and particle parts are the base's alone at a level's
     /// load, a base file missing failing the part; a walker's are read by
