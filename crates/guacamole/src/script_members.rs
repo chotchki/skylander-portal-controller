@@ -3952,18 +3952,28 @@ impl ScriptWorld {
         false
     }
 
-    /// Whether a hero hangs on actor `h` itself or on one of its nodes
-    /// (openspec AS.540: Warnado on his spin dummy).
+    /// Whether a hero hangs on actor `h`, on one of its nodes, or on what
+    /// hangs on it, up the chain (openspec AS.540: Warnado on his spin
+    /// dummy; Wrecking Ball in his shield ball, which hangs on his roller).
     pub fn carries_hero(&self, h: Handle, engine: &dyn Engine) -> bool {
         engine.heroes().into_iter().any(|hero| {
-            self.actors.get(&hero).is_some_and(|a| {
-                a.attach != Value::Null
-                    && match self.object(Some(a.attach)) {
-                        Some(Object::Node(owner, _)) => owner == h,
-                        None => self.actor_of(Some(a.attach)) == Some(h),
-                        _ => false,
-                    }
-            })
+            let mut at = hero;
+            for _ in 0..HUNG_DEPTH {
+                let Some(a) = self.actors.get(&at) else {
+                    return false;
+                };
+                let owner = match self.object(Some(a.attach)) {
+                    Some(Object::Node(owner, _)) => Some(owner),
+                    None if a.attach != Value::Null => self.actor_of(Some(a.attach)),
+                    _ => None,
+                };
+                match owner {
+                    Some(o) if o == h => return true,
+                    Some(o) if o != at => at = o,
+                    _ => return false,
+                }
+            }
+            false
         })
     }
 
@@ -7751,7 +7761,8 @@ mod fight_tests {
     /// openspec AS.540: a launched actor its script drives along the ground
     /// carrying a hero (Warnado's spin dummy: a speed along his facing
     /// written each step, a gravity of 128) goes along a floor of many
-    /// triangles at that speed, on it, the hero hung on it riding it, and
+    /// triangles at that speed, on it, a hero hung on what hangs on it
+    /// riding it, and
     /// stops at a wall; the same actor carrying no one still stops at the
     /// floor. Before, each step's sweep met the floor at its start and the
     /// dummy stood still under him.
@@ -7820,8 +7831,13 @@ mod fight_tests {
         alone.position = Vec3::new(0.0, 0.0, 6.0);
         w.actors.insert(C1, dummy);
         w.actors.insert(C3, alone);
+        // He hangs on a ball that hangs on it, as Wrecking Ball hangs in
+        // his shield ball on his roller.
+        let mut ball = Actor::blank();
+        ball.attach = Value::Entity(C1);
+        w.actors.insert(C2, ball);
         let mut rider = Actor::blank();
-        rider.attach = Value::Entity(C1);
+        rider.attach = Value::Entity(C2);
         w.actors.insert(HERO, rider);
         e.hero.as_mut().unwrap().hung = true;
         let speed = 50.0;
