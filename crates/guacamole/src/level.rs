@@ -3868,6 +3868,40 @@ mod tests {
         write(&deck, "cardPic_elfNear.mdl", &other);
         let why = read_card(&source, &deck, formats).err().unwrap();
         assert!(why.contains("another dump's"), "{why}");
+        // The palettes part's palette for a model the archive holds is its
+        // rig; another model's isn't.
+        let palette = |owner: &str| guac_ir::palette::Palette {
+            identity: identity.clone(),
+            owner: owner.into(),
+            slots: 0,
+            entries: Vec::new(),
+            refused: Vec::new(),
+        };
+        let palettes = guac_ir::palette::LevelPalettes {
+            identity: identity.clone(),
+            level: "card game".into(),
+            palettes: vec![palette("skyStone.mdl"), palette("cardGrid3x3.mdl")],
+            loops: Vec::new(),
+        };
+        std::fs::write(
+            tmp.path().join(IrFormat::Ron.card_palettes_path()),
+            guac_ir::to_ron(&palettes).unwrap(),
+        )
+        .unwrap();
+        let spawns = read_ir::<SpawnModels>(
+            IrFormat::Ron,
+            &tmp.path()
+                .join(guac_extract::screens::card_model_path(IrFormat::Ron, board)),
+        )
+        .unwrap();
+        let rigs = card_rigs(&source, board, &spawns).expect("the palettes read");
+        assert_eq!(
+            rigs.rigs
+                .iter()
+                .map(|r| r.palette.owner.as_str())
+                .collect::<Vec<_>>(),
+            ["cardGrid3x3.mdl"]
+        );
         let mut level = Level::new(false);
         level.ask_card(board);
         level.ask_card("character/009_Eruptor.bld");

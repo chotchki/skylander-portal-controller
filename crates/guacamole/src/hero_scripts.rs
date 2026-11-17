@@ -3700,6 +3700,35 @@ mod tests {
         assert!(!comes_back(&drawn(false), None));
     }
 
+    /// openspec AS.531: the clone draw asks the level for a joined card
+    /// archive's models, a level with nothing loaded included (the read
+    /// waits for it), and asks nothing on a run that joined none.
+    #[test]
+    fn the_clone_draw_asks_for_a_joined_card_archives_models() {
+        use bevy::ecs::system::RunSystemOnce;
+        let tmp = tempfile::tempdir().unwrap();
+        write_attack(tmp.path());
+        let files = level_scripts::load(tmp.path(), LEVEL).unwrap().placements;
+        let handles = headless_handles(&files);
+        let board = guacamole::card_game::BOARD;
+        let mut app = App::new();
+        app.insert_resource(ScriptWorld::new(
+            &files,
+            &handles,
+            headless_objects(&handles),
+        ))
+        .insert_resource(Level::new(false));
+        app.world_mut().run_system_once(draw_clones).unwrap();
+        assert!(!app.world().resource::<Level>().card_asked(board));
+        app.world_mut()
+            .resource_mut::<ScriptWorld>()
+            .card_streams
+            .joined
+            .push((board, 4));
+        app.world_mut().run_system_once(draw_clones).unwrap();
+        assert!(app.world().resource::<Level>().card_asked(board));
+    }
+
     /// AG.60: a clone the scripts make before the level's loaded (the
     /// start's, run from the part's link) isn't settled as drawing nothing:
     /// it waits, undecided, for the level's models.
