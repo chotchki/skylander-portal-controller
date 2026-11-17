@@ -1234,6 +1234,62 @@ fn the_view_holds_from_his_minion_going_while_hes_still_in() {
     }
 }
 
+/// openspec AS.552: a played card game's board takes his minion off and
+/// holds his slot (`Restore::Replaced`) while its manager aims the
+/// gameplay viewport at the board each step: the TV draws that view, every
+/// step, where AH.227's hold would keep the last one.
+#[cfg(feature = "played-card-games")]
+#[test]
+fn the_boards_view_is_drawn_while_it_holds_his_slot() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut app, _) = camera_app(tmp.path(), CameraFault::None);
+    app.init_resource::<Wander>()
+        .init_resource::<Steps>()
+        .add_systems(FixedUpdate, wander.in_set(Frame::Hands))
+        .add_systems(FixedUpdate, board_holds.in_set(Frame::Hands))
+        .add_systems(FixedUpdate, steps_seen.in_set(Frame::Record));
+    run_until(&mut app, "the scripts' view", 30, |s| {
+        s.hold == ViewHold::Scripts
+    });
+    frames(&mut app, 30);
+    let held = last(&app);
+    let minion = {
+        let e = hero_entity(&app);
+        match &app.world().get::<super::HeroRun>(e).unwrap().join {
+            super::Join::Joined(m) => *m,
+            other => panic!("joined: {other:?}"),
+        }
+    };
+    let off = held.eye + Vec3::new(0.0, 6.0, 8.0);
+    {
+        let w = app.world_mut();
+        let mut rt = w.resource_mut::<ScriptRuntime>();
+        let h = rt.vm.handle_of(minion).expect("his minion's handle");
+        assert!(rt.vm.remove(h), "his minion taken off by the board");
+        w.resource_mut::<Wander>().0 = Some(off);
+    }
+    frames(&mut app, 20);
+    let seen = app.world().resource::<Steps>().0.clone();
+    assert!(seen.len() >= 5, "{} steps", seen.len());
+    for (k, (join, t)) in seen.iter().enumerate() {
+        assert_eq!(*join, Some("joined"), "still in: step {k}");
+        assert!(
+            t.translation.distance(off) < 1e-3,
+            "step {k} of {} with the board up: {t:?}, the board's view at {off}",
+            seen.len()
+        );
+    }
+}
+
+/// The board holding his slot each step while [`Wander`] is set, as a
+/// played game's replacement on the VM keeps it (openspec AS.552).
+#[cfg(feature = "played-card-games")]
+fn board_holds(to: Res<Wander>, world: Option<ResMut<ScriptWorld>>) {
+    if let (Some(_), Some(mut world)) = (to.0, world) {
+        world.card_streams.restore_replaced();
+    }
+}
+
 /// Eruptor in place of the hero on the portal (slot 0 cleared, Eruptor
 /// placed in slot 1), taken in and his scripts joined; the index of the
 /// first step recorded after the clear.

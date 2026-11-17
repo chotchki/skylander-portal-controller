@@ -330,6 +330,15 @@ impl CardStreams {
         self.restore = Restore::Asked;
     }
 
+    /// The board standing as holding the hero's slot ([`Restore::Replaced`]):
+    /// the TV's camera tests' stand-in for a played game's replacement on
+    /// the VM (openspec AS.552). Feature-gated as
+    /// [`CardStreams::play_games`] is.
+    #[cfg(feature = "played-card-games")]
+    pub fn restore_replaced(&mut self) {
+        self.restore = Restore::Replaced;
+    }
+
     /// The restore answered: his character joined again.
     pub fn hero_returned(&mut self) {
         self.restore = Restore::Idle;
