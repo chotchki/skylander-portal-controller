@@ -469,7 +469,12 @@ fn into_turret(run: &mut Run, stops: &mut Vec<String>) {
             still(run, stops, [false; 4]);
             continue;
         };
-        let s = Stick::new(((at[0] - p[0]) / 40.0).clamp(-1.0, 1.0), 0.0);
+        // Both ways: the circle is the turret script's literal, 100 over
+        // the middle (openspec AS.560: x the file's low half).
+        let s = Stick::new(
+            ((at[0] - p[0]) / 40.0).clamp(-1.0, 1.0),
+            (-(at[1] - p[1]) / 40.0).clamp(-1.0, 1.0),
+        );
         step(run, stops, s, [false; 4]);
     }
     for _ in 0..600 {
