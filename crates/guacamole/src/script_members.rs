@@ -3847,6 +3847,10 @@ impl ScriptWorld {
                 if self.dropped.contains(&h) {
                     own.extend(&bodies);
                 }
+                // Only what carries a hero slides on (AS.540): a block or a
+                // landed pickup left a sideways velocity would slide forever,
+                // where nothing in the flying move brakes it.
+                let slide = self.carries_hero(h, engine);
                 let (end, slid) = sweep_sliding(
                     engine.seam(),
                     &shape,
@@ -3855,6 +3859,7 @@ impl ScriptWorld {
                     motion,
                     v,
                     &own,
+                    slide,
                 );
                 at = end;
                 v = slid;
@@ -3945,6 +3950,21 @@ impl ScriptWorld {
             at = owner;
         }
         false
+    }
+
+    /// Whether a hero hangs on actor `h` itself or on one of its nodes
+    /// (openspec AS.540: Warnado on his spin dummy).
+    pub fn carries_hero(&self, h: Handle, engine: &dyn Engine) -> bool {
+        engine.heroes().into_iter().any(|hero| {
+            self.actors.get(&hero).is_some_and(|a| {
+                a.attach != Value::Null
+                    && match self.object(Some(a.attach)) {
+                        Some(Object::Node(owner, _)) => owner == h,
+                        None => self.actor_of(Some(a.attach)) == Some(h),
+                        _ => false,
+                    }
+            })
+        })
     }
 
     /// Each actor hung from a node set at it, as the engine's frame leaves
@@ -4318,15 +4338,17 @@ const TOUCH: f32 = 2.0 * CAST_SLOP;
 /// before what's left of its motion is dropped.
 const SLIDE_PASSES: usize = 3;
 
-/// A launched actor's step through the level (openspec AS.540): `motion`
-/// swept from `start`, stopping at what it hits, the step's velocity `v`
-/// losing its part into each plane met. What's left of the motion past a
-/// hit slides along ground it can stand on (a normal at least the walk's
-/// [`guac_motion::steer::LEAVE_NORMAL`] up) and stops at anything steeper:
-/// Warnado's spin dummy, given a speed along the plank and a gravity each
-/// step, hit the plank at the step's start and stood still with him hung on
-/// it. Returns where it ends and its velocity. The engine's mover sliding a
-/// launched actor along the ground is unread; stand-in ledger: `fly-slide`.
+/// A launched actor's step through the level: `motion` swept from `start`,
+/// stopping at what it hits, the step's velocity `v` losing its part into
+/// each plane met. With `slide` (openspec AS.540: it carries a hero) what's
+/// left of the motion past a hit slides along ground it can stand on (a
+/// normal at least the walk's [`guac_motion::steer::LEAVE_NORMAL`] up) and
+/// stops at anything steeper: Warnado's spin dummy, given a speed along the
+/// plank and a gravity each step, hit the plank at the step's start and
+/// stood still with him hung on it. Returns where it ends and its velocity.
+/// The engine's mover sliding a launched actor along the ground is unread;
+/// stand-in ledger: `fly-slide`.
+#[allow(clippy::too_many_arguments)]
 fn sweep_sliding(
     seam: &dyn PhysicsSeam,
     shape: &Shape,
@@ -4335,6 +4357,7 @@ fn sweep_sliding(
     motion: Vec3,
     mut v: Vec3,
     own: &[BodyId],
+    slide: bool,
 ) -> (Vec3, Vec3) {
     let mut at = start;
     let mut left = motion;
@@ -4361,7 +4384,7 @@ fn sweep_sliding(
                 }
             }
         }
-        if stopped || rest.length() <= guac_motion::steer::STOP {
+        if !slide || stopped || rest.length() <= guac_motion::steer::STOP {
             break;
         }
         // A cast stops touching what it met, where a cast along it from
@@ -7726,10 +7749,12 @@ mod fight_tests {
     }
 
     /// openspec AS.540: a launched actor its script drives along the ground
-    /// (Warnado's spin dummy: a speed along his facing written each step, a
-    /// gravity of 128) goes along a floor of many triangles at that speed,
-    /// on it, with what it carries hung on it, and stops at a wall. Before,
-    /// each step's sweep met the floor at its start and it stood still.
+    /// carrying a hero (Warnado's spin dummy: a speed along his facing
+    /// written each step, a gravity of 128) goes along a floor of many
+    /// triangles at that speed, on it, the hero hung on it riding it, and
+    /// stops at a wall; the same actor carrying no one still stops at the
+    /// floor. Before, each step's sweep met the floor at its start and the
+    /// dummy stood still under him.
     #[test]
     fn a_launched_actor_driven_along_the_ground_slides_on_it_and_stops_at_a_wall() {
         // A floor at y = 0 in 2 m squares from x = -10 to 30, a wall's face
@@ -7772,7 +7797,7 @@ mod fight_tests {
         };
         let mut e = Pit {
             world: ParryWorld::new(&[floor, wall]).unwrap(),
-            hero: None,
+            hero: Some(Hero::actor(eruptor_solid(), Vec3::ZERO, 0.0)),
             bodies: HashMap::new(),
         };
         let mut w = world();
@@ -7789,15 +7814,23 @@ mod fight_tests {
             shape: 3,
             ..Solid::default()
         };
+        // The same dummy, 6 m aside, carrying no one: its sweep stops at
+        // the floor as every other launched actor's does.
+        let mut alone = dummy.clone();
+        alone.position = Vec3::new(0.0, 0.0, 6.0);
         w.actors.insert(C1, dummy);
+        w.actors.insert(C3, alone);
         let mut rider = Actor::blank();
         rider.attach = Value::Entity(C1);
-        w.actors.insert(C2, rider);
+        w.actors.insert(HERO, rider);
+        e.hero.as_mut().unwrap().hung = true;
         let speed = 50.0;
         let mut steps = 0;
         let mut low = f32::MAX;
         while steps < 120 {
-            w.actors.get_mut(&C1).unwrap().velocity.x = speed;
+            for d in [C1, C3] {
+                w.actors.get_mut(&d).unwrap().velocity.x = speed;
+            }
             w.advance(STEP, &mut e);
             steps += 1;
             let at = w.actor(C1).unwrap().position;
@@ -7811,9 +7844,14 @@ mod fight_tests {
                 assert!(at.x >= 0.9 * want, "{at} after 30 steps, want {want}");
                 assert!(at.y.abs() < 0.1, "on the floor: {at}");
                 assert_eq!(
-                    w.actor(C2).unwrap().position,
+                    e.hero.as_ref().unwrap().pivot,
                     at,
-                    "what hangs on it rides it"
+                    "the hero hung on it rides it"
+                );
+                let alone = w.actor(C3).unwrap().position;
+                assert!(
+                    alone.x < 0.5,
+                    "carrying no one, it stops at the floor: {alone}"
                 );
             }
         }
