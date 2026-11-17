@@ -1061,7 +1061,8 @@ impl Plugin for HeroScriptsPlugin {
 /// scale is the one his drawn model stands at and his hands are posed at
 /// ([`pose_hands`], AG.181: they stood at 1.0 while he was drawn at his
 /// scripts' 1.2). A scale that isn't a uniform one (a script setting one
-/// axis) is left as it was; a measured walker's solid and scale stay the
+/// axis) leaves his solid and hands as they were and is drawn per axis
+/// (openspec AS.444); a measured walker's solid and scale stay the
 /// measured ones. Off his scripts (his join failing, or AH.151's fall-back)
 /// nothing rebuilds them: he stands on what they last set.
 pub(crate) fn apply_scripted_solid(
@@ -1084,6 +1085,18 @@ pub(crate) fn apply_scripted_solid(
         let Some(a) = world.actor(e.to_bits()) else {
             continue;
         };
+        // His drawn model takes each axis his set-up scripts write (openspec
+        // AS.444: Ninjini squeezed into her bottle); his solid and hands
+        // stay at the uniform scale below.
+        if held == walkers::Held::SetUp
+            && let Some(root) = run.root
+            && let Ok(mut t) = transforms.get_mut(root)
+        {
+            let want = guacamole::props::hero_drawn_scale(a.scale, run.scale);
+            if t.scale != want {
+                t.scale = want;
+            }
+        }
         let Some(next) = walkers::rebuilt(&run.shape, run.scale, a, held) else {
             continue;
         };

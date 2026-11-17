@@ -760,6 +760,19 @@ pub(crate) struct HeroReport {
     /// fresh for a figure no profile placed.
     pub experience: Option<u32>,
     pub gold: Option<u32>,
+    /// In the level: whether his body draws, and each part the extract
+    /// hangs on a fresh figure, by placement, with whether it draws
+    /// (openspec AS.444, [`guacamole::props::hero_drawn`]); what his
+    /// scripts hang on him reads in `creatures.spawned`.
+    pub drawn: Option<bool>,
+    pub fresh_parts: Vec<FreshPartReport>,
+}
+
+/// A part the extract hangs on a fresh figure, as [`HeroReport`] reads it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub(crate) struct FreshPartReport {
+    pub placement: String,
+    pub drawn: bool,
 }
 
 /// The solid a hero stands on as `/api/_test/tv` reports it (openspec
@@ -1113,8 +1126,11 @@ impl Play {
         cameras: &Query<(&Transform, &Projection, &FollowCamera)>,
         runtime: Option<&ScriptRuntime>,
         earning: Option<&crate::progress::Earning>,
+        shown: &Query<&Visibility>,
     ) -> Option<HeroReport> {
         let c = self.candidate.as_ref()?;
+        let drawn = |e: Entity| shown.get(e).is_ok_and(|v| *v != Visibility::Hidden);
+        let on_stage = self.on_stage();
         let body = self.on_stage().and_then(|h| bodies.get(h.hero).ok());
         let hero = body.map(|(b, ..)| &b.hero);
         let gait = body.and_then(|(_, g, _)| g).map(GaitReport::of_gaits);
@@ -1168,6 +1184,20 @@ impl Play {
             behaviour: numbers.behaviour,
             experience: inside.then(|| progress.map_or(0, |p| p.xp)),
             gold: inside.then(|| progress.map_or(0, |p| p.gold)),
+            drawn: on_stage.map(|h| drawn(h.hero)),
+            fresh_parts: on_stage
+                .map(|h| {
+                    h.model
+                        .attachments
+                        .iter()
+                        .zip(&h.attachments.roots)
+                        .map(|(a, &root)| FreshPartReport {
+                            placement: a.placement.clone(),
+                            drawn: drawn(h.hero) && drawn(root),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
         })
     }
 }
@@ -1199,6 +1229,7 @@ pub(crate) struct PlayShots<'w, 's> {
     runtime: Option<Res<'w, ScriptRuntime>>,
     earning: Option<Res<'w, crate::progress::Earning>>,
     source: Option<Res<'w, ScriptSource>>,
+    shown: Query<'w, 's, &'static Visibility>,
 }
 
 impl PlayShots<'_, '_> {
@@ -1231,6 +1262,7 @@ impl PlayShots<'_, '_> {
                 &self.cameras,
                 self.runtime.as_deref(),
                 self.earning.as_deref(),
+                &self.shown,
             )
         })
     }
@@ -2357,20 +2389,38 @@ fn enter(
 /// while his join is pending (asked, requested, his entry beam running) he's
 /// drawn nowhere, as the original's minion is in the world from his
 /// activation on; a hero with no run, or one whose join fell back, is drawn
-/// from his entry.
-fn show_hero(play: Res<Play>, mut heroes: Query<(&mut Visibility, Option<&HeroRun>)>) {
+/// from his entry. Nor while his tint is see-through, and the extract's
+/// fresh parts only while his scripts don't hang his parts themselves
+/// (openspec AS.444, [`guacamole::props::hero_drawn`]).
+fn show_hero(
+    mut commands: Commands,
+    play: Res<Play>,
+    world: Option<Res<ScriptWorld>>,
+    runs: Query<&HeroRun>,
+    mut shown: Query<&mut Visibility>,
+) {
     let Some(h) = play.on_stage() else {
         return;
     };
-    let Ok((mut shown, run)) = heroes.get_mut(h.hero) else {
-        return;
+    let run = runs.get(h.hero).ok();
+    let drawn = guacamole::props::hero_drawn(
+        run.is_some_and(|r| r.join.pending()),
+        run.is_some_and(|r| matches!(r.join, Join::Joined(_))),
+        world.as_deref().and_then(|w| w.actor(h.hero.to_bits())),
+    );
+    let want = |on: bool| match on {
+        true => Visibility::Inherited,
+        false => Visibility::Hidden,
     };
-    let want = match run.is_some_and(|r| r.join.pending()) {
-        true => Visibility::Hidden,
-        false => Visibility::Inherited,
-    };
-    if *shown != want {
-        *shown = want;
+    let parts = h.attachments.roots.iter().map(|&r| (r, drawn.fresh_parts));
+    for (e, on) in std::iter::once((h.hero, drawn.body)).chain(parts) {
+        match shown.get_mut(e) {
+            Ok(mut v) if *v != want(on) => *v = want(on),
+            Ok(_) => {}
+            Err(_) => {
+                commands.entity(e).insert(want(on));
+            }
+        }
     }
 }
 
@@ -2919,9 +2969,10 @@ mod tests {
                 Query<(&HeroBody, Option<&HeroGaits>, Option<&HeroRun>)>,
                 Query<(&Transform, &Projection, &FollowCamera)>,
                 Res<Play>,
+                Query<&Visibility>,
             )> = bevy::ecs::system::SystemState::new(app.world_mut());
-            let (bodies, cameras, play) = state.get(app.world()).unwrap();
-            play.report(&bodies, &cameras, None, None)
+            let (bodies, cameras, play, shown) = state.get(app.world()).unwrap();
+            play.report(&bodies, &cameras, None, None, &shown)
                 .expect("the hero")
         };
         assert!(report.position.is_some(), "in the level");
@@ -3707,9 +3758,10 @@ mod tests {
                 Query<(&HeroBody, Option<&HeroGaits>, Option<&HeroRun>)>,
                 Query<(&Transform, &Projection, &FollowCamera)>,
                 Res<Play>,
+                Query<&Visibility>,
             )> = bevy::ecs::system::SystemState::new(app.world_mut());
-            let (bodies, cameras, play) = state.get(app.world()).unwrap();
-            play.report(&bodies, &cameras, None, None)
+            let (bodies, cameras, play, shown) = state.get(app.world()).unwrap();
+            play.report(&bodies, &cameras, None, None, &shown)
                 .expect("the hero")
         };
         // As the hook serves it.
@@ -4706,10 +4758,18 @@ mod tests {
                     Option<Res<ScriptRuntime>>,
                     Option<Res<crate::progress::Earning>>,
                     Res<Play>,
+                    Query<&Visibility>,
                 )> = bevy::ecs::system::SystemState::new(app.world_mut());
-                let (bodies, cameras, runtime, earning, play) = state.get(app.world()).unwrap();
-                play.report(&bodies, &cameras, runtime.as_deref(), earning.as_deref())
-                    .and_then(|r| r.experience)
+                let (bodies, cameras, runtime, earning, play, shown) =
+                    state.get(app.world()).unwrap();
+                play.report(
+                    &bodies,
+                    &cameras,
+                    runtime.as_deref(),
+                    earning.as_deref(),
+                    &shown,
+                )
+                .and_then(|r| r.experience)
             };
             let start = if owned { 999 } else { 0 };
             let e = app.world().resource::<Play>().hero().unwrap();
