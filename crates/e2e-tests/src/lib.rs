@@ -1639,6 +1639,10 @@ impl IntroFixture {
         opened
             .dir
             .record_part(guac_extract::screens::CARD_PALETTES_PART, Vec::new())?;
+        // AS.365's card game art: likewise, so no stone has a model.
+        opened
+            .dir
+            .record_part(guac_extract::screens::CARD_ART_PART, Vec::new())?;
         // AT.30's model part: the models above are the fixture's, so the
         // part names no record and a stage over the fixture reads again.
         opened

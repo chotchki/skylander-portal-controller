@@ -376,6 +376,7 @@ pub struct AnimationInfo<'a> {
     pub playback_percent: f32,
     /// Bitfields as `tfbAnimationInfo`'s, without `_statusFieldsSet`.
     pub properties: u32,
+    /// `None` too where the label isn't UTF-8 (AS.530).
     pub media_name: Option<&'a str>,
     pub blend_factor: f32,
     /// A `tfbAnimationInfo`: a `tfbPhysicsAnimation` or an animation network.
@@ -411,7 +412,13 @@ impl<'a> Layout<'a> for AnimationInfo<'a> {
             playback_mode: v.u32(Self::PLAYBACK_MODE, "_playbackMode")?,
             playback_percent: v.f32(Self::PLAYBACK_PERCENT, "_playbackPercent")?,
             properties: v.u32(Self::PROPERTIES, "_properties")?,
-            media_name: v.string(Self::MEDIA_NAME, "_mediaName")?,
+            // A label that isn't UTF-8 reads as none (openspec AS.530: one
+            // model, `ChompyBot.mdl`, in 15 archives): it's a name only, and
+            // the strict read refused the whole model for it.
+            media_name: match v.string(Self::MEDIA_NAME, "_mediaName") {
+                Err(e) if e.kind == crate::error::ErrorKind::InvalidUtf8 => None,
+                r => r?,
+            },
             blend_factor: v.f32(Self::BLEND_FACTOR, "_blendFactor")?,
             tfb_animation: v.object(Self::TFB_ANIMATION, "_tfbAnimation", "tfbAnimationInfo")?,
             blend_list: v.object_ref(Self::BLEND_LIST, "_blendList")?,

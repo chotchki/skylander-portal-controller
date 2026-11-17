@@ -1102,6 +1102,11 @@ impl ScriptWorld {
         self.sounds.as_deref()
     }
 
+    /// Each unit's archive stem the book is read by, as [`ScriptWorld::set_sounds`] set it.
+    pub fn sound_stems(&self) -> &HashMap<u16, String> {
+        &self.sound_stems
+    }
+
     /// This run's number, unique on the TV.
     pub fn run(&self) -> u64 {
         self.run

@@ -539,6 +539,30 @@ fn model_and_clip_table_read_back() {
     assert_eq!(info.blend_list, ObjectRef::Null);
 }
 
+/// openspec AS.530: an entry whose label (`_mediaName`) isn't UTF-8 reads,
+/// the label as none and the rest as stored; a name that isn't stays refused.
+#[test]
+fn an_animation_label_that_isnt_utf8_reads_as_none() {
+    let (s, mut bytes) = sampled();
+    let label = bytes
+        .windows(13)
+        .position(|w| w == b"Eruptor_Idle\0")
+        .unwrap();
+    bytes[label] = 0xFF;
+    let igz = Igz::parse(&bytes).unwrap();
+    let info = AnimationInfo::read(&igz, index(&igz, s.clip_info)).unwrap();
+    assert_eq!(info.media_name, None);
+    assert_eq!(info.name, Some("Idle"));
+    assert_eq!(info.tfb_animation, Some(index(&igz, s.idle)));
+
+    let (s, mut bytes) = sampled();
+    let name = bytes.windows(6).position(|w| w == b"\0Idle\0").unwrap() + 1;
+    bytes[name] = 0xFF;
+    let igz = Igz::parse(&bytes).unwrap();
+    let err = AnimationInfo::read(&igz, index(&igz, s.clip_info)).unwrap_err();
+    assert_eq!(err.kind, crate::error::ErrorKind::InvalidUtf8);
+}
+
 #[test]
 fn the_hero_walks_from_its_model() {
     let (s, bytes) = sampled();

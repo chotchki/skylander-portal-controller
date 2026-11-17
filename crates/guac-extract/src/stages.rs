@@ -349,6 +349,8 @@ pub struct ScriptStage {
     /// [`crate::screens::CARD_PALETTES_PART`]): its one file, read or kept,
     /// and how many palettes it holds when read this run.
     pub card_palettes: EntryPart,
+    /// The card game's art (openspec AS.365, [`crate::screens::CARD_ART_PART`]).
+    pub card_art: CardArtStage,
     /// Of [`ScriptStage::files`], the script entries' and the spawn
     /// models' (their IR and textures).
     pub script_files: Files,
@@ -1053,6 +1055,7 @@ pub fn script_stage(
     card_part(dir, &usrdir, &mut stage)?;
     stone_part(dir, &usrdir, &mut stage)?;
     card_palette_part(dir, &usrdir, ir, &mut stage)?;
+    card_art_part(dir, &usrdir, ir, &mut stage)?;
     send(Event::Scripts { done: 2, total });
     for f in [stage.script_files, stage.spawn_files] {
         stage.files.written += f.written;
@@ -1183,6 +1186,163 @@ pub fn card_palette_part(
         }
     }
     stage.card_palettes = part;
+    Ok(())
+}
+
+/// The card game's art part as a run left it (openspec AS.365).
+#[derive(Debug, Default, Clone)]
+pub struct CardArtStage {
+    pub read: bool,
+    pub kept: bool,
+    /// Archives read this run, and the models, distinct textures, interface
+    /// records and sounds they gave.
+    pub archives: usize,
+    pub models: usize,
+    pub textures: usize,
+    pub interfaces: usize,
+    pub sounds: usize,
+    /// Every refusal by name (`<archive>: <what>`) with why, as the record
+    /// keeps them.
+    pub refused: Vec<(String, String)>,
+    pub missing: Vec<String>,
+    pub files: Files,
+    pub took: Duration,
+}
+
+/// Whether a recorded art part is current: every file intact, and every
+/// interface record named for this build's shape (AT.27's rule).
+fn card_art_current(dir: &IdentityDir, files: &[String]) -> Result<bool> {
+    Ok(crate::screens::card_art_records_current(files)
+        && dir.part_holds(crate::screens::CARD_ART_PART, files)?)
+}
+
+/// The card game's art part (openspec AS.365, [`crate::screens::card_art`]):
+/// kept while it's recorded and current, else every archive read and its
+/// models, textures, interface record and sounds written, with the record
+/// ([`crate::screens::CARD_ART_RECORD`]) naming every refusal; a dump with
+/// none of the archives records the part with no file. An archive the dump
+/// lacks is listed; one that won't read is the part's failure
+/// alone, as the screens' rule has it.
+pub fn card_art_part(
+    dir: &mut IdentityDir,
+    usrdir: &Path,
+    ir: IrFormat,
+    stage: &mut ScriptStage,
+) -> Result<()> {
+    const NAME: &str = crate::screens::CARD_ART_PART;
+    let started = Instant::now();
+    let mut part = CardArtStage::default();
+    let recorded = dir.manifest().parts.get(NAME).cloned();
+    if let Some(files) = recorded
+        && card_art_current(dir, &files)?
+    {
+        count_kept(dir, &files, &mut part.files);
+        part.kept = true;
+        part.took = started.elapsed();
+        stage.card_art = part;
+        return Ok(());
+    }
+    let identity = dir.manifest().identity.clone();
+    let archives = crate::screens::card_art_archives();
+    let (present, missing): (Vec<String>, Vec<String>) =
+        archives.into_iter().partition(|a| usrdir.join(a).is_file());
+    part.missing = missing.clone();
+    let mut record = crate::screens::CardArtRecord {
+        archives: Vec::new(),
+        missing,
+    };
+    let fail = |stage: &mut ScriptStage, archive: &str, reason: String| {
+        let e = ExtractError::ScriptsUnreadable {
+            part: NAME.to_owned(),
+            archive: archive.to_owned(),
+            reason,
+        };
+        stage.failed.push(PartFailure {
+            part: NAME.to_owned(),
+            archive: archive.to_owned(),
+            reason: e.to_string(),
+        });
+    };
+    let mut files: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    if !present.is_empty() {
+        let exports = match crate::sounds::exports(usrdir) {
+            Ok(x) => x,
+            Err(reason) => {
+                fail(stage, crate::roster::GLOBAL, reason);
+                return Ok(());
+            }
+        };
+        for archive in &present {
+            let art = match crate::screens::card_art(usrdir, archive, &exports, identity.clone()) {
+                Ok(a) => a,
+                Err(reason) => {
+                    fail(stage, archive, reason);
+                    return Ok(());
+                }
+            };
+            let line = crate::screens::CardArtEntry::of(&art);
+            let mut put_once = |dir: &mut IdentityDir, rel: &str, bytes: &[u8]| -> Result<()> {
+                if seen.insert(rel.to_owned()) {
+                    put(dir, rel, bytes, &mut part.files)?;
+                    files.push(rel.to_owned());
+                }
+                Ok(())
+            };
+            for (t, ktx2) in &art.models.textures {
+                put_once(dir, t, ktx2)?;
+            }
+            if !art.models.ir.props.is_empty() || !art.models.ir.refused.is_empty() {
+                let rel = crate::screens::card_model_path(ir, archive);
+                let bytes = ir.encode(&art.models.ir, dir, &rel)?;
+                put_once(dir, &rel, &bytes)?;
+            }
+            if let Some(i) = &art.interface {
+                for (t, ktx2) in &i.textures {
+                    put_once(dir, t, ktx2)?;
+                }
+                let rel = crate::screens::card_interface_path(ir, archive);
+                let bytes = ir.encode(&i.ir, dir, &rel)?;
+                put_once(dir, &rel, &bytes)?;
+                part.interfaces += 1;
+            }
+            if !art.sounds.ir.sounds.is_empty() || !art.sounds.ir.data.is_empty() {
+                for (a, bytes) in &art.sounds.audio {
+                    put_once(dir, a, bytes)?;
+                }
+                let rel = crate::sounds::path(ir, archive);
+                let bytes = ir.encode(&art.sounds.ir, dir, &rel)?;
+                put_once(dir, &rel, &bytes)?;
+            }
+            part.archives += 1;
+            part.models += line.models.len();
+            part.sounds += line.sounds.len();
+            part.refused.extend(
+                line.refused
+                    .iter()
+                    .map(|(what, why)| (format!("{archive}: {what}"), why.clone())),
+            );
+            record.archives.push(line);
+        }
+    }
+    part.textures = files
+        .iter()
+        .filter(|f| f.starts_with(crate::models::TEXTURE_DIR))
+        .count();
+    // A dump with none of the archives (the e2e fixture's) records the part
+    // with no file, as the palettes' part does.
+    if !present.is_empty() {
+        let json = serde_json::to_vec_pretty(&record).map_err(|e| ExtractError::Io {
+            path: dir.path().join(crate::screens::CARD_ART_RECORD),
+            source: std::io::Error::other(e),
+        })?;
+        put(dir, crate::screens::CARD_ART_RECORD, &json, &mut part.files)?;
+        files.push(crate::screens::CARD_ART_RECORD.to_owned());
+    }
+    dir.record_part(NAME, files)?;
+    part.read = true;
+    part.took = started.elapsed();
+    stage.card_art = part;
     Ok(())
 }
 

@@ -74,11 +74,12 @@ pub fn level_path(ir: IrFormat, level: &str) -> String {
     )
 }
 
-/// Whether every IR file the interface part and each first-run level's
-/// `sprites` part record is named for this build's [`RECORD`] (AT.27): the
+/// Whether every IR file the interface part, each first-run level's
+/// `sprites` part and the card game's art part (AS.365) record is named for
+/// this build's [`RECORD`] (AT.27): the
 /// manifest's currency check asks it beside the parts' keys, so an extract
 /// holding another shape's files opens as a resume and its next start reads
-/// the two parts again. A part not recorded is the keys' check's to refuse.
+/// those parts again. A part not recorded is the keys' check's to refuse.
 pub fn record_current(m: &Manifest) -> bool {
     let tag = format!(".v{RECORD}.");
     let named = |files: &Vec<String>| {
@@ -88,6 +89,9 @@ pub fn record_current(m: &Manifest) -> bool {
             .all(|f| f.contains(&tag))
     };
     m.parts.get(PART).is_none_or(named)
+        && m.parts
+            .get(crate::screens::CARD_ART_PART)
+            .is_none_or(|f| crate::screens::card_art_records_current(f))
         && crate::levels::FIRST_RUN.iter().all(|level| {
             m.levels
                 .get(*level)
