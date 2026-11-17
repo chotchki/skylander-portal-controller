@@ -2875,6 +2875,16 @@ lane's (`~/workspace/guacamole-research/as-cards-board/notes/table.md`), read of
   hub stage 2's board) and the board's camera, the second layer
   (`viewportinfo.alternate viewport`), which the TV keeps as a cell: its camera stays where the game took
   the hero off, the board in a corner of it.
+- **A departure, not settled** (the as-cards-board review, 2026-11-17): the interface records hold no
+  layout. Every template in the board's and the hand select's records sits at (0, 0), only an image, its
+  size, scale and colour (the board's: `ScoreBox_Cap`/`_Tile` and their strokes, 16 and 1 by 44 px, the
+  two pause images, 159 px; the hand select's 112, `Card_Sprite_NNN` at 128 px; no text keys in either). So
+  the layout a kid saw is wherever the scripts put the sprites in the interface model, which those two
+  records join as linked units, and AS.99's path already draws a listed template's clones where the model
+  lays them out (`interface_host::DRAWN_SPRITES`), where a Bevy piece places them by our own. The lane's evidence
+  that nothing draws, `sprites.shown` empty, lists only what `DRAWN_SPRITES` draws, so it doesn't say
+  whether the manager's scripts place the score header's sprites in the model. If they do, listing them
+  is nearer the original than a piece of ours. That's chotchki's call (AS.559), after that read.
 
 ## Figures
 

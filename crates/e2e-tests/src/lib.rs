@@ -3779,15 +3779,23 @@ mod warm_grace_tests {
         );
     }
 
-    /// Any screen but Preparing runs the clock, a growing count or not.
+    /// Any screen but Preparing runs the clock, a growing count or not:
+    /// each screen a test waits on, and one with no screen read.
     #[test]
     fn another_screen_gets_no_grace() {
-        let mut g = WarmGrace::new(Duration::from_secs(10));
-        for i in 0..9 {
-            let snap = json!({"screen": "Portal", "prepare": {"compiled": i * 5}});
-            assert!(!g.poll(&snap, GAP));
+        for screen in [
+            json!("Portal"),
+            json!("Join"),
+            json!("NoGiants"),
+            json!(null),
+        ] {
+            let mut g = WarmGrace::new(Duration::from_secs(10));
+            for i in 0..9 {
+                let snap = json!({"screen": screen, "prepare": {"compiled": i * 5}});
+                assert!(!g.poll(&snap, GAP), "{screen}");
+            }
+            let snap = json!({"screen": screen, "prepare": {"compiled": 100}});
+            assert!(g.poll(&snap, GAP), "{screen} gets no grace");
         }
-        let snap = json!({"screen": "Portal", "prepare": {"compiled": 100}});
-        assert!(g.poll(&snap, GAP));
     }
 }

@@ -3909,6 +3909,73 @@ mod tests {
         assert!(!level.card_asked("character/009_Eruptor.bld"));
     }
 
+    /// openspec AS.531 on the dump: the TV's read of the card art part as the
+    /// dump writes it, made into a throwaway extract under
+    /// `GUAC_EXTRACT_DIR` with the card palettes part. Every archive the part
+    /// holds models for reads through [`read_card`] (its identity the
+    /// extract's), the board's grid and stone and a deck's face among them,
+    /// and every skinned model gets its palette off [`card_rigs`] by its
+    /// path, so no stone or creature stands on its idle for want of a name
+    /// match. The synthetic test above holds the rules; this holds them to
+    /// the disc's names.
+    #[test]
+    #[ignore = "reads the Giants dump at GUAC_GIANTS_DUMP and writes under GUAC_EXTRACT_DIR"]
+    fn every_card_archive_on_the_dump_reads_for_the_tv() {
+        use guac_extract::known::KNOWN_DUMPS;
+        fn key(k: &str) -> String {
+            std::env::var(k).unwrap_or_else(|_| panic!("set {k}"))
+        }
+        let started = Instant::now();
+        let dump = PathBuf::from(key("GUAC_GIANTS_DUMP"));
+        let base = PathBuf::from(key("GUAC_EXTRACT_DIR"));
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::Builder::new()
+            .prefix("as531-card-read-")
+            .tempdir_in(&base)
+            .unwrap();
+        let root = guac_extract::ExtractRoot::checked(tmp.path().join("extract")).unwrap();
+        let mut opened = guac_extract::open(&dump, &root, KNOWN_DUMPS, &|_| {}).unwrap();
+        let usr = dump.join("PS3_GAME/USRDIR");
+        let ir = IrFormat::Postcard;
+        let mut st = guac_extract::stages::ScriptStage::default();
+        guac_extract::stages::card_palette_part(&mut opened.dir, &usr, ir, &mut st).unwrap();
+        guac_extract::stages::card_art_part(&mut opened.dir, &usr, ir, &mut st).unwrap();
+        assert!(st.failed.is_empty(), "{:?}", st.failed);
+        let identity = opened.dir.manifest().identity.clone();
+        let source = LevelSource::chapter_1(opened.dir.path().to_path_buf(), ir, identity.clone());
+        let formats = CompressedImageFormats::BC;
+        let (mut archives, mut models, mut skinned, mut with_nodes) = (0, Vec::new(), 0, 0);
+        for archive in guac_extract::screens::card_art_archives() {
+            let rel = guac_extract::screens::card_model_path(ir, &archive);
+            if !source.dir.join(&rel).is_file() {
+                continue;
+            }
+            let read = read_card(&source, &archive, formats)
+                .unwrap_or_else(|why| panic!("{archive}: {why}"));
+            archives += 1;
+            for c in &read.creatures {
+                assert!(c.palette.is_some(), "{archive}: {} has no palette", c.path);
+                skinned += 1;
+                with_nodes += usize::from(c.nodes.is_some());
+            }
+            models.extend(read.models.iter().map(|(p, _)| p.clone()));
+            models.extend(read.creatures.iter().map(|c| c.path.clone()));
+        }
+        println!(
+            "{archives} archives read, {} models, {skinned} skinned (each with its palette, {with_nodes} with attach nodes); {:.1} s",
+            models.len(),
+            started.elapsed().as_secs_f32()
+        );
+        for piece in [
+            "cardGrid3x3.mdl",
+            "skyStone.mdl",
+            "cardStrengthx1.mdl",
+            "cardPic_",
+        ] {
+            assert!(models.iter().any(|m| m.contains(piece)), "no {piece} read");
+        }
+    }
+
     /// AU.19: the spawn and particle parts are the base's alone at a level's
     /// load, a base file missing failing the part; a walker's are read by
     /// himself once he's placed, one whose models don't read an error of his
