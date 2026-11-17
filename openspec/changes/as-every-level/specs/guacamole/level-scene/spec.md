@@ -644,3 +644,14 @@ A yes on the hub to a screen the TV hasn't built (the Heroic Challenges, the sto
 #### Scenario: Cali's Heroic Challenges
 - **WHEN** a player answers yes to Cali's challenge question
 - **THEN** the talk ends and the log names the Heroic Challenges as not built, once
+
+### Requirement: A hero draws as his scripts show him
+A joined hero SHALL be drawn nowhere while his tint's alpha is 0 and whole otherwise, and each part he carries SHALL draw once: the clone his scripts hang, never also the part the extract lists for a fresh figure. His drawn model SHALL take each axis of his scale; his solid stays uniform.
+
+#### Scenario: Ninjini's bottle
+- **WHEN** Ninjini goes into her bottle
+- **THEN** her body squeezes, is drawn nowhere while the bottle stands for her, and is drawn again once she's out, the bottle drawn once throughout
+
+#### Scenario: Chop Chop's sword
+- **WHEN** Chop Chop swings
+- **THEN** one sword and one shield draw on every frame

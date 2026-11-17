@@ -387,8 +387,9 @@ pub struct HeroDrawn {
 /// (AH.224), nor while his actor's tint is see-through, as his scripts and
 /// the shared ones hide him (`Minion - Set Minion Tint` with alpha 0 into
 /// Ninjini's bottle, a portal entry's alpha 0; [`actor_shows`]), with
-/// what's hung on his joints. The extract's fresh parts: only while his
-/// scripts don't carry him (`scripted` false, a walker on the stand-in),
+/// what's hung on his joints; hidden or whole, never faded or coloured
+/// (stand-in ledger: `hero-tint`). The extract's fresh parts: only while
+/// his scripts don't carry him (`scripted` false: his join off or failed),
 /// since joined they hang every one of them as a clone of their own and
 /// swap, let go, fade or remove it (a part drawn by both read as two
 /// blades on Chop Chop).
