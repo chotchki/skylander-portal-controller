@@ -1600,6 +1600,26 @@ impl ScriptWorld {
             Member::SeqRawDuration if matches!(object, Some(Object::Clip { .. })) => {
                 Value::Float(self.length_of(recv.ok_or(HostFault::Nothing)?))
             }
+            // A palette's clip read for what's left of it: the latest copy
+            // of it started on the running placement (openspec AS.444:
+            // Stealth Elf's stealth waits on its go-invisible clip by the
+            // palette entry, and read as nothing it never ended, her tint
+            // left see-through); none started there reads as nothing.
+            Member::SeqTimeRemaining | Member::SeqPercentRemaining
+                if matches!(object, Some(Object::Clip { .. })) =>
+            {
+                let clip = recv.ok_or(HostFault::Nothing)?;
+                let s = self
+                    .sequences
+                    .iter()
+                    .rev()
+                    .find(|s| s.actor == at.placement && s.template == clip)
+                    .ok_or(HostFault::Nothing)?;
+                match m {
+                    Member::SeqTimeRemaining => Value::Float(s.time_remaining()),
+                    _ => Value::Float(s.percent_remaining()),
+                }
+            }
             Member::SeqTimeRemaining
             | Member::SeqPercentRemaining
             | Member::SeqRate
@@ -10250,6 +10270,65 @@ mod animation_tests {
             panic!("a copy");
         };
         assert_eq!(raw(&mut w, &mut e, s), Ok(Value::Float(10.0)));
+    }
+
+    /// AS.444: a palette's clip read for what's left of it reads the latest
+    /// copy of it started on the running placement (Stealth Elf's stealth
+    /// waits on its go-invisible clip so, by the palette entry), down to 0
+    /// once it ends; with none started there it reads as nothing.
+    #[test]
+    fn a_palette_clip_reads_what_is_left_of_its_copy_on_the_placement() {
+        let (mut w, mut e) = (world(), pit());
+        let clips = palette(&mut w);
+        w.set_palette(TEMPLATE, vec![1.0, 0.5, 0.0, 10.0]);
+        let left = |w: &mut ScriptWorld, e: &mut dyn Engine, placement: Handle, name: &str| {
+            w.get(
+                &Access {
+                    placement,
+                    receiver: Some(clips[3]),
+                    member: MemberId::named("sequence", name),
+                    other_point: None,
+                    via: None,
+                    op: None,
+                },
+                e,
+            )
+        };
+        assert_eq!(
+            left(&mut w, &mut e, C1, "percent remaining"),
+            Err(HostFault::Nothing),
+            "no copy started"
+        );
+        let Answer::Run {
+            result: Some(_), ..
+        } = w.play_on(clips[3], C1)
+        else {
+            panic!("a copy");
+        };
+        assert_eq!(
+            left(&mut w, &mut e, C1, "percent remaining"),
+            Ok(Value::Float(100.0))
+        );
+        assert_eq!(
+            left(&mut w, &mut e, C1 + 1, "percent remaining"),
+            Err(HostFault::Nothing),
+            "a copy on another placement isn't its"
+        );
+        w.sequences.last_mut().unwrap().time = 5.0;
+        assert_eq!(
+            left(&mut w, &mut e, C1, "percent remaining"),
+            Ok(Value::Float(50.0))
+        );
+        assert_eq!(
+            left(&mut w, &mut e, C1, "time remaining"),
+            Ok(Value::Float(5.0))
+        );
+        w.sequences.last_mut().unwrap().done = true;
+        assert_eq!(
+            left(&mut w, &mut e, C1, "percent remaining"),
+            Ok(Value::Float(0.0)),
+            "ended"
+        );
     }
 
     /// Slot 0 a base clip, 1 partial, 2 additive (and partial: additive

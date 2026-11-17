@@ -2182,6 +2182,19 @@ impl ScriptWorld {
         }
     }
 
+    /// `h`'s scale, percent per axis, as a script's write of
+    /// `placement.scale` leaves it: a test's (openspec AS.444). False when
+    /// the scripts reach no actor there.
+    pub fn set_scale(&mut self, h: Handle, scale: [f32; 3]) -> bool {
+        match self.actors.get_mut(&h) {
+            Some(a) => {
+                a.scale = scale;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Every actor the scripts reach, file placements and clones, in no
     /// order: a reader's (openspec AS.440's capture), never a script's.
     pub fn actors(&self) -> impl Iterator<Item = (Handle, &Actor)> {

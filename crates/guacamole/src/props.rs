@@ -374,6 +374,47 @@ pub fn actor_shows(a: &Actor) -> bool {
     a.tint & 0xFF != 0
 }
 
+/// What of a hero the TV draws (openspec AS.444): his body, and the parts a
+/// fresh figure carries as the extract lists them (AE.23's, hung on his
+/// joints with him).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HeroDrawn {
+    pub body: bool,
+    pub fresh_parts: bool,
+}
+
+/// What of a hero draws. His body: nowhere while his entry is pending
+/// (AH.224), nor, while his scripts carry him, while his actor's tint is
+/// see-through, as his scripts and the shared ones hide him (`Minion - Set
+/// Minion Tint` with alpha 0 into Ninjini's bottle, a turret's hide, an
+/// outro's; [`actor_shows`]), with what's hung on his joints; hidden or
+/// whole, never faded or coloured (stand-in ledger: `hero-tint`). Off his
+/// scripts (`scripted` false: his join off or failed, AH.151's fall-back)
+/// his tint is never read: nothing of his own could set it back. The
+/// extract's fresh parts: only while his scripts don't carry him, since
+/// joined they hang every one of them as a clone of their own and swap,
+/// let go, fade or remove it (a part drawn by both read as two blades on
+/// Chop Chop).
+pub fn hero_drawn(entering: bool, scripted: bool, actor: Option<&Actor>) -> HeroDrawn {
+    let body = !entering && (!scripted || actor.is_none_or(actor_shows));
+    HeroDrawn {
+        body,
+        fresh_parts: body && !scripted,
+    }
+}
+
+/// A hero's drawn scale off his actor's (percent per axis): each axis as a
+/// fraction while all three are over 0 (Ninjini squeezed to half across as
+/// she's drawn into her bottle), else `fallback`, the uniform one his
+/// solid is built at. The solid stays uniform ([`crate::walkers`]).
+pub fn hero_drawn_scale(scale: [f32; 3], fallback: f32) -> Vec3 {
+    if scale.iter().all(|&s| s > 0.0) {
+        Vec3::from_array(scale) / 100.0
+    } else {
+        Vec3::splat(fallback)
+    }
+}
+
 /// A prop's solid where its actor stands (openspec AG.60): its file's
 /// `CollisionInfo` turn under the primitive, sizes and offset the scripts
 /// leave on the actor (a Titan boulder's cylinder, the cannon's smaller
@@ -1790,5 +1831,61 @@ mod tests {
             centres > touching && centres - touching < 0.006,
             "{centres}"
         );
+    }
+
+    /// AS.444: a hero's body draws unless his entry is pending or, joined,
+    /// his tint's alpha is 0 (Ninjini's bottle sets it; any other alpha
+    /// draws him); the extract's fresh parts only while his scripts don't
+    /// carry him, and never with his body hidden.
+    #[test]
+    fn a_heros_tint_and_his_scripts_rule_what_of_him_draws() {
+        let mut a = Actor::blank();
+        let both = HeroDrawn {
+            body: true,
+            fresh_parts: true,
+        };
+        assert_eq!(hero_drawn(false, false, Some(&a)), both, "a walker");
+        assert_eq!(hero_drawn(false, false, None), both, "no actor yet");
+        let carried = HeroDrawn {
+            body: true,
+            fresh_parts: false,
+        };
+        assert_eq!(
+            hero_drawn(false, true, Some(&a)),
+            carried,
+            "his scripts hang his parts"
+        );
+        let none = HeroDrawn {
+            body: false,
+            fresh_parts: false,
+        };
+        assert_eq!(hero_drawn(true, false, Some(&a)), none, "entering");
+        assert_eq!(hero_drawn(true, true, None), none, "entering, joined");
+        // Ninjini's bottle: `Minion - Set Minion Tint` grey at alpha 0.
+        a.tint = 0x8080_8000;
+        assert_eq!(hero_drawn(false, true, Some(&a)), none, "in the bottle");
+        // Off his scripts his tint isn't read: a fall-back mid-bottle would
+        // otherwise leave him see-through for good (the AS.444 review).
+        assert_eq!(hero_drawn(false, false, Some(&a)), both, "a walker");
+        // Any alpha over 0 draws him whole (no fade on the hero).
+        a.tint = 0x8080_8001;
+        assert_eq!(hero_drawn(false, true, Some(&a)), carried);
+        a.tint = 0x0000_00FF;
+        assert_eq!(hero_drawn(false, true, Some(&a)), carried, "colour alone");
+    }
+
+    /// AS.444: his drawn scale is his actor's per axis, Ninjini's squeeze
+    /// included; one with an axis at or under 0 keeps the uniform one.
+    #[test]
+    fn a_heros_drawn_scale_takes_each_axis() {
+        assert_eq!(hero_drawn_scale([100.0; 3], 1.0), Vec3::ONE);
+        assert_eq!(hero_drawn_scale([150.0; 3], 1.0), Vec3::splat(1.5));
+        assert_eq!(
+            hero_drawn_scale([50.0, 100.0, 50.0], 1.0),
+            Vec3::new(0.5, 1.0, 0.5),
+            "squeezed across"
+        );
+        assert_eq!(hero_drawn_scale([0.0, 100.0, 50.0], 1.2), Vec3::splat(1.2));
+        assert_eq!(hero_drawn_scale([100.0, -1.0, 50.0], 1.2), Vec3::splat(1.2));
     }
 }
