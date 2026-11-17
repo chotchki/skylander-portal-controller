@@ -11,13 +11,19 @@
 //! drawn with the objectives screen's own images and `global.bld`'s bitmap
 //! font off the extract's interface part; its sprite tree is never built.
 //!
-//! The layout rests on the screen's file and our choice: each piece is one
-//! of its templates at the size the file gives it (the panel of three tab
-//! columns its scripts build, 509 by 327 of the original's 640 by 480 units;
-//! a recess under each objective; the stars; the checkmarks), placed where
-//! we put them, there being no recording of a completion screen; the
-//! scripts' own animation (the tabs shown in turn, the checkmarks slammed
-//! in, the fireworks for three stars) isn't drawn.
+//! The layout is the screen's own (openspec AS.446): each piece one of its
+//! templates at the size the file gives it, the right way up (the extract's
+//! interface images run bottom row first), placed where its scripts put
+//! it ([`Places`]: the panel of three tab columns, 509 by 327 of the
+//! original's 640 by 480 units; the rows from (20, 95), 32 apart, each its
+//! checkmark, its words at 40, a count ending at 455 or a time in its
+//! half-alpha recess box from 360; each earned star in its column's well).
+//! The tabs come up in turn, as its scripts run them, until the last or the
+//! player's first left or right ([`TabCycle`]). Not drawn: its animation (the
+//! rows sliding in, the checkmarks slammed in, the fireworks for three
+//! stars), the dots between a line and its count, and the tab titles' place,
+//! which the generic menu's items set and nobody has read (on the column's
+//! head, ours), there being no recording of a completion screen.
 //!
 //! Its pads as the original's menu takes them: left and right move between
 //! the tabs, the accept button (South) on any tab is the screen's continue,
@@ -79,10 +85,11 @@ const TAB_TILE: &str = "UI_EOL_Tab_tile";
 const RECESS_LEFT: &str = "UI_Recess_left";
 const RECESS_RIGHT: &str = "UI_Recess_right";
 const RECESS_TILE: &str = "UI_Recess_tile";
+const RECESS_TIME: &str = "UI_Recess_Time";
 const STAR: &str = "UI_Star";
 const CHECK_EMPTY: &str = "UI_Checkmark_(00)_empty";
 const CHECK_DONE: &str = "UI_Checkmark_(01)";
-const ART: [&str; 12] = [
+const ART: [&str; 13] = [
     TAB_FOCUS,
     TAB_OFF,
     TAB_LEFT,
@@ -91,6 +98,7 @@ const ART: [&str; 12] = [
     RECESS_LEFT,
     RECESS_RIGHT,
     RECESS_TILE,
+    RECESS_TIME,
     STAR,
     CHECK_EMPTY,
     CHECK_DONE,
@@ -99,16 +107,6 @@ const ART: [&str; 12] = [
 
 /// The tiles beside the tab heads, as the screen's scripts size them.
 const TILE_WIDTH: f32 = 75.0;
-
-/// Our layout's, in the original's units: the objectives' list inside the
-/// panel, under the tab heads and over the columns' star wells, seven rows
-/// at most (chapter 1's collections), and each earned star in its well.
-const LIST_SIDE: f32 = 40.0;
-const LIST_TOP: f32 = 50.0;
-const ROW_HEIGHT: f32 = 24.0;
-const ROW_GAP: f32 = 3.0;
-const WELL_CENTRE: f32 = 283.0;
-const STAR_SIZE: f32 = 52.0;
 
 /// Whether the completion screen holds the TV: shown, its continue not
 /// yet asked. The router takes it as a modal's (its tabs the choices), the
@@ -186,6 +184,7 @@ impl Plugin for CompletionPlugin {
         app.init_resource::<CompletionOpen>()
             .init_resource::<LevelEnding>()
             .init_resource::<CompletionTab>()
+            .init_resource::<TabCycle>()
             .init_resource::<CompletionReport>()
             .init_resource::<Loaded>()
             .add_message::<TvInput>()
@@ -222,6 +221,7 @@ fn open_completion(
     mut open: ResMut<CompletionOpen>,
     mut ending: ResMut<LevelEnding>,
     mut tab: ResMut<CompletionTab>,
+    mut cycle: ResMut<TabCycle>,
     mut was_open: Local<bool>,
 ) {
     let holds = world.as_deref().is_some_and(|w| w.sequence.ending);
@@ -232,6 +232,11 @@ fn open_completion(
     let sequenced = world.as_deref().is_some_and(is_open);
     if sequenced && !*was_open {
         tab.0 = 0;
+        let results = world
+            .as_deref()
+            .and_then(|w| w.sequence.completion.as_ref())
+            .and_then(|c| c.results.as_ref().ok());
+        cycle.0 = Some(tab_time(results, 0));
     }
     *was_open = sequenced;
     let now = sequenced && !pads.is_some_and(|p| p.held());
@@ -241,11 +246,40 @@ fn open_completion(
     }
 }
 
-/// Left and right move between the tabs.
+/// The screen's own run through its tabs (`UI - Objectives Menu - Update`
+/// and `Set Show Next Tab Timer`, openspec AS.446): each tab shown, its rows
+/// coming in 0.15 s apart, then after the screen's one-second delay the
+/// next, until the last; the player's left or right ends it. Seconds of the
+/// screen's time left on the shown tab, none once it's over.
+#[derive(Resource, Debug, Default, Clone, Copy, PartialEq)]
+pub(crate) struct TabCycle(pub(crate) Option<f32>);
+
+/// The screen's delay after a tab's last row before the next tab.
+pub(crate) const NEXT_TAB_DELAY: f32 = 1.0;
+/// Between one row's coming in and the next's.
+pub(crate) const ROW_DELAY: f32 = 0.15;
+
+/// How long tab `tab` of `results` stays before the next: its rows in turn,
+/// then the screen's delay (the rows' own slide not counted: no recording).
+pub(crate) fn tab_time(results: Option<&LevelResults>, tab: usize) -> f32 {
+    let rows = results.map_or(0, |r| {
+        r.objectives
+            .iter()
+            .filter(|o| o.category as usize == tab)
+            .count()
+    });
+    rows as f32 * ROW_DELAY + NEXT_TAB_DELAY
+}
+
+/// Left and right move between the tabs, ending the screen's own run
+/// through them; while it runs, its time moves it on.
 fn tab_moves(
     mut inputs: MessageReader<TvInput>,
     open: Res<CompletionOpen>,
+    world: Option<Res<ScriptWorld>>,
+    time: Res<Time<Real>>,
     mut tab: ResMut<CompletionTab>,
+    mut cycle: ResMut<TabCycle>,
 ) {
     let read: Vec<TvInput> = inputs.read().copied().collect();
     if !open.0 {
@@ -257,8 +291,24 @@ fn tab_moves(
             TvInput::Move(CompassOctant::East) => (tab.0 + 1).min(TABS.len() - 1),
             _ => continue,
         };
+        cycle.0 = None;
         if next != tab.0 {
             tab.0 = next;
+        }
+    }
+    if let Some(left) = cycle.0 {
+        let left = left - time.delta_secs();
+        if left > 0.0 {
+            cycle.0 = Some(left);
+        } else if tab.0 + 1 < TABS.len() {
+            tab.0 += 1;
+            let results = world
+                .as_deref()
+                .and_then(|w| w.sequence.completion.as_ref())
+                .and_then(|c| c.results.as_ref().ok());
+            cycle.0 = (tab.0 + 1 < TABS.len()).then(|| tab_time(results, tab.0));
+        } else {
+            cycle.0 = None;
         }
     }
 }
@@ -621,7 +671,10 @@ pub(crate) fn bitmap_text(
         });
 }
 
-/// One of the screen's pieces at its template's size times `scale` units.
+/// One of the screen's pieces at its template's size (`w` its width when
+/// the scripts set one), upright: the extract's interface images run bottom
+/// row first, so drawn as they are a checkmark and a star point down
+/// (openspec AS.446, chotchki's shot of 10:45).
 fn piece(parent: &mut ChildSpawnerCommands, art: &Art, name: &str, w: Option<f32>, alpha: f32) {
     let Some(p) = art.pieces.get(name) else {
         return;
@@ -633,16 +686,61 @@ fn piece(parent: &mut ChildSpawnerCommands, art: &Art, name: &str, w: Option<f32
             flex_shrink: 0.0,
             ..default()
         },
-        ImageNode {
-            color: Color::WHITE.with_alpha(alpha),
-            ..ImageNode::new(p.image.clone())
-        },
+        upright(p, alpha),
     ));
 }
 
+/// `p`'s image the right way up, at `alpha`.
+fn upright(p: &Piece, alpha: f32) -> ImageNode {
+    ImageNode {
+        color: Color::WHITE.with_alpha(alpha),
+        flip_y: true,
+        ..ImageNode::new(p.image.clone())
+    }
+}
+
+/// Where the screen's scripts put a tab's pieces, in the original's units
+/// off the panel's top-left (`UI - Objectives Menu - Create Tab`, `Create
+/// Entry`, `Create Star`, `Create Time Box`, read on the disc for AS.446):
+/// the panel the left end, a 75-unit tile, the three columns, a tile and
+/// the right end, 509 by 327; the rows from (20, 95), 32 apart, each its
+/// checkmark centred on its line, its words from 40, a count ending at 455
+/// or a time box from 360; each column's star centred 121 over the panel's
+/// middle and 102 apart from 105 left of it.
+pub(crate) struct Places;
+
+impl Places {
+    pub(crate) const ENTRY: Vec2 = Vec2::new(20.0, 95.0);
+    pub(crate) const ROW_STEP: f32 = 32.0;
+    pub(crate) const WORDS: f32 = 40.0;
+    pub(crate) const COUNT_END: f32 = 455.0;
+    pub(crate) const TIME_BOX: f32 = 360.0;
+    pub(crate) const TIME_WIDTH: f32 = 75.0;
+    pub(crate) const STAR_FIRST: f32 = -105.0;
+    pub(crate) const STAR_STEP: f32 = 102.0;
+    pub(crate) const STAR_RISE: f32 = 121.0;
+    /// A star's size over its image's: halved, then 1.1 times.
+    pub(crate) const STAR_SCALE: f32 = 0.55;
+
+    /// Row `i`'s line (its middle), off the panel's top-left.
+    pub(crate) fn row(i: usize) -> Vec2 {
+        Self::ENTRY + Vec2::new(0.0, Self::ROW_STEP * i as f32)
+    }
+
+    /// Tab `i`'s star's middle in a panel `size` units.
+    pub(crate) fn star(i: usize, size: Vec2) -> Vec2 {
+        size / 2.0
+            + Vec2::new(
+                Self::STAR_FIRST + Self::STAR_STEP * i as f32,
+                -Self::STAR_RISE,
+            )
+    }
+}
+
 /// The panel: the three tab columns side by side (the focused one's art
-/// lit), each a button behind the router with its title on its head, and
-/// the focused tab's objectives over them.
+/// lit), each a button behind the router with its title on its head, the
+/// focused tab's objectives over them and each earned star in its well,
+/// all where the screen's scripts put them ([`Places`]).
 fn panel(
     parent: &mut ChildSpawnerCommands,
     art: Option<&Art>,
@@ -651,10 +749,15 @@ fn panel(
     tab: usize,
 ) {
     let theme = &pen.theme;
-    let height = art
-        .and_then(|a| a.pieces.get(TAB_FOCUS))
-        .map_or(327.0, |p| p.size.y)
-        * UNIT;
+    let head = art.and_then(|a| a.pieces.get(TAB_FOCUS));
+    let height = head.map_or(327.0, |p| p.size.y) * UNIT;
+    let end = art
+        .and_then(|a| a.pieces.get(TAB_LEFT))
+        .map_or(0.0, |p| p.size.x);
+    let size = Vec2::new(
+        2.0 * (end + TILE_WIDTH) + 3.0 * head.map_or(80.0, |p| p.size.x),
+        height / UNIT,
+    );
     parent
         .spawn(Node {
             flex_direction: FlexDirection::Row,
@@ -678,13 +781,14 @@ fn panel(
                     Button,
                     FocusId(id),
                     Node {
-                        width: px(art
-                            .and_then(|a| a.pieces.get(TAB_FOCUS))
-                            .map_or(160.0, |p| p.size.x * UNIT)),
+                        width: px(head.map_or(160.0, |p| p.size.x * UNIT)),
                         height: px(height),
                         flex_direction: FlexDirection::Column,
                         align_items: AlignItems::Center,
-                        padding: UiRect::top(px(14.0 * UNIT)),
+                        // The column's head is its foot once the art is the
+                        // right way up: the title on it.
+                        justify_content: JustifyContent::FlexEnd,
+                        padding: UiRect::bottom(px(14.0 * UNIT)),
                         flex_shrink: 0.0,
                         ..default()
                     },
@@ -694,7 +798,7 @@ fn panel(
                 }
                 match art.and_then(|a| a.pieces.get(if focused { TAB_FOCUS } else { TAB_OFF })) {
                     Some(p) => {
-                        button.insert(ImageNode::new(p.image.clone()));
+                        button.insert(upright(p, 1.0));
                     }
                     None => {
                         button.insert((
@@ -731,149 +835,215 @@ fn panel(
             }
         })
         .with_children(|row| {
-            // The focused tab's objectives over the columns, under their heads.
-            row.spawn(Node {
-                position_type: PositionType::Absolute,
-                left: px(LIST_SIDE * UNIT),
-                right: px(LIST_SIDE * UNIT),
-                top: px(LIST_TOP * UNIT),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(ROW_GAP * UNIT),
-                ..default()
-            })
-            .with_children(|list| {
-                for o in r.objectives.iter().filter(|o| o.category as usize == tab) {
-                    objective(list, art, pen, o);
-                }
-            });
-            // Each tab's star in the well at the foot of its column, an
-            // earned one alone (the well's own art shows an empty one).
-            if let Some(a) = art
-                && let (Some(star), Some(head)) = (a.pieces.get(STAR), a.pieces.get(TAB_FOCUS))
+            // The focused tab's objectives, a line each from the scripts'
+            // first entry down.
+            for (i, o) in r
+                .objectives
+                .iter()
+                .filter(|o| o.category as usize == tab)
+                .enumerate()
             {
-                let first = a.pieces.get(TAB_LEFT).map_or(0.0, |p| p.size.x) + TILE_WIDTH;
+                objective(row, art, pen, o, Places::row(i));
+            }
+            // Each tab's star in its well, an earned one alone (the well's
+            // own art shows an empty one).
+            if let Some(star) = art.and_then(|a| a.pieces.get(STAR)) {
+                let side = star.size.x * Places::STAR_SCALE;
                 for (i, earned) in r.stars.iter().enumerate().take(TABS.len()) {
                     if !earned {
                         continue;
                     }
-                    let centre = first + head.size.x * (i as f32 + 0.5);
+                    let at = Places::star(i, size);
                     row.spawn((
                         Node {
                             position_type: PositionType::Absolute,
-                            left: px((centre - STAR_SIZE / 2.0) * UNIT),
-                            top: px((WELL_CENTRE - STAR_SIZE / 2.0) * UNIT),
-                            width: px(STAR_SIZE * UNIT),
-                            height: px(STAR_SIZE * UNIT),
+                            left: px((at.x - side / 2.0) * UNIT),
+                            top: px((at.y - side / 2.0) * UNIT),
+                            width: px(side * UNIT),
+                            height: px(side * UNIT),
                             ..default()
                         },
-                        ImageNode::new(star.image.clone()),
+                        upright(star, 1.0),
                     ));
                 }
             }
         });
 }
 
-/// One objective's row: its recess, its checkmark, its line and its count
-/// or time.
-fn objective(parent: &mut ChildSpawnerCommands, art: Option<&Art>, pen: &Pen, o: &Objective) {
-    let theme = &pen.theme;
-    let h = ROW_HEIGHT * UNIT;
-    let mut row = parent.spawn(Node {
-        height: px(h),
+/// A piece of a row, `left` units from the row's start and centred on its
+/// line, `w` units wide.
+fn on_line(left: f32, w: f32, h: f32) -> Node {
+    Node {
+        position_type: PositionType::Absolute,
+        left: px(left * UNIT),
+        top: px((Places::ROW_STEP - h) / 2.0 * UNIT),
+        width: px(w * UNIT),
+        height: px(h * UNIT),
         flex_direction: FlexDirection::Row,
         align_items: AlignItems::Center,
-        column_gap: px(8.0 * UNIT),
-        padding: UiRect::horizontal(px(6.0 * UNIT)),
+        ..default()
+    }
+}
+
+/// One objective's row with its line at `at` (units off the panel's
+/// top-left), as `Create Entry` builds it: its checkmark at its start, its
+/// words at 40, a count's N/M ending at 455, a time's box (the recess at
+/// half alpha, its clock and the time) from 360.
+fn objective(
+    parent: &mut ChildSpawnerCommands,
+    art: Option<&Art>,
+    pen: &Pen,
+    o: &Objective,
+    at: Vec2,
+) {
+    let theme = &pen.theme;
+    let mut row = parent.spawn(Node {
+        position_type: PositionType::Absolute,
+        left: px(at.x * UNIT),
+        top: px((at.y - Places::ROW_STEP / 2.0) * UNIT),
+        width: px((Places::COUNT_END + 10.0) * UNIT),
+        height: px(Places::ROW_STEP * UNIT),
         ..default()
     });
     if art.is_none() {
         row.insert(BackgroundColor(theme.panel[0].with_alpha(0.8)));
     }
     row.with_children(|line| {
-        if let Some(a) = art {
-            // The recess behind the row: its two ends and its tile between.
-            line.spawn(Node {
-                position_type: PositionType::Absolute,
-                left: px(0),
-                right: px(0),
-                top: px(0),
-                bottom: px(0),
-                flex_direction: FlexDirection::Row,
-                ..default()
-            })
-            .with_children(|recess| {
-                for (name, grow) in [
-                    (RECESS_LEFT, false),
-                    (RECESS_TILE, true),
-                    (RECESS_RIGHT, false),
-                ] {
-                    if let Some(p) = a.pieces.get(name) {
-                        let mut node = Node {
-                            height: px(h),
-                            flex_shrink: 0.0,
-                            ..default()
-                        };
-                        if grow {
-                            node.flex_grow = 1.0;
-                        } else {
-                            node.width = px(p.size.x * h / p.size.y.max(1.0));
-                        }
-                        recess.spawn((node, ImageNode::new(p.image.clone())));
-                    }
-                }
-            });
-            let check = if o.status.done() {
-                CHECK_DONE
-            } else {
-                CHECK_EMPTY
-            };
-            if let Some(p) = a.pieces.get(check) {
-                line.spawn((
-                    Node {
-                        width: px(20.0 * UNIT),
-                        height: px(20.0 * UNIT),
-                        flex_shrink: 0.0,
-                        ..default()
-                    },
-                    ImageNode::new(p.image.clone()),
-                ));
-            }
+        let check = if o.status.done() {
+            CHECK_DONE
         } else {
-            let mark = if o.status.done() { "[x]" } else { "[ ]" };
-            line.spawn(pen.text(mark, Step::Caption, Role::Accent));
+            CHECK_EMPTY
+        };
+        match art.and_then(|a| a.pieces.get(check)) {
+            Some(p) => {
+                // The container its checkmark sits in is the done one's
+                // size; the mark centred in it.
+                let side = art
+                    .and_then(|a| a.pieces.get(CHECK_DONE))
+                    .map_or(p.size.x, |d| d.size.x);
+                line.spawn(on_line(0.0, side, side)).with_children(|c| {
+                    c.spawn((
+                        Node {
+                            width: px(p.size.x * UNIT),
+                            height: px(p.size.y * UNIT),
+                            margin: UiRect::all(Val::Auto),
+                            ..default()
+                        },
+                        upright(p, 1.0),
+                    ));
+                });
+            }
+            None => {
+                let mark = if o.status.done() { "[x]" } else { "[ ]" };
+                line.spawn(on_line(0.0, Places::WORDS, Places::ROW_STEP))
+                    .with_children(|c| {
+                        c.spawn(pen.text(mark, Step::Caption, Role::Accent));
+                    });
+            }
         }
         let color = if o.status == Status::NewlyDone {
             theme.gold_bright
         } else {
             Color::WHITE
         };
-        words(
-            line,
-            art,
-            pen,
-            &self::line(o),
-            24.0,
-            color,
-            Step::Caption,
-            Role::Primary,
-        );
-        line.spawn(Node {
-            flex_grow: 1.0,
-            ..default()
-        });
-        if let Some(t) = tally(o) {
+        let words_end = match o.kind {
+            ObjectiveKind::Time => Places::TIME_BOX,
+            _ => Places::COUNT_END,
+        };
+        line.spawn(on_line(
+            Places::WORDS,
+            words_end - Places::WORDS,
+            Places::ROW_STEP,
+        ))
+        .with_children(|w| {
             words(
-                line,
+                w,
                 art,
                 pen,
-                &t,
+                &self::line(o),
                 24.0,
-                theme.gold_bright,
+                color,
                 Step::Caption,
-                Role::Accent,
+                Role::Primary,
             );
+        });
+        match (o.kind, tally(o)) {
+            (ObjectiveKind::Time, Some(t)) => time_box(line, art, pen, &t),
+            (_, Some(t)) => {
+                // Right-justified, its end at 455.
+                let mut n = on_line(0.0, Places::COUNT_END, Places::ROW_STEP);
+                n.justify_content = JustifyContent::FlexEnd;
+                line.spawn(n).with_children(|w| {
+                    words(
+                        w,
+                        art,
+                        pen,
+                        &t,
+                        24.0,
+                        theme.gold_bright,
+                        Step::Caption,
+                        Role::Accent,
+                    );
+                });
+            }
+            _ => {}
         }
     });
+}
+
+/// A time's box from 360 on its row (`Create Time Box`): the recess's two
+/// ends and its 75-unit tile at half alpha, its clock 5 in at 0.7 of its
+/// size, the time right-justified 10 in from its end.
+fn time_box(line: &mut ChildSpawnerCommands, art: Option<&Art>, pen: &Pen, time: &str) {
+    let ends = art.and_then(|a| a.pieces.get(RECESS_LEFT)).map(|p| p.size);
+    let h = ends.map_or(Places::ROW_STEP, |s| s.y);
+    let end_w = ends.map_or(0.0, |s| s.x);
+    let width = 2.0 * end_w + Places::TIME_WIDTH;
+    line.spawn(on_line(Places::TIME_BOX, width, h))
+        .with_children(|b| {
+            if let Some(a) = art {
+                piece(b, a, RECESS_LEFT, None, 0.5);
+                piece(b, a, RECESS_TILE, Some(Places::TIME_WIDTH), 0.5);
+                piece(b, a, RECESS_RIGHT, None, 0.5);
+                if let Some(clock) = a.pieces.get(RECESS_TIME) {
+                    let side = clock.size * 0.7;
+                    b.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: px(5.0 * UNIT),
+                            top: px((h - side.y) / 2.0 * UNIT),
+                            width: px(side.x * UNIT),
+                            height: px(side.y * UNIT),
+                            ..default()
+                        },
+                        upright(clock, 1.0),
+                    ));
+                }
+            }
+            b.spawn(Node {
+                position_type: PositionType::Absolute,
+                left: px(0),
+                right: px(10.0 * UNIT),
+                top: px(0),
+                bottom: px(0),
+                flex_direction: FlexDirection::Row,
+                justify_content: JustifyContent::FlexEnd,
+                align_items: AlignItems::Center,
+                ..default()
+            })
+            .with_children(|w| {
+                words(
+                    w,
+                    art,
+                    pen,
+                    time,
+                    24.0,
+                    pen.theme.gold_bright,
+                    Step::Caption,
+                    Role::Accent,
+                );
+            });
+        });
 }
 
 /// The level's three stars in a row, in the TV's own style (the disc's
@@ -1341,6 +1511,129 @@ mod tests {
         assert_eq!(
             load_art(dir, IrFormat::Ron, &mut images, CompressedImageFormats::BC).err(),
             Some(format!("{SCREEN} holds no {TAB_FOCUS}"))
+        );
+    }
+
+    /// AS.446: the screen runs through its tabs by itself, as its scripts
+    /// do: each tab's rows 0.15 s apart and then its one-second delay
+    /// (100 ms a frame here: the first tab's one row 1.15 s, the second's
+    /// the same), on to the last and no further; a left or right ends it
+    /// where the player put it.
+    #[test]
+    fn the_tabs_come_up_in_turn_until_the_last_or_a_press() {
+        let (mut app, _) = screen_app();
+        let frames_to = |app: &mut App, want: usize| {
+            (0..40).find(|_| {
+                app.update();
+                report(app).tab == want
+            })
+        };
+        let first = frames_to(&mut app, 1).expect("the second tab by itself");
+        assert!((10..=14).contains(&first), "{first} frames");
+        let second = frames_to(&mut app, 2).expect("the third tab by itself");
+        assert!((10..=14).contains(&second), "{second} frames");
+        for _ in 0..30 {
+            app.update();
+        }
+        assert_eq!(report(&app).tab, 2, "the last stays");
+        assert_eq!(app.world().resource::<TabCycle>().0, None);
+
+        let (mut app, presses) = screen_app();
+        for _ in 0..3 {
+            app.update();
+        }
+        presses.push(TestPress::Right);
+        for _ in 0..40 {
+            app.update();
+        }
+        assert_eq!(report(&app).tab, 1, "the press ends the run through them");
+        assert_eq!(app.world().resource::<TabCycle>().0, None);
+    }
+
+    /// AS.446: the panel's pieces where the screen's scripts put them:
+    /// each column's star over its column (102 apart against the columns'
+    /// 103, within 4 units of each middle), the rows inside the panel from
+    /// (20, 95) 32 apart; and on the TV, every image of the screen's the
+    /// right way up, the first row's checkmark on its line and its earned
+    /// star in its well 121 over the panel's middle.
+    #[test]
+    fn the_layouts_columns_are_where_the_screens_scripts_put_them() {
+        let (end, tile, column) = (25.0, TILE_WIDTH, 103.0);
+        let panel = Vec2::new(2.0 * (end + tile) + 3.0 * column, 327.0);
+        assert_eq!(panel.x, 509.0);
+        for i in 0..3 {
+            let middle = end + tile + column * (i as f32 + 0.5);
+            let star = Places::star(i, panel);
+            assert!(
+                (star.x - middle).abs() <= 4.0,
+                "tab {i}: {star} against {middle}"
+            );
+            assert_eq!(star.y, 327.0 / 2.0 - 121.0);
+        }
+        assert_eq!(Places::row(0), Vec2::new(20.0, 95.0));
+        assert_eq!(Places::row(6), Vec2::new(20.0, 95.0 + 6.0 * 32.0));
+        assert!(Places::row(6).y + 16.0 < panel.y, "seven rows inside");
+        assert!(Places::ENTRY.x + Places::COUNT_END < panel.x - end);
+
+        let (mut app, _) = screen_app();
+        let sizes = [
+            (TAB_FOCUS, (103.0, 327.0)),
+            (TAB_OFF, (103.0, 327.0)),
+            (TAB_LEFT, (25.0, 327.0)),
+            (TAB_RIGHT, (25.0, 327.0)),
+            (TAB_TILE, (1.0, 327.0)),
+            (RECESS_LEFT, (16.0, 30.0)),
+            (RECESS_RIGHT, (16.0, 30.0)),
+            (RECESS_TILE, (1.0, 30.0)),
+            (RECESS_TIME, (32.0, 32.0)),
+            (STAR, (128.0, 128.0)),
+            (CHECK_EMPTY, (25.0, 25.0)),
+            (CHECK_DONE, (32.0, 32.0)),
+        ];
+        let mut pieces = HashMap::new();
+        {
+            let mut images = app.world_mut().resource_mut::<Assets<Image>>();
+            for (name, (w, h)) in sizes {
+                pieces.insert(
+                    name,
+                    Piece {
+                        image: images.add(Image::default()),
+                        size: Vec2::new(w, h),
+                    },
+                );
+            }
+        }
+        let ours: Vec<Handle<Image>> = pieces.values().map(|p| p.image.clone()).collect();
+        let star = pieces[STAR].image.clone();
+        let check = pieces[CHECK_DONE].image.clone();
+        let recess = pieces[RECESS_TILE].image.clone();
+        app.insert_resource(Loaded(Some(Ok(Art::for_tests(pieces)))));
+        for _ in 0..3 {
+            app.update();
+        }
+        let mut q = app.world_mut().query::<(&Node, &ImageNode)>();
+        let drawn: Vec<(Node, ImageNode)> = q
+            .iter(app.world())
+            .map(|(n, i)| (n.clone(), i.clone()))
+            .collect();
+        let art: Vec<&(Node, ImageNode)> = drawn
+            .iter()
+            .filter(|(_, i)| ours.contains(&i.image))
+            .collect();
+        assert!(art.len() >= 7, "{} pieces", art.len());
+        assert!(art.iter().all(|(_, i)| i.flip_y), "every piece upright");
+        let (n, _) = art.iter().find(|(_, i)| i.image == star).expect("the star");
+        let side = 128.0 * Places::STAR_SCALE;
+        let at = Places::star(0, panel);
+        assert_eq!(n.left, px((at.x - side / 2.0) * UNIT));
+        assert_eq!(n.top, px((at.y - side / 2.0) * UNIT));
+        assert!(
+            art.iter().any(|(_, i)| i.image == check),
+            "the first row's check"
+        );
+        assert!(
+            !art.iter().any(|(_, i)| i.image == recess),
+            "no recess behind a check row"
         );
     }
 }
