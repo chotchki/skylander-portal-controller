@@ -1238,7 +1238,7 @@ fn the_view_holds_from_his_minion_going_while_hes_still_in() {
 /// holds his slot (`Restore::Replaced`) while its manager aims the
 /// gameplay viewport at the board each step: the TV draws that view, every
 /// step, where AH.227's hold would keep the last one.
-#[cfg(feature = "played-card-games")]
+#[cfg(feature = "card-game-seams")]
 #[test]
 fn the_boards_view_is_drawn_while_it_holds_his_slot() {
     let tmp = tempfile::tempdir().unwrap();
@@ -1283,7 +1283,7 @@ fn the_boards_view_is_drawn_while_it_holds_his_slot() {
 
 /// The board holding his slot each step while [`Wander`] is set, as a
 /// played game's replacement on the VM keeps it (openspec AS.552).
-#[cfg(feature = "played-card-games")]
+#[cfg(feature = "card-game-seams")]
 fn board_holds(to: Res<Wander>, world: Option<ResMut<ScriptWorld>>) {
     if let (Some(_), Some(mut world)) = (to.0, world) {
         world.card_streams.restore_replaced();

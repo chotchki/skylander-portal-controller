@@ -5854,7 +5854,7 @@ mod tests {
     /// brings him in again where he stood, his scripts joined on a new
     /// entity, not beaten, the ask answered. His minion off with no ask (a
     /// run that plays no game) leaves him as he is.
-    #[cfg(feature = "played-card-games")]
+    #[cfg(feature = "card-game-seams")]
     #[test]
     fn a_card_games_ask_brings_the_hero_back_through_the_swap() {
         let tmp = tempfile::tempdir().unwrap();
