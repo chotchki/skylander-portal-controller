@@ -1194,10 +1194,11 @@ pub fn card_palette_part(
 pub struct CardArtStage {
     pub read: bool,
     pub kept: bool,
-    /// Archives read this run, and the models, distinct textures, interface
-    /// records and sounds they gave.
+    /// Archives read this run, and the models, attach lists (AS.554),
+    /// distinct textures, interface records and sounds they gave.
     pub archives: usize,
     pub models: usize,
+    pub nodes: usize,
     pub textures: usize,
     pub interfaces: usize,
     pub sounds: usize,
@@ -1296,6 +1297,12 @@ pub fn card_art_part(
                 let rel = crate::screens::card_model_path(ir, archive);
                 let bytes = ir.encode(&art.models.ir, dir, &rel)?;
                 put_once(dir, &rel, &bytes)?;
+            }
+            if !art.nodes.models.is_empty() || !art.nodes.refused.is_empty() {
+                let rel = crate::screens::card_nodes_path(ir, archive);
+                let bytes = ir.encode(&art.nodes, dir, &rel)?;
+                put_once(dir, &rel, &bytes)?;
+                part.nodes += art.nodes.models.len();
             }
             if let Some(i) = &art.interface {
                 for (t, ktx2) in &i.textures {

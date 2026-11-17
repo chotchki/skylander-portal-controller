@@ -1639,7 +1639,9 @@ impl IntroFixture {
         opened
             .dir
             .record_part(guac_extract::screens::CARD_PALETTES_PART, Vec::new())?;
-        // AS.365's card game art: likewise, so no stone has a model.
+        // AS.365's card game art: likewise, so no stone has a model. With
+        // no file it holds no record of an older shape, so AS.554's bump
+        // (`screens::CARD_ART_SHAPE`) leaves it current.
         opened
             .dir
             .record_part(guac_extract::screens::CARD_ART_PART, Vec::new())?;

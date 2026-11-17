@@ -321,6 +321,15 @@ impl CardStreams {
         self.restore
     }
 
+    /// The board's teardown's ask standing as asked ([`Restore::Asked`]):
+    /// how the TV's tests stand for a played game's replacement set and
+    /// cleared on the VM (openspec AS.553). Feature-gated as
+    /// [`CardStreams::play_games`] is.
+    #[cfg(feature = "played-card-games")]
+    pub fn restore_asked(&mut self) {
+        self.restore = Restore::Asked;
+    }
+
     /// The restore answered: his character joined again.
     pub fn hero_returned(&mut self) {
         self.restore = Restore::Idle;

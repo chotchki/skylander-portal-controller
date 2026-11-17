@@ -366,6 +366,24 @@ fn the_card_art_lands_by_the_extracts_own_readers_and_a_second_run_keeps_it() {
     card_art_part(&mut dir, &usr, IrFormat::Ron, &mut third).unwrap();
     assert!(third.card_art.read && !third.card_art.kept);
 
+    // An older shape's part (openspec AS.554: its record named before the
+    // attach nodes joined, `art.json`), every file intact: the extract
+    // opens as a resume and the part reads again, the record under this
+    // shape's name.
+    assert!(CARD_ART_RECORD.contains(&format!(".v{}.", guac_extract::screens::CARD_ART_SHAPE)));
+    let mut older = dir.manifest().parts[CARD_ART_PART].clone();
+    let at = older.iter().position(|f| f == CARD_ART_RECORD).unwrap();
+    let bytes = fs::read(dir.path().join(CARD_ART_RECORD)).unwrap();
+    dir.write_output("card_game/art.json", &bytes).unwrap();
+    older[at] = "card_game/art.json".to_owned();
+    dir.record_part(CARD_ART_PART, older).unwrap();
+    assert!(!guac_extract::interface::record_current(dir.manifest()));
+    let mut fourth = ScriptStage::default();
+    card_art_part(&mut dir, &usr, IrFormat::Ron, &mut fourth).unwrap();
+    assert!(fourth.card_art.read && !fourth.card_art.kept);
+    assert!(dir.manifest().parts[CARD_ART_PART].contains(&CARD_ART_RECORD.to_owned()));
+    assert!(guac_extract::interface::record_current(dir.manifest()));
+
     let tmp = tempfile::tempdir().unwrap();
     let dump = dump_with(tmp.path(), |_| {});
     let mut dir = opened(tmp.path(), &dump);
