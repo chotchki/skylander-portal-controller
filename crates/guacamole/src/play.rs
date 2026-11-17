@@ -7615,6 +7615,50 @@ mod tests {
         assert_eq!(join(&app).as_deref(), Some("joined"));
     }
 
+    /// AS.444 on the TV: a joined hero whose tint his scripts set
+    /// see-through is drawn nowhere until they set it back, and the parts
+    /// the extract hangs on a fresh figure don't draw while his scripts
+    /// carry him (a stand-in part's root here); `/api/_test/tv`'s hero reads
+    /// both.
+    #[test]
+    fn a_joined_heros_tint_hides_him_and_his_scripts_carry_his_parts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = joined_eruptor(tmp.path());
+        let e = app.world().resource::<Play>().hero().unwrap();
+        let part = app.world_mut().spawn(Visibility::Inherited).id();
+        app.world_mut()
+            .resource_mut::<Play>()
+            .inside
+            .as_mut()
+            .and_then(|i| i.hero.as_mut())
+            .unwrap()
+            .attachments
+            .roots
+            .push(part);
+        let set_tint = |app: &mut App, tint: u32| {
+            let mut w = app.world_mut().resource_mut::<ScriptWorld>();
+            assert!(w.set_tint(e.to_bits(), tint), "his actor");
+        };
+        let seen = |app: &App, e: Entity| -> Option<Visibility> {
+            app.world().entity(e).get::<Visibility>().copied()
+        };
+        app.update();
+        assert_eq!(join(&app).as_deref(), Some("joined"));
+        assert_eq!(seen(&app, e), Some(Visibility::Inherited), "drawn");
+        assert_eq!(
+            seen(&app, part),
+            Some(Visibility::Hidden),
+            "his scripts carry it"
+        );
+        set_tint(&mut app, 0x8080_8000);
+        app.update();
+        assert_eq!(seen(&app, e), Some(Visibility::Hidden), "see-through");
+        set_tint(&mut app, 0x8080_80FF);
+        app.update();
+        assert_eq!(seen(&app, e), Some(Visibility::Inherited), "back");
+        assert_eq!(seen(&app, part), Some(Visibility::Hidden));
+    }
+
     /// AG.100 and AH.224 on the TV: on the part with the entry beam, the
     /// replacement's beam drops its column onto the ground where the last
     /// stood, and he's drawn from the frame his minion is in, his scripts'
