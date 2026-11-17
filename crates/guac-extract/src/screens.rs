@@ -159,8 +159,15 @@ pub const CARD_ART_PART: &str = "card game art";
 /// Where the part's own files sit.
 pub const CARD_ART_DIR: &str = "card_game";
 
-/// The part's record: what it read and every refusal by name.
-pub const CARD_ART_RECORD: &str = "card_game/art.json";
+/// The part's shape: 2 since its archives' attach nodes joined it (openspec
+/// AS.554). The record's name carries it ([`CARD_ART_RECORD`]), so an
+/// extract an older build wrote holds another name and reads the part again
+/// ([`card_art_records_current`]).
+pub const CARD_ART_SHAPE: u32 = 2;
+
+/// The part's record: what it read and every refusal by name, named for
+/// [`CARD_ART_SHAPE`].
+pub const CARD_ART_RECORD: &str = "card_game/art.v2.json";
 
 /// Every archive the art part reads, the streams then the stones.
 pub fn card_art_archives() -> Vec<String> {
@@ -187,6 +194,17 @@ pub fn card_model_path(ir: crate::intros::IrFormat, archive: &str) -> String {
     )
 }
 
+/// `card_game/nodes/<stem>.<ron|postcard>`: the attach lists of an
+/// archive's models (openspec AS.554), as a level's nodes part keeps a
+/// level's ([`guac_ir::nodes::LevelNodes`], named for the archive).
+pub fn card_nodes_path(ir: crate::intros::IrFormat, archive: &str) -> String {
+    format!(
+        "{CARD_ART_DIR}/nodes/{}.{}",
+        scripts::stem(archive),
+        ir_ext(ir)
+    )
+}
+
 /// `card_game/interface/<stem>.v<RECORD>.<ron|postcard>`: an archive's
 /// interface record, named for its shape as the interface part's are.
 pub fn card_interface_path(ir: crate::intros::IrFormat, archive: &str) -> String {
@@ -198,17 +216,21 @@ pub fn card_interface_path(ir: crate::intros::IrFormat, archive: &str) -> String
     )
 }
 
-/// Whether every interface record among `files` (the art part's) is named
-/// for this build's record (AT.27's rule): the manifest's currency check
-/// ([`crate::interface::record_current`]) and the part's own ask it, so an
-/// extract holding another shape's opens as a resume and reads the part again.
+/// Whether the art part's `files` are this build's: every interface record
+/// among them named for this build's record (AT.27's rule), and a part that
+/// wrote any file holding this shape's record ([`CARD_ART_RECORD`]). The
+/// manifest's currency check ([`crate::interface::record_current`]) and the
+/// part's own ask it, so an extract holding another shape's opens as a
+/// resume and reads the part again. A part with no file (a dump holding
+/// none of the archives) has nothing to re-read.
 pub fn card_art_records_current(files: &[String]) -> bool {
     let tag = format!(".v{}.", guac_ir::interface::RECORD);
     let dir = format!("{CARD_ART_DIR}/interface/");
-    files
-        .iter()
-        .filter(|f| f.starts_with(&dir))
-        .all(|f| f.contains(&tag))
+    (files.is_empty() || files.iter().any(|f| f == CARD_ART_RECORD))
+        && files
+            .iter()
+            .filter(|f| f.starts_with(&dir))
+            .all(|f| f.contains(&tag))
 }
 
 /// Whether the interface part already holds `archive`'s record (a
@@ -223,6 +245,9 @@ pub fn card_interface_held(archive: &str) -> bool {
 pub struct ArchiveArt {
     pub archive: String,
     pub models: crate::levels::Read<guac_ir::spawn::SpawnModels>,
+    /// Its models' attach lists (openspec AS.554), read as a level's nodes
+    /// part reads a level's ([`crate::levels::nodes`]).
+    pub nodes: guac_ir::nodes::LevelNodes,
     /// `None` where the interface part holds the record.
     pub interface: Option<crate::interface::Read>,
     pub sounds: crate::sounds::Read,
@@ -248,6 +273,7 @@ pub fn card_art(
     let entry = scripts::entry(usrdir, archive)?;
     let igz = guac_formats::igz::Igz::parse(&entry).map_err(|e| e.to_string())?;
     let models = scripts::spawn_models(&igz, archive, identity.clone(), None, None)?;
+    let nodes = crate::levels::nodes(&igz, archive, identity.clone())?.ir;
     let interface = if card_interface_held(archive) {
         None
     } else {
@@ -262,6 +288,7 @@ pub fn card_art(
     Ok(ArchiveArt {
         archive: archive.to_owned(),
         models,
+        nodes,
         interface,
         sounds,
     })
@@ -283,6 +310,10 @@ pub struct CardArtEntry {
     /// Each model read, by the path placements name it by.
     pub models: Vec<String>,
     pub textures: usize,
+    /// Each model whose attach list the part keeps, by path (openspec
+    /// AS.554).
+    #[serde(default)]
+    pub nodes: Vec<String>,
     /// Images of the interface record the part keeps, `None` where the
     /// interface part holds it.
     pub images: Option<usize>,
@@ -309,6 +340,12 @@ impl CardArtEntry {
             );
         }
         refused.extend(
+            art.nodes
+                .refused
+                .iter()
+                .map(|r| (format!("nodes {}", r.path), r.reason.clone())),
+        );
+        refused.extend(
             art.sounds
                 .ir
                 .refused
@@ -330,6 +367,12 @@ impl CardArtEntry {
             archive: art.archive.clone(),
             models: art.models.ir.props.iter().map(|p| p.path.clone()).collect(),
             textures: textures.len(),
+            nodes: art
+                .nodes
+                .models
+                .iter()
+                .map(|m| m.load_file.clone())
+                .collect(),
             images: art.interface.as_ref().map(|i| {
                 i.ir.templates
                     .iter()

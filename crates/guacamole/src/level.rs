@@ -933,8 +933,11 @@ fn read_card(
 }
 
 /// The card palettes part's palettes for `spawns`' skinned models, as an
-/// archive's rigs (no attach lists: the part holds palettes only). None
-/// when the part doesn't read: the models stand on their idles.
+/// archive's rigs, each with its attach list off the art part's nodes file
+/// for `archive` (openspec AS.554: a stone's face hangs on its `player` or
+/// `AI` node). None when the palettes don't read: the models stand on their
+/// idles. Nodes that don't read leave what hangs on them at their owner's
+/// pivot, as a level's do.
 fn card_rigs(
     source: &LevelSource,
     archive: &str,
@@ -944,13 +947,14 @@ fn card_rigs(
     let all = read_ir::<guac_ir::palette::LevelPalettes>(source.ir, &source.dir.join(rel))
         .inspect_err(|why| warn!(archive, reason = %why, "the card palettes didn't read"))
         .ok()?;
+    let nodes = card_nodes(source, archive);
     let rigs = all
         .palettes
         .into_iter()
         .filter(|p| spawns.props.iter().any(|m| m.path == p.owner))
         .map(|palette| guac_ir::spawn::SpawnRig {
+            nodes: nodes.as_ref().and_then(|n| n.get(&palette.owner)).cloned(),
             palette,
-            nodes: None,
         })
         .collect();
     Some(guac_ir::spawn::SpawnRigs {
@@ -959,6 +963,21 @@ fn card_rigs(
         rigs,
         refused: Vec::new(),
     })
+}
+
+/// `archive`'s attach lists off the art part (openspec AS.554), none when
+/// the archive's models hold none, the file doesn't read or is another
+/// dump's.
+fn card_nodes(source: &LevelSource, archive: &str) -> Option<guac_ir::nodes::LevelNodes> {
+    let rel = guac_extract::screens::card_nodes_path(source.ir, archive);
+    let path = source.dir.join(&rel);
+    if !path.is_file() {
+        return None;
+    }
+    let nodes = read_ir::<guac_ir::nodes::LevelNodes>(source.ir, &path)
+        .inspect_err(|why| warn!(archive, reason = %why, "a card archive's nodes didn't read"))
+        .ok()?;
+    (nodes.identity == source.identity).then_some(nodes)
 }
 
 /// `spawns` (kept at `rel`) with its `rigs` and `emitters` as the renderer
@@ -3902,6 +3921,51 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["cardGrid3x3.mdl"]
         );
+        // No nodes file: the rig has no attach list (what hangs on it stands
+        // at its pivot).
+        assert!(rigs.rigs[0].nodes.is_none());
+        // The art part's nodes file for the archive (openspec AS.554): each
+        // rig takes its model's list by path; another dump's file gives none.
+        let node = |name: &str| guac_ir::nodes::AttachNode {
+            name: Some(name.into()),
+            bone: Some("J_pips".into()),
+            joint: Some(1),
+            offset: guac_ir::model::Transform {
+                translation: [0.0; 3],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                scale: [1.0; 3],
+            },
+        };
+        let list = |owner: &str, id: &guac_ir::DumpIdentity| guac_ir::nodes::AttachNodes {
+            identity: id.clone(),
+            load_file: owner.into(),
+            nodes: vec![node("player"), node("AI")],
+        };
+        let write_nodes = |id: &guac_ir::DumpIdentity| {
+            let path = tmp
+                .path()
+                .join(guac_extract::screens::card_nodes_path(IrFormat::Ron, board));
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let part = guac_ir::nodes::LevelNodes {
+                identity: id.clone(),
+                level: board.into(),
+                models: vec![list("skyStone.mdl", id), list("cardGrid3x3.mdl", id)],
+                refused: Vec::new(),
+            };
+            std::fs::write(path, guac_ir::to_ron(&part).unwrap()).unwrap();
+        };
+        write_nodes(&identity);
+        let rigs = card_rigs(&source, board, &spawns).expect("the palettes read");
+        assert_eq!(
+            rigs.rigs[0].nodes.as_ref().map(|n| n.load_file.as_str()),
+            Some("cardGrid3x3.mdl")
+        );
+        assert_eq!(rigs.rigs[0].nodes.as_ref().unwrap().nodes.len(), 2);
+        let read = read_card(&source, board, formats).ok().unwrap();
+        assert!(read.creatures.iter().all(|c| c.nodes.is_some()));
+        write_nodes(&other);
+        let rigs = card_rigs(&source, board, &spawns).expect("the palettes read");
+        assert!(rigs.rigs[0].nodes.is_none(), "another dump's nodes");
         let mut level = Level::new(false);
         level.ask_card(board);
         level.ask_card("character/009_Eruptor.bld");
@@ -3974,6 +4038,17 @@ mod tests {
         ] {
             assert!(models.iter().any(|m| m.contains(piece)), "no {piece} read");
         }
+        // The stone's attach list reaches the TV (openspec AS.554): its face
+        // hangs on one of its five nodes, each on a joint.
+        let board = read_card(&source, guacamole::card_game::BOARD, formats).unwrap();
+        let stone = board
+            .creatures
+            .iter()
+            .find(|c| c.path.ends_with("/skyStone.mdl"))
+            .expect("the stone is skinned");
+        let nodes = stone.nodes.as_ref().expect("the stone's nodes");
+        assert_eq!(nodes.nodes.len(), 5, "{nodes:?}");
+        assert!(nodes.nodes.iter().all(|n| n.joint.is_some()), "{nodes:?}");
     }
 
     /// AU.19: the spawn and particle parts are the base's alone at a level's

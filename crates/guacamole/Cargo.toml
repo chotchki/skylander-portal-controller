@@ -168,8 +168,12 @@ guac-formats = { path = "../guac-formats", features = ["test-fixtures"] }
 # member it stopped on.
 guac-script = { path = "../guac-script", features = ["test-fixtures"] }
 # Turns `unmodel` on for the tests, whose lib is built without `test-hooks`,
-# and `played-card-games`, which only the tests' harness may turn on.
-guacamole = { path = ".", features = ["unmodel", "played-card-games"] }
+# and `card-game-seams`, the played game's setters the tests call. Never
+# `played-card-games`: cargo unifies a dev-dependency's features into the
+# binary `cargo test --workspace` and `--all-targets` build (and uplift to
+# target/<profile>/guacamole), so the TV's switch named here would play the
+# game on a yes in a binary a person can run (main.rs refuses to build it).
+guacamole = { path = ".", features = ["unmodel", "card-game-seams"] }
 # The live GameController check prints the backend's own log lines.
 tracing-subscriber = { workspace = true }
 
@@ -201,12 +205,16 @@ unmodel = ["guac-script/test-fixtures"]
 # --features video-spike --example video_spike` (the TV pass in
 # openspec/backlog.md runs it on the TV, ex-AB.16).
 video-spike = []
-# openspec AS.366: a yes at a card pirate plays the original's own card game
-# on the VM (`card_game::CardStreams::play_games`) where the TV answers it as
-# a quit. Only the disc tests' headless harness turns it on (the
-# dev-dependency below): no binary feature names it, so no release, `cargo
-# run` or `test-hooks` binary holds the switch.
-played-card-games = []
+# openspec AS.366: the played card game's setters on the lib
+# (`card_game::CardStreams::play_games`, `ask_quit`, `restore_asked`,
+# `restore_replaced`), for the disc tests' headless harness and the unit
+# tests (the dev-dependency above). Nothing in the binary calls them under it.
+card-game-seams = []
+# openspec AS.367's first rung: the TV plays the game on a yes where a
+# landed build answers it as a quit, with its quit route. A lane's build
+# alone, named on its own cargo line with `test-hooks`; no dependency turns
+# it on.
+played-card-games = ["card-game-seams"]
 
 [[example]]
 name = "video_spike"

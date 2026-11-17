@@ -1297,6 +1297,11 @@ pub fn card_art_part(
                 let bytes = ir.encode(&art.models.ir, dir, &rel)?;
                 put_once(dir, &rel, &bytes)?;
             }
+            if !art.nodes.models.is_empty() || !art.nodes.refused.is_empty() {
+                let rel = crate::screens::card_nodes_path(ir, archive);
+                let bytes = ir.encode(&art.nodes, dir, &rel)?;
+                put_once(dir, &rel, &bytes)?;
+            }
             if let Some(i) = &art.interface {
                 for (t, ktx2) in &i.textures {
                     put_once(dir, t, ktx2)?;

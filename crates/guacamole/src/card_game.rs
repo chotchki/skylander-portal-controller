@@ -294,10 +294,10 @@ impl CardStreams {
     /// From here on a yes at a pirate plays the game (openspec AS.366):
     /// `Card Game - Start Card Game` runs as the original's script, the hand
     /// select and board join as asked and the host answers what they wait on
-    /// ([`step`]). Headless only: the `played-card-games` feature, which only
-    /// the disc tests' harness turns on, so no binary can reach it; the TV
-    /// has no screen to play on until AS.367 and keeps the quit.
-    #[cfg(feature = "played-card-games")]
+    /// ([`step`]). Behind `card-game-seams`, which the tests turn on; the
+    /// only caller outside a test is the TV's, behind `played-card-games`,
+    /// which only a lane's build names (AS.367's first rung).
+    #[cfg(feature = "card-game-seams")]
     pub fn play_games(&mut self) {
         self.played = true;
     }
@@ -306,7 +306,7 @@ impl CardStreams {
     /// ([`step`], [`quit`]): the lane build's test hook (openspec AS.367's
     /// first rung), as a player's pause menu would. Feature-gated as
     /// [`CardStreams::play_games`] is.
-    #[cfg(feature = "played-card-games")]
+    #[cfg(feature = "card-game-seams")]
     pub fn ask_quit(&mut self) {
         self.quit_asked = true;
     }
@@ -319,6 +319,24 @@ impl CardStreams {
     /// Where the board's replacement of the hero stands ([`Restore`]).
     pub fn restore(&self) -> Restore {
         self.restore
+    }
+
+    /// The board's teardown's ask standing as asked ([`Restore::Asked`]):
+    /// how the TV's tests stand for a played game's replacement set and
+    /// cleared on the VM (openspec AS.553). Feature-gated as
+    /// [`CardStreams::play_games`] is.
+    #[cfg(feature = "card-game-seams")]
+    pub fn restore_asked(&mut self) {
+        self.restore = Restore::Asked;
+    }
+
+    /// The board standing as holding the hero's slot ([`Restore::Replaced`]):
+    /// the TV's camera tests' stand-in for a played game's replacement on
+    /// the VM (openspec AS.552). Feature-gated as
+    /// [`CardStreams::play_games`] is.
+    #[cfg(feature = "card-game-seams")]
+    pub fn restore_replaced(&mut self) {
+        self.restore = Restore::Replaced;
     }
 
     /// The restore answered: his character joined again.

@@ -854,11 +854,33 @@ impl Fake {
             .unwrap()
     }
 
-    /// Pauses `ahead` flips on and returns where.
+    /// Pauses `ahead` flips on and returns where. The count is read, then the
+    /// pause asked for: a thread stalled `ahead` flips (2 ms each) between the
+    /// two, as the workspace's suites side by side can stall one, finds the
+    /// target past and is refused as the real verb would. Only that refusal
+    /// reads the count again and asks again, `PAST_TRIES` times at most, so a
+    /// stall that outlasts them all still fails.
     fn pause(&self, ahead: u64) -> u64 {
-        let at = self.control.state().unwrap().frames + ahead;
-        self.control.pause_at(at, WAIT).unwrap().frames
+        assert!(ahead > 0, "a pause 0 flips on is always past");
+        let mut tries = 0;
+        loop {
+            let at = self.control.state().unwrap().frames + ahead;
+            match self.control.pause_at(at, WAIT) {
+                Ok(state) => return state.frames,
+                Err(err) if tries + 1 < PAST_TRIES && is_past(&err) => tries += 1,
+                Err(err) => panic!("{err:#}"),
+            }
+        }
     }
+}
+
+/// How often [`Fake::pause`] asks again after an `ERR past` it raced into.
+const PAST_TRIES: u32 = 5;
+
+/// Whether `err` is `PAUSE_AT`'s `ERR past`.
+fn is_past(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<ReplyError>()
+        .is_some_and(|e| e.refusal() == Some(Refusal::Past))
 }
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);

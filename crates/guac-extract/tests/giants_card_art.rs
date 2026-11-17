@@ -20,7 +20,7 @@ use guac_extract::intros::IrFormat;
 use guac_extract::known::KNOWN_DUMPS;
 use guac_extract::screens::{
     CARD_ART_PART, CARD_ART_RECORD, CARD_GAME, CARD_STONE_COUNT, CardArtRecord, card_asset,
-    card_deck, card_model_path,
+    card_deck, card_model_path, card_nodes_path,
 };
 use guac_extract::stages::{ScriptStage, card_art_part};
 use guac_extract::{DirState, ExtractRoot, open};
@@ -153,6 +153,49 @@ fn the_card_games_art_extracts_and_resumes_alone() {
         );
     }
 
+    // The stone's attach nodes (openspec AS.554): the five its face, its
+    // pips and its element hang on, each on a joint of its skeleton, the
+    // `AI`'s turned half round from the `player`'s.
+    let nodes: guac_ir::nodes::LevelNodes = IR
+        .decode(&opened.dir, &card_nodes_path(IR, CARD_GAME[1]))
+        .unwrap();
+    for m in &nodes.models {
+        println!(
+            "  nodes of {}: {:?}",
+            m.load_file,
+            m.nodes
+                .iter()
+                .map(|n| (n.name.clone(), n.bone.clone(), n.joint))
+                .collect::<Vec<_>>()
+        );
+    }
+    let stone = nodes
+        .models
+        .iter()
+        .find(|m| m.load_file.ends_with("/skyStone.mdl"))
+        .unwrap_or_else(|| panic!("skyStone's nodes: {:?}", nodes.refused));
+    assert_eq!(stone.nodes.len(), 5, "{:?}", stone.nodes);
+    assert!(stone.nodes.iter().all(|n| n.joint.is_some()), "{stone:?}");
+    let named = |name: &str| {
+        stone
+            .nodes
+            .iter()
+            .find(|n| n.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("{name}: {stone:?}"))
+    };
+    assert_eq!(named("player").bone.as_deref(), Some("J_pips"));
+    assert_eq!(named("AI").bone.as_deref(), Some("J_pips"));
+    assert!(named("player").offset.translation[1] > 0.0);
+    assert!(named("AI").offset.translation[1] < 0.0);
+    let record_nodes: usize = {
+        let record: CardArtRecord =
+            serde_json::from_slice(&std::fs::read(dir_path.join(CARD_ART_RECORD)).unwrap())
+                .unwrap();
+        record.archives.iter().map(|l| l.nodes.len()).sum()
+    };
+    println!("  {record_nodes} models' attach lists in the record");
+    assert_eq!(record_nodes, 116, "the lists on the dump");
+
     // Every stone: its deck's face model read, its asset's sound kept
     // where the TV's book looks for the asset's stem.
     let record: CardArtRecord =
@@ -182,7 +225,33 @@ fn the_card_games_art_extracts_and_resumes_alone() {
     }
     let refused: usize = record.archives.iter().map(|l| l.refused.len()).sum();
     assert_eq!(refused, art.refused.len(), "the record names every refusal");
-    assert!(art.refused.is_empty(), "{:?}", art.refused);
+    // Models, images and sounds: none refused. Attach lists (AS.554): four
+    // presented creatures' weapon models in eight assets hold a list the
+    // attach reader refuses (an element it doesn't know); nothing of the
+    // board hangs on them, so each stays listed by name.
+    let (lists, rest): (Vec<_>, Vec<_>) = art
+        .refused
+        .iter()
+        .partition(|(what, _)| what.contains(": nodes "));
+    assert!(rest.is_empty(), "{rest:?}");
+    let mut weapons: Vec<&str> = lists
+        .iter()
+        .map(|(what, _)| what.rsplit('/').next().unwrap())
+        .collect();
+    weapons.dedup();
+    assert_eq!(lists.len(), 8, "{lists:?}");
+    for w in &weapons {
+        assert!(
+            [
+                "CrystalTrogHeavy.mdl",
+                "CyclopsBomber.mdl",
+                "SeaDogHeavyGun.mdl",
+                "ArkeyanSniperRifle.mdl"
+            ]
+            .contains(w),
+            "{lists:?}"
+        );
+    }
     assert_eq!(art.models, 244, "the 238 AS.365 read and AS.530's six");
 
     // An extract made before the part reads it alone at its next start.

@@ -490,10 +490,18 @@ pub(crate) fn step_cameras(
     // wanders, into the rock behind the pit after a defeat (openspec
     // AH.227), so the view holds where it stood until the next one joins
     // (a stand-in, stand-in ledger: `camera`).
-    let in_run = match (run.map(|r| &r.join), runtime.as_deref()) {
-        (Some(crate::hero_scripts::Join::Joined(m)), Some(rt)) => !rt.vm.removed(*m),
-        _ => false,
-    };
+    // A played card game's board holds his slot (openspec AS.552,
+    // `card_game::Restore::Replaced`): its manager aims the gameplay
+    // viewport at the board each step with his minion off, so its view is
+    // drawn, not held. Only a run that plays the game ever sets it.
+    let board_holds = world
+        .as_deref()
+        .is_some_and(|w| w.card_streams.restore() == guacamole::card_game::Restore::Replaced);
+    let in_run = board_holds
+        || match (run.map(|r| &r.join), runtime.as_deref()) {
+            (Some(crate::hero_scripts::Join::Joined(m)), Some(rt)) => !rt.vm.removed(*m),
+            _ => false,
+        };
     for (mut follow, mut transform, drawn) in &mut cameras {
         let follow = &mut *follow;
         let place = match (&state, world.as_deref()) {

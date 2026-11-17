@@ -6,6 +6,11 @@
 //!
 //! Threading: the main thread runs Bevy; `guac_server::boot` runs the server
 //! and driver worker on its own tokio thread.
+// The TV that plays the card game on a yes (openspec AS.367's first rung) is
+// a lane's build, with its quit route; a dependency turning the feature on
+// would put it in the binary `cargo test --workspace` leaves behind.
+#[cfg(all(feature = "played-card-games", not(feature = "test-hooks")))]
+compile_error!("`played-card-games` is a lane's TV build: name it with `test-hooks`");
 
 mod alert;
 mod announce;
