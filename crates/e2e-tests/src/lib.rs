@@ -1705,6 +1705,14 @@ impl IntroFixture {
                 "the e2e fixture writes no extract-wide part {missing:?}: write it in build_with_fight"
             );
         }
+        // A part recorded under an older shape's name (the interface's
+        // records, AS.554's `card_game/art.v2.json`) makes it stale the same
+        // way: the manifest's currency check reads it again over the fixture.
+        if !guac_extract::interface::record_current(opened.dir.manifest()) {
+            bail!(
+                "the e2e fixture records a part under an older shape's name: write this build's in build_with_fight"
+            );
+        }
         opened.dir.mark_complete()?;
         Ok(Self {
             _dir: None,
@@ -3732,7 +3740,9 @@ mod fixture_tests {
     /// and the guacamole suite fails at its first level (AH.138's nodes
     /// part: 43 tests). A part added to `guac_extract::levels::PARTS` fails
     /// this, naming it, until `write_level` writes it; one added to
-    /// `guac_extract::PARTS` (AR.5's sounds) until `build_with_fight` does.
+    /// `guac_extract::PARTS` (AR.5's sounds) until `build_with_fight` does;
+    /// one recorded under an older shape's name (AS.554's card art record)
+    /// until it's this build's.
     #[test]
     fn the_fixture_writes_every_level_part() {
         let tmp = tempfile::tempdir().unwrap();

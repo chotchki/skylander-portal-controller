@@ -1584,10 +1584,19 @@ fn card_hero_back(
         .and_then(|(_, run)| run)
         .map(|r| &r.join)
     {
-        Some(Join::Joined(minion)) => runtime.vm.removed(*minion),
-        _ => false,
+        Some(Join::Joined(minion)) => Some(runtime.vm.removed(*minion)),
+        _ => None,
     };
-    if !guacamole::card_game::hero_owed(&runtime.vm, &world, off) {
+    // A hero who joined with his minion on while the board held the slot (a
+    // figure put on during the game) came in by the portal's own swap: the
+    // ask is answered, or it would stand until his minion next goes (a
+    // defeat, a lift) and take him off then.
+    if off == Some(false) && world.card_streams.restore() == guacamole::card_game::Restore::Asked {
+        world.card_streams.hero_returned();
+        info!("the card game's ask answered already: a hero joined during the game");
+        return;
+    }
+    if !guacamole::card_game::hero_owed(&runtime.vm, &world, off == Some(true)) {
         return;
     }
     let play = &mut *play;
@@ -5907,6 +5916,55 @@ mod tests {
             app.world().resource::<ScriptWorld>().card_streams.restore(),
             guacamole::card_game::Restore::Idle,
             "the ask answered"
+        );
+    }
+
+    /// A hero joined with his minion on when the board's teardown asks (a
+    /// figure put on during a played game came in by the swap, as-cards-view
+    /// review): the ask is dropped, and his minion going later (a defeat, a
+    /// lift) isn't answered as a card game's put-back.
+    #[cfg(feature = "card-game-seams")]
+    #[test]
+    fn an_ask_a_joined_hero_answered_is_dropped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = joined_eruptor(tmp.path());
+        app.update();
+        let first = app.world().resource::<Play>().hero().unwrap();
+        app.world_mut()
+            .resource_mut::<ScriptWorld>()
+            .card_streams
+            .restore_asked();
+        for _ in 0..5 {
+            app.update();
+        }
+        assert_eq!(
+            app.world().resource::<ScriptWorld>().card_streams.restore(),
+            guacamole::card_game::Restore::Idle,
+            "the ask dropped"
+        );
+        assert_eq!(app.world().resource::<Play>().hero(), Some(first));
+        let Join::Joined(minion) = app.world().entity(first).get::<HeroRun>().unwrap().join else {
+            panic!("joined");
+        };
+        let handle = app
+            .world()
+            .resource::<ScriptRuntime>()
+            .vm
+            .handle_of(minion)
+            .unwrap();
+        assert!(
+            app.world_mut()
+                .resource_mut::<ScriptRuntime>()
+                .vm
+                .remove(handle)
+        );
+        for _ in 0..30 {
+            app.update();
+        }
+        assert_eq!(
+            app.world().resource::<Play>().hero(),
+            Some(first),
+            "his minion off later: no put-back"
         );
     }
 
