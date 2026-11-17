@@ -10,7 +10,8 @@
 //! `cargo test -p guacamole --profile disc --test giants_hero_parts -- --ignored --nocapture --test-threads=1`
 //!
 //! The roster check joins a few figures by default; `GUAC_HERO_PARTS_ALL=1`
-//! joins every character load file the roster holds (67, about 18 minutes).
+//! joins every numbered character archive (68 with `113_sniper`, which the
+//! roster never loads: 1,119 s at load 2.5-6 on 2026-11-16).
 
 mod common;
 
