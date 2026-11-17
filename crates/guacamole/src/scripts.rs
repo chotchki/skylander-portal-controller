@@ -3423,6 +3423,15 @@ pub fn is_hub(level: &str) -> bool {
 /// clips). By name, since the ships' scripts are the hub's too.
 pub const SHIP: [&str; 3] = ["The_Ship_1", "214_Intro_Ship", "Hub_Engine"];
 
+/// The landing pod (openspec AS.443), by script, every tick, on every level
+/// that places one but the hub's stages ([`level_config`]; 201's, 205's
+/// and 208's intros fly a clone of it):
+/// its STARTUP clones its base, plank, propeller and wheel (`LP_Parts`)
+/// onto its nodes, each by its own id, and its SHUTDOWN takes them off.
+/// Off the listing the pod flew as its mast, sail and wings alone, the
+/// people on it standing on air.
+pub const LANDING_POD_SCRIPTS: [&str; 1] = ["GameElement_LandingPod/Scripts/LandingPod.ai"];
+
 /// The intro placement of the level whose archive is `level`, if the TV
 /// runs one.
 pub fn intro(level: &str) -> Option<&'static str> {
@@ -4168,6 +4177,7 @@ pub fn smash_config(mode: Mode) -> Config {
         scripts.extend(ELEMENTAL_SCRIPTS.iter().map(|s| (*s).to_owned()));
         // Level 214's ship (openspec AS.60).
         placements.extend(SHIP.iter().map(|s| (*s).to_owned()));
+        scripts.extend(LANDING_POD_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(EFFECT_SCRIPTS.iter().map(|s| (*s).to_owned()));
         // The levels' music (openspec AR.16, AS.54): their rolls draw on
         // the session's generator, as the original's do.
@@ -4584,6 +4594,13 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
     if is_hub(name)
         && let Whitelist::Only { scripts, .. } = &mut config.whitelist
     {
+        // Not the landing pod's own script (the as-ship-scenes review): on
+        // a hub stage it builds the base, plank and wheel onto the stage's
+        // own `LandingPod`, docked in the ship's top ring, a scripted
+        // skinned placement the TV doesn't draw, so they stood there as
+        // half a pod, and the pod's own clip moved the arrival's camera off
+        // 2.0's. AS.512.
+        scripts.retain(|s| !LANDING_POD_SCRIPTS.contains(&s.as_str()));
         scripts.extend(HUB_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(HUB_PEOPLE.iter().map(|s| (*s).to_owned()));
         scripts.extend(HUB_DOORS.iter().map(|s| (*s).to_owned()));
@@ -7575,6 +7592,28 @@ mod tests {
     /// its background by script, every tick, on each hub stage's listing
     /// and no other level's; each stage's intro by its placement, as level
     /// 214's.
+    /// The as-ship-scenes review: the landing pod's own script runs on the
+    /// levels whose intros fly its clone and not on a hub stage, where it
+    /// built half a pod onto the stage's undrawn `LandingPod` (AS.512).
+    #[test]
+    fn the_landing_pods_script_runs_off_the_hub() {
+        let files = Files::default();
+        let pod = "C:/tfb/Content/Levels/Includes/GameElement_LandingPod/Scripts/LandingPod.ai";
+        for level in ["level_201", "level_205_piratecards", "level_208_ice"] {
+            let c = level_config(Mode::Play, &files, 4, level);
+            assert!(c.whitelist.lists("Landing_Pod", pod), "{level}");
+        }
+        for stage in [
+            "level_hub_2_stage_1",
+            "level_hub_2_stage_2",
+            "level_hub_2_stage_3",
+            "level_hub_2_stage_4",
+        ] {
+            let c = level_config(Mode::Play, &files, 4, stage);
+            assert!(!c.whitelist.lists("LandingPod", pod), "{stage}");
+        }
+    }
+
     #[test]
     fn a_hub_stages_own_scripts_and_its_intro_are_listed() {
         let files = Files::default();
@@ -8860,6 +8899,12 @@ mod tests {
             assert!(c.whitelist.lists(name, ships), "{name}");
         }
         assert!(!c.whitelist.lists("Hub_Ship", ships));
+        // AS.443: the landing pod's own script, its clones' with it, on
+        // any level that places one.
+        let pod = "C:/tfb/Content/Levels/Includes/GameElement_LandingPod/Scripts/LandingPod.ai";
+        for name in ["Landing_Pod", "LandingPod", "205_Outro_Landing_Pod"] {
+            assert!(c.whitelist.lists(name, pod), "{name}");
+        }
     }
 
     #[test]

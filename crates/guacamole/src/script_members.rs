@@ -907,12 +907,37 @@ impl ScriptWorld {
             );
         }
         let pivot = self.position_within(a, engine, depth)?;
-        let posed = self.nodes.get(&a).and_then(|n| n.get(i as usize));
-        let Some(off) = posed.copied().or_else(|| self.origin_node(a, i)) else {
+        if let Some(posed) = self.nodes.get(&a).and_then(|n| n.get(i as usize)) {
+            let facing = self.angles(a, engine).map_or(0.0, |g| g.facing);
+            return Some(pivot + Quat::from_rotation_y(facing.to_radians()) * posed.at);
+        }
+        let Some(off) = self.origin_node(a, i) else {
             return Some(pivot);
         };
-        let facing = self.angles(a, engine).map_or(0.0, |g| g.facing);
-        Some(pivot + Quat::from_rotation_y(facing.to_radians()) * off.at)
+        // A model nothing poses holds its nodes in its own frame, turned
+        // as it's drawn: tilt and roll too (openspec AS.443: Flynn and Cali
+        // on the ship's deck nodes as it banks).
+        let turn = self.drawn_turn(a, engine).unwrap_or(Quat::IDENTITY);
+        Some(pivot + turn * off.at)
+    }
+
+    /// How actor `h` is drawn turned: a hero by his facing, a skinned
+    /// placement of a file by its facing (its tilt and roll the engine's
+    /// lean, never drawn), anything else by its three angles (a clone, a
+    /// prop), each under the turn of the actor it hangs on itself
+    /// ([`crate::script_engine::Actor::carried`], openspec AS.443).
+    pub(crate) fn drawn_turn(&self, h: Handle, engine: &mut dyn Engine) -> Option<Quat> {
+        if let Some(hero) = engine.hero(h) {
+            return Some(Quat::from_rotation_y(hero.facing.to_radians()));
+        }
+        let a = self.actors.get(&h)?;
+        let placed_skinned = a.obj.is_some_and(|o| self.palettes.contains_key(&o));
+        let own = if placed_skinned {
+            Quat::from_rotation_y(a.angles.facing.to_radians())
+        } else {
+            euler([a.angles.tilt, a.angles.facing, a.angles.roll])
+        };
+        Some(a.carried.unwrap_or(Quat::IDENTITY) * own)
     }
 
     /// Attach node `i` of a model nothing poses, off its list at the actor's
@@ -935,12 +960,14 @@ impl ScriptWorld {
         if self.rig_unposed(a) {
             return self.rig_held.get(i as usize).map(|(_, turn)| *turn);
         }
-        let posed = self.nodes.get(&a).and_then(|n| n.get(i as usize));
-        let node = posed.copied().or_else(|| self.origin_node(a, i))?;
-        let facing = self
-            .angles_within(a, engine, depth)
-            .map_or(0.0, |g| g.facing);
-        Some(Quat::from_rotation_y(facing.to_radians()) * node.turn)
+        if let Some(posed) = self.nodes.get(&a).and_then(|n| n.get(i as usize)) {
+            let facing = self
+                .angles_within(a, engine, depth)
+                .map_or(0.0, |g| g.facing);
+            return Some(Quat::from_rotation_y(facing.to_radians()) * posed.turn);
+        }
+        let node = self.origin_node(a, i)?;
+        Some(self.drawn_turn(a, engine)? * node.turn)
     }
 
     fn set_point(
@@ -1998,6 +2025,7 @@ impl ScriptWorld {
                     _ => None,
                 };
                 let a = self.actors.get_mut(&h).ok_or(HostFault::Nothing)?;
+                a.turned |= matches!(m, Member::Facing | Member::Tilt | Member::Roll);
                 match m {
                     Member::Facing => a.angles.facing = x,
                     // One hung from nothing turns by it about its own axis
@@ -2174,9 +2202,16 @@ impl ScriptWorld {
                 }
                 // Hung where it hangs from, no offset yet.
                 if let Some(a) = self.actors.get_mut(&h) {
+                    // Hung somewhere new, a turn written before is its own
+                    // under its new carrier's (`Ships.ai`'s parts, cloned
+                    // and hung; AS.443).
+                    if a.attach != v {
+                        a.turned = false;
+                    }
                     a.attach = v;
                     a.hung = Vec3::ZERO;
                     a.hung_facing = None;
+                    a.carried = None;
                 }
                 // A hero hung has his controller off until he's let go
                 // (openspec AS.115); another's ground carries nobody here.
@@ -3859,8 +3894,8 @@ impl ScriptWorld {
 
     /// Whether what actor `h` hangs on, a node of another actor or that
     /// actor itself, was taken off, or what that hangs on was, up the
-    /// chain (openspec AS.186): what hangs on nothing, which the TV doesn't
-    /// draw. It stays in the world, as the engine keeps a minion hung on an
+    /// chain (openspec AS.186), a camera's rig aside (AS.443): what hangs
+    /// on nothing, which the TV doesn't draw. It stays in the world, as the engine keeps a minion hung on an
     /// actor destroyed under him (the cutscene system's own clean-up
     /// detaches him), its scripts and its own reads unchanged; whether the
     /// original draws it is unread (stand-in ledger: `hung-draw`). False for
@@ -3879,7 +3914,12 @@ impl ScriptWorld {
             let Some(owner) = owner.filter(|&o| o != at) else {
                 return false;
             };
-            if self.actors.get(&owner).is_some_and(|o| o.removed) {
+            // A camera's rig taken off at its shot's end leaves what rode
+            // it where it last stood (openspec AS.443: the sail's ship,
+            // hung on its last shot's rig and written onto the second
+            // island's dock for the scenes after, Flynn on its deck): the
+            // rig is the shot's, not a body that carried it.
+            if self.actors.get(&owner).is_some_and(|o| o.removed) && !self.is_rig(owner) {
                 return true;
             }
             at = owner;
@@ -3921,21 +3961,37 @@ impl ScriptWorld {
                 }
                 _ => None,
             };
-            // A skinned clone hung on an actor itself turns as that actor
-            // turns (openspec AU.37: Pop Fizz's beast, hung on him), by what
-            // it turned through, so a spin of its own goes on. What has no
+            // A skinned clone hung on a hero himself turns as he turns
+            // (openspec AU.37: Pop Fizz's beast, hung on him), by what he
+            // turned through, so a spin of its own goes on. What has no
             // palette, a collider or a pivot, keeps the scripts' facing:
             // turned, Dino-Rang's whirlwind misses. Stand-in ledger:
             // `hung-turn`.
             let skinned = self
                 .template_of(h)
                 .is_some_and(|t| self.palettes.contains_key(&t));
-            let owner_facing = match self.object(Some(node)) {
-                None if skinned => self
-                    .actor_of(Some(node))
-                    .filter(|&o| o != h)
-                    .and_then(|o| self.angles_within(o, engine, HUNG_DEPTH - 1))
+            let on_actor = match self.object(Some(node)) {
+                None => self.actor_of(Some(node)).filter(|&o| o != h),
+                _ => None,
+            };
+            let owner_facing = match on_actor {
+                Some(o) if skinned && engine.hero(o).is_some() => self
+                    .angles_within(o, engine, HUNG_DEPTH - 1)
                     .map(|g| g.facing),
+                _ => None,
+            };
+            // Hung on any other actor itself, it's drawn turned as that
+            // actor is drawn, its own turn (the one a script reads on top
+            // of that actor's, AS.76) laid over it (openspec AS.443: the
+            // ship's masthead, roof and engine, cloned at the ship facing 0
+            // and hung on it by `Ships.ai`, came apart from the hull as it
+            // flew; stand-in ledger `hung-turn`).
+            // A turn a script wrote while it hangs is the one it asked for,
+            // drawn as written, as before AS.443 (the hub's talk button
+            // turned toward the camera each tick; a turret's body aimed).
+            let written = self.actors.get(&h).is_some_and(|a| a.turned);
+            let carried = match on_actor {
+                Some(o) if engine.hero(o).is_none() && !written => self.drawn_turn(o, engine),
                 _ => None,
             };
             // Its offset from what it hangs from, in that frame (openspec
@@ -3957,6 +4013,9 @@ impl ScriptWorld {
                     a.angles.facing = (a.angles.facing + now - last).rem_euclid(360.0);
                 }
                 a.hung_facing = owner_facing;
+            }
+            if let Some(a) = self.actors.get_mut(&h) {
+                a.carried = carried;
             }
             // A hung hero's body goes with his node (openspec AS.115), his
             // place being his controller's.
@@ -6057,6 +6116,250 @@ mod tests {
         hung(&mut w, B, Value::Entity(A));
         assert!(!w.hangs_on_nothing(A), "a loop of live actors");
         assert!(!w.hangs_on_nothing(0x99), "no such actor");
+    }
+
+    /// openspec AS.443: a camera's rig taken off at its shot's end leaves
+    /// what rode it where it last stood (the sail's ship on the second
+    /// island's dock); a person taken off still leaves his hat on nothing.
+    #[test]
+    fn what_rode_a_rig_taken_off_still_hangs_on_something() {
+        const RIG: Obj = Obj { unit: 0, index: 78 };
+        const SHOT: Handle = 0x6000_0041;
+        const SHIP: Handle = 0x6000_0042;
+        const MAST: Handle = 0x6000_0043;
+        const MABU: Handle = 0x6000_0044;
+        const HAT: Handle = 0x6000_0045;
+        let mut w = world();
+        w.set_rig(RIG);
+        let mut shot = Actor::blank();
+        shot.template = Some(RIG);
+        w.actors.insert(SHOT, shot);
+        w.actors.insert(MABU, Actor::blank());
+        let mut ship = Actor::blank();
+        ship.attach = w.objs.value(Object::Node(SHOT, 1));
+        w.actors.insert(SHIP, ship);
+        let mut mast = Actor::blank();
+        mast.attach = Value::Entity(SHIP);
+        w.actors.insert(MAST, mast);
+        let mut hat = Actor::blank();
+        hat.attach = w.objs.value(Object::Node(MABU, 2));
+        w.actors.insert(HAT, hat);
+        for h in [SHOT, MABU] {
+            w.actors.get_mut(&h).unwrap().removed = true;
+        }
+        assert!(
+            !w.hangs_on_nothing(SHIP),
+            "on the rig's node, the rig taken off"
+        );
+        assert!(!w.hangs_on_nothing(MAST), "on the ship on the rig");
+        assert!(w.hangs_on_nothing(HAT), "on a person taken off");
+    }
+
+    /// openspec AS.443: what hangs on an actor itself (not a node of it,
+    /// not a hero) is drawn turned as that actor is drawn, tilt and roll
+    /// too, its own turn on top: the ship's masthead, cloned facing 0 and
+    /// hung on the ship, stays on it as the ship flies round; the engine,
+    /// skinned, too, and AU.37's turn by what the actor turned through,
+    /// which left it as far off the ship as the ship faced when it was
+    /// hung, stays a hero's. Let go, it's drawn by its own turn.
+    #[test]
+    fn what_hangs_on_an_actor_itself_is_drawn_turned_as_it() {
+        const SHIP: Handle = 0x6000_0051;
+        const MAST: Handle = 0x6000_0052;
+        const ENGINE: Handle = 0x6000_0053;
+        const CAPE: Handle = 0x6000_0054;
+        let mut e = bench();
+        e.hero = Some(Hero::actor(eruptor_solid(), Vec3::ZERO, 0.0));
+        let mut w = world();
+        w.actors.insert(HERO, Actor::blank());
+        let skinned = Obj { unit: 9, index: 3 };
+        w.set_palette(skinned, vec![1.0]);
+        let mut ship = Actor::blank();
+        ship.position = Vec3::new(5.0, 2.0, -3.0);
+        ship.angles = crate::script_engine::Angles {
+            tilt: -5.0,
+            facing: 186.0,
+            roll: 2.0,
+        };
+        w.actors.insert(SHIP, ship);
+        let part = |template: Option<Obj>, on: Value| {
+            let mut a = Actor::blank();
+            a.template = template;
+            a.attach = on;
+            a.position = Vec3::new(5.0, 2.0, -3.0);
+            a
+        };
+        w.actors.insert(
+            MAST,
+            part(Some(Obj { unit: 9, index: 4 }), Value::Entity(SHIP)),
+        );
+        w.actors
+            .insert(ENGINE, part(Some(skinned), Value::Entity(SHIP)));
+        w.actors.insert(
+            CAPE,
+            part(Some(Obj { unit: 9, index: 5 }), Value::Entity(HERO)),
+        );
+        let drawn =
+            |w: &ScriptWorld, h: Handle| crate::props::actor_transform(&w.actors[&h]).rotation;
+        // The same turn, a quaternion or its negative (glam's
+        // `angle_between` reads NaN at a dot just over 1).
+        let close = |a: Quat, b: Quat| a.dot(b).abs() > 1.0 - 1e-6;
+        w.place_hung(&mut e);
+        let ship_turn = drawn(&w, SHIP);
+        assert!(
+            close(drawn(&w, MAST), ship_turn),
+            "the masthead turned as the ship"
+        );
+        assert!(close(drawn(&w, ENGINE), ship_turn), "the engine too");
+        assert_eq!(
+            w.actors[&ENGINE].angles.facing, 0.0,
+            "no turn of its own added"
+        );
+        assert_eq!(w.actors[&CAPE].carried, None, "on a hero: AU.37's");
+        // The ship flies round; its parts with it.
+        w.actors.get_mut(&SHIP).unwrap().angles.facing = 261.0;
+        w.place_hung(&mut e);
+        let ship_turn = drawn(&w, SHIP);
+        assert!(close(drawn(&w, MAST), ship_turn));
+        assert!(close(drawn(&w, ENGINE), ship_turn));
+        assert_eq!(w.actors[&ENGINE].angles.facing, 0.0);
+        // A turn of its own lies over the ship's.
+        w.actors.get_mut(&MAST).unwrap().angles.facing = 10.0;
+        w.place_hung(&mut e);
+        assert!(close(
+            drawn(&w, MAST),
+            ship_turn * Quat::from_rotation_y(10f32.to_radians())
+        ));
+        // Let go, its own turn alone.
+        let node = at(
+            "abstractplacement",
+            "attach node",
+            Some(Value::Entity(MAST)),
+            None,
+        );
+        w.set_member(&node, Member::AttachNode, Value::Null, &mut e)
+            .unwrap();
+        assert_eq!(w.actors[&MAST].carried, None);
+        assert!(close(
+            drawn(&w, MAST),
+            Quat::from_rotation_y(10f32.to_radians())
+        ));
+    }
+
+    /// The as-ship-scenes review (AS.443): a turn a script writes on what
+    /// hangs on an actor itself is drawn as written, not over that actor's
+    /// (the hub's talk button, turned toward the camera each tick, drew
+    /// turned away by its person's facing); a relative turn doesn't count,
+    /// and hung somewhere new it's carried again.
+    #[test]
+    fn a_turn_written_on_what_hangs_is_drawn_as_written() {
+        const PERSON: Handle = 0x6000_0071;
+        const BUTTON: Handle = 0x6000_0072;
+        const OTHER: Handle = 0x6000_0073;
+        let mut e = bench();
+        let mut w = world();
+        let mut person = Actor::blank();
+        person.angles.facing = 36.0;
+        w.actors.insert(PERSON, person);
+        w.actors.insert(OTHER, Actor::blank());
+        let mut button = Actor::blank();
+        button.template = Some(Obj { unit: 9, index: 7 });
+        button.attach = Value::Entity(PERSON);
+        w.actors.insert(BUTTON, button);
+        let drawn = |w: &ScriptWorld| crate::props::actor_transform(&w.actors[&BUTTON]).rotation;
+        let close = |a: Quat, b: Quat| a.dot(b).abs() > 1.0 - 1e-6;
+        w.place_hung(&mut e);
+        assert!(
+            close(drawn(&w), Quat::from_rotation_y(36f32.to_radians())),
+            "unwritten, carried"
+        );
+        let turn = w.objs.value(Object::Facet(BUTTON, Facet::Orientation));
+        let rel = at(
+            "orientationmeasurement",
+            "relative facing",
+            Some(turn),
+            None,
+        );
+        w.set_member(&rel, Member::RelativeFacing, Value::Float(5.0), &mut e)
+            .unwrap();
+        w.place_hung(&mut e);
+        assert!(
+            w.actors[&BUTTON].carried.is_some(),
+            "a relative turn is its own"
+        );
+        let facing = at("orientationmeasurement", "facing", Some(turn), None);
+        w.set_member(&facing, Member::Facing, Value::Float(86.0), &mut e)
+            .unwrap();
+        w.place_hung(&mut e);
+        assert_eq!(w.actors[&BUTTON].carried, None);
+        assert!(
+            close(drawn(&w), Quat::from_rotation_y(86f32.to_radians())),
+            "drawn as written"
+        );
+        // Hung on the same actor again, still as written.
+        let node = at(
+            "abstractplacement",
+            "attach node",
+            Some(Value::Entity(BUTTON)),
+            None,
+        );
+        w.set_member(&node, Member::AttachNode, Value::Entity(PERSON), &mut e)
+            .unwrap();
+        w.place_hung(&mut e);
+        assert_eq!(w.actors[&BUTTON].carried, None, "the same hang");
+        // Hung somewhere new, carried again.
+        w.set_member(&node, Member::AttachNode, Value::Entity(OTHER), &mut e)
+            .unwrap();
+        w.place_hung(&mut e);
+        assert!(w.actors[&BUTTON].carried.is_some(), "hung anew");
+    }
+
+    /// openspec AS.443: a static model's attach nodes stand where its whole
+    /// drawn turn puts them, its tilt and roll with its facing (Flynn and
+    /// Cali on the ship's deck nodes as it banks), and what hangs on one is
+    /// turned so; a node of one posed (a skinned model's) still goes by its
+    /// facing, the pose holding the rest.
+    #[test]
+    fn a_static_models_nodes_turn_with_its_tilt_and_roll() {
+        const SHIP_T: Obj = Obj { unit: 9, index: 6 };
+        const SHIP: Handle = 0x6000_0061;
+        const FLYNN: Handle = 0x6000_0062;
+        let mut e = bench();
+        let mut w = world();
+        let mut template = crate::scripts::Placed::named(SHIP_T, "214_Intro_Ship", None, 5);
+        template.model = Some("ship.mdl".into());
+        w.templates.insert(SHIP_T, template);
+        w.set_origin_nodes(HashMap::from([(
+            "ship.mdl".to_owned(),
+            vec![NodePose::at(Vec3::new(0.0, 4.0, 10.0))],
+        )]));
+        let mut ship = Actor::blank();
+        ship.template = Some(SHIP_T);
+        ship.position = Vec3::new(1.0, 0.0, 0.0);
+        ship.angles = crate::script_engine::Angles {
+            tilt: -5.0,
+            facing: 30.0,
+            roll: 3.0,
+        };
+        w.actors.insert(SHIP, ship);
+        let turn = euler([-5.0, 30.0, 3.0]);
+        let want = Vec3::new(1.0, 0.0, 0.0) + turn * Vec3::new(0.0, 4.0, 10.0);
+        let at = w.node(SHIP, 0, &mut e).unwrap();
+        assert!(at.distance(want) < 1e-4, "{at} against {want}");
+        let mut flynn = Actor::blank();
+        flynn.attach = w.objs.value(Object::Node(SHIP, 0));
+        w.actors.insert(FLYNN, flynn);
+        w.place_hung(&mut e);
+        let a = &w.actors[&FLYNN];
+        assert!(a.position.distance(want) < 1e-4, "{}", a.position);
+        let drawn = crate::props::actor_transform(a).rotation;
+        assert!(drawn.dot(turn).abs() > 1.0 - 1e-6, "turned as the deck");
+        // Posed, its facing alone turns the pose's node.
+        w.set_nodes(SHIP, vec![NodePose::at(Vec3::new(0.0, 4.0, 10.0))]);
+        let at = w.node(SHIP, 0, &mut e).unwrap();
+        let posed = Vec3::new(1.0, 0.0, 0.0)
+            + Quat::from_rotation_y(30f32.to_radians()) * Vec3::new(0.0, 4.0, 10.0);
+        assert!(at.distance(posed) < 1e-4, "{at}");
     }
 
     /// AU.37: what hangs on an actor itself turns as he turns (Pop Fizz's
