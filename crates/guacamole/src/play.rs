@@ -3920,6 +3920,23 @@ mod tests {
             Vec3::splat(scale)
         );
         assert_eq!(run.rig.as_ref().map(|r| r.scale), Some(scale));
+        // AS.444: a scale his scripts write per axis (Ninjini's squeeze)
+        // draws per axis; his solid, run and hands stay at the uniform one.
+        let squeezed = [WALKER_REGROW / 2.0, WALKER_REGROW, WALKER_REGROW / 2.0];
+        assert!(
+            app.world_mut()
+                .resource_mut::<ScriptWorld>()
+                .set_scale(e.to_bits(), squeezed)
+        );
+        app.update();
+        assert_eq!(
+            app.world().entity(root).get::<Transform>().unwrap().scale,
+            Vec3::new(scale / 2.0, scale, scale / 2.0),
+            "drawn squeezed"
+        );
+        let run = app.world().entity(e).get::<HeroRun>().unwrap();
+        assert_eq!(run.scale, scale);
+        assert_eq!(hero(&app).solid(), &rebuilt, "his solid as it was");
     }
 
     /// AG.170: once his script stops in play (AH.151's fall-back) he stands
