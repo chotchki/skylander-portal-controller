@@ -699,6 +699,12 @@ pub(crate) struct SpawnShot {
     pub hung_on: Option<String>,
     pub on_nothing: bool,
     pub drawn: bool,
+    /// Its template's model, by path, if it names one (openspec AS.531:
+    /// what a card game's clones draw with, read off the art part).
+    pub model: Option<String>,
+    /// The behaviour its script runs, if it runs one (the card game's
+    /// manager is a clone: openspec AS.367).
+    pub behaviour: Option<String>,
     /// The clips its scripts play on it, by name (openspec AS.461: a
     /// scene's Flynn and Cali are clones).
     pub clips: Vec<guacamole::scripts::ClipPlay>,
@@ -885,6 +891,14 @@ pub(crate) fn report(vm: &guac_script::Vm, world: &ScriptWorld) -> CreaturesRepo
                 hung_on,
                 on_nothing: world.hangs_on_nothing(c),
                 drawn: false,
+                model: a
+                    .template
+                    .and_then(|t| world.template(t))
+                    .and_then(|p| p.model.clone()),
+                behaviour: vm
+                    .placement_of(c)
+                    .and_then(|id| vm.behaviour(id))
+                    .map(str::to_owned),
                 clips: world.clips_on(c),
                 handle: c,
             })

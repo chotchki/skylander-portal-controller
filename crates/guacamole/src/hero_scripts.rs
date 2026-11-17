@@ -517,6 +517,10 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     // The card game's streams, each joining as a script asks for it
     // (openspec AS.364).
     script_world.card_streams = guacamole::card_game::CardStreams::fresh(&source.card_streams);
+    // A lane's build plays the game on the TV (openspec AS.367's first rung):
+    // never a landed build, which leaves the feature to the disc tests.
+    #[cfg(feature = "played-card-games")]
+    script_world.card_streams.play_games();
     // The sounds its starts play (openspec AR.9).
     if let Some(s) = &source.sounds {
         script_world.set_sounds(s.book.clone(), s.stems.clone());
@@ -1051,6 +1055,8 @@ impl Plugin for HeroScriptsPlugin {
                     set_asked_experience.run_if(resource_exists::<AskedExperience>),
                 ),
             );
+        #[cfg(all(feature = "test-hooks", feature = "played-card-games"))]
+        app.add_systems(Update, ask_card_quit.run_if(resource_exists::<ScriptWorld>));
     }
 }
 
@@ -1171,6 +1177,34 @@ pub(crate) fn health_routes<S: Clone + Send + Sync + 'static>(
             }
         }),
     )
+}
+
+/// A played card game's quit asked over `POST /api/_test/tv/card_quit`
+/// (openspec AS.367's first rung): a lane's build with `test-hooks` and
+/// `played-card-games` alone, never a landed one.
+#[cfg(all(feature = "test-hooks", feature = "played-card-games"))]
+static CARD_QUIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `POST /api/_test/tv/card_quit`: 202, the game quit through the board's
+/// own confirm at the next step ([`guacamole::card_game::quit`]).
+#[cfg(all(feature = "test-hooks", feature = "played-card-games"))]
+pub(crate) fn card_quit_routes<S: Clone + Send + Sync + 'static>() -> axum::Router<S> {
+    axum::Router::new().route(
+        "/api/_test/tv/card_quit",
+        axum::routing::post(|| async {
+            CARD_QUIT.store(true, std::sync::atomic::Ordering::SeqCst);
+            axum::http::StatusCode::ACCEPTED
+        }),
+    )
+}
+
+/// The quit [`card_quit_routes`] asked, handed to the run's card game.
+#[cfg(all(feature = "test-hooks", feature = "played-card-games"))]
+fn ask_card_quit(mut world: ResMut<ScriptWorld>) {
+    if CARD_QUIT.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        info!("a card game's quit asked over the test hook");
+        world.card_streams.ask_quit();
+    }
 }
 
 /// The health [`AskedHealth`] holds, set on the hero whose scripts joined;
@@ -2056,7 +2090,7 @@ pub(crate) fn clone_parts<'m>(
 pub(crate) fn draw_clones(
     mut commands: Commands,
     world: Res<ScriptWorld>,
-    level: Res<Level>,
+    mut level: ResMut<Level>,
     steps: Option<Res<ScriptSteps>>,
     mut clones: Query<(
         Entity,
@@ -2065,6 +2099,10 @@ pub(crate) fn draw_clones(
         Option<&mut Transform>,
     )>,
 ) {
+    for archive in card_models_owed(&world.card_streams, |a| level.card_asked(a)) {
+        level.ask_card(archive);
+    }
+    let level = &*level;
     let Some(models) = level.spawn_models() else {
         return;
     };
@@ -2141,6 +2179,25 @@ pub(crate) fn draw_clones(
             (Some(_), None) => {}
         }
     }
+}
+
+/// The card game archives joined to the run whose models the level hasn't
+/// been asked for (openspec AS.531): a stream or a stone's deck or asset
+/// joins as a script asks for it ([`guacamole::card_game::join_asked`]),
+/// and its templates' clones draw off its models from then on, read as a
+/// placed walker's are. Nothing joins on a run that plays no game, so a
+/// level's load reads none of them.
+pub(crate) fn card_models_owed(
+    streams: &guacamole::card_game::CardStreams,
+    asked: impl Fn(&str) -> bool,
+) -> Vec<&'static str> {
+    let mut owed: Vec<&'static str> = Vec::new();
+    for (archive, _) in &streams.joined {
+        if !asked(archive) && !owed.contains(archive) {
+            owed.push(archive);
+        }
+    }
+    owed
 }
 
 /// Whether a clone on again is to be drawn afresh: drawing nothing with
@@ -2493,6 +2550,20 @@ mod tests {
 
     use super::*;
     use crate::test_support::hero_scripts::{LEVEL, progression_rows, write_attack, write_smash};
+
+    /// The card game archives joined to the run are owed their models once
+    /// each (openspec AS.531), none already asked, none on a run that
+    /// joined nothing.
+    #[test]
+    fn the_card_archives_joined_are_owed_their_models_once() {
+        let mut streams = guacamole::card_game::CardStreams::default();
+        assert!(card_models_owed(&streams, |_| false).is_empty());
+        let board = guacamole::card_game::BOARD;
+        let hand = guacamole::card_game::HAND_SELECT;
+        streams.joined = vec![(hand, 3), (board, 5), (hand, 3)];
+        assert_eq!(card_models_owed(&streams, |_| false), [hand, board]);
+        assert_eq!(card_models_owed(&streams, |a| a == hand), [board]);
+    }
 
     #[test]
     fn a_heros_scripts_read_his_buttons_while_hes_on_them() {

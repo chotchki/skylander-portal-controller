@@ -459,12 +459,17 @@ fn test_routes(
     flag_asks: &flags::FlagAsks,
 ) -> Option<axum::Router<std::sync::Arc<guac_server::state::AppState>>> {
     cfg!(feature = "test-hooks").then(|| {
-        mirror::routes(mirror)
+        let routes = mirror::routes(mirror)
             .merge(flags::routes(flag_asks))
             .merge(hero_scripts::health_routes(health))
             .merge(hero_scripts::experience_routes(xp))
             .merge(dev_entry::routes(entry_asks))
-            .merge(level_choice::routes(level_asks))
+            .merge(level_choice::routes(level_asks));
+        // A lane's build that plays the card game (openspec AS.367's first
+        // rung) quits it over a route of its own; no landed build has it.
+        #[cfg(all(feature = "test-hooks", feature = "played-card-games"))]
+        let routes = routes.merge(hero_scripts::card_quit_routes());
+        routes
     })
 }
 
