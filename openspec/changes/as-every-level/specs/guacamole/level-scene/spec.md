@@ -655,3 +655,7 @@ A joined hero SHALL be drawn nowhere while his tint's alpha is 0 and whole other
 #### Scenario: Chop Chop's sword
 - **WHEN** Chop Chop swings
 - **THEN** one sword and one shield draw on every frame
+
+#### Scenario: Stealth Elf's stealth
+- **WHEN** Stealth Elf goes unseen with her second action
+- **THEN** she and her knives are drawn nowhere until her scripts' stealth runs out, and drawn again after

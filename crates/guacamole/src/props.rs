@@ -384,17 +384,19 @@ pub struct HeroDrawn {
 }
 
 /// What of a hero draws. His body: nowhere while his entry is pending
-/// (AH.224), nor while his actor's tint is see-through, as his scripts and
-/// the shared ones hide him (`Minion - Set Minion Tint` with alpha 0 into
-/// Ninjini's bottle, a portal entry's alpha 0; [`actor_shows`]), with
-/// what's hung on his joints; hidden or whole, never faded or coloured
-/// (stand-in ledger: `hero-tint`). The extract's fresh parts: only while
-/// his scripts don't carry him (`scripted` false: his join off or failed),
-/// since joined they hang every one of them as a clone of their own and
-/// swap, let go, fade or remove it (a part drawn by both read as two
-/// blades on Chop Chop).
+/// (AH.224), nor, while his scripts carry him, while his actor's tint is
+/// see-through, as his scripts and the shared ones hide him (`Minion - Set
+/// Minion Tint` with alpha 0 into Ninjini's bottle, a turret's hide, an
+/// outro's; [`actor_shows`]), with what's hung on his joints; hidden or
+/// whole, never faded or coloured (stand-in ledger: `hero-tint`). Off his
+/// scripts (`scripted` false: his join off or failed, AH.151's fall-back)
+/// his tint is never read: nothing of his own could set it back. The
+/// extract's fresh parts: only while his scripts don't carry him, since
+/// joined they hang every one of them as a clone of their own and swap,
+/// let go, fade or remove it (a part drawn by both read as two blades on
+/// Chop Chop).
 pub fn hero_drawn(entering: bool, scripted: bool, actor: Option<&Actor>) -> HeroDrawn {
-    let body = !entering && actor.is_none_or(actor_shows);
+    let body = !entering && (!scripted || actor.is_none_or(actor_shows));
     HeroDrawn {
         body,
         fresh_parts: body && !scripted,
@@ -1831,10 +1833,10 @@ mod tests {
         );
     }
 
-    /// AS.444: a hero's body draws unless his entry is pending or his
-    /// tint's alpha is 0 (Ninjini's bottle sets it; any other alpha draws
-    /// him); the extract's fresh parts only while his scripts don't carry
-    /// him, and never with his body hidden.
+    /// AS.444: a hero's body draws unless his entry is pending or, joined,
+    /// his tint's alpha is 0 (Ninjini's bottle sets it; any other alpha
+    /// draws him); the extract's fresh parts only while his scripts don't
+    /// carry him, and never with his body hidden.
     #[test]
     fn a_heros_tint_and_his_scripts_rule_what_of_him_draws() {
         let mut a = Actor::blank();
@@ -1862,7 +1864,9 @@ mod tests {
         // Ninjini's bottle: `Minion - Set Minion Tint` grey at alpha 0.
         a.tint = 0x8080_8000;
         assert_eq!(hero_drawn(false, true, Some(&a)), none, "in the bottle");
-        assert_eq!(hero_drawn(false, false, Some(&a)), none, "a walker hidden");
+        // Off his scripts his tint isn't read: a fall-back mid-bottle would
+        // otherwise leave him see-through for good (the AS.444 review).
+        assert_eq!(hero_drawn(false, false, Some(&a)), both, "a walker");
         // Any alpha over 0 draws him whole (no fade on the hero).
         a.tint = 0x8080_8001;
         assert_eq!(hero_drawn(false, true, Some(&a)), carried);

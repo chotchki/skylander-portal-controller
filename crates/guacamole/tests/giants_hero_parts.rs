@@ -320,6 +320,54 @@ fn ninjinis_bottle_hides_her_and_draws_it_once() {
     assert_eq!(after, before, "as she was once she's out");
 }
 
+const STEALTH_ELF: Character = Character {
+    archive: "character/026_stealthelf.bld",
+    load_file: "026_StealthElf",
+    toy: 26,
+};
+
+/// Stealth Elf's stealth (her second action, the AS.444 review): her
+/// scripts hide her and her knives through `Minion - Set Minion Tint`, wait
+/// on her go-invisible clip by its palette entry, then on a 2 s timer, and
+/// bring her back. With that wait read as nothing she stayed see-through
+/// for good. Hidden a second at least, back within 420 steps of a tap; a
+/// second press mid-stealth ends it too; taken off mid-stealth, the next
+/// figure stands drawn.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn stealth_elfs_stealth_ends_and_draws_her_again() {
+    let fresh = fresh_parts(STEALTH_ELF.archive, STEALTH_ELF.load_file);
+    let mut run = joined_on_201(STEALTH_ELF);
+    let seen = attack(&mut run, &fresh, 1, 10, 420);
+    print("stealth elf", &seen);
+    let hidden = seen.iter().filter(|(_, d)| !d.body).count();
+    assert!(hidden > 60, "unseen a second at least: {hidden}");
+    let last = seen.iter().rposition(|(_, d)| !d.body).unwrap();
+    assert!(
+        last + 60 < seen.len(),
+        "drawn again a second before the end: {last}"
+    );
+    assert!(seen[seen.len() - 1].1.body);
+    // A second press while she's unseen.
+    let seen = attack(&mut run, &fresh, 1, 10, 30);
+    assert!(seen.iter().any(|(_, d)| !d.body), "unseen again");
+    let again = attack(&mut run, &fresh, 1, 10, 420);
+    assert!(again[again.len() - 1].1.body, "drawn after a second press");
+    // Taken off mid-stealth and put back: drawn.
+    let seen = attack(&mut run, &fresh, 1, 10, 30);
+    assert!(
+        seen.iter().any(|(_, d)| !d.body),
+        "unseen before the take-off"
+    );
+    run.deactivate().unwrap_or_else(|h| panic!("{h}"));
+    for _ in 0..30 {
+        play(&mut run, [false; 4]);
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    let after = attack(&mut run, &fresh, 1, 0, 60);
+    assert!(after.iter().all(|(_, d)| d.body), "the next figure drawn");
+}
+
 /// Chop Chop's sword (his first action): his scripts hang his sword and
 /// shield as clones of their own, which the extract lists on a fresh
 /// figure too. Each draws once on every step of his swing, his body all
@@ -376,11 +424,17 @@ fn warnados_spin_and_tornado_keep_his_body() {
     );
 }
 
-/// The roster check under AS.444's rule: every part the extract hangs on a
-/// fresh figure is a live clone his own scripts made once he's joined (on
-/// him, or where they put it: Eye-Brawl's optic nerve, aimed at his eye
-/// each tick), so the extract's draws give way to theirs without a part
-/// going missing.
+/// Parts the extract hangs on a fresh figure that his own scripts keep
+/// see-through while he stands, so they draw nowhere once he's joined:
+/// Eye-Brawl's optic nerve (alpha 0 standing, stretched to his eye). Every
+/// other named part on the roster draws as a clone of his scripts.
+const SEE_THROUGH_STANDING: &[&str] = &["114_Optic_Nerve"];
+
+/// The roster check under AS.444's rule: every named part the extract
+/// hangs on a fresh figure is a clone his own scripts made once he's
+/// joined and the TV draws (hung on something live, a model, not
+/// see-through), so the extract's draws give way to theirs without a part
+/// going missing; [`SEE_THROUGH_STANDING`]'s are the ones his scripts hide.
 /// A few figures by default, `GUAC_HERO_PARTS_ALL=1` every load file.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
@@ -441,27 +495,48 @@ fn every_fresh_part_is_one_his_scripts_hang() {
         for _ in 0..30 {
             play(&mut run, [false; 4]);
         }
-        // His scripts' live clones by placement, with what each hangs on
-        // and its alpha: the TV draws each where his scripts put it.
-        let live: Vec<(String, Option<String>, u32)> = run
+        // His scripts' live clones by placement that the TV draws: hung on
+        // something live, a model, not see-through (the AS.444 review: a
+        // clone at alpha 0 counted as carried and drew nothing).
+        let live: Vec<(String, Option<String>, String)> = run
             .world
             .clones()
             .into_iter()
             .filter(|&c| !run.world.removed(c) && !run.world.hangs_on_nothing(c))
             .filter_map(|c| {
                 let a = run.world.actor(c)?;
-                let hung = owner(&run, c).map(|o| run.world.name(o));
-                Some((run.world.name(c), hung, a.tint & 0xFF))
+                let model = a
+                    .template
+                    .and_then(|t| run.world.template(t))
+                    .and_then(|p| p.model.as_deref())
+                    .map(file_name)?;
+                actor_shows(a).then(|| {
+                    (
+                        run.world.name(c),
+                        owner(&run, c).map(|o| run.world.name(o)),
+                        model,
+                    )
+                })
             })
             .collect();
         println!("{load_file}: fresh {fresh:?}");
         for (placement, file) in &fresh {
+            // A global template's part has no placement name to find its
+            // clone by (three `inviso.mdl`s on the roster).
+            if placement.is_empty() {
+                println!("   ({file}): a global template's, not matched");
+                continue;
+            }
             let want = fresh.iter().filter(|(p, _)| p == placement).count();
             let mine: Vec<_> = live.iter().filter(|(n, ..)| n == placement).collect();
             println!("   {placement} ({file}): {mine:?}");
+            if SEE_THROUGH_STANDING.contains(&placement.as_str()) {
+                assert!(mine.is_empty(), "{placement} drawn standing now: {mine:?}");
+                continue;
+            }
             assert!(
                 mine.len() >= want,
-                "{load_file}: {placement} ({file}) a live clone of his scripts: {mine:?}"
+                "{load_file}: {placement} ({file}) a drawn clone of his scripts: {mine:?}"
             );
         }
         checked += 1;
