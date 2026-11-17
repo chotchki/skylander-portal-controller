@@ -753,17 +753,18 @@ fn screen_positions_and_colours_are_read_and_written_by_their_parts() {
                     three,
                 );
                 // Halves add on their own; a product shifts back by four
-                // fraction bits; both hold to 16 bits.
-                let a = w.literal("ScreenMeasurement", 0x0010_0020, false);
-                let b = w.literal("ScreenMeasurement", 0xFFF0_0030, false);
+                // fraction bits; both hold to 16 bits. The literals are the
+                // file's words, x in the low half (AS.560).
+                let a = w.literal("ScreenMeasurement", 0x0020_0010, false);
+                let b = w.literal("ScreenMeasurement", 0x0030_FFF0, false);
                 let s = w.expr(a, Some((0, b)));
                 w.set(&[El::Local(sum)], s);
-                let a = w.literal("ScreenMeasurement", 0x0010_0020, false);
-                let b = w.literal("ScreenMeasurement", 0xFFF0_0030, false);
+                let a = w.literal("ScreenMeasurement", 0x0020_0010, false);
+                let b = w.literal("ScreenMeasurement", 0x0030_FFF0, false);
                 let m = w.expr(a, Some((2, b)));
                 w.set(&[El::Local(product)], m);
-                let a = w.literal("ScreenMeasurement", 0x7FFF_0000, false);
-                let b = w.literal("ScreenMeasurement", 0x0001_0000, false);
+                let a = w.literal("ScreenMeasurement", 0x0000_7FFF, false);
+                let b = w.literal("ScreenMeasurement", 0x0000_0001, false);
                 let h = w.expr(a, Some((0, b)));
                 w.set(&[El::Local(high)], h);
             },
@@ -963,6 +964,67 @@ fn a_file_colour_reads_red_from_its_low_byte() {
     assert_eq!(vm.global(g), Some(Value::Color(0x2214_14FF)));
     vm.tick(id, &mut Engine::default()).unwrap();
     assert_eq!(vm.local(id, "red"), Some(Value::Int(34)));
+}
+
+/// AS.560: a screen literal keeps x in its low half, so a custom menu
+/// button's size, `0x0320_1A40` as the file holds it, reads 420 across and
+/// 50 down through `.x` and `.y`, and sits in the VM's word x high.
+#[test]
+fn a_screen_literal_reads_x_from_its_low_half() {
+    let p = program(|w| {
+        let pos = w.variable("pos", "ScriptScreenInfo", Some("ScreenMeasurement"));
+        let (x, y) = (var(w, "x"), var(w, "y"));
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let size = w.literal("ScreenMeasurement", 0x0320_1A40, false);
+                w.set(&[El::Local(pos)], size);
+                for (name, at) in [("x", x), ("y", y)] {
+                    let v = w.rhs(
+                        FLOAT,
+                        &[El::Local(pos), El::Member("screenmeasurement", name)],
+                    );
+                    w.set(&[El::Local(at)], v);
+                }
+            },
+        );
+    });
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "Thing", 0);
+    vm.tick(id, &mut Engine::default()).unwrap();
+    assert_eq!(vm.local(id, "pos"), Some(Value::Screen(0x1A40_0320)));
+    assert_eq!(vm.local(id, "x"), Some(Value::Float(420.0)));
+    assert_eq!(vm.local(id, "y"), Some(Value::Float(50.0)));
+}
+
+/// AS.560: a file's own screen position (a `ScriptScreenInfo`'s `_value`,
+/// as `global.bld`'s half screen dimensions) reads with its halves swapped
+/// as a literal does: `0x0F00_1400` is 320 across and 240 down.
+#[test]
+fn a_file_screen_position_reads_x_from_its_low_half() {
+    let p = program(|w| {
+        let x = var(w, "x");
+        let f = w.b.object(0, "ScriptScreenInfo", 0x1C);
+        w.text(f, 0x08, "half screen");
+        w.word(f, 0x18, 0x0F00_1400);
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let v = w.rhs(FLOAT, &[El::Local(f), El::Member("screenmeasurement", "x")]);
+                w.set(&[El::Local(x)], v);
+            },
+        );
+    });
+    let g = p
+        .global_named("half screen")
+        .expect("a file screen position");
+    let mut vm = Vm::new(p, Config::new(Mode::Strict));
+    let id = vm.add(HANDLE, "Thing", 0);
+    assert_eq!(vm.global(g), Some(Value::Screen(0x1400_0F00)));
+    vm.tick(id, &mut Engine::default()).unwrap();
+    assert_eq!(vm.local(id, "x"), Some(Value::Float(320.0)));
 }
 
 /// AS.52: a `set reference` whose right side's edit type names a structure
@@ -1877,9 +1939,10 @@ fn a_host_copied_sets_colours_are_cells_a_reference_writes() {
         Some(Value::Color(lit.swap_bytes())),
         "written through the reference"
     );
+    // A file's screen word is its halves the other way round (AS.560).
     assert_eq!(
         vm.local(id, "spot"),
-        Some(Value::Screen(at)),
+        Some(Value::Screen(at.rotate_left(16))),
         "a screen position a cell too"
     );
     assert_eq!(
@@ -1887,7 +1950,7 @@ fn a_host_copied_sets_colours_are_cells_a_reference_writes() {
         [vec![
             grey,
             Value::Color(lit.swap_bytes()),
-            Value::Screen(at)
+            Value::Screen(at.rotate_left(16))
         ]],
         "the write-back hands the host the values, not the cells"
     );

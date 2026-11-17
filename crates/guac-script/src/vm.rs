@@ -5826,8 +5826,9 @@ impl Vm {
 
 /// A part of a packed value, the members that read and write one (aj-vm's
 /// member table and the EBOOT's accessors as read): a screen position is two
-/// 12.4 fixed-point halves, x the high one; a colour is RGBA, red the high
-/// byte and alpha the low one.
+/// 12.4 fixed-point halves, x the high one (a word off the disc swapped into
+/// this order as it's read, `program::file_screen`); a colour is RGBA, red
+/// the high byte and alpha the low one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Packed {
     ScreenX,

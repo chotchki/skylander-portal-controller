@@ -205,7 +205,9 @@ impl SpriteBits {
 pub struct SpriteInfo<'a> {
     pub placement: AbstractPlacement<'a>,
     pub flags: i32,
-    /// Screen position, 12.4 fixed point (aj-vm).
+    /// Screen position, 12.4 fixed point (aj-vm): x at offset 0, y at 2, the
+    /// other way round from a script's packed screen word (openspec AS.560:
+    /// `PS3PointerIcon` sits at (320, 240), the frame's centre, only so).
     pub position: [i16; 2],
     /// Storage for the visual type, blend mode, alignment and visibility
     /// bitfields.

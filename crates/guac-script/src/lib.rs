@@ -679,6 +679,23 @@
 //! routine, an aid, no measurement yet). A screen position's roll stops as
 //! unsupported until a script reaches one.
 //!
+//! A screen position the file holds (a literal, a `ScriptScreenInfo`
+//! global) keeps x in its LOW half and y in its high, the other way round
+//! from the VM's, so it reads with its halves swapped into the VM's order,
+//! x high (openspec AS.560). Inside the VM every screen word keeps x high:
+//! `screenmeasurement.x` and `.y`, the arithmetic, slides and every host
+//! member that takes or answers one agree on it, so a word a script builds
+//! by member, or one the host hands back, never swaps. The evidence is the
+//! disc's own: of the 20 size literals with both halves above 0 across the
+//! levels, the card streams and the characters' archives, 18 are wider than
+//! tall only with x low (message boxes, a menu button, the hand select's
+//! stone; the other 2 are a camera's ranges, not sizes), 5 positions fall
+//! inside the 640 by 480 frame only with x low and none only with x high,
+//! the objectives screen's tab heads step 100 apart from -100 only with x
+//! low, and the card board's camera holds the board's centre line only so.
+//! An interface record's template position is a different thing (two
+//! halfwords, x first) and isn't read through here.
+//!
 //! # Members
 //!
 //! An engine member is a path step imported by name (FNV-1a of the
@@ -712,7 +729,8 @@
 //! - a packed value's parts, wherever the value lives (a cell, a value cell
 //!   or a host member, read and written back whole):
 //!   `screenmeasurement.x` and `.y`, the high and low halves in sixteenths,
-//!   a write truncated to them; `colormeasurement.red`, `.green`, `.blue`
+//!   a write truncated to them (a word off the disc is already in this
+//!   order: Literals and rolls); `colormeasurement.red`, `.green`, `.blue`
 //!   and `.alpha`, the bytes from the high one down, a write clamped to
 //!   0-255.
 //!
