@@ -1212,12 +1212,7 @@ pub struct CardArtStage {
 /// Whether a recorded art part is current: every file intact, and every
 /// interface record named for this build's shape (AT.27's rule).
 fn card_art_current(dir: &IdentityDir, files: &[String]) -> Result<bool> {
-    let tag = format!(".v{}.", guac_ir::interface::RECORD);
-    let iface = format!("{}/interface/", crate::screens::CARD_ART_DIR);
-    Ok(files
-        .iter()
-        .filter(|f| f.starts_with(&iface))
-        .all(|f| f.contains(&tag))
+    Ok(crate::screens::card_art_records_current(files)
         && dir.part_holds(crate::screens::CARD_ART_PART, files)?)
 }
 

@@ -198,6 +198,19 @@ pub fn card_interface_path(ir: crate::intros::IrFormat, archive: &str) -> String
     )
 }
 
+/// Whether every interface record among `files` (the art part's) is named
+/// for this build's record (AT.27's rule): the manifest's currency check
+/// ([`crate::interface::record_current`]) and the part's own ask it, so an
+/// extract holding another shape's opens as a resume and reads the part again.
+pub fn card_art_records_current(files: &[String]) -> bool {
+    let tag = format!(".v{}.", guac_ir::interface::RECORD);
+    let dir = format!("{CARD_ART_DIR}/interface/");
+    files
+        .iter()
+        .filter(|f| f.starts_with(&dir))
+        .all(|f| f.contains(&tag))
+}
+
 /// Whether the interface part already holds `archive`'s record (a
 /// character archive or a menu's), so the art part leaves it there.
 pub fn card_interface_held(archive: &str) -> bool {

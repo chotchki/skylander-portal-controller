@@ -340,6 +340,14 @@ fn the_card_art_lands_by_the_extracts_own_readers_and_a_second_run_keeps_it() {
         (0, written)
     );
 
+    // A file of the part gone: the part isn't intact and reads again,
+    // writing that file back.
+    fs::remove_file(dir.path().join(&sound)).unwrap();
+    let mut gone = ScriptStage::default();
+    card_art_part(&mut dir, &usr, IrFormat::Ron, &mut gone).unwrap();
+    assert!(gone.card_art.read && !gone.card_art.kept);
+    assert!(dir.path().join(&sound).is_file());
+
     // An interface record of another shape isn't current, though every
     // file the part names is intact: the part reads again (AT.27's rule).
     let mut stale = dir.manifest().parts[CARD_ART_PART].clone();
@@ -348,7 +356,12 @@ fn the_card_art_lands_by_the_extracts_own_readers_and_a_second_run_keeps_it() {
     let bytes = fs::read(dir.path().join(&iface)).unwrap();
     dir.write_output(&old_shape, &bytes).unwrap();
     stale[at] = old_shape;
+    assert!(guac_extract::interface::record_current(dir.manifest()));
     dir.record_part(CARD_ART_PART, stale).unwrap();
+    // The extract doesn't open as current either, so the start runs the
+    // stage that reads it again (the review's TV run found it opening as
+    // current and the part never read).
+    assert!(!guac_extract::interface::record_current(dir.manifest()));
     let mut third = ScriptStage::default();
     card_art_part(&mut dir, &usr, IrFormat::Ron, &mut third).unwrap();
     assert!(third.card_art.read && !third.card_art.kept);

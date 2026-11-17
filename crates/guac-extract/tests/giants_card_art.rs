@@ -170,6 +170,10 @@ fn the_card_games_art_extracts_and_resumes_alone() {
         let asset = card_asset(n);
         let line = record.archives.iter().find(|l| l.archive == asset).unwrap();
         assert_eq!(line.sounds.len(), 1, "stone {n}: {:?}", line.sounds);
+        // The creature it presents (AS.530: `ChompyBot.mdl`'s label isn't
+        // UTF-8 in six of them and refused it whole until the label read
+        // let it be).
+        assert!(!line.models.is_empty(), "stone {n}: {:?}", line.refused);
         assert!(
             dir_path
                 .join(guac_extract::sounds::path(IR, &asset))
@@ -178,6 +182,8 @@ fn the_card_games_art_extracts_and_resumes_alone() {
     }
     let refused: usize = record.archives.iter().map(|l| l.refused.len()).sum();
     assert_eq!(refused, art.refused.len(), "the record names every refusal");
+    assert!(art.refused.is_empty(), "{:?}", art.refused);
+    assert_eq!(art.models, 244, "the 238 AS.365 read and AS.530's six");
 
     // An extract made before the part reads it alone at its next start.
     forget_part(&dir_path);
