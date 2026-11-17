@@ -1635,5 +1635,37 @@ mod tests {
             !art.iter().any(|(_, i)| i.image == recess),
             "no recess behind a check row"
         );
+        // The dares: the time's box, its recess and its time; the
+        // collections: a count's N/M with no box.
+        let pieces_now = |app: &mut App| -> Vec<Handle<Image>> {
+            let mut q = app.world_mut().query::<&ImageNode>();
+            q.iter(app.world()).map(|i| i.image.clone()).collect()
+        };
+        app.world_mut().resource_mut::<CompletionTab>().0 = 1;
+        app.world_mut().resource_mut::<TabCycle>().0 = None;
+        for _ in 0..3 {
+            app.update();
+        }
+        assert!(pieces_now(&mut app).contains(&recess), "the time's box");
+        app.world_mut().resource_mut::<CompletionTab>().0 = 2;
+        for _ in 0..3 {
+            app.update();
+        }
+        assert!(
+            !pieces_now(&mut app).contains(&recess),
+            "no box for a count"
+        );
+        assert_eq!(report(&app).tab, 2);
+        // The count's place: right-justified, its end at 455.
+        let counts = {
+            let mut q = app.world_mut().query::<&Node>();
+            q.iter(app.world())
+                .filter(|n| {
+                    n.justify_content == JustifyContent::FlexEnd
+                        && n.width == px(Places::COUNT_END * UNIT)
+                })
+                .count()
+        };
+        assert_eq!(counts, 1, "the count drawn at its place");
     }
 }
