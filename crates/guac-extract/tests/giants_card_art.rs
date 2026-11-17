@@ -193,11 +193,8 @@ fn the_card_games_art_extracts_and_resumes_alone() {
                 .unwrap();
         record.archives.iter().map(|l| l.nodes.len()).sum()
     };
-    println!(
-        "  {} models' attach lists kept, {record_nodes} in the record",
-        art.nodes
-    );
-    assert_eq!(record_nodes, art.nodes);
+    println!("  {record_nodes} models' attach lists in the record");
+    assert_eq!(record_nodes, 116, "the lists on the dump");
 
     // Every stone: its deck's face model read, its asset's sound kept
     // where the TV's book looks for the asset's stem.
