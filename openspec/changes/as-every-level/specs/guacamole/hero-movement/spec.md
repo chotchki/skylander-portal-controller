@@ -23,3 +23,10 @@ A hero coming in where the last stood who doesn't fit there SHALL be set at the 
 #### Scenario: A Giant swapped in where he fits a few metres on
 - **WHEN** Eruptor stands between the pots and barrels at chapter 1's far end, where Tree Rex fits nowhere within 10 ft, and Tree Rex is placed in his stead
 - **THEN** Tree Rex comes in 8 m along on the same ground and walks off with the stick on every heading
+
+### Requirement: What carries a hero carries him along the ground
+An actor its script drives by a velocity, with a hero hung on it or on what hangs on it, SHALL go along walkable ground it meets at that velocity, the hero riding it, and SHALL stop at anything steeper; an actor carrying no one SHALL stop at what it meets as before.
+
+#### Scenario: Warnado's spin with the stick held
+- **WHEN** Warnado spins on level 201's landing with the stick held along the plank
+- **THEN** he travels with his spin about 7.8 m over its 33 steps, drawn where his spin is on every step

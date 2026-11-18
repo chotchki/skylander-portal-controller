@@ -3838,26 +3838,31 @@ impl ScriptWorld {
             let motion = v * (dt * METRES_PER_FOOT);
             let rotation =
                 guac_motion::solid::euler([a.angles.tilt, a.angles.facing, a.angles.roll]);
-            let placed = Pose::new(a.position, rotation);
             let solid = a.havok().filter(|_| a.solid.interacts_with_level_mesh != 0);
             let mut at = a.position + motion;
             let mut contacts = Vec::new();
             if let Some(solid) = solid {
                 let shape = solid.grown(0.0);
-                let from = solid.pose(placed);
                 let mut own: Vec<BodyId> = engine.body(h).into_iter().collect();
                 if self.dropped.contains(&h) {
                     own.extend(&bodies);
                 }
-                if let Some(cast) = engine.seam().cast(&shape, from, motion, CAST_SLOP, &own) {
-                    at = a.position + motion * cast.fraction;
-                    for p in &cast.planes {
-                        let into = v.dot(p.normal);
-                        if into < 0.0 {
-                            v -= p.normal * into;
-                        }
-                    }
-                }
+                // Only what carries a hero slides on (AS.540): a block or a
+                // landed pickup left a sideways velocity would slide forever,
+                // where nothing in the flying move brakes it.
+                let slide = self.carries_hero(h, engine);
+                let (end, slid) = sweep_sliding(
+                    engine.seam(),
+                    &shape,
+                    |p| solid.pose(Pose::new(p, rotation)),
+                    a.position,
+                    motion,
+                    v,
+                    &own,
+                    slide,
+                );
+                at = end;
+                v = slid;
                 // What it touches where it ends up, at rest against it too.
                 let end = solid.pose(Pose::new(at, rotation));
                 for p in engine.seam().contacts(&shape, end, TOUCH, &own) {
@@ -3945,6 +3950,31 @@ impl ScriptWorld {
             at = owner;
         }
         false
+    }
+
+    /// Whether a hero hangs on actor `h`, on one of its nodes, or on what
+    /// hangs on it, up the chain (openspec AS.540: Warnado on his spin
+    /// dummy; Wrecking Ball in his shield ball, which hangs on his roller).
+    pub fn carries_hero(&self, h: Handle, engine: &dyn Engine) -> bool {
+        engine.heroes().into_iter().any(|hero| {
+            let mut at = hero;
+            for _ in 0..HUNG_DEPTH {
+                let Some(a) = self.actors.get(&at) else {
+                    return false;
+                };
+                let owner = match self.object(Some(a.attach)) {
+                    Some(Object::Node(owner, _)) => Some(owner),
+                    None if a.attach != Value::Null => self.actor_of(Some(a.attach)),
+                    _ => None,
+                };
+                match owner {
+                    Some(o) if o == h => return true,
+                    Some(o) if o != at => at = o,
+                    _ => return false,
+                }
+            }
+            false
+        })
     }
 
     /// Each actor hung from a node set at it, as the engine's frame leaves
@@ -4313,6 +4343,69 @@ fn steer_physics(p: &crate::script_engine::Physics) -> SteerPhysics {
 /// How near a solid counts as touching for its contacts: twice what a cast
 /// leaves between a shape and what stopped it.
 const TOUCH: f32 = 2.0 * CAST_SLOP;
+
+/// How many casts a launched actor's step takes along walkable ground
+/// before what's left of its motion is dropped.
+const SLIDE_PASSES: usize = 3;
+
+/// A launched actor's step through the level: `motion` swept from `start`,
+/// stopping at what it hits, the step's velocity `v` losing its part into
+/// each plane met. With `slide` (openspec AS.540: it carries a hero) what's
+/// left of the motion past a hit slides along ground it can stand on (a
+/// normal at least the walk's [`guac_motion::steer::LEAVE_NORMAL`] up) and
+/// stops at anything steeper: Warnado's spin dummy, given a speed along the
+/// plank and a gravity each step, hit the plank at the step's start and
+/// stood still with him hung on it. Returns where it ends and its velocity.
+/// The engine's mover sliding a launched actor along the ground is unread;
+/// stand-in ledger: `fly-slide`.
+#[allow(clippy::too_many_arguments)]
+fn sweep_sliding(
+    seam: &dyn PhysicsSeam,
+    shape: &Shape,
+    pose_at: impl Fn(Vec3) -> Pose,
+    start: Vec3,
+    motion: Vec3,
+    mut v: Vec3,
+    own: &[BodyId],
+    slide: bool,
+) -> (Vec3, Vec3) {
+    let mut at = start;
+    let mut left = motion;
+    for _ in 0..SLIDE_PASSES {
+        let Some(cast) = seam.cast(shape, pose_at(at), left, CAST_SLOP, own) else {
+            return (at + left, v);
+        };
+        at += left * cast.fraction;
+        let mut rest = left * (1.0 - cast.fraction);
+        let mut stopped = false;
+        let mut ground = None;
+        for p in &cast.planes {
+            let into = v.dot(p.normal);
+            if into < 0.0 {
+                v -= p.normal * into;
+            }
+            let into = rest.dot(p.normal);
+            if into < 0.0 {
+                if p.normal.y >= guac_motion::steer::LEAVE_NORMAL {
+                    rest -= p.normal * into;
+                    ground = Some(p.normal);
+                } else {
+                    stopped = true;
+                }
+            }
+        }
+        if !slide || stopped || rest.length() <= guac_motion::steer::STOP {
+            break;
+        }
+        // A cast stops touching what it met, where a cast along it from
+        // there meets it again at once: the slide starts a slop off it.
+        if let Some(n) = ground {
+            at += n * CAST_SLOP;
+        }
+        left = rest;
+    }
+    (at, v)
+}
 
 /// How far off the level under it an actor at rest stands for a script's
 /// gravity to drop it, metres (openspec AS.217): one resting there stands
@@ -7663,6 +7756,235 @@ mod fight_tests {
         for k in 0..3 {
             assert!(after[k].distance(before[k]) > 0.05, "{k}: {after:?}");
         }
+    }
+
+    /// openspec AS.540: a launched actor its script drives along the ground
+    /// carrying a hero (Warnado's spin dummy: a speed along his facing
+    /// written each step, a gravity of 128) goes along a floor of many
+    /// triangles at that speed, on it, a hero hung on what hangs on it
+    /// riding it, and
+    /// stops at a wall; the same actor carrying no one still stops at the
+    /// floor. Before, each step's sweep met the floor at its start and the
+    /// dummy stood still under him.
+    #[test]
+    fn a_launched_actor_driven_along_the_ground_slides_on_it_and_stops_at_a_wall() {
+        // A floor at y = 0 in 2 m squares from x = -10 to 30, a wall's face
+        // at x = 20.
+        let mut vertices = Vec::new();
+        let mut triangles = Vec::new();
+        for i in 0..=20 {
+            for k in 0..=10 {
+                vertices.push(Vec3::new(
+                    -10.0 + 2.0 * i as f32,
+                    0.0,
+                    -10.0 + 2.0 * k as f32,
+                ));
+            }
+        }
+        for i in 0..20u32 {
+            for k in 0..10u32 {
+                let a = i * 11 + k;
+                triangles.push([a, a + 1, a + 12]);
+                triangles.push([a, a + 12, a + 11]);
+            }
+        }
+        let materials = vec![0; triangles.len()];
+        let floor = Body {
+            id: BodyId(1),
+            kind: BodyKind::Static,
+            pose: Pose::at(Vec3::ZERO),
+            collider: Collider::Mesh(std::sync::Arc::new(
+                Mesh::new(vertices, triangles, materials).unwrap(),
+            )),
+        };
+        let wall = Body {
+            id: BodyId(2),
+            kind: BodyKind::Static,
+            pose: Pose::at(Vec3::new(21.0, 2.0, 0.0)),
+            collider: Collider::Convex(Shape::Box {
+                half_extents: Vec3::new(1.0, 2.0, 10.0),
+                margin: 0.0,
+            }),
+        };
+        let mut e = Pit {
+            world: ParryWorld::new(&[floor, wall]).unwrap(),
+            hero: Some(Hero::actor(eruptor_solid(), Vec3::ZERO, 0.0)),
+            bodies: HashMap::new(),
+        };
+        let mut w = world();
+        let mut dummy = Actor::blank();
+        dummy.launched = true;
+        dummy.physics.gravity_acceleration = 128.0;
+        dummy.physics.gravity_max_speed = 128.0;
+        dummy.solid = Solid {
+            width: 3.0,
+            length: 3.0,
+            height: 3.0,
+            interacts_with_level_mesh: 1,
+            interacts_with_actors: 1,
+            shape: 3,
+            ..Solid::default()
+        };
+        // The same dummy, 6 m aside, carrying no one: its sweep stops at
+        // the floor as every other launched actor's does.
+        let mut alone = dummy.clone();
+        alone.position = Vec3::new(0.0, 0.0, 6.0);
+        w.actors.insert(C1, dummy);
+        w.actors.insert(C3, alone);
+        // He hangs on a ball that hangs on it, as Wrecking Ball hangs in
+        // his shield ball on his roller.
+        let mut ball = Actor::blank();
+        ball.attach = Value::Entity(C1);
+        w.actors.insert(C2, ball);
+        let mut rider = Actor::blank();
+        rider.attach = Value::Entity(C2);
+        w.actors.insert(HERO, rider);
+        e.hero.as_mut().unwrap().hung = true;
+        let speed = 50.0;
+        let mut steps = 0;
+        let mut low = f32::MAX;
+        while steps < 120 {
+            for d in [C1, C3] {
+                w.actors.get_mut(&d).unwrap().velocity.x = speed;
+            }
+            w.advance(STEP, &mut e);
+            steps += 1;
+            let at = w.actor(C1).unwrap().position;
+            if steps > 10 {
+                low = low.min(at.y);
+            }
+            if steps == 30 {
+                // Half a second along open floor: its speed's ground, less
+                // what the first steps' drop onto the floor took.
+                let want = speed * FOOT * STEP * 30.0;
+                assert!(at.x >= 0.9 * want, "{at} after 30 steps, want {want}");
+                assert!(at.y.abs() < 0.1, "on the floor: {at}");
+                assert_eq!(
+                    e.hero.as_ref().unwrap().pivot,
+                    at,
+                    "the hero hung on it rides it"
+                );
+                let alone = w.actor(C3).unwrap().position;
+                assert!(
+                    alone.x < 0.5,
+                    "carrying no one, it stops at the floor: {alone}"
+                );
+            }
+        }
+        let at = w.actor(C1).unwrap().position;
+        assert!(low > -0.1, "never through the floor: {low}");
+        assert!(
+            at.x < 20.0 && at.x > 18.0,
+            "against the wall, not past it: {at}"
+        );
+    }
+
+    /// The as-hero-carry review (openspec AS.540): what carries a hero
+    /// climbs ground he could walk (a 30° ramp) and stops at a slope he
+    /// couldn't (60°), the walk's own bound: a slide along any face it met
+    /// would carry him up a cliff a walk holds him under.
+    #[test]
+    fn a_carrier_slides_up_a_walkable_ramp_and_stops_at_a_steep_one() {
+        for (deg, climbs) in [(30.0f32, true), (60.0, false)] {
+            let rise = deg.to_radians().tan() * 10.0;
+            // A floor from x = -10 to 10, then a ramp to x = 20.
+            let vertices = vec![
+                Vec3::new(-10.0, 0.0, -10.0),
+                Vec3::new(-10.0, 0.0, 10.0),
+                Vec3::new(10.0, 0.0, -10.0),
+                Vec3::new(10.0, 0.0, 10.0),
+                Vec3::new(20.0, rise, -10.0),
+                Vec3::new(20.0, rise, 10.0),
+            ];
+            let triangles = vec![[0, 1, 3], [0, 3, 2], [2, 3, 5], [2, 5, 4]];
+            let ground = Body {
+                id: BodyId(1),
+                kind: BodyKind::Static,
+                pose: Pose::at(Vec3::ZERO),
+                collider: Collider::Mesh(std::sync::Arc::new(
+                    Mesh::new(vertices, triangles, vec![0; 4]).unwrap(),
+                )),
+            };
+            let mut e = Pit {
+                world: ParryWorld::new(&[ground]).unwrap(),
+                hero: Some(Hero::actor(eruptor_solid(), Vec3::ZERO, 0.0)),
+                bodies: HashMap::new(),
+            };
+            let mut w = world();
+            let mut dummy = Actor::blank();
+            dummy.launched = true;
+            dummy.physics.gravity_acceleration = 128.0;
+            dummy.physics.gravity_max_speed = 128.0;
+            dummy.solid = Solid {
+                width: 3.0,
+                length: 3.0,
+                height: 3.0,
+                interacts_with_level_mesh: 1,
+                interacts_with_actors: 1,
+                shape: 3,
+                ..Solid::default()
+            };
+            w.actors.insert(C1, dummy);
+            let mut rider = Actor::blank();
+            rider.attach = Value::Entity(C1);
+            w.actors.insert(HERO, rider);
+            e.hero.as_mut().unwrap().hung = true;
+            let (mut far, mut high) = (f32::MIN, f32::MIN);
+            for _ in 0..60 {
+                w.actors.get_mut(&C1).unwrap().velocity.x = 50.0;
+                w.advance(STEP, &mut e);
+                let at = w.actor(C1).unwrap().position;
+                far = far.max(at.x);
+                high = high.max(at.y);
+            }
+            if climbs {
+                assert!(high > 0.5 * rise, "{deg}°: up {high} of {rise}");
+            } else {
+                assert!(far < 10.5 && high < 0.3, "{deg}°: to {far}, up {high}");
+            }
+        }
+    }
+
+    /// The as-hero-carry review: `carries_hero` follows each hero's own
+    /// hang in co-op. One hero hung on a dummy and one standing: the dummy
+    /// carries, a launched actor beside it doesn't; hang the second hero on
+    /// that one and both do.
+    #[test]
+    fn carries_hero_follows_each_heros_own_hang() {
+        const OTHER: Handle = 0x6100_0011;
+        struct Two(ParryWorld);
+        impl Engine for Two {
+            fn hero(&mut self, _: Handle) -> Option<&mut Hero> {
+                None
+            }
+            fn heroes(&self) -> Vec<Handle> {
+                vec![HERO, OTHER]
+            }
+            fn seam(&self) -> &dyn PhysicsSeam {
+                &self.0
+            }
+            fn view_heading(&self) -> f32 {
+                0.0
+            }
+            fn pad(&self, _: usize) -> Pad {
+                Pad::default()
+            }
+        }
+        let e = Two(ParryWorld::new(&[]).unwrap());
+        let mut w = world();
+        for c in [C1, C3] {
+            let mut a = Actor::blank();
+            a.launched = true;
+            w.actors.insert(c, a);
+        }
+        let mut hung = Actor::blank();
+        hung.attach = Value::Entity(C1);
+        w.actors.insert(HERO, hung);
+        w.actors.insert(OTHER, Actor::blank());
+        assert!(w.carries_hero(C1, &e));
+        assert!(!w.carries_hero(C3, &e), "the first's hang slides only his");
+        w.actors.get_mut(&OTHER).unwrap().attach = Value::Entity(C3);
+        assert!(w.carries_hero(C1, &e) && w.carries_hero(C3, &e));
     }
 
     /// AS.166: one of the people the TV draws, its solid meeting the level,
