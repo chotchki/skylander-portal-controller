@@ -5449,6 +5449,89 @@ fn a_beaten_hero_hops_and_his_stars_burst_where_he_fell() {
     println!("load after: {}", load());
 }
 
+/// Hot Head, the fire Giant (openspec AS.573: chotchki's late flash away).
+const HOT_HEAD: Character = Character {
+    archive: "character/104_oilblazer.bld",
+    load_file: "104_OilBlazer",
+    toy: 104,
+};
+
+/// Openspec AS.573: a beaten hero's body draws at his tint's alpha as his
+/// death slides it 255 to 0 (`guacamole::props::hero_drawn`, what the TV's
+/// `fade_hero` lays on him), a small hero and a Giant alike: from the first
+/// step under 255 every step drawn at the actor's alpha, never rising, at
+/// least 15 steps between 0 and 255, hidden from the step it's 0. Each
+/// step's drawn alpha is printed by step from the killing bite. Ends at his
+/// minion's going, or fails within 300 steps of no change past the bite.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn a_beaten_heros_body_fades_by_his_tints_alpha() {
+    println!("load before: {}", load());
+    for (who, character) in [("Eruptor", None), ("Hot Head", Some(HOT_HEAD))] {
+        let (mut run, _) = fight(Script {
+            hero_health: Some(20),
+            steps: 40,
+            character,
+            ..Script::default()
+        });
+        let minion = run.minion;
+        let mut fell: Option<i64> = None;
+        let mut by_step: Vec<(i64, u32, guacamole::props::HeroDrawn)> = Vec::new();
+        let mut last_change = 40i64;
+        let mut last = None;
+        for f in 40..2000i64 {
+            run.step().unwrap_or_else(|h| panic!("{who} F0 + {f}: {h}"));
+            if fell.is_none() && run.health().is_some_and(|h| h <= 0.0) {
+                fell = Some(f);
+            }
+            let Some(b) = fell else {
+                assert!(f < 1500, "{who}: never beaten");
+                continue;
+            };
+            let actor = run.world.actor(run.hero).map(|a| a.tint & 0xFF);
+            let drawn = guacamole::props::hero_drawn(false, true, run.world.actor(run.hero));
+            if last != Some((actor, drawn)) {
+                (last, last_change) = (Some((actor, drawn)), f);
+            }
+            if let Some(a) = actor {
+                by_step.push((f - b, a, drawn));
+            }
+            if minion.is_some_and(|m| run.vm.removed(m)) {
+                break;
+            }
+            assert!(f - last_change < 300, "{who}: stalled at +{}", f - b);
+        }
+        let first = by_step
+            .iter()
+            .position(|(_, a, _)| *a < 255)
+            .unwrap_or_else(|| panic!("{who}: his alpha never left 255"));
+        let zero = by_step
+            .iter()
+            .position(|(_, a, _)| *a == 0)
+            .unwrap_or_else(|| panic!("{who}: his alpha never reached 0"));
+        for (k, a, d) in &by_step[first.saturating_sub(1)..=(zero + 1).min(by_step.len() - 1)] {
+            println!("{who} +{k}: alpha {a}, drawn {} at {}", d.body, d.alpha);
+        }
+        let mut between = 0;
+        for w in by_step[first..=zero].windows(2) {
+            assert!(w[1].1 <= w[0].1, "{who}: rose at +{}", w[1].0);
+        }
+        for (k, a, d) in &by_step[first..=zero] {
+            assert_eq!(u32::from(d.alpha), *a, "{who} +{k}: drawn at the actor's");
+            assert_eq!(d.body, *a > 0, "{who} +{k}: drawn while over 0");
+            if *a > 0 {
+                between += 1;
+            }
+        }
+        println!(
+            "{who}: alpha under 255 at +{}, 0 at +{}, {between} steps drawn between",
+            by_step[first].0, by_step[zero].0
+        );
+        assert!(between >= 15, "{who}: {between} faded steps");
+    }
+    println!("load after: {}", load());
+}
+
 /// Anchor A (AH.7): Eruptor still at the foot of the ledge route facing
 /// `barrel_b_intact(1)`, metres and degrees.
 const ANCHOR_A: ([f32; 3], f32) = ([31.0884, 51.4631, -72.9834], 253.706);

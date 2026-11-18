@@ -624,6 +624,9 @@ struct OnStage {
     model: Arc<Model>,
     clips: Arc<HeroClips>,
     joints: Vec<Entity>,
+    /// His body's drawn segments: what his tint's alpha fades (openspec
+    /// AS.573, [`fade_hero`]).
+    segments: Vec<Entity>,
     attachments: SpawnedAttachments,
     /// Parts with scroll tracks, and their materials.
     scrolling: Vec<(Vec<Scroll>, Handle<CharacterMaterial>)>,
@@ -765,6 +768,8 @@ pub(crate) struct HeroReport {
     /// (openspec AS.444, [`guacamole::props::hero_drawn`]); what his
     /// scripts hang on him reads in `creatures.spawned`.
     pub drawn: Option<bool>,
+    /// The alpha his body draws at (openspec AS.573, [`fade_hero`]).
+    pub drawn_alpha: Option<u8>,
     pub fresh_parts: Vec<FreshPartReport>,
 }
 
@@ -1185,6 +1190,7 @@ impl Play {
             experience: inside.then(|| progress.map_or(0, |p| p.xp)),
             gold: inside.then(|| progress.map_or(0, |p| p.gold)),
             drawn: on_stage.map(|h| drawn(h.hero)),
+            drawn_alpha: None,
             fresh_parts: on_stage
                 .map(|h| {
                     h.model
@@ -1230,6 +1236,7 @@ pub(crate) struct PlayShots<'w, 's> {
     earning: Option<Res<'w, crate::progress::Earning>>,
     source: Option<Res<'w, ScriptSource>>,
     shown: Query<'w, 's, &'static Visibility>,
+    alphas: Query<'w, 's, &'static HeroAlpha>,
 }
 
 impl PlayShots<'_, '_> {
@@ -1264,6 +1271,13 @@ impl PlayShots<'_, '_> {
                 self.earning.as_deref(),
                 &self.shown,
             )
+            .map(|mut r| {
+                r.drawn_alpha = p
+                    .on_stage()
+                    .and_then(|h| self.alphas.get(h.hero).ok())
+                    .map(|a| a.0);
+                r
+            })
         })
     }
 }
@@ -1379,7 +1393,8 @@ impl Plugin for PlayPlugin {
                     .chain()
                     .in_set(PlaySystems)
                     .after(LevelSystems),
-            );
+            )
+            .add_systems(PostUpdate, fade_hero.in_set(crate::tints::TintSystems));
     }
 }
 
@@ -2386,6 +2401,7 @@ fn enter(
         model: drawn.model,
         clips,
         joints: drawn.joints,
+        segments: drawn.segments,
         attachments: drawn.attachments,
         scrolling: drawn.scrolling,
         lit,
@@ -2479,6 +2495,57 @@ fn show_hero(
     }
 }
 
+/// The alpha his body draws at, as [`fade_hero`] last laid it:
+/// `/api/_test/tv`'s `drawn_alpha` (openspec AS.573).
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct HeroAlpha(pub(crate) u8);
+
+/// His tint's alpha on his body (openspec AS.573,
+/// [`guacamole::props::hero_drawn`]): each segment on a copy of its
+/// material at a neutral tint carrying it, the opaque ones blending under
+/// 255 ([`crate::tints::tint_part`], the clones' and creatures' path), so
+/// his death's 0.35 s slide to 0 draws as a fade rather than a pop at its
+/// end. A blended part casts no shadow (`shadow::mark_casters`), so a
+/// fading hero's shadow goes at the fade's first step (ledger
+/// `hero-tint`). What hangs on him fades by its own tint, which his
+/// scripts write with his (the death to every attached actor, `Minion -
+/// Set Minion Tint` to his `tinting actors`). In `PostUpdate`, after the
+/// glow masks are made ([`crate::tints::TintSystems`]).
+pub(crate) fn fade_hero(
+    mut commands: Commands,
+    play: Res<Play>,
+    world: Option<Res<ScriptWorld>>,
+    runs: Query<&HeroRun>,
+    alphas: Query<&HeroAlpha>,
+    mut parts: Query<(
+        &mut MeshMaterial3d<CharacterMaterial>,
+        Option<&crate::tints::TintedPart>,
+    )>,
+    mut materials: ResMut<Assets<CharacterMaterial>>,
+) {
+    let Some(h) = play.on_stage() else {
+        return;
+    };
+    let run = runs.get(h.hero).ok();
+    let drawn = guacamole::props::hero_drawn(
+        run.is_some_and(|r| r.join.pending()),
+        run.is_some_and(|r| matches!(r.join, Join::Joined(_))),
+        world.as_deref().and_then(|w| w.actor(h.hero.to_bits())),
+    );
+    for &segment in &h.segments {
+        crate::tints::tint_part(
+            segment,
+            drawn.tint(),
+            &mut commands,
+            &mut parts,
+            &mut materials,
+        );
+    }
+    if alphas.get(h.hero).ok() != Some(&HeroAlpha(drawn.alpha)) {
+        commands.entity(h.hero).insert(HeroAlpha(drawn.alpha));
+    }
+}
+
 /// The cards' turntables draw nothing while the level covers the portal
 /// view, and draw again once it's left (AG.55: Eruptor's card and its glow,
 /// drawn behind the level, took 1.6 ms of every 7.8 ms frame of the render
@@ -2516,6 +2583,7 @@ struct DrawnHero {
     /// The model's root: what his scripts' scale (AG.27) sets.
     root: Entity,
     joints: Vec<Entity>,
+    segments: Vec<Entity>,
     attachments: SpawnedAttachments,
     scrolling: Vec<(Vec<Scroll>, Handle<CharacterMaterial>)>,
     lit: Vec<LitAlso>,
@@ -2604,6 +2672,7 @@ fn draw_hero(
         model,
         root: body.root,
         joints: body.joints,
+        segments: body.segments,
         attachments,
         scrolling,
         lit,
@@ -7840,6 +7909,82 @@ mod tests {
         app.update();
         assert_eq!(seen(&app, e), Some(Visibility::Inherited), "back");
         assert_eq!(seen(&app, part), Some(Visibility::Hidden));
+    }
+
+    /// AS.573: a joined hero's tint alpha between 0 and 255 draws his body
+    /// at it, every segment on a copy of its material carrying a neutral
+    /// tint at that alpha and blending (his death's fade), with
+    /// `/api/_test/tv`'s `drawn_alpha` reading it; back at 255 each copy
+    /// draws as its shared material does.
+    #[test]
+    fn a_joined_heros_body_fades_by_his_tints_alpha() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = joined_eruptor(tmp.path());
+        let e = app.world().resource::<Play>().hero().unwrap();
+        app.update();
+        assert_eq!(join(&app).as_deref(), Some("joined"));
+        let segments = app
+            .world()
+            .resource::<Play>()
+            .on_stage()
+            .unwrap()
+            .segments
+            .clone();
+        assert!(!segments.is_empty(), "his body's segments");
+        let drawn = |app: &App| -> Vec<(f32, guac_ir::model::Blend)> {
+            let materials = app.world().resource::<Assets<CharacterMaterial>>();
+            segments
+                .iter()
+                .map(|&s| {
+                    let h = &app
+                        .world()
+                        .entity(s)
+                        .get::<MeshMaterial3d<CharacterMaterial>>()
+                        .unwrap()
+                        .0;
+                    let m = materials.get(h).unwrap();
+                    (m.uniform.placement_tint.w, m.key.states.blend)
+                })
+                .collect()
+        };
+        let rgb = |app: &App| {
+            let materials = app.world().resource::<Assets<CharacterMaterial>>();
+            let h = &app
+                .world()
+                .entity(segments[0])
+                .get::<MeshMaterial3d<CharacterMaterial>>()
+                .unwrap()
+                .0;
+            materials.get(h).unwrap().uniform.placement_tint.truncate()
+        };
+        let whole = drawn(&app);
+        let whole_rgb = rgb(&app);
+        assert!(whole.iter().all(|(a, _)| (*a - 1.0).abs() < 1e-6), "{whole:?}");
+        let alpha = |app: &App| app.world().entity(e).get::<HeroAlpha>().copied();
+        assert_eq!(alpha(&app), Some(HeroAlpha(255)));
+        {
+            let mut w = app.world_mut().resource_mut::<ScriptWorld>();
+            assert!(w.set_tint(e.to_bits(), 0x2040_607F), "his actor");
+        }
+        app.update();
+        let fading = drawn(&app);
+        for (k, (a, blend)) in fading.iter().enumerate() {
+            assert!((a - 127.0 / 255.0).abs() < 1e-3, "segment {k}: {fading:?}");
+            assert_ne!(*blend, guac_ir::model::Blend::Opaque, "segment {k} blends");
+        }
+        assert_eq!(alpha(&app), Some(HeroAlpha(127)));
+        assert_eq!(rgb(&app), whole_rgb, "his tint's colour never laid on him");
+        {
+            let mut w = app.world_mut().resource_mut::<ScriptWorld>();
+            assert!(w.set_tint(e.to_bits(), 0x8080_80FF));
+        }
+        app.update();
+        let back = drawn(&app);
+        for (k, ((a, blend), (_, was))) in back.iter().zip(&whole).enumerate() {
+            assert!((a - 1.0).abs() < 1e-6, "segment {k}: {back:?}");
+            assert_eq!(blend, was, "segment {k}: its own states again");
+        }
+        assert_eq!(alpha(&app), Some(HeroAlpha(255)));
     }
 
     /// AG.100 and AH.224 on the TV: on the part with the entry beam, the
