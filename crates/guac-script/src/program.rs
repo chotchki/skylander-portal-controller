@@ -72,6 +72,12 @@ pub(crate) fn file_colour(word: u32) -> u32 {
     word.swap_bytes()
 }
 
+/// A screen position's word as the file stores it, x in its low half, in
+/// the VM's order, x high (crate docs, Literals and rolls; openspec AS.560).
+pub(crate) fn file_screen(word: u32) -> u32 {
+    word.rotate_left(16)
+}
+
 /// What an RHS literal's 32 bits are, by its `_type` class.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LiteralClass {
@@ -94,7 +100,7 @@ impl Literal {
             LiteralClass::Int => Value::Int(self.bits as i32),
             LiteralClass::Float => Value::Float(f32::from_bits(self.bits)),
             LiteralClass::Color => Value::Color(file_colour(self.bits)),
-            LiteralClass::Screen => Value::Screen(self.bits),
+            LiteralClass::Screen => Value::Screen(file_screen(self.bits)),
         }
     }
 }
@@ -1305,7 +1311,7 @@ impl<'l, 'u, 'a> Linker<'l, 'u, 'a> {
                     None => 0,
                 };
                 Global::Number(if ty == "ScriptScreenInfo" {
-                    Value::Screen(word)
+                    Value::Screen(file_screen(word))
                 } else {
                     Value::Color(file_colour(word))
                 })

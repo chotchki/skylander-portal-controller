@@ -1008,8 +1008,13 @@ mod tests {
                         let v = w.int(v);
                         w.set(&last(field), v);
                     }
-                    let three_of_five = w.literal("ScreenMeasurement", 0x0030_0050, false);
-                    w.set(&last(count), three_of_five);
+                    // Built by its parts, as the screen's `Define
+                    // Objective` builds it: the count in x, the total in y.
+                    for (part, v) in [("x", 3), ("y", 5)] {
+                        let [a, b, c, d] = last(count);
+                        let v = w.int(v);
+                        w.set(&[a, b, c, d, El::Member("screenmeasurement", part)], v);
+                    }
                     let star = [El::Local(current), El::Local(stars)];
                     w.inc(&[star[0], star[1], El::Member("setvariant", "count")]);
                     let one = w.int(1);

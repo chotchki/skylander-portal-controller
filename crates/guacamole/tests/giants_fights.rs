@@ -314,6 +314,8 @@ fn level_214s_carried_bomb_counts_down_over_him() {
         if !quads.is_empty() {
             lay_out_time.push(laid.elapsed().as_secs_f64() * 1e6);
         }
+        // Each count's glyphs as one run: its left, top, right and bottom.
+        let mut runs: BTreeMap<i32, [f32; 4]> = BTreeMap::new();
         for q in &quads {
             let d = drawn.entry(q.value as i32).or_insert((0, 0, 255));
             d.0 = d.0.max(1);
@@ -321,28 +323,39 @@ fn level_214s_carried_bomb_counts_down_over_him() {
             d.2 = d.2.min(q.colour[3]);
             assert_eq!(q.sprite, "Bomb_Counter");
             assert!(q.rect[2] > q.rect[0] && q.rect[3] > q.rect[1], "{q:?}");
-            // Over its timer on the screen: the follow's update keeps it
-            // there as it moves, a step behind at most, 20 units across.
+            let r = runs
+                .entry(q.value as i32)
+                .or_insert([f32::MAX, f32::MAX, f32::MIN, f32::MIN]);
+            *r = [
+                r[0].min(q.rect[0]),
+                r[1].min(q.rect[1]),
+                r[2].max(q.rect[2]),
+                r[3].max(q.rect[3]),
+            ];
+        }
+        // On its timer on the screen: the follow's update keeps it there as
+        // it moves, a step behind at most, centred across and 20 units (30 px)
+        // down, the file's 0x0140_0000 with x its low half (openspec AS.560).
+        for (&count, r) in &runs {
             let timer = run.world.clones().into_iter().find(|h| {
                 run.world.name(*h) == "Bomb_Timer"
                     && run
                         .world
                         .actor(*h)
-                        .is_some_and(|a| a.id == q.value as i32 && !a.removed)
+                        .is_some_and(|a| a.id == count && !a.removed)
             });
             if let Some(a) = timer.and_then(|h| run.world.actor(h))
                 && let Some((x, y)) = run.world.viewport().project(a.position)
             {
-                off = off.max((q.rect[0] - (x + 20.0)).abs());
-                let dy = q.rect[1] - y;
+                off = off.max(((r[0] + r[2]) / 2.0 - x).abs());
+                let dy = (r[1] + r[3]) / 2.0 - y;
                 dy_range = (dy_range.0.min(dy), dy_range.1.max(dy));
             }
         }
-        let by_count = quads.iter().fold(HashMap::new(), |mut m, q| {
+        for (count, glyphs) in quads.iter().fold(HashMap::new(), |mut m, q| {
             *m.entry(q.value as i32).or_insert(0usize) += 1;
             m
-        });
-        for (count, glyphs) in by_count {
+        }) {
             let digits = if count >= 10 { 2 } else { 1 };
             assert_eq!(glyphs, digits, "count {count} at step {}", run.steps);
         }
@@ -356,18 +369,20 @@ fn level_214s_carried_bomb_counts_down_over_him() {
     counts_drawn.sort_unstable();
     lay_out_time.sort_by(f64::total_cmp);
     println!(
-        "drawn {drawn:?}, at most {off:.1} px off its timer across, {dy_range:?} px over it; \
+        "drawn {drawn:?}, at most {off:.1} px off its timer across, {dy_range:?} px under it; \
          laid out in {:.0} us (median of {}, p99 {:.0})",
         lay_out_time[lay_out_time.len() / 2],
         lay_out_time.len(),
         lay_out_time[lay_out_time.len() * 99 / 100],
     );
-    // Across, 20 px right of its timer within a step's lag (13.8 measured);
-    // up, from just over it to the top of its 2 s rise (15.8 to 189.5).
+    // Across, its digits centred on its timer within a step's lag; down,
+    // from 30 px under it at its start to the top of its 2 s rise. With the
+    // offset's halves the other way round (2.0) it stood 30 px right and
+    // started level with it.
     assert!(off < 20.0, "{off}");
     assert!(
-        dy_range.0 > -200.0 && dy_range.1 < -10.0,
-        "{dy_range:?}: over its timer, risen no further than its slide"
+        dy_range.0 > -200.0 && dy_range.1 > 25.0 && dy_range.1 < 35.0,
+        "{dy_range:?}: under its timer at the start, risen no further than its slide"
     );
     assert_eq!(
         counts_drawn,

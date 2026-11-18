@@ -4932,6 +4932,37 @@ const GAME_STEPS: u32 = 20_000;
 /// three games, whose walk to the card house is most of its time.
 const SHORT_GAMES: u32 = 3;
 
+/// The count at and over which [`fangs_rolls_over_a_thousand_seeded_games`]
+/// holds the first roll's share to 5 points: the hub's twin's (about 1,500
+/// draws, the share's spread about 0.4 points).
+const FULL_GAMES: u32 = 300;
+
+/// The fewest landings `k` out of `draws` at `chance` each with more than
+/// `k` landing no likelier than `tail`: the binomial's upper tail.
+fn landings_bound(draws: u32, chance: f64, tail: f64) -> u32 {
+    let n = f64::from(draws);
+    let (mut term, mut below) = ((1.0 - chance).powf(n), 0.0);
+    for k in 0..=draws {
+        below += term;
+        if 1.0 - below <= tail {
+            return k;
+        }
+        let k = f64::from(k);
+        term *= (n - k) / (k + 1.0) * chance / (1.0 - chance);
+    }
+    draws
+}
+
+/// openspec AS.583: the short run's bound by its own arithmetic: 18 draws
+/// at 2 in 101 give over 3 landings once in about 2,700 runs, 16 at 1 in
+/// 100 over 2 once in about 2,000.
+#[test]
+fn a_short_runs_landings_bound_is_the_binomials_tail() {
+    assert_eq!(landings_bound(18, 2.0 / 101.0, 1e-3), 3);
+    assert_eq!(landings_bound(16, 0.01, 1e-3), 2);
+    assert_eq!(landings_bound(0, 0.5, 1e-3), 0);
+}
+
 /// The seeds of Fangs' three games: the quit's, the loss's, the win's.
 const FANGS_SEEDS: [u32; 3] = [1, 2, 4];
 
@@ -4944,8 +4975,15 @@ const FANGS_SEEDS: [u32; 3] = [1, 2, 4];
 /// [`SHORT_GAMES`] games on one walk to the house (seeded, so the same every
 /// run); the box's 1,000 only when `AS366_GAMES=1000` asks (about 90
 /// minutes a third: run as three processes by `AS366_FROM` and
-/// `AS366_GAMES`, their counts summed). His chances are 1 and 100, so 5
-/// points holds over any count.
+/// `AS366_GAMES`, their counts summed). A roll is `random 100`, 0 to 100
+/// with both ends, landing at or under the chance (guac-script's crate docs,
+/// Literals and rolls), so his 1 lands 2 draws in 101 (1.98%) and his 100
+/// every draw. Five points about 1.98% holds at [`FULL_GAMES`] games and
+/// over (about 5 draws a game); a shorter run's 15 to 20 draws can't carry
+/// a share at all (one landing reads 5.6 points), so it holds the count of
+/// landings under what its draws give once in a thousand runs at that
+/// chance ([`landings_bound`]: 3 of 18), which a roll broken toward always
+/// or often landing still fails (openspec AS.583).
 #[test]
 #[ignore = "reads the Giants dump; 3 games, 1,000 by AS366_GAMES"]
 fn fangs_rolls_over_a_thousand_seeded_games() {
@@ -5010,11 +5048,24 @@ fn fangs_rolls_over_a_thousand_seeded_games() {
     // A game that never reached the opponent's pick fails here, not on a
     // share of nothing.
     assert!(picks.attempts > 0 && picks.count() > 0, "{picks:?}");
-    assert!(
-        (picks.first() - 1.0).abs() <= 5.0,
-        "first {:.1}%",
-        picks.first()
-    );
+    // His call's first chance, 1, as the VM rolls it: 2 draws in 101.
+    let chance = 2.0 / 101.0;
+    if games - from >= FULL_GAMES {
+        assert!(
+            (picks.first() - 100.0 * chance).abs() <= 5.0,
+            "first {:.1}% against {:.2}%",
+            picks.first(),
+            100.0 * chance
+        );
+    } else {
+        let bound = landings_bound(picks.attempts, chance, 1e-3);
+        assert!(
+            picks.first_landed <= bound,
+            "first landed {} of {}, over the {bound} its draws give once in a thousand",
+            picks.first_landed,
+            picks.attempts
+        );
+    }
     assert!(
         (picks.second() - 100.0).abs() <= 5.0,
         "second {:.1}%",
