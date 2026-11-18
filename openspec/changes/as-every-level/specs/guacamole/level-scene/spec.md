@@ -656,6 +656,14 @@ A joined hero SHALL be drawn nowhere while his tint's alpha is 0 and at that alp
 - **WHEN** a beaten hero's death slides his tint's alpha to 0
 - **THEN** his body fades step by step with it and is gone once it reaches 0
 
+#### Scenario: A beaten hero's wash
+- **WHEN** his death writes his element's colour and its percent on him and what hangs on him
+- **THEN** each draws covered by that colour by that percent, step by step, and his glow goes while he fades
+
+#### Scenario: An idle Chompy
+- **WHEN** an idle Chompy's script turns it a few degrees and moves it from itself each step
+- **THEN** it runs round where it stands, its run's clip playing, and never stands still facing one way
+
 #### Scenario: Chop Chop's sword
 - **WHEN** Chop Chop swings
 - **THEN** one sword and one shield draw on every frame
