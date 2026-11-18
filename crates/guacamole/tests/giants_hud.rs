@@ -202,7 +202,8 @@ fn eruptors_join_builds_the_hud() {
     assert!(k.unknown().is_empty(), "unknown: {:?}", k.unknown());
     // The main box: a clone of `Generic_Container` hung on a clone of
     // `_Gameplay_Container`, 237 by 96, its bottom-left on its parent's
-    // bottom-left, 20 up (location 0x0000FEC0).
+    // bottom-left, 20 left: the file's 0x0000FEC0, x its low half (openspec
+    // AS.560), which AC.13's quads below bear out.
     let boxes: Vec<_> = instances
         .iter()
         .copied()
@@ -216,7 +217,7 @@ fn eruptors_join_builds_the_hud() {
                 && s.size[..2] == [237.0, 96.0]
                 && props::ALIGNMENT.get(s.properties) == 6
                 && props::ALIGN_TO_PARENT.get(s.properties) == 6
-                && s.location == [0, -320]
+                && s.location == [-320, 0]
         })
         .collect();
     assert_eq!(boxes.len(), 1, "the main box, once");
@@ -244,6 +245,14 @@ fn eruptors_join_builds_the_hud() {
         let (image, want) = AC13_QUADS[i];
         println!("  AC.13 quad {i:>2} {image:<26} {want:?}: nearest of its image {off:.2} px off");
     }
+    // openspec AS.560: with the disc's screen words read x low, 15 of the 51
+    // land within 1 px of AC.13's and none is over 123 px off; read x high
+    // (2.0), none lands and the worst is 306 px off.
+    let worst = offsets.iter().map(|(_, o)| *o).fold(0.0f32, f32::max);
+    assert!(
+        within >= 15 && worst < 124.0,
+        "{within} within 1 px, the worst {worst} px off"
+    );
     // The health bars (openspec AT.47): `UI - Tile Sprites` lays them out by
     // the sprite flags the bit-field macros read, so each cap is 12 px and
     // the tile 229.5 px across, as AC.13's are (2.0's VM read the flags 0
