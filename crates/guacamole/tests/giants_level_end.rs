@@ -401,10 +401,15 @@ fn level_214s_first_encounter_is_fought_with_eruptor() {
     run.join().unwrap_or_else(|h| panic!("{h}"));
     // Its intro skipped as a player would (AS.81).
     stops.extend(skip_214s_intro(&mut run));
-    let spawners: Vec<guac_script::Handle> = ["Enemy_Chompy_Spawner(1)", "Enemy_Chompy_Spawner(5)"]
-        .iter()
-        .map(|n| run.placed(n).0)
-        .collect();
+    // The scene's Root Runner too (openspec AS.450).
+    let spawners: Vec<guac_script::Handle> = [
+        "Enemy_Chompy_Spawner(1)",
+        "Enemy_Chompy_Spawner(5)",
+        "Enemy_Chompy_Spawner(3)",
+    ]
+    .iter()
+    .map(|n| run.placed(n).0)
+    .collect();
     // The spawners walk, and the later fights' own from the start too
     // (openspec AS.58, AS.75, AS.76, AS.84, AS.97, AS.98), none of them a
     // clone, and nothing else.
@@ -421,6 +426,7 @@ fn level_214s_first_encounter_is_fought_with_eruptor() {
     assert!(
         walking.iter().any(|n| n == "Enemy_Chompy_Spawner(1)")
             && walking.iter().any(|n| n == "Enemy_Chompy_Spawner(5)")
+            && walking.iter().any(|n| n == "Enemy_Chompy_Spawner(3)")
             && walking.iter().any(|n| n == "Enemy_TreeRex(4)"),
         "{walking:?}"
     );
@@ -443,8 +449,10 @@ fn level_214s_first_encounter_is_fought_with_eruptor() {
     run.put(Vec3::from_array(AMONG_THE_PODS), 90.0);
     let health_before = run.health().unwrap();
     let xp_before = run.figure_values().map_or(0, |v| v.xp);
-    // Each clone walked, by when it was first seen and when it went.
+    // Each clone walked, by when it was first seen and when it went, and
+    // the spawner it was first seen nearest.
     let mut chompies: BTreeMap<guac_script::Handle, (u32, Option<u32>)> = BTreeMap::new();
+    let mut from: BTreeMap<guac_script::Handle, usize> = BTreeMap::new();
     for k in 0..1200u32 {
         run.bench.pads[0] = Pad {
             stick: Stick::new(0.0, 0.0),
@@ -458,6 +466,16 @@ fn level_214s_first_encounter_is_fought_with_eruptor() {
             }
             let gone = run.world.actor(h).is_none_or(|a| a.removed)
                 || run.vm.placement_of(h).is_none_or(|i| run.vm.removed(i));
+            let near = |s: &guac_script::Handle| {
+                let (a, b) = (run.world.actor(h), run.world.actor(*s));
+                a.zip(b)
+                    .map_or(f32::MAX, |(a, b)| (a.position - b.position).length())
+            };
+            from.entry(h).or_insert_with(|| {
+                (0..spawners.len())
+                    .min_by(|i, j| near(&spawners[*i]).total_cmp(&near(&spawners[*j])))
+                    .unwrap()
+            });
             let e = chompies.entry(h).or_insert((run.steps, None));
             if gone && e.1.is_none() {
                 e.1 = Some(run.steps);
@@ -487,6 +505,9 @@ fn level_214s_first_encounter_is_fought_with_eruptor() {
         chompies.len() >= 3,
         "the spawners clone Chompies: {chompies:?}"
     );
+    let rooted = from.values().filter(|s| **s == 2).count();
+    println!("first seen by the Root Runner: {rooted}");
+    assert!(rooted >= 1, "the scene's Root Runner spawns: {from:?}");
     assert!(
         chompies
             .keys()
