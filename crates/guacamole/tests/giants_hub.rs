@@ -2020,6 +2020,25 @@ fn dreadbeards_games_with(
     }
 }
 
+/// openspec AS.560: the card board's cursor steps are file literals (`Get
+/// Desired Move`'s `move direction`, 0x0000_FFF0 as one arc of the stick's
+/// heading hands it over), x their low half, so the test player's square reads
+/// that one a column, not a row: read the other way round, its stick walks
+/// the wrong axis and a strong player sees three squares, not eight.
+#[test]
+fn a_cursor_step_off_the_disc_is_a_column() {
+    let step = guac_script::Literal {
+        class: guac_script::LiteralClass::Screen,
+        bits: 0x0000_FFF0,
+        random: false,
+    };
+    assert_eq!(cards::square(step.value()), Some((-1, 0)));
+    assert_eq!(
+        cards::square(Value::Screen(guacamole::viewport::pack_screen(2.0, 1.0))),
+        Some((2, 1))
+    );
+}
+
 /// The steps a played run may go without a game over before it's called
 /// stuck and ends (a game is about 3,900): a broken board fails its test
 /// in minutes rather than at the run's cap.

@@ -43,14 +43,17 @@ pub fn board(run: &Run) -> Option<String> {
     manager(run).and_then(|m| run.vm.behaviour(m).map(str::to_owned))
 }
 
-/// A packed screen position's two halves (12.4 fixed point), the board's
-/// squares' column and row.
+/// A board square, the column and row a packed screen position holds,
+/// read by the VM's own unpacker (x the high half): the cursor's steps are
+/// file literals, which read x off the low half on the way in (openspec
+/// AS.560), so a by-hand read the other way round walks the stick across
+/// the wrong axis.
 pub fn square(v: Value) -> Option<(i32, i32)> {
     match v {
-        Value::Screen(b) => Some((
-            i32::from((b & 0xffff) as u16 as i16) / 16,
-            i32::from((b >> 16) as u16 as i16) / 16,
-        )),
+        Value::Screen(b) => {
+            let (x, y) = guacamole::viewport::unpack_screen(b);
+            Some((x as i32, y as i32))
+        }
         _ => None,
     }
 }
