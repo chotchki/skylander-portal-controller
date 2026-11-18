@@ -211,6 +211,10 @@ struct Walked {
     lowest: Vec<(&'static str, f32)>,
     /// The hero's lowest height since the stretch began.
     low: Option<f32>,
+    /// Each fight gate's opening with its blocked-by-combat mark (openspec
+    /// AS.447): the gate, the step its spikes start down, its mark, and the
+    /// step the mark went.
+    marks: Vec<(String, u32, Handle, Option<u32>)>,
 }
 
 /// A kid's push: the block, each move's first step and where it came to
@@ -278,11 +282,49 @@ struct Walker {
     walked: Walked,
     watched: Vec<(&'static str, Handle)>,
     last: HashMap<Handle, State>,
+    /// The level's spike gates and whether each was lowering last step.
+    gates: Vec<(String, Handle, bool)>,
     card: Option<Card>,
     scene: Option<(String, u32)>,
 }
 
+/// The level's spike gates by name and handle, none lowering yet.
+fn spike_gates(run: &Run) -> Vec<(String, Handle, bool)> {
+    run.files
+        .placed
+        .iter()
+        .filter(|p| p.obj.unit == LEVEL && p.name.starts_with("Spike_Gate"))
+        .filter_map(|p| Some((p.name.clone(), *run.handles.get(&p.obj)?, false)))
+        .collect()
+}
+
 impl Walker {
+    /// Each gate whose spikes start down this step, with the mark its
+    /// `lock art` holds; each mark noted the step it goes (openspec AS.447).
+    fn watch_marks(&mut self) {
+        let steps = self.run.steps;
+        for k in 0..self.gates.len() {
+            let h = self.gates[k].1;
+            let id = self.run.vm.placement_of(h);
+            let lowering = id.and_then(|id| self.run.vm.behaviour(id)) == Some("lower spikes");
+            if lowering && !self.gates[k].2 {
+                let mark = id
+                    .and_then(|id| self.run.vm.local(id, "lock art"))
+                    .map(|v| self.run.vm.value(v));
+                if let Some(Value::Entity(m)) = mark {
+                    let name = self.gates[k].0.clone();
+                    self.walked.marks.push((name, steps, m, None));
+                }
+            }
+            self.gates[k].2 = lowering;
+        }
+        for mark in self.walked.marks.iter_mut().filter(|m| m.3.is_none()) {
+            if self.run.world.actor(mark.2).is_none_or(|a| a.removed) {
+                mark.3 = Some(steps);
+            }
+        }
+    }
+
     fn state(&self, name: &'static str, h: Handle) -> State {
         let run = &self.run;
         let behaviour = match run.vm.placement_of(h) {
@@ -331,6 +373,7 @@ impl Walker {
                 self.last.insert(h, now);
             }
         }
+        self.watch_marks();
         let steps = self.run.steps;
         let scene = cutscene_name(&self.run);
         let up = guacamole::announcements::enemy_card(&self.run.vm, &self.run.world);
@@ -622,8 +665,10 @@ impl Walker {
         };
         let (run, _) = run_on_level(Mode::Play, LEVEL_201, setup);
         let watched = WATCHED.iter().map(|n| (*n, run.placed(n).0)).collect();
+        let gates = spike_gates(&run);
         let mut w = Walker {
             run,
+            gates,
             walked: Walked::default(),
             watched,
             last: HashMap::new(),
@@ -733,6 +778,26 @@ fn level_201_is_walked_from_its_landing_to_the_hub() {
     assert!(w.stops.is_empty(), "{:#?}", w.stops);
     assert_eq!(w.level_change.as_deref(), Some("level_hub_2_stage_1"));
     println!("{} top-ups: {:?}", w.topups.len(), w.topups);
+}
+
+/// Openspec AS.447: each fight gate the way opens takes its blocked-by-combat
+/// mark off with it: the gate sets the mark's `kill` as its spikes start
+/// down, the mark fades over 0.3 s and goes, within 30 steps.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn each_fight_gate_takes_its_mark_off_as_it_opens() {
+    let w = walked();
+    for (gate, lowered, _, gone) in &w.marks {
+        println!("{gate}: spikes down from step {lowered}, its mark gone at {gone:?}");
+    }
+    let gates: std::collections::BTreeSet<&str> = w.marks.iter().map(|m| m.0.as_str()).collect();
+    assert!(gates.len() >= 4, "the way's fight gates: {gates:?}");
+    for (gate, lowered, _, gone) in &w.marks {
+        assert!(
+            gone.is_some_and(|g| g >= *lowered && g - lowered <= 30),
+            "{gate}: lowered at {lowered}, its mark gone at {gone:?}"
+        );
+    }
 }
 
 /// AU.53: each setup's controller, woken by its own trigger, runs its
@@ -962,8 +1027,10 @@ fn fresh_as(character: Option<Character>) -> Walker {
         ..Setup::default()
     };
     let (run, _) = run_on_level(Mode::Play, LEVEL_201, setup);
+    let gates = spike_gates(&run);
     let mut w = Walker {
         run,
+        gates,
         walked: Walked::default(),
         watched: Vec::new(),
         last: HashMap::new(),
