@@ -18,18 +18,24 @@
 //! original's 640 by 480 units; the rows from (20, 95), 32 apart, each its
 //! checkmark, its words at 40, a count ending at 455 or a time in its
 //! half-alpha recess box from 360; each earned star in its column's well).
-//! The tabs come up in turn, as its scripts run them, until the last or the
-//! player's first left or right ([`TabCycle`]). Not drawn: its animation (the
-//! rows sliding in, the checkmarks slammed in, the fireworks for three
-//! stars) and the dots between a line and its count, there being no
-//! recording of a completion screen. The focused tab's name joins the
+//! The tabs come up in turn, as its scripts run them: a tally the kid
+//! watches ([`TabCycle`], openspec AS.601), the pads doing nothing and the
+//! title and the continue prompt hidden until it's over, each tab after the
+//! first coming up with the menu's move sound and each objective the run
+//! completed with the checked sound 0.2 s after its row ([`TallySounds`]),
+//! three stars holding it the fireworks' 8 s more. Not drawn or heard: its
+//! animation (the rows sliding in, the checkmarks and stars slammed in, the
+//! screen's shake, the fireworks), each row's count sound and the
+//! fireworks' (the objectives screen's own sounds, which the extract's
+//! sounds part doesn't hold), and the dots between a line and its count,
+//! there being no recording of a completion screen. The focused tab's name joins the
 //! screen's title in the scripts' yellow and no title stands under a column
 //! (`UI - Objectives Menu - Item Focus`, openspec AS.585).
 //!
-//! Its pads as the original's menu takes them: left and right move between
-//! the tabs, the accept button (South) on any tab is the screen's continue,
-//! which the next step runs (the screen's own shutdown raising the
-//! sequencing on). An extract without the art (no interface part yet, or a
+//! Its pads as the original's menu takes them once the tally's over: left
+//! and right move between the tabs with the move sound, the accept button
+//! (South) on any tab is the screen's continue, which the next step runs
+//! (the screen's own shutdown raising the sequencing on). An extract without the art (no interface part yet, or a
 //! record or texture missing) shows the results in the TV's own style,
 //! saying so in `/api/_test/tv`'s `completion.art`.
 
@@ -186,13 +192,14 @@ impl Plugin for CompletionPlugin {
             .init_resource::<LevelEnding>()
             .init_resource::<CompletionTab>()
             .init_resource::<TabCycle>()
+            .init_resource::<TallySounds>()
             .init_resource::<CompletionReport>()
             .init_resource::<Loaded>()
             .add_message::<TvInput>()
             .add_observer(on_continue)
             .add_systems(
                 Update,
-                (open_completion, tab_moves, show_completion)
+                (open_completion, tab_moves, tally_sounds, show_completion)
                     .chain()
                     .after(PlaySystems),
             );
@@ -223,6 +230,7 @@ fn open_completion(
     mut ending: ResMut<LevelEnding>,
     mut tab: ResMut<CompletionTab>,
     mut cycle: ResMut<TabCycle>,
+    mut sounds: ResMut<TallySounds>,
     mut was_open: Local<bool>,
 ) {
     let holds = world.as_deref().is_some_and(|w| w.sequence.ending);
@@ -237,7 +245,12 @@ fn open_completion(
             .as_deref()
             .and_then(|w| w.sequence.completion.as_ref())
             .and_then(|c| c.results.as_ref().ok());
-        cycle.0 = Some(tab_time(results, 0));
+        *cycle = TabCycle {
+            left: Some(tab_time(results, 0)),
+            fireworks: false,
+        };
+        *sounds = TallySounds::default();
+        sounds.tab_shown(results, 0, false);
     }
     *was_open = sequenced;
     let now = sequenced && !pads.is_some_and(|p| p.held());
@@ -247,13 +260,83 @@ fn open_completion(
     }
 }
 
-/// The screen's own run through its tabs (`UI - Objectives Menu - Update`
-/// and `Set Show Next Tab Timer`, openspec AS.446): each tab shown, its rows
-/// coming in 0.15 s apart, then after the screen's one-second delay the
-/// next, until the last; the player's left or right ends it. Seconds of the
-/// screen's time left on the shown tab, none once it's over.
+/// The screen's own run through its tabs, its tally (`UI - Objectives Menu
+/// - Update` and `Set Show Next Tab Timer`, openspec AS.446, AS.601): each
+/// tab shown, its rows coming in 0.15 s apart, then after the screen's
+/// one-second delay the next, the last's too; then, with three stars, the
+/// fireworks' 8 s (`Start Fireworks`' timeout), and `End Animation Mode`
+/// hands the pads back. While it runs (`allow user control` 0) the pads do
+/// nothing and the title and the continue prompt are hidden (`Show`,
+/// `Prompt Display`).
 #[derive(Resource, Debug, Default, Clone, Copy, PartialEq)]
-pub(crate) struct TabCycle(pub(crate) Option<f32>);
+pub(crate) struct TabCycle {
+    /// Seconds of the screen's time left on what it shows: the tab, then
+    /// the fireworks; none once it's over.
+    pub(crate) left: Option<f32>,
+    /// Holding for the fireworks (three stars, the last tab's time out).
+    pub(crate) fireworks: bool,
+}
+
+impl TabCycle {
+    /// The tally runs: the pads do nothing and the title is hidden.
+    pub(crate) fn running(&self) -> bool {
+        self.left.is_some()
+    }
+}
+
+/// How long `Start Fireworks` holds the tally at three stars.
+pub(crate) const FIREWORKS_TIME: f32 = 8.0;
+
+/// The menu's move sound, `Menu - Change Selection`'s with `play sound
+/// effect` on: the tally's each tab after the first, a player's move once
+/// it's over (`Menu - Control Menus`).
+pub(crate) const MOVE_SOUND: &str = "snd_gbl_fx_navigate_movement_global";
+/// `Create Entry`'s for an objective the run completed, 0.2 s after its
+/// row comes in, with its checkmark's slam.
+pub(crate) const CHECKED_SOUND: &str = "snd_gbl_ui_object_checked";
+/// `Create Entry`'s for every row as it comes in: the objectives screen's
+/// own, which the extract's sounds part doesn't hold (asked all the same,
+/// so `/api/_test/tv` says it played nothing).
+pub(crate) const COUNT_SOUND: &str = "fx_objectives_count";
+/// The checked sound's delay after its row's.
+pub(crate) const CHECKED_DELAY: f32 = 0.2;
+
+/// The tally's sounds (openspec AS.601): those owed, each at its second of
+/// the shown tab's time, and every one asked so far, with what came of it.
+#[derive(Resource, Debug, Default, Clone, PartialEq)]
+pub(crate) struct TallySounds {
+    /// Seconds since the shown tab came up.
+    pub(crate) clock: f32,
+    pub(crate) owed: Vec<(f32, &'static str)>,
+    /// Each asked: its name, and why it played nothing if it didn't.
+    pub(crate) asked: Vec<(&'static str, Option<String>)>,
+}
+
+impl TallySounds {
+    /// Tab `tab` shown by the tally: the move sound now (`moved`: any tab
+    /// after the first), and each of its rows' sounds owed at its row's
+    /// time, row k's at (k + 1) * 0.15 s, the checked one 0.2 s after a
+    /// row the run completed (`Create Entry`, the first time a tab's shown).
+    pub(crate) fn tab_shown(&mut self, results: Option<&LevelResults>, tab: usize, moved: bool) {
+        self.clock = 0.0;
+        self.owed.clear();
+        if moved {
+            self.owed.push((0.0, MOVE_SOUND));
+        }
+        let rows = results.into_iter().flat_map(|r| {
+            r.objectives
+                .iter()
+                .filter(move |o| o.category as usize == tab)
+        });
+        for (k, o) in rows.enumerate() {
+            let at = (k + 1) as f32 * ROW_DELAY;
+            self.owed.push((at, COUNT_SOUND));
+            if o.status == Status::NewlyDone {
+                self.owed.push((at + CHECKED_DELAY, CHECKED_SOUND));
+            }
+        }
+    }
+}
 
 /// The screen's delay after a tab's last row before the next tab.
 pub(crate) const NEXT_TAB_DELAY: f32 = 1.0;
@@ -272,8 +355,9 @@ pub(crate) fn tab_time(results: Option<&LevelResults>, tab: usize) -> f32 {
     rows as f32 * ROW_DELAY + NEXT_TAB_DELAY
 }
 
-/// Left and right move between the tabs, ending the screen's own run
-/// through them; while it runs, its time moves it on.
+/// While the tally runs, its time moves it on and the pads do nothing;
+/// once it's over, left and right move between the tabs with the move
+/// sound.
 fn tab_moves(
     mut inputs: MessageReader<TvInput>,
     open: Res<CompletionOpen>,
@@ -281,9 +365,34 @@ fn tab_moves(
     time: Res<Time<Real>>,
     mut tab: ResMut<CompletionTab>,
     mut cycle: ResMut<TabCycle>,
+    mut sounds: ResMut<TallySounds>,
 ) {
     let read: Vec<TvInput> = inputs.read().copied().collect();
     if !open.0 {
+        return;
+    }
+    let results = world
+        .as_deref()
+        .and_then(|w| w.sequence.completion.as_ref())
+        .and_then(|c| c.results.as_ref().ok());
+    if let Some(left) = cycle.left {
+        let left = left - time.delta_secs();
+        if left > 0.0 {
+            cycle.left = Some(left);
+        } else if tab.0 + 1 < TABS.len() {
+            tab.0 += 1;
+            cycle.left = Some(tab_time(results, tab.0));
+            sounds.tab_shown(results, tab.0, true);
+        } else if !cycle.fireworks && results.is_some_and(|r| r.stars.iter().all(|s| *s)) {
+            info!("three stars: the fireworks hold the tally");
+            *cycle = TabCycle {
+                left: Some(FIREWORKS_TIME),
+                fireworks: true,
+            };
+        } else {
+            info!("the tally's over: the pads handed back");
+            *cycle = TabCycle::default();
+        }
         return;
     }
     for input in read {
@@ -292,25 +401,40 @@ fn tab_moves(
             TvInput::Move(CompassOctant::East) => (tab.0 + 1).min(TABS.len() - 1),
             _ => continue,
         };
-        cycle.0 = None;
         if next != tab.0 {
             tab.0 = next;
+            let now = sounds.clock;
+            sounds.owed.push((now, MOVE_SOUND));
         }
     }
-    if let Some(left) = cycle.0 {
-        let left = left - time.delta_secs();
-        if left > 0.0 {
-            cycle.0 = Some(left);
-        } else if tab.0 + 1 < TABS.len() {
-            tab.0 += 1;
-            let results = world
-                .as_deref()
-                .and_then(|w| w.sequence.completion.as_ref())
-                .and_then(|c| c.results.as_ref().ok());
-            cycle.0 = (tab.0 + 1 < TABS.len()).then(|| tab_time(results, tab.0));
-        } else {
-            cycle.0 = None;
+}
+
+/// The tally's sounds as they fall due, through the sound book on the
+/// screen ([`ScriptWorld::play_screen_sound`]); each asked is logged, with
+/// why one played nothing.
+fn tally_sounds(
+    open: Res<CompletionOpen>,
+    time: Res<Time<Real>>,
+    world: Option<ResMut<ScriptWorld>>,
+    mut sounds: ResMut<TallySounds>,
+) {
+    if !open.0 {
+        return;
+    }
+    sounds.clock += time.delta_secs();
+    let now = sounds.clock;
+    let (due, owed): (Vec<_>, Vec<_>) = sounds.owed.drain(..).partition(|(at, _)| *at <= now);
+    sounds.owed = owed;
+    let Some(mut world) = world else {
+        return;
+    };
+    for (_, name) in due {
+        let why = world.play_screen_sound(name).err();
+        match &why {
+            None => info!(sound = name, "the completion screen's sound"),
+            Some(why) => info!(sound = name, %why, "the completion screen's sound plays nothing"),
         }
+        sounds.asked.push((name, why));
     }
 }
 
@@ -319,12 +443,20 @@ fn on_continue(
     activate: On<Activate>,
     ids: Query<&FocusId>,
     open: Res<CompletionOpen>,
+    cycle: Res<TabCycle>,
     world: Option<ResMut<ScriptWorld>>,
 ) {
     let Ok(id) = ids.get(activate.entity) else {
         return;
     };
     if !open.0 || !TABS.contains(&id.0) {
+        return;
+    }
+    if cycle.running() {
+        info!(
+            tab = id.0,
+            "the completion screen's continue: the tally runs, nothing done"
+        );
         return;
     }
     if let Some(c) = world.and_then(|w| w.into_inner().sequence.completion.as_mut()) {
@@ -338,8 +470,12 @@ fn on_continue(
 #[allow(clippy::too_many_arguments)]
 fn show_completion(
     mut commands: Commands,
-    open: Res<CompletionOpen>,
-    tab: Res<CompletionTab>,
+    (open, tab, cycle, sounds): (
+        Res<CompletionOpen>,
+        Res<CompletionTab>,
+        Res<TabCycle>,
+        Res<TallySounds>,
+    ),
     world: Option<Res<ScriptWorld>>,
     source: Option<Res<ScriptSource>>,
     (assets, theme, time): (Option<Res<TvAssets>>, Option<Res<TvTheme>>, Res<Time<Real>>),
@@ -347,10 +483,10 @@ fn show_completion(
     (pads, gamepads): (Res<LevelPads>, Query<(&Gamepad, Option<&FacesPrinted>)>),
     mut loaded: ResMut<Loaded>,
     mut report: ResMut<CompletionReport>,
-    mut shown: Local<Option<(usize, Entity)>>,
+    mut shown: Local<Option<((usize, bool), Entity)>>,
 ) {
     let completion = world.as_deref().and_then(|w| w.sequence.completion.clone());
-    let want = open.0.then_some(tab.0);
+    let want = open.0.then_some((tab.0, cycle.running()));
     if shown.map(|(t, _)| t) != want {
         if let Some((_, entity)) = shown.take()
             && let Ok(mut root) = commands.get_entity(entity)
@@ -361,7 +497,7 @@ fn show_completion(
             loaded.0 = None;
         }
     }
-    if let (Some(t), None) = (want, *shown) {
+    if let (Some((t, tallying)), None) = (want, *shown) {
         if loaded.0.is_none() {
             let formats = device.as_deref().map_or(CompressedImageFormats::BC, |d| {
                 CompressedImageFormats::from_features(d.features())
@@ -383,9 +519,16 @@ fn show_completion(
                 .and_then(|e| gamepads.get(e).ok())
                 .map_or(Labels::Position, |(pad, printed)| labels(pad, printed));
             let art = loaded.0.as_ref().and_then(|a| a.as_ref().ok());
-            let root = spawn(&mut commands, &pen, art, c.results.as_ref().ok(), t, label);
+            let root = spawn(
+                &mut commands,
+                &pen,
+                art,
+                c.results.as_ref().ok(),
+                (t, tallying),
+                label,
+            );
             commands.entity(root).insert(ShownAt(time.elapsed()));
-            *shown = Some((t, root));
+            *shown = Some(((t, tallying), root));
         }
     }
     let next = CompletionReport::of(
@@ -394,7 +537,8 @@ fn show_completion(
         completion.as_ref(),
         loaded.0.as_ref(),
         shown.map(|_| time.elapsed().as_secs_f64() * 1e3),
-    );
+    )
+    .with_tally(&cycle, &sounds);
     if *report != next {
         *report = CompletionReport {
             shown_ms: report.shown_ms.filter(|_| next.shown).or(next.shown_ms),
@@ -516,10 +660,17 @@ pub(crate) fn spawn(
     pen: &Pen,
     art: Option<&Art>,
     results: Option<&LevelResults>,
-    tab: usize,
+    (tab, tallying): (usize, bool),
     labels: Labels,
 ) -> Entity {
     let theme = &pen.theme;
+    // The title and the continue prompt hidden while the tally runs
+    // (`UI - Objectives Menu - Show`, `Prompt Display`), their room kept.
+    let shows = if tallying {
+        Visibility::Hidden
+    } else {
+        Visibility::Inherited
+    };
     let empty = LevelResults::default();
     let r = results.unwrap_or(&empty);
     let gold = theme.gold_bright;
@@ -555,6 +706,7 @@ pub(crate) fn spawn(
                     column_gap: px(16),
                     ..default()
                 },
+                shows,
             ))
             .with_children(|line| {
                 words(line, art, pen, &title, 52.0, gold, Step::Lg, Role::Accent);
@@ -575,12 +727,16 @@ pub(crate) fn spawn(
             if art.is_none() {
                 stars(root, pen, &r.stars);
             }
-            root.spawn(Node {
-                flex_direction: FlexDirection::Row,
-                align_items: AlignItems::Center,
-                column_gap: px(16),
-                ..default()
-            })
+            root.spawn((
+                ContinuePrompt,
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: px(16),
+                    ..default()
+                },
+                shows,
+            ))
             .with_children(|line| {
                 // The disc's prompt draws its own button (the font's glyph
                 // for `<`); the TV's own names the button by the pad's
@@ -611,6 +767,10 @@ pub(crate) fn spawn(
 /// The screen's title line (openspec AS.585).
 #[derive(Component)]
 pub(crate) struct ScreenTitle;
+
+/// The continue prompt's line (openspec AS.601: hidden while the tally runs).
+#[derive(Component)]
+pub(crate) struct ContinuePrompt;
 
 /// The focused tab's name in the title line (openspec AS.585).
 #[derive(Component)]
@@ -1125,6 +1285,13 @@ pub struct CompletionReport {
     pub continued: bool,
     /// When it was drawn, on the frame log's clock.
     pub shown_ms: Option<f64>,
+    /// The tally runs (openspec AS.601): the pads do nothing, the title and
+    /// the prompt hidden; `fireworks` while three stars hold it.
+    pub tallying: bool,
+    pub fireworks: bool,
+    /// Each of the tally's sounds asked, in order: its name, `: <why>`
+    /// after one that played nothing.
+    pub sounds: Vec<String>,
 }
 
 impl CompletionReport {
@@ -1187,7 +1354,26 @@ impl CompletionReport {
             continue_asked: c.continue_asked,
             continued: c.continued,
             shown_ms: shown_ms.filter(|_| open),
+            ..Self::default()
         }
+    }
+
+    /// The tally's part (openspec AS.601), for a report of a screen.
+    fn with_tally(mut self, cycle: &TabCycle, sounds: &TallySounds) -> Self {
+        if self.results.is_empty() {
+            return self;
+        }
+        self.tallying = cycle.running();
+        self.fireworks = cycle.fireworks;
+        self.sounds = sounds
+            .asked
+            .iter()
+            .map(|(name, why)| match why {
+                None => (*name).to_owned(),
+                Some(why) => format!("{name}: {why}"),
+            })
+            .collect();
+        self
     }
 }
 
@@ -1297,6 +1483,24 @@ mod tests {
         app.world().resource::<CompletionReport>().clone()
     }
 
+    /// Frames until the tally's over (openspec AS.601), within 200.
+    fn past_the_tally(app: &mut App) -> usize {
+        (1..=200)
+            .find(|_| {
+                app.update();
+                !app.world().resource::<TabCycle>().running()
+            })
+            .expect("the tally's over")
+    }
+
+    /// Whether the one entity `F` matches is drawn (not hidden).
+    fn visible<F: bevy::ecs::query::QueryFilter>(app: &mut App) -> bool {
+        let mut q = app.world_mut().query_filtered::<&Visibility, F>();
+        let v: Vec<Visibility> = q.iter(app.world()).copied().collect();
+        assert_eq!(v.len(), 1, "one of it");
+        v[0] != Visibility::Hidden
+    }
+
     /// AU.5: the screen comes up over the held level with the run's
     /// results (its title, the three tabs, each objective's line as drawn,
     /// the stars), the first tab focused behind the router; a move right
@@ -1343,7 +1547,11 @@ mod tests {
             !texts.iter().any(|t| t == "Under 4:20" || t == "Hats"),
             "{texts:?}"
         );
-        presses.push(TestPress::Right);
+        // The tally run to its end (AS.601) leaves the last tab up; a move
+        // left from there shows the second.
+        past_the_tally(&mut app);
+        assert_eq!(report(&app).tab, 2);
+        presses.push(TestPress::Left);
         for _ in 0..3 {
             app.update();
         }
@@ -1444,7 +1652,9 @@ mod tests {
         );
         let all = drawn_texts(&mut app);
         assert!(!all.iter().any(|t| t == "Two" || t == "Three"), "{all:?}");
-        presses.push(TestPress::Right);
+        past_the_tally(&mut app);
+        assert_eq!(texts_under::<With<TabTitle>>(&mut app), ["Three"]);
+        presses.push(TestPress::Left);
         for _ in 0..3 {
             app.update();
         }
@@ -1583,13 +1793,11 @@ mod tests {
         );
     }
 
-    /// AS.446: the screen runs through its tabs by itself, as its scripts
-    /// do: each tab's rows 0.15 s apart and then its one-second delay
-    /// (100 ms a frame here: the first tab's one row 1.15 s, the second's
-    /// the same), on to the last and no further; a left or right ends it
-    /// where the player put it.
+    /// AS.446, AS.601: the tally brings the tabs up in turn, each held for
+    /// its rows (0.15 s each) and the screen's second, the last's too, and
+    /// a press meanwhile does nothing; once it's over the last tab stays.
     #[test]
-    fn the_tabs_come_up_in_turn_until_the_last_or_a_press() {
+    fn the_tally_brings_the_tabs_up_in_turn_and_a_press_does_nothing() {
         let (mut app, _) = screen_app();
         let frames_to = |app: &mut App, want: usize| {
             (0..40).find(|_| {
@@ -1601,22 +1809,123 @@ mod tests {
         assert!((10..=14).contains(&first), "{first} frames");
         let second = frames_to(&mut app, 2).expect("the third tab by itself");
         assert!((10..=14).contains(&second), "{second} frames");
+        assert!(report(&app).tallying, "the last tab's time held");
+        let over = past_the_tally(&mut app);
+        assert!((10..=14).contains(&over), "{over} frames on the last");
         for _ in 0..30 {
             app.update();
         }
         assert_eq!(report(&app).tab, 2, "the last stays");
-        assert_eq!(app.world().resource::<TabCycle>().0, None);
+        assert!(!report(&app).tallying);
 
         let (mut app, presses) = screen_app();
         for _ in 0..3 {
             app.update();
         }
         presses.push(TestPress::Right);
-        for _ in 0..40 {
+        for _ in 0..3 {
             app.update();
         }
-        assert_eq!(report(&app).tab, 1, "the press ends the run through them");
-        assert_eq!(app.world().resource::<TabCycle>().0, None);
+        assert_eq!(report(&app).tab, 0, "the press did nothing");
+        assert!(report(&app).tallying);
+        let first = frames_to(&mut app, 1).expect("the second tab by itself");
+        assert!(
+            (4..=8).contains(&first),
+            "{first} more frames: the tally went on"
+        );
+    }
+
+    /// openspec AS.601: while the tally runs (`allow user control` 0) the
+    /// title and the continue prompt are hidden and the accept does
+    /// nothing; its sounds asked as `Create Entry` and `Update` ask them
+    /// (each row's count sound, the checked sound for an objective done
+    /// this run, the move sound for each tab after the first); once it's
+    /// over the title and prompt show, a move plays the move sound and the
+    /// accept continues. Three stars hold it the fireworks' 8 s more.
+    #[test]
+    fn the_tally_locks_the_pads_hides_the_title_and_asks_its_sounds() {
+        let (mut app, presses) = screen_app();
+        for _ in 0..3 {
+            app.update();
+        }
+        assert!(report(&app).tallying);
+        assert!(!visible::<With<ScreenTitle>>(&mut app), "the title hidden");
+        assert!(
+            !visible::<With<ContinuePrompt>>(&mut app),
+            "the prompt hidden"
+        );
+        presses.push(TestPress::South);
+        for _ in 0..3 {
+            app.update();
+        }
+        let world = app.world().resource::<ScriptWorld>();
+        let asked = world.sequence.completion.as_ref().unwrap().continue_asked;
+        assert!(!asked, "the accept continued mid-tally");
+        past_the_tally(&mut app);
+        let names: Vec<String> = report(&app)
+            .sounds
+            .iter()
+            .map(|s| s.split(':').next().unwrap().to_owned())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                COUNT_SOUND,
+                CHECKED_SOUND,
+                MOVE_SOUND,
+                COUNT_SOUND,
+                MOVE_SOUND,
+                COUNT_SOUND
+            ],
+            "the tally's sounds in turn"
+        );
+        assert!(
+            report(&app).sounds[0].ends_with(": no sounds part"),
+            "{:?}",
+            report(&app).sounds
+        );
+        for _ in 0..2 {
+            app.update();
+        }
+        assert!(visible::<With<ScreenTitle>>(&mut app), "the title back");
+        assert!(visible::<With<ContinuePrompt>>(&mut app), "the prompt back");
+        presses.push(TestPress::Left);
+        for _ in 0..3 {
+            app.update();
+        }
+        let r = report(&app);
+        assert_eq!((r.tab, r.sounds.len()), (1, 7));
+        assert!(r.sounds[6].starts_with(MOVE_SOUND), "{:?}", r.sounds);
+        presses.push(TestPress::South);
+        for _ in 0..3 {
+            app.update();
+        }
+        let world = app.world().resource::<ScriptWorld>();
+        assert!(world.sequence.completion.as_ref().unwrap().continue_asked);
+
+        // Three stars: the last tab's time out, the fireworks hold 8 s.
+        let (mut app, _) = screen_app();
+        app.world_mut()
+            .resource_mut::<ScriptWorld>()
+            .sequence
+            .completion
+            .as_mut()
+            .unwrap()
+            .results
+            .as_mut()
+            .unwrap()
+            .stars = vec![true; 3];
+        let to_fireworks = (0..60)
+            .find(|_| {
+                app.update();
+                report(&app).fireworks
+            })
+            .expect("the fireworks");
+        assert!((32..=40).contains(&to_fireworks), "{to_fireworks} frames");
+        assert!(report(&app).tallying, "held for them");
+        let held = past_the_tally(&mut app);
+        assert!((78..=82).contains(&held), "{held} frames of fireworks");
+        assert!(!report(&app).fireworks);
     }
 
     /// AS.446: the panel's pieces where the screen's scripts put them:
@@ -1711,7 +2020,7 @@ mod tests {
             q.iter(app.world()).map(|i| i.image.clone()).collect()
         };
         app.world_mut().resource_mut::<CompletionTab>().0 = 1;
-        app.world_mut().resource_mut::<TabCycle>().0 = None;
+        *app.world_mut().resource_mut::<TabCycle>() = TabCycle::default();
         for _ in 0..3 {
             app.update();
         }

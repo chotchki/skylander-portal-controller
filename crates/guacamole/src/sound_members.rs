@@ -301,6 +301,37 @@ impl ScriptWorld {
         }
     }
 
+    /// A sound the TV's own screen plays by its name in the book (openspec
+    /// AS.601: the completion screen's tally, which our layout runs where
+    /// the original's menu scripts would), on the screen itself: placed
+    /// nowhere, so heard at its own pan and full volume wherever the camera
+    /// is, its sequence on the game clock as a script's. Its name: `Err` with
+    /// why for a name no linked unit's sounds hold (the objectives screen's
+    /// own aren't in the extract's sounds part) or one that plays nothing.
+    pub fn play_screen_sound(&mut self, name: &str) -> Result<(), String> {
+        let book = self.sounds.clone().ok_or("no sounds part")?;
+        let sound = book
+            .named(name)
+            .iter()
+            .find_map(|id| {
+                let unit = self
+                    .sound_stems
+                    .iter()
+                    .filter(|(_, stem)| **stem == id.stem)
+                    .map(|(unit, _)| *unit)
+                    .min()?;
+                Some(Obj {
+                    unit,
+                    index: id.object,
+                })
+            })
+            .ok_or_else(|| format!("{name}: in no linked unit's sounds"))?;
+        let screen = self.objs.handle(Object::ContainerSprite);
+        self.play_sound_on(sound, screen)
+            .map(|_| ())
+            .ok_or_else(|| format!("{name}: its start played nothing"))
+    }
+
     /// A `stop sequence` on sound `template` with `receiver`: its copies on
     /// the receiver stop. False for a template that isn't a sound.
     pub(crate) fn stop_sound(&mut self, template: Value, receiver: Option<Handle>) -> bool {
@@ -1020,6 +1051,27 @@ mod tests {
             HashMap::from([(LEVEL, "level_213_tutotial".to_owned())]),
         );
         w
+    }
+
+    /// openspec AS.601: a sound the TV's screen plays, by its name in the
+    /// book: started on the screen, placed nowhere (heard at its own pan
+    /// whatever the camera does), and still playing a frame on (the screen
+    /// never leaves play); a name the book doesn't hold, or one with no
+    /// data, says why and plays nothing.
+    #[test]
+    fn a_screen_sound_plays_by_name_placed_nowhere_and_an_unknown_one_says_why() {
+        let mut w = world();
+        w.play_screen_sound("snd_10").unwrap();
+        assert_eq!(w.plays().len(), 1);
+        assert_eq!(w.plays()[0].id.object, ONCE);
+        w.advance_sounds(&mut NoEngine);
+        assert_eq!(w.plays().len(), 1, "it plays on");
+        assert_eq!(w.plays()[0].at, None, "placed nowhere");
+        let unknown = w.play_screen_sound("snd_99").unwrap_err();
+        assert!(unknown.contains("in no linked unit"), "{unknown}");
+        let silent = w.play_screen_sound("snd_16").unwrap_err();
+        assert!(silent.contains("played nothing"), "{silent}");
+        assert_eq!(w.plays().len(), 1);
     }
 
     fn sound_value(object: u32) -> Value {
