@@ -184,15 +184,35 @@ pub struct TurretView {
     pub get_out: Option<[f32; 3]>,
 }
 
+/// The screen word `New Turret - Find Target` takes off its pointer
+/// graphic's place to find where the ray goes through, as the file holds it.
+const FIND_TARGET_NUDGE: u32 = 0x00A0_0000;
+
+/// [`FIND_TARGET_NUDGE`] in pixels, read as every disc-born screen word is
+/// (guac-script's crate docs, Literals and rolls; openspec AS.560): 10 down,
+/// none across.
+fn find_target_nudge() -> (f32, f32) {
+    let word = guac_script::Literal {
+        class: guac_script::LiteralClass::Screen,
+        bits: FIND_TARGET_NUDGE,
+        random: false,
+    };
+    match word.value() {
+        Value::Screen(s) => crate::viewport::unpack_screen(s),
+        _ => (0.0, 0.0),
+    }
+}
+
 /// A pointer's offset that lands on `(x, y)` on the screen: `New Turret -
-/// Find Target` reads its graphic's place 10 pixels left of where the ray
-/// goes through, at 1.5 pixels a unit.
+/// Find Target` sends the ray through its graphic's place less
+/// [`find_target_nudge`], at 1.5 pixels a unit.
 pub fn pointer_at(x: f32, y: f32) -> [f32; 2] {
     let (w, h) = (
         crate::viewport::SCREEN_WIDTH,
         crate::viewport::SCREEN_HEIGHT,
     );
-    [(x - w / 2.0 + 10.0) / 1.5, (y - h / 2.0) / 1.5]
+    let (nx, ny) = find_target_nudge();
+    [(x + nx - w / 2.0) / 1.5, (y + ny - h / 2.0) / 1.5]
 }
 
 /// The first player's data of `turret`.
@@ -366,14 +386,16 @@ mod tests {
         assert!(near(arc(from, from, 10.0, 0.0), from), "a spot on it");
     }
 
-    /// openspec AS.76: a pointer's offset for a place on the screen is what
-    /// `New Turret - Find Target` turns back into that place: 1.5 pixels a
-    /// unit, its graphic read 10 pixels left of the ray.
+    /// openspec AS.76, AS.560: a pointer's offset for a place on the screen
+    /// is what `New Turret - Find Target` turns back into that place: 1.5
+    /// pixels a unit, the ray through its graphic's place less the file's
+    /// nudge, which reads 10 down (x the file word's low half), not 10 across.
     #[test]
     fn a_pointers_offset_lands_on_its_place() {
-        assert_eq!(pointer_at(630.0, 360.0), [0.0, 0.0]);
+        assert_eq!(find_target_nudge(), (0.0, 10.0));
+        assert_eq!(pointer_at(640.0, 350.0), [0.0, 0.0]);
         let [x, y] = pointer_at(516.15, 373.47);
-        assert!((x * 1.5 - 10.0 - (516.15 - 640.0)).abs() < 1e-3);
-        assert!((y * 1.5 - (373.47 - 360.0)).abs() < 1e-3);
+        assert!((x * 1.5 - (516.15 - 640.0)).abs() < 1e-3);
+        assert!((y * 1.5 - 10.0 - (373.47 - 360.0)).abs() < 1e-3);
     }
 }
