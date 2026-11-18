@@ -51,3 +51,14 @@ The opponent's best-move roll writes the first move's stone into the move it cho
 #### Scenario: A thousand games against Dreadbeard
 - **WHEN** 1,000 seeded games are played against hub stage 2's Dreadbeard, his chances 70 and 70
 - **THEN** of the full lists' picks the first is played none, the second within 5 points of 70% and the last within 5 points of 30%
+
+### Requirement: A screen position off the disc reads x from its low half
+A packed screen position the disc holds, a literal or a file's screen global, SHALL read x from its low half and y from its high, and keep one order inside the VM and the host, so the card board's neighbours, edges, cursor and camera agree on one axis and the HUD's places land on the original's: 15 of 51 of AC.13's HUD quads within 1 px of the oracle's, where the other reading fails its main box.
+
+#### Scenario: A stone placed beside another on the card board
+- **WHEN** a stone is placed with a stone one square across from it
+- **THEN** its side facing that stone is the one compared, and the opponent's edge check for that side is on the column
+
+#### Scenario: Fang's opponent's first roll
+- **WHEN** 150 seeded weak games are played against Fang
+- **THEN** his first roll lands near 2 draws in 101, 19 of 770 measured, its call's 1 rolled as `random 100` with both ends
