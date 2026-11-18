@@ -189,6 +189,10 @@ pub struct TurretView {
     /// `New Turret - Find Target` put where the pointer's ray lands: what
     /// `New Turret - Track Target With Barrel` aims the ball at.
     pub aim: Option<[f32; 2]>,
+    /// Where that target stands, metres: on the pointer's ray from the
+    /// camera, where it met the level or a prop, else 250 ft out (openspec
+    /// AS.445's review, a corner the TV and headless aimed apart at).
+    pub target: Option<[f32; 3]>,
 }
 
 /// The heading and pitch of `d`, degrees: heading 0 along +Z, 90 along +X.
@@ -295,13 +299,15 @@ pub fn view(vm: &Vm, world: &ScriptWorld) -> Option<TurretView> {
         .and_then(|p| actor_in(vm, world, p, "turret barrel"))
         .and_then(|h| world.actor(h))
         .map(|a| heading_pitch(crate::props::actor_transform(a).rotation * Vec3::Z));
+    let target = p1.and_then(|p| {
+        let data = vm.value(vm.field(p, "attack data ref")?);
+        Some(world.actor(actor_in(vm, world, data, "target")?)?.position)
+    });
     let aim = p1.and_then(|p| {
         let ball = world
             .actor(actor_in(vm, world, p, "turret ball")?)?
             .position;
-        let data = vm.value(vm.field(p, "attack data ref")?);
-        let target = world.actor(actor_in(vm, world, data, "target")?)?.position;
-        Some(heading_pitch(target - ball))
+        Some(heading_pitch(target? - ball))
     });
     Some(TurretView {
         state,
@@ -313,6 +319,7 @@ pub fn view(vm: &Vm, world: &ScriptWorld) -> Option<TurretView> {
         get_out,
         barrel,
         aim,
+        target: target.map(|t| t.to_array()),
     })
 }
 

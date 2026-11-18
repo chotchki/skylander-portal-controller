@@ -325,11 +325,11 @@ impl ScriptWorld {
                     index: id.object,
                 })
             })
-            .ok_or_else(|| format!("{name}: in no linked unit's sounds"))?;
+            .ok_or("in no linked unit's sounds")?;
         let screen = self.objs.handle(Object::ContainerSprite);
         self.play_sound_on(sound, screen)
             .map(|_| ())
-            .ok_or_else(|| format!("{name}: its start played nothing"))
+            .ok_or_else(|| "its start played nothing".to_owned())
     }
 
     /// A `stop sequence` on sound `template` with `receiver`: its copies on

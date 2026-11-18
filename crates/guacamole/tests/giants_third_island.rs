@@ -496,8 +496,11 @@ fn barrel_follows_pointer(run: &mut Run, stops: &mut Vec<String>) {
         }
         let adr = run.vm.value(run.vm.field(p1, "attack data ref").unwrap());
         let target = field_actor(run, adr, "target").expect("its target");
-        let to =
-            run.world.actor(target).unwrap().position - run.world.actor(ball).unwrap().position;
+        let at = run.world.actor(target).unwrap().position;
+        // The view's target is its (`/api/_test/tv`'s, AS.445's review).
+        let shown = turret::view(&run.vm, &run.world).and_then(|v| v.target);
+        assert_eq!(shown, Some(at.to_array()), "the view's target at {c:?}");
+        let to = at - run.world.actor(ball).unwrap().position;
         let heading = to.x.atan2(to.z).to_degrees().rem_euclid(360.0);
         let pitch = to.y.atan2(to.x.hypot(to.z)).to_degrees();
         let drawn = guacamole::props::actor_transform(run.world.actor(barrel).unwrap()).rotation;
