@@ -8013,7 +8013,7 @@ mod tests {
             .len();
         let count = |app: &App| app.world().resource::<Assets<CharacterMaterial>>().len();
         let whole = count(&app);
-        let mut tint = |app: &mut App, packed: u32| {
+        let tint = |app: &mut App, packed: u32| {
             let mut w = app.world_mut().resource_mut::<ScriptWorld>();
             assert!(w.set_tint(e.to_bits(), packed), "his actor");
             app.update();
