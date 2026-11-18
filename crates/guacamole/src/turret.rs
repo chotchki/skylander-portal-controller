@@ -182,6 +182,21 @@ pub struct TurretView {
     /// Getting out, where the first player is let go (`get out location`),
     /// metres.
     pub get_out: Option<[f32; 3]>,
+    /// Where the first player's barrel points as drawn, its heading and
+    /// pitch in degrees (openspec AS.445).
+    pub barrel: Option<[f32; 2]>,
+    /// The heading and pitch from the first player's ball to the target
+    /// `New Turret - Find Target` put where the pointer's ray lands: what
+    /// `New Turret - Track Target With Barrel` aims the ball at.
+    pub aim: Option<[f32; 2]>,
+}
+
+/// The heading and pitch of `d`, degrees: heading 0 along +Z, 90 along +X.
+pub fn heading_pitch(d: Vec3) -> [f32; 2] {
+    [
+        d.x.atan2(d.z).to_degrees().rem_euclid(360.0),
+        d.y.atan2(d.x.hypot(d.z)).to_degrees(),
+    ]
 }
 
 /// The screen word `New Turret - Find Target` takes off its pointer
@@ -275,6 +290,19 @@ pub fn view(vm: &Vm, world: &ScriptWorld) -> Option<TurretView> {
         .and_then(|p| actor_in(vm, world, p, "get out location"))
         .and_then(|h| world.actor(h))
         .map(|a| a.position.to_array());
+    let p1 = player(vm, turret);
+    let barrel = p1
+        .and_then(|p| actor_in(vm, world, p, "turret barrel"))
+        .and_then(|h| world.actor(h))
+        .map(|a| heading_pitch(crate::props::actor_transform(a).rotation * Vec3::Z));
+    let aim = p1.and_then(|p| {
+        let ball = world
+            .actor(actor_in(vm, world, p, "turret ball")?)?
+            .position;
+        let data = vm.value(vm.field(p, "attack data ref")?);
+        let target = world.actor(actor_in(vm, world, data, "target")?)?.position;
+        Some(heading_pitch(target - ball))
+    });
     Some(TurretView {
         state,
         pointer,
@@ -283,6 +311,8 @@ pub fn view(vm: &Vm, world: &ScriptWorld) -> Option<TurretView> {
         hits,
         targets,
         get_out,
+        barrel,
+        aim,
     })
 }
 
@@ -384,6 +414,27 @@ mod tests {
             (from + to) / 2.0 + Vec3::Y * 25.0 * METRES_PER_FOOT
         ));
         assert!(near(arc(from, from, 10.0, 0.0), from), "a spot on it");
+    }
+
+    /// openspec AS.445: a direction's heading and pitch, as the barrel's
+    /// and the aim's are read: 0 along +Z, 90 along +X, up positive.
+    #[test]
+    fn a_directions_heading_and_pitch() {
+        let near =
+            |a: [f32; 2], b: [f32; 2]| (a[0] - b[0]).abs() < 1e-3 && (a[1] - b[1]).abs() < 1e-3;
+        assert!(near(heading_pitch(Vec3::Z), [0.0, 0.0]));
+        assert!(near(heading_pitch(Vec3::X), [90.0, 0.0]));
+        assert!(near(heading_pitch(-Vec3::X), [270.0, 0.0]));
+        assert!(near(heading_pitch(Vec3::new(0.0, 1.0, 1.0)), [0.0, 45.0]));
+        let turned = crate::props::actor_transform(&{
+            let mut a = crate::script_engine::Actor::blank();
+            a.angles.facing = 107.0;
+            a.angles.tilt = 18.0;
+            a
+        });
+        let [h, p] = heading_pitch(turned.rotation * Vec3::Z);
+        assert!((h - 107.0).abs() < 1e-2, "{h}");
+        assert!((p.abs() - 18.0).abs() < 1e-2, "{p}");
     }
 
     /// openspec AS.76, AS.560: a pointer's offset for a place on the screen
