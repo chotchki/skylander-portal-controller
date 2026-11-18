@@ -2445,14 +2445,7 @@ impl ScriptWorld {
                     .map(|i| self.objs.value(Object::Node(h, i)))
                     .collect()
             }
-            Member::AttachedObjects => {
-                let r = recv.ok_or(HostFault::Nothing)?;
-                self.actors
-                    .iter()
-                    .filter(|(_, a)| a.attach == r && !a.removed)
-                    .map(|(h, _)| Value::Entity(*h))
-                    .collect()
-            }
+            Member::AttachedObjects => self.attached_to(recv.ok_or(HostFault::Nothing)?),
             Member::Clones => {
                 let h = self.actor_of(recv).ok_or(HostFault::Nothing)?;
                 self.actors
@@ -3897,6 +3890,26 @@ impl ScriptWorld {
             Some(Object::Node(owner, _)) => Some(owner),
             _ => None,
         }
+    }
+
+    /// `abstractplacement.attached objects` of `r`: every actor not taken
+    /// off that hangs on it or, for an actor, on one of its nodes (openspec
+    /// AS.573: Hot Head's hand grills hang on his nodes, and his death's
+    /// `Game - Get Attached Objects` fades and takes off what this gives;
+    /// off it they stood after he'd gone).
+    pub(crate) fn attached_to(&self, r: Value) -> Vec<Value> {
+        let owner = self.actor_of(Some(r));
+        self.actors
+            .iter()
+            .filter(|(_, a)| !a.removed)
+            .filter(|(_, a)| {
+                a.attach == r
+                    || owner.is_some_and(|o| {
+                        matches!(self.object(Some(a.attach)), Some(Object::Node(n, _)) if n == o)
+                    })
+            })
+            .map(|(h, _)| Value::Entity(*h))
+            .collect()
     }
 
     /// The actors something not taken off hangs on a node of, each once in
@@ -7949,6 +7962,39 @@ mod fight_tests {
     /// hang in co-op. One hero hung on a dummy and one standing: the dummy
     /// carries, a launched actor beside it doesn't; hang the second hero on
     /// that one and both do.
+    #[test]
+    fn an_actors_attached_objects_hold_what_hangs_on_its_nodes() {
+        let mut w = world();
+        let mut on_him = Actor::blank();
+        on_him.attach = Value::Entity(HERO);
+        w.actors.insert(C1, on_him);
+        let node = w.objs.handle(Object::Node(HERO, 3));
+        let mut on_node = Actor::blank();
+        on_node.attach = Value::Entity(node);
+        w.actors.insert(C3, on_node);
+        let other = w.objs.handle(Object::Node(C1, 0));
+        let mut elsewhere = Actor::blank();
+        elsewhere.attach = Value::Entity(other);
+        w.actors.insert(0x6100_0042, elsewhere);
+        let mut gone = Actor::blank();
+        gone.attach = Value::Entity(node);
+        gone.removed = true;
+        w.actors.insert(0x6100_0043, gone);
+        let mut got = w.attached_to(Value::Entity(HERO));
+        got.sort_by_key(|v| format!("{v:?}"));
+        let mut want = vec![Value::Entity(C1), Value::Entity(C3)];
+        want.sort_by_key(|v| format!("{v:?}"));
+        assert_eq!(
+            got, want,
+            "on him and on his node, not on another's or taken off"
+        );
+        assert_eq!(
+            w.attached_to(Value::Entity(node)),
+            vec![Value::Entity(C3)],
+            "a node's: what hangs on it"
+        );
+    }
+
     #[test]
     fn carries_hero_follows_each_heros_own_hang() {
         const OTHER: Handle = 0x6100_0011;

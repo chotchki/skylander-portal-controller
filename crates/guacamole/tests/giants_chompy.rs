@@ -5477,6 +5477,8 @@ fn a_beaten_heros_body_fades_by_his_tints_alpha() {
         let minion = run.minion;
         let mut fell: Option<i64> = None;
         let mut by_step: Vec<(i64, u32, guacamole::props::HeroDrawn)> = Vec::new();
+        // What hangs on his nodes, each step: alive with its alpha, or gone.
+        let mut parts: Vec<(i64, Vec<Option<u32>>)> = Vec::new();
         let mut last_change = 40i64;
         let mut last = None;
         for f in 40..2000i64 {
@@ -5495,6 +5497,15 @@ fn a_beaten_heros_body_fades_by_his_tints_alpha() {
             }
             if let Some(a) = actor {
                 by_step.push((f - b, a, drawn));
+                let hung: Vec<Option<u32>> = run
+                    .world
+                    .clones()
+                    .into_iter()
+                    .filter_map(|h| run.world.actor(h).map(|c| (c, h)))
+                    .filter(|(c, _)| run.world.node_owner(c.attach) == Some(run.hero))
+                    .map(|(c, _)| (!c.removed).then_some(c.tint & 0xFF))
+                    .collect();
+                parts.push((f - b, hung));
             }
             if minion.is_some_and(|m| run.vm.removed(m)) {
                 break;
@@ -5528,6 +5539,23 @@ fn a_beaten_heros_body_fades_by_his_tints_alpha() {
             by_step[first].0, by_step[zero].0
         );
         assert!(between >= 15, "{who}: {between} faded steps");
+        // What hangs on his nodes (Hot Head's hand grills): his death's
+        // `Game - Get Attached Objects` gives it his alpha each step and takes
+        // it off at 0, so it fades with him and is gone with him.
+        let (_, at_first) = &parts[first];
+        let (_, at_zero) = &parts[zero];
+        println!("{who}: hung on his nodes {at_first:?} as he fades, {at_zero:?} at 0");
+        if who == "Hot Head" {
+            assert!(!at_first.is_empty(), "his grills hang on him");
+        }
+        assert!(
+            at_first.iter().all(|a| *a == Some(by_step[first].1)),
+            "{who}: each at his alpha: {at_first:?}"
+        );
+        assert!(
+            at_zero.iter().all(Option::is_none),
+            "{who}: gone at 0: {at_zero:?}"
+        );
     }
     println!("load after: {}", load());
 }
