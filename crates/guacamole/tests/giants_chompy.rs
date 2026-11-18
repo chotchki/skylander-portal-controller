@@ -1734,6 +1734,68 @@ fn a_join_wakes_only_whom_the_warning_rule_reaches() {
     println!("{:.2?}; load after: {}", started.elapsed(), load());
 }
 
+/// openspec AS.448: a Chompy's idle walks as AH.10 recorded it. In
+/// `ah10-main`'s `still-00`, `Enemy_Chompy(2)` stands at its place to F0 +
+/// 12, then each frame of its idle turns 3 degrees and speeds up along its
+/// facing (its `turn to` and its `move from` itself), 178 to 214 degrees,
+/// until it's alerted at F0 + 24. Ours, a step ahead as the snaps count,
+/// each step within 1 cm and 0.5 degrees of the record; before it the Chompy
+/// stood on, its move from itself answered as done (2.0's rule).
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP and AH.10's recordings; run on the Mac"]
+fn a_chompys_idle_turns_and_runs_as_ah10_recorded() {
+    println!("load before: {}", load());
+    let started = Instant::now();
+    let root = env_or_dotenv("GUAC_CAPTURE_DIR").expect("GUAC_CAPTURE_DIR: AH.10's recordings");
+    let path = Path::new(&root).join("BLUS30968/ah10-main-1792553632/still-00/chain-records.json");
+    let list: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("still-00's records")).unwrap();
+    let f0 = list[0]["game_frame"].as_i64().unwrap();
+    let records: BTreeMap<i64, &serde_json::Value> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["game_frame"].as_i64().unwrap() - f0, r))
+        .collect();
+    let theirs = |k: i64| -> (Vec3, f32) {
+        let r = records[&k];
+        let c = items(r, "chompy")
+            .find(|i| i["placement"] == CHOMPIES[1])
+            .expect("Enemy_Chompy(2) in the record");
+        let p = &c["body"]["position"];
+        let f = |i: usize| p[i].as_f64().unwrap() as f32;
+        (
+            Vec3::new(f(0), f(1), f(2)),
+            c["body"]["rotation"][1].as_f64().unwrap() as f32,
+        )
+    };
+    let (_, snaps) = fight(Script {
+        steps: 30,
+        ..Script::default()
+    });
+    let mut walked = 0;
+    for k in 0..=24i64 {
+        let ours = snaps.iter().find(|s| s.k == k - 1).expect("a snap");
+        let c = &ours.chompies[1];
+        let (at, facing) = theirs(k);
+        let off = (c.pos - at).length();
+        let turned = (c.facing - facing + 180.0).rem_euclid(360.0) - 180.0;
+        println!(
+            "F0 + {k}: ours {:?} {:.1}, theirs {at:?} {facing:.1}: {off:.4} m, {turned:.2} deg",
+            c.pos, c.facing
+        );
+        assert!(
+            off < 0.01 && turned.abs() < 0.5,
+            "F0 + {k}: {off} m, {turned} deg"
+        );
+        if k > 0 && (at - theirs(k - 1).0).length() > 1e-3 {
+            walked += 1;
+        }
+    }
+    assert!(walked >= 10, "its idle walks: {walked} frames");
+    println!("{:.2?}; load after: {}", started.elapsed(), load());
+}
+
 /// What a standing-still fight from anchor B makes of AH.10's numbers
 /// (`ah10-main`'s `still`: the opening, then nothing to F0 + 900): the
 /// wake, the calls, each Chompy's sequence, the nips and the bites. Every
@@ -4309,9 +4371,15 @@ fn bites_on_him_on_a_schedule_follow_his_reactions_rule() {
         }
         let p = push.expect("a push");
         let staged = schedule.contains(&k);
-        // Into a wall a push stops short: only open ground is held to a
-        // profile.
-        let open = p.speeds.len() >= 8 && p.speeds[..8].iter().all(|v| *v > 1.0);
+        // Into a wall (or a body) a push stops short: only open ground is
+        // held to a profile. A stop shows as a speed down to nothing or a
+        // step losing more than either profile ever loses in one (AS.448:
+        // F0 + 300's push meets something its second step, 24.4 to 6.5 ft/s,
+        // and with `Enemy_Chompy(2)` at its recorded place since its idle
+        // walks it slows to 3.7 by its eighth, not 0).
+        let open = p.speeds.len() >= 8
+            && p.speeds[..8].iter().all(|v| *v > 1.0)
+            && p.speeds[..8].windows(2).all(|w| w[0] - w[1] < 5.0);
         if running || since_end.is_some_and(|t| t < 1.0) {
             seen.insert(if running { "inside" } else { "within 1 s" });
             assert!(!started, "a bite at F0 + {k} started his reaction");

@@ -7596,7 +7596,10 @@ mod fight_tests {
         // back by where it started.
         let at = w.actor(C1).unwrap().position;
         assert!((3.4..4.2).contains(&far), "across {far}");
-        assert!(Vec3::new(at.x, 0.0, at.z).length() < 1.0, "back by its start: {at}");
+        assert!(
+            Vec3::new(at.x, 0.0, at.z).length() < 1.0,
+            "back by its start: {at}"
+        );
     }
 
     /// openspec AU.34: of those the engine doesn't walk, the people whose
