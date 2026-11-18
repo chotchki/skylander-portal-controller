@@ -7959,7 +7959,10 @@ mod tests {
         };
         let whole = drawn(&app);
         let whole_rgb = rgb(&app);
-        assert!(whole.iter().all(|(a, _)| (*a - 1.0).abs() < 1e-6), "{whole:?}");
+        assert!(
+            whole.iter().all(|(a, _)| (*a - 1.0).abs() < 1e-6),
+            "{whole:?}"
+        );
         let alpha = |app: &App| app.world().entity(e).get::<HeroAlpha>().copied();
         assert_eq!(alpha(&app), Some(HeroAlpha(255)));
         {
