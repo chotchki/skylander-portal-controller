@@ -2967,15 +2967,23 @@ impl ScriptWorld {
         };
         let point = self.point(target, engine).ok_or(HostFault::Nothing)?;
         // A `move from` itself is never clear of its own place: the mover
-        // goes on along its facing, a scene actor's (openspec AU.34: the
-        // hub's fairies) and a creature's alike (AS.448: an idle Chompy's
-        // run in a circle; a reading, `steer::input` already heading a
-        // mover at its point along its facing).
+        // goes on along its facing (a reading, `steer::input` already
+        // heading a mover at its point along its facing), a scene actor's
+        // always (openspec AU.34: the hub's fairies), a creature's on a step
+        // its scripts turn it too (AS.448: an idle Chompy's turn and run, a
+        // circle, as AH.10 recorded it; a Root Runner's retreat). A
+        // creature's with no turn that step is clear at once, as before: on
+        // 201 one run on so went straight 15 m into the walk's way.
         let own = !toward && self.actor_of(Some(target)) == Some(mover);
+        let turning = self
+            .actors
+            .get(&mover)
+            .and_then(|a| a.walker.as_deref())
+            .is_none_or(|w| matches!(w.aim, Aim::Face(_)));
         let done = if toward {
             guac_motion::steer::reached(at, point, distance)
         } else {
-            !own && guac_motion::steer::cleared(at, point, distance)
+            !(own && turning) && guac_motion::steer::cleared(at, point, distance)
         };
         if self
             .actors
@@ -7532,19 +7540,18 @@ mod fight_tests {
             ask(&mut w, &mut e, &from(Value::Object(WP), 0)),
             Answer::Run { .. }
         ));
-        // A creature's own place it's never clear of either (openspec
-        // AS.448): it runs on along its facing at its speed.
+        // A creature's own place, with no turn asked that step, it's clear
+        // of at once, and it stands (AS.448: a turn the same step runs it
+        // on, the next test).
         let creature = chompy(Vec3::new(0.0, 3.0, 0.0), 90.0);
         w.actors.insert(C1, creature);
-        for _ in 0..60 {
-            assert_eq!(
-                ask(&mut w, &mut e, &from(Value::Entity(C1), 0)),
-                Answer::Done
-            );
-            w.advance(STEP, &mut e);
-        }
+        assert!(matches!(
+            ask(&mut w, &mut e, &from(Value::Entity(C1), 0)),
+            Answer::Run { .. }
+        ));
+        w.advance(STEP, &mut e);
         let at = w.actor(C1).unwrap().position;
-        assert!(at.x > 2.0 && at.z.abs() < 1e-3, "along its facing: {at}");
+        assert!(at.x.abs() < 1e-3, "it stands: {at}");
     }
 
     /// openspec AS.448: an idle Chompy's step, `turn to` its facing and 3
