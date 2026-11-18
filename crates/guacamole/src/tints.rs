@@ -122,16 +122,8 @@ pub(crate) fn tint_clones(
     parts: Query<(&mut MeshMaterial3d<CharacterMaterial>, Option<&TintedPart>)>,
     materials: ResMut<Assets<CharacterMaterial>>,
 ) {
-    let wash = |h: guac_script::Handle| {
-        let vm = &runtime.as_deref()?.vm;
-        let a = world.actor(h)?;
-        let owner = match a.attach {
-            guac_script::Value::Entity(o) => Some(o),
-            v => world.node_owner(v),
-        }?;
-        guacamole::props::actor_wash(vm, owner)?;
-        guacamole::props::actor_wash(vm, h)
-    };
+    let wash =
+        |h: guac_script::Handle| guacamole::props::hung_wash(&world, &runtime.as_deref()?.vm, h);
     tint_parts(
         |clone| {
             let h = clone.to_bits();
