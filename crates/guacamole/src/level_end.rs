@@ -609,6 +609,11 @@ pub fn step(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<Option<Ended>, 
         host.world.ship_parts.stopped = Some(h.to_string());
     }
     crate::turret::step(vm, host.world, host.engine);
+    // A warp's camera target (openspec AS.604): a stop costs the camera's
+    // follow alone, not the level's end.
+    if let Err(h) = crate::interiors::aim_after_warps(vm, host) {
+        warn!(%h, "a warped hero's camera target stopped: the old one stands");
+    }
     if let Some((current, name, time)) = cutscene(vm)
         && time > 0.0
         && (SKIPPED_CUTSCENES.contains(&name.as_str()) || host.world.skip_cutscenes)

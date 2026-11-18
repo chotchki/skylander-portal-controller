@@ -710,6 +710,9 @@ pub struct ScriptWorld {
     pub(crate) warps: Vec<crate::interiors::Warp>,
     /// The warps landed, in order.
     pub landed: Vec<crate::interiors::Landed>,
+    /// How many of [`ScriptWorld::landed`] have had their players' camera
+    /// targets made afresh ([`crate::interiors::aim_after_warps`]).
+    pub(crate) landed_aimed: usize,
     /// This run, unique on the TV: a player holding a play of an earlier
     /// run's stops it.
     run: u64,
@@ -1064,6 +1067,7 @@ impl ScriptWorld {
             interface: None,
             warps: Vec::new(),
             landed: Vec::new(),
+            landed_aimed: 0,
             run: fresh_serial(),
         }
     }

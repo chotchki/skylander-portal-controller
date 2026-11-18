@@ -994,3 +994,168 @@ fn level_214s_earth_area_pick_mines_a_rock_for_any_earth_hero() {
     assert!(sizes.len() >= 3, "a size a strike: {sizes:?}");
     assert!(w.stops.is_empty(), "{:#?}", w.stops);
 }
+
+/// openspec AS.604: level 214's Earth cave on its third island takes any
+/// hero in, as the original's controller does (it asks a Giant's size, never
+/// an element), and sets him down in the Earth area's antechamber 6,037 ft
+/// from its door, its wall 9 m north of him. Each hero walked from the
+/// cave's door into its mouth: in, the camera framing him once the room is
+/// up (his camera target made on him as the original's re-entry makes it:
+/// with the old one left at the door the scripts never move it again past
+/// 6000 ft, and the camera framed the sky 1.4 km off); walked north, a Fire
+/// hero stopped short of the wall with it standing and an Earth one past
+/// it with it gone; walked back south into the exit's box, out at the
+/// cave's door with the camera on him. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_earth_cave_takes_any_hero_in_its_wall_stops_another_and_he_walks_out() {
+    const CAVE: &str = "Interior_controller_Cave_Island_3_earth";
+    const WALL: &str = "ElementalWallController(2)";
+    /// The wall's nodes' line, across the antechamber.
+    const WALL_Z: f32 = -586.5;
+    /// Far enough that the camera frames him: the definitions' 50-58 ft
+    /// out and up is 15-18 m; the sky the far clip leaves past 152 m.
+    const FRAMED: f32 = 25.0;
+    let t = std::time::Instant::now();
+    println!("load at start: {}", load());
+    for element in [FIRE, EARTH] {
+        let mut w = Walk::joined(LEVEL_214);
+        if element == EARTH {
+            w.be(EARTH);
+        }
+        assert_eq!(w.element(), element);
+        let (cave, mouth) = w.run.placed(CAVE);
+        let (wall, _) = w.run.placed(WALL);
+        let p = w.run.files.placed.iter().find(|p| p.name == CAVE).unwrap();
+        let wps: Vec<Vec3> = p.waypoints.iter().map(|o| w.run.files.points[o]).collect();
+        let (door, arrival, exit) = (wps[0], wps[1], wps[2]);
+        let behaviour = |w: &Walk| {
+            w.run
+                .vm
+                .placement_of(cave)
+                .and_then(|id| w.run.vm.behaviour(id))
+                .map(str::to_owned)
+        };
+        let framed = |w: &Walk| (w.run.world.viewport().eye - w.run.hero().pivot).length();
+        // The camera's list of targets: his, held to one through each warp
+        // (the old one taken off as the new one goes on).
+        let listed = |w: &mut Walk| {
+            let g = w
+                .run
+                .vm
+                .program()
+                .global_named("camera control data")
+                .unwrap();
+            let cc = w.run.vm.global(g).map(|v| w.run.vm.value(v)).unwrap();
+            let defs = w.field(cc, "cam target defs");
+            w.run.vm.set(defs).map_or(0, <[_]>::len)
+        };
+        let listed0 = listed(&mut w);
+        // In at the mouth, from outside its door.
+        w.run.put(door + Vec3::Y * 0.5, 180.0);
+        w.still(30);
+        let landed0 = w.run.world.landed.len();
+        let mut k = 0;
+        while k < 600 && behaviour(&w).as_deref() != Some("3. wait for exit") {
+            let at = w.run.hero().pivot;
+            let s = if w.run.world.landed.len() == landed0 {
+                w.stick_along((mouth.x - at.x).atan2(mouth.z - at.z).to_degrees())
+            } else {
+                Stick::new(0.0, 0.0)
+            };
+            w.step(s);
+            k += 1;
+        }
+        let landed = w.run.world.landed.get(landed0).copied();
+        assert!(
+            landed.is_some_and(|l| (l.at.x - arrival.x).hypot(l.at.z - arrival.z) < 0.5),
+            "element {element}: landed {landed:?}, the arrival {arrival}, after {k} steps"
+        );
+        w.still(30);
+        assert_eq!(
+            listed(&mut w),
+            listed0,
+            "element {element}: the camera's targets inside"
+        );
+        let inside = framed(&w);
+        println!(
+            "element {element}: in after {k} steps at {}, the eye {inside:.1} m off him",
+            w.run.hero().pivot
+        );
+        assert!(
+            inside < FRAMED,
+            "element {element}: the eye {inside} m off him inside"
+        );
+        // North at the wall.
+        let start = w.run.hero().pivot;
+        for _ in 0..360 {
+            let at = w.run.hero().pivot;
+            let s = w.stick_along((-822.0 - at.x).atan2(-575.0 - at.z).to_degrees());
+            w.step(s);
+        }
+        let reached = w.run.hero().pivot;
+        let along = framed(&w);
+        println!(
+            "element {element}: walked north from {start} to {reached}, the wall gone {}, the eye {along:.1} m off",
+            w.gone(wall)
+        );
+        assert!(
+            along < FRAMED,
+            "element {element}: the eye {along} m off him at the wall"
+        );
+        if element == EARTH {
+            assert!(w.gone(wall), "the wall stood for an Earth hero");
+            assert!(
+                reached.z > WALL_Z + 2.0,
+                "an Earth hero stopped at {reached}"
+            );
+            // Back to the antechamber for the way out.
+            w.walk(&[[-822.0, -590.0]]);
+        } else {
+            assert!(!w.gone(wall), "the wall went for a Fire hero");
+            assert!(
+                reached.z < WALL_Z,
+                "a Fire hero through the wall at {reached}"
+            );
+        }
+        // Out by the exit's box, behind him.
+        let landed1 = w.run.world.landed.len();
+        let mut out = 0;
+        while out < 900 && behaviour(&w).as_deref() != Some("1. check for enterance") {
+            let at = w.run.hero().pivot;
+            let s = if w.run.world.landed.len() == landed1 {
+                w.stick_along((exit.x - at.x).atan2(exit.z - at.z).to_degrees())
+            } else {
+                Stick::new(0.0, 0.0)
+            };
+            w.step(s);
+            out += 1;
+        }
+        let back = w.run.world.landed.get(landed1).copied();
+        assert!(
+            back.is_some_and(|l| (l.at.x - door.x).hypot(l.at.z - door.z) < 0.5),
+            "element {element}: out {back:?}, the door {door}, after {out} steps"
+        );
+        w.still(60);
+        assert_eq!(
+            listed(&mut w),
+            listed0,
+            "element {element}: the camera's targets outside"
+        );
+        let outside = framed(&w);
+        println!(
+            "element {element}: out after {out} steps at {}, the eye {outside:.1} m off him",
+            w.run.hero().pivot
+        );
+        assert!(
+            outside < FRAMED,
+            "element {element}: the eye {outside} m off him outside"
+        );
+        assert!(w.stops.is_empty(), "{:#?}", w.stops);
+    }
+    println!(
+        "{:.1} s; load at end: {}",
+        t.elapsed().as_secs_f32(),
+        load()
+    );
+}

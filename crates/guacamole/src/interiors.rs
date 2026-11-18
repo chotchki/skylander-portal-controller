@@ -42,6 +42,10 @@
 //! off the portal (`Portal - Exit Object`) and, 0.2 s on, puts him back at
 //! the marker; here the macro is answered ([`answer`]) and the hero is set
 //! down at the marker 0.2 s on, his minion kept (stand-in ledger: `warp`).
+//! What his re-entry would give the camera, his camera target made afresh
+//! on him, the next step gives him ([`aim_after_warps`], openspec AS.604):
+//! the scripts move a camera target only while it's under 6000 ft from its
+//! player, and level 214's Earth cave sets him down 6,037 ft from its door.
 //! As the original's warp control belongs to the player's slot, a warp
 //! whose minion's figure came off the portal while it was owed lands the
 //! hero who came in after him.
@@ -54,7 +58,7 @@ use guac_script::{Handle, PlacementId, Value, Vm};
 use tracing::{info, warn};
 
 use crate::script_engine::Engine;
-use crate::scripts::ScriptWorld;
+use crate::scripts::{ScriptWorld, WorldHost};
 
 /// The macro that asks the portal to warp a player (`global.bld`'s
 /// `Spyro_PortalEntry_Macros.ai`), which the TV answers ([`answer`]).
@@ -199,6 +203,130 @@ pub(crate) fn land(world: &mut ScriptWorld, dt: f32, engine: &mut dyn Engine) {
             frame: world.sound_clock,
         });
     }
+}
+
+/// The macro the original's minion activation runs to give his player a
+/// camera target on him (`CameraControl.ai`).
+pub const CAM_TARGET: &str = "Camera - Generate Player Cam Target";
+
+/// Each player whose minion a warp landed since the last call gets his
+/// camera target made afresh on him, by the scripts' own macro with his
+/// player's `cam control data` (the portal manager's `player data`), as the
+/// original's re-entry at the target activates him (`Game - Activate/
+/// Deactivate Minion`; openspec AS.604, stand-in ledger: `warp`). Without
+/// it the old target stays at the door: `Camera - Update Player Cam Target`
+/// moves one only while it's under 6000 ft from him, so a warp further
+/// than that leaves the camera framing the door for good. The number made.
+pub fn aim_after_warps(
+    vm: &mut Vm,
+    host: &mut WorldHost<'_, '_>,
+) -> Result<usize, guac_script::Halt> {
+    if host.world.landed_aimed >= host.world.landed.len() {
+        return Ok(0);
+    }
+    let fresh: Vec<Handle> = host.world.landed[host.world.landed_aimed..]
+        .iter()
+        .map(|l| l.minion)
+        .collect();
+    host.world.landed_aimed = host.world.landed.len();
+    let Some(pm) = crate::scripts::portal_manager_placement(vm, host.world) else {
+        return Ok(0);
+    };
+    let Some(players) = vm.local(pm, "player data").map(|v| vm.value(v)) else {
+        return Ok(0);
+    };
+    let players: Vec<Value> = vm
+        .set(players)
+        .map(|s| s.iter().map(|p| vm.value(*p)).collect())
+        .unwrap_or_default();
+    let mut made = 0;
+    for minion in fresh {
+        let Some(control) = players.iter().find_map(|&p| {
+            let theirs = vm.field(p, "minion").map(|m| vm.value(m));
+            (theirs == Some(Value::Entity(minion)))
+                .then(|| vm.field(p, "cam control data").map(|c| vm.value(c)))
+                .flatten()
+        }) else {
+            continue;
+        };
+        // As the activation has it: a new target made on him, then put on
+        // the camera's list under his player number (the old one's, which
+        // the camera's own update renames to the new one each tick: no
+        // second entry, so nothing to take off).
+        let was = vm.field(control, "cam target").map(|v| vm.value(v));
+        let number = was
+            .and_then(|was| {
+                camera_targets(vm).into_iter().find_map(|e| {
+                    (vm.field(e, "target").map(|v| vm.value(v)) == Some(was))
+                        .then(|| vm.field(e, "player number").map(|v| vm.value(v)))
+                        .flatten()
+                })
+            })
+            .unwrap_or(Value::Int(1));
+        vm.call_for(
+            pm,
+            CAM_TARGET,
+            &[
+                ("follow actor", Value::Entity(minion)),
+                ("cam control data", control),
+            ],
+            &[],
+            host,
+        )?;
+        if let Some(now) = vm.field(control, "cam target").map(|v| vm.value(v)) {
+            add_camera_target(vm, host, pm, now, number)?;
+        }
+        info!(minion, "a warp landed him: his camera target made on him");
+        made += 1;
+    }
+    Ok(made)
+}
+
+/// The macro the activation puts his camera target on the camera's list
+/// with.
+pub const ADD_CAMERA_TARGET: &str = "Camera - Add Camera Target";
+
+/// `target` on the camera's list as the activation puts a player's: of
+/// importance 1, kept in view, for every camera, under his player number.
+fn add_camera_target(
+    vm: &mut Vm,
+    host: &mut WorldHost<'_, '_>,
+    pm: PlacementId,
+    target: Value,
+    number: Value,
+) -> Result<(), guac_script::Halt> {
+    vm.call_for(
+        pm,
+        ADD_CAMERA_TARGET,
+        &[
+            ("target actor", target),
+            ("importance", Value::Int(1)),
+            ("keep in view", Value::Int(1)),
+            ("remove", Value::Int(0)),
+            ("playernumber", number),
+            ("cameraid", Value::Int(-1)),
+        ],
+        &[],
+        host,
+    )?;
+    Ok(())
+}
+
+/// The camera system's targets (`camera control data`'s `cam target
+/// defs`), each an entry naming its target.
+fn camera_targets(vm: &mut Vm) -> Vec<Value> {
+    let Some(g) = vm.program().global_named("camera control data") else {
+        return Vec::new();
+    };
+    let Some(cc) = vm.global(g).map(|v| vm.value(v)) else {
+        return Vec::new();
+    };
+    let Some(defs) = vm.field(cc, "cam target defs").map(|v| vm.value(v)) else {
+        return Vec::new();
+    };
+    vm.set(defs)
+        .map(|s| s.iter().map(|e| vm.value(*e)).collect())
+        .unwrap_or_default()
 }
 
 /// The way `target` faces: an actor's facing, a file waypoint's turn as the
