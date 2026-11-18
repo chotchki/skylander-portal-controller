@@ -7995,6 +7995,46 @@ mod tests {
         assert_eq!(alpha(&app), Some(HeroAlpha(255)));
     }
 
+    /// AS.573's review: a fade makes one copy of each segment's material,
+    /// once, and every later step and fade writes into it, so twenty deaths'
+    /// worth of fades at a step each add no material past the first.
+    #[test]
+    fn a_heros_fades_make_one_copy_a_segment_and_reuse_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = joined_eruptor(tmp.path());
+        let e = app.world().resource::<Play>().hero().unwrap();
+        app.update();
+        let segments = app
+            .world()
+            .resource::<Play>()
+            .on_stage()
+            .unwrap()
+            .segments
+            .len();
+        let count = |app: &App| app.world().resource::<Assets<CharacterMaterial>>().len();
+        let whole = count(&app);
+        let mut tint = |app: &mut App, packed: u32| {
+            let mut w = app.world_mut().resource_mut::<ScriptWorld>();
+            assert!(w.set_tint(e.to_bits(), packed), "his actor");
+            app.update();
+        };
+        tint(&mut app, 0x8080_80F0);
+        let faded = count(&app);
+        assert!(faded > whole, "the fade's copies: {whole} then {faded}");
+        assert!(
+            faded - whole <= segments,
+            "at most one a segment: {} for {segments}",
+            faded - whole
+        );
+        for _ in 0..20 {
+            for alpha in (1..=255u32).rev().step_by(14) {
+                tint(&mut app, 0x8080_8000 | alpha);
+            }
+            tint(&mut app, 0x8080_80FF);
+        }
+        assert_eq!(count(&app), faded, "no copy past the first fade's");
+    }
+
     /// AG.100 and AH.224 on the TV: on the part with the entry beam, the
     /// replacement's beam drops its column onto the ground where the last
     /// stood, and he's drawn from the frame his minion is in, his scripts'
