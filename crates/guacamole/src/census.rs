@@ -610,30 +610,51 @@ pub const WALKER_GLOW: &[Row] = &[
 /// (openspec AH.65: the level's scene, its three point lights on) that the
 /// cards' table doesn't hold, each once: every one of the roster's, since
 /// any comes in as a replacement (AG.27; the arrival lane's Mac run of
-/// 2026-10-31 compiled Tree Rex's three in play, under his arrival).
+/// 2026-10-31 compiled Tree Rex's three in play, under his arrival), and
+/// each opaque one blending as his tint fades him (openspec AS.573: 33
+/// before his death's fade was drawn).
 pub const HEROES: &[Row] = &[
+    row(0x0404, 0x0404, A, true, false, false, 1, true, false),
+    row(0x041c, 0x041c, A, true, false, false, 1, true, false),
     row(0x3c00, 0x2400, O, true, false, false, 1, true, false),
+    row(0x3c00, 0x2400, A, true, false, false, 1, true, false),
     row(0x3c04, 0x2404, O, true, false, false, 1, true, false),
+    row(0x3c04, 0x2404, A, true, false, false, 1, true, false),
     row(0x3c04, 0x2404, ADD, false, false, false, 1, true, false),
     row(0x3c04, 0x3404, O, true, false, false, 1, true, true),
     row(0x3c04, 0x3404, A, false, false, false, 1, true, true),
     row(0x3c04, 0x3404, A, false, true, false, 1, true, true),
+    row(0x3c04, 0x3404, A, true, false, false, 1, true, true),
     row(0x3c18, 0x2418, O, true, false, false, 1, true, false),
+    row(0x3c18, 0x2418, A, true, false, false, 1, true, false),
     row(0x3c1c, 0x241c, O, true, false, false, 1, true, false),
     row(0x3c1c, 0x241c, O, true, false, true, 1, true, false),
+    row(0x3c1c, 0x241c, A, true, false, false, 1, true, false),
+    row(0x3c1c, 0x241c, A, true, false, true, 1, true, false),
     row(0x3c1c, 0x341c, O, true, false, false, 1, true, true),
+    row(0x3c1c, 0x341c, A, true, false, false, 1, true, true),
     row(0x3c20, 0x2420, O, true, false, false, 1, true, false),
+    row(0x3c20, 0x2420, A, true, false, false, 1, true, false),
     row(0x3c24, 0x2424, O, true, false, false, 1, true, false),
     row(0x3c24, 0x2424, O, true, false, true, 1, true, false),
     row(0x3c24, 0x2424, O, true, true, true, 1, true, false),
+    row(0x3c24, 0x2424, A, true, false, false, 1, true, false),
+    row(0x3c24, 0x2424, A, true, false, true, 1, true, false),
     row(0x3c24, 0x2424, A, true, true, true, 1, true, false),
     row(0x3c28, 0x2428, O, true, false, false, 1, true, false),
+    row(0x3c28, 0x2428, A, true, false, false, 1, true, false),
     row(0x3c2c, 0x242c, O, true, false, false, 1, true, false),
+    row(0x3c2c, 0x242c, A, true, false, false, 1, true, false),
     row(0x3c2c, 0x342c, O, true, false, false, 1, true, true),
+    row(0x3c2c, 0x342c, A, true, false, false, 1, true, true),
     row(0x3c38, 0x2438, O, true, false, false, 1, true, false),
     row(0x3c38, 0x2438, O, true, true, false, 1, true, false),
     row(0x3c38, 0x2438, O, true, true, true, 1, true, false),
+    row(0x3c38, 0x2438, A, true, false, false, 1, true, false),
+    row(0x3c38, 0x2438, A, true, true, false, 1, true, false),
+    row(0x3c38, 0x2438, A, true, true, true, 1, true, false),
     row(0x3c38, 0x3438, O, true, false, false, 1, true, true),
+    row(0x3c38, 0x3438, A, true, false, false, 1, true, true),
     row(0x3c3c, 0x243c, O, true, false, false, 1, true, false),
     row(0x3c3c, 0x243c, O, true, false, true, 1, true, false),
     row(0x3c3c, 0x243c, O, true, true, false, 1, true, false),
@@ -711,10 +732,8 @@ pub const HEROES_GLOW_STATIC: &[Row] = &[];
 pub const CREATURES: &[Row] = &[
     row(0x3c00, 0x2400, O, true, true, true, 1, true, false),
     row(0x3c00, 0x2400, A, false, true, true, 1, true, false),
-    row(0x3c00, 0x2400, A, true, false, false, 1, true, false),
     row(0x3c00, 0x2400, A, true, true, true, 1, true, false),
     row(0x3c00, 0x2400, ADD, false, false, false, 1, true, false),
-    row(0x3c04, 0x2404, A, true, false, false, 1, true, false),
     row(0x3c18, 0x3418, O, true, true, false, 1, true, true),
     row(0x3c18, 0x3418, A, true, true, false, 1, true, true),
     row(0x3c1c, 0x241c, O, true, true, false, 1, true, false),
@@ -724,10 +743,6 @@ pub const CREATURES: &[Row] = &[
     row(0x3c20, 0x3420, O, true, true, false, 1, true, true),
     row(0x3c20, 0x3420, A, true, true, false, 1, true, true),
     row(0x3c23, 0x3423, ADD, true, false, false, 3, true, true),
-    row(0x3c24, 0x2424, A, true, false, false, 1, true, false),
-    row(0x3c2c, 0x242c, A, true, false, false, 1, true, false),
-    row(0x3c38, 0x2438, A, true, false, false, 1, true, false),
-    row(0x3c38, 0x3438, A, true, false, false, 1, true, true),
     row(0x3c3c, 0x343c, O, true, true, false, 1, true, true),
     row(0x3c3c, 0x343c, A, true, true, false, 1, true, true),
 ];
@@ -745,8 +760,6 @@ pub const WALKER_CREATURES: &[Row] = &[
     row(0x0424, 0x1424, A, true, true, false, 1, true, true),
     row(0x3c00, 0x2400, ADD, true, false, false, 1, true, false),
     row(0x3c01, 0x3401, A, false, true, false, 2, true, true),
-    row(0x3c04, 0x3404, A, true, false, false, 1, true, true),
-    row(0x3c1c, 0x241c, A, true, false, false, 1, true, false),
     row(0x3c20, 0x3420, O, true, false, false, 1, true, true),
     row(0x3c20, 0x3420, A, true, false, false, 1, true, true),
     row(0x3c20, 0x3420, ADD, false, false, false, 1, true, true),
@@ -754,7 +767,6 @@ pub const WALKER_CREATURES: &[Row] = &[
     row(0x3c24, 0x3424, A, true, false, false, 1, true, true),
     row(0x3c25, 0x3425, O, true, false, false, 2, true, true),
     row(0x3c25, 0x3425, A, true, false, false, 2, true, true),
-    row(0x3c2c, 0x342c, A, true, false, false, 1, true, true),
 ];
 
 /// Their glowing parts' level glow masks past [`HEROES_GLOW`]'s and
@@ -1015,10 +1027,10 @@ mod tests {
             (LEVEL_PROPS, false, 124),
             (SPAWNS, false, 7),
             (WALKER_SPAWNS, false, 79),
-            (HEROES, true, 33),
+            (HEROES, true, 52),
             (HEROES_STATIC, false, 23),
-            (CREATURES, true, 21),
-            (WALKER_CREATURES, true, 15),
+            (CREATURES, true, 15),
+            (WALKER_CREATURES, true, 12),
             (PARTICLES, false, 1),
         ] {
             assert_eq!(rows.len(), n);
@@ -1072,7 +1084,7 @@ mod tests {
         // its glow pass and a level's without.
         assert_eq!(
             every.len(),
-            33 + 24 + 67 + 124 + 86 + 33 + 23 + 78 + 17 + 21 + 1 + 1 + 1 + 1 + 4 + 15 + 3
+            33 + 24 + 67 + 124 + 86 + 52 + 23 + 78 + 17 + 15 + 1 + 1 + 1 + 1 + 4 + 12 + 3
         );
         assert_eq!(
             turntable_keys().len(),

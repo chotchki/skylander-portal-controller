@@ -222,7 +222,14 @@ mod tests {
     /// A made-up prop: one segment on a census key's material, one on a
     /// warp effect the level doesn't draw; skinned when `skinned`.
     fn prop(path: &str, skinned: bool) -> guac_ir::level::Prop {
-        let key = census::HEROES[0].key(true).unwrap();
+        // The heroes' first opaque row (AS.573: the table holds each one's
+        // blending twin too, sorted among them).
+        let key = census::HEROES
+            .iter()
+            .find(|r| r.blend == 0)
+            .unwrap()
+            .key(true)
+            .unwrap();
         let material = census::material_for(&key);
         let warp = LevelMaterial::Effect(EffectMaterial {
             name: "warp".into(),

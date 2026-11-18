@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashMap};
 use guac_motion::seam::Vec3;
 use guac_motion::stick::{DEAD_ZONE, Stick};
 use guac_motion::tuning::FOOT;
-use guac_script::{Handle, Mode, Value};
+use guac_script::{Handle, Mode, PlacementId, Value};
 use guacamole::script_engine::Pad;
 
 mod common;
@@ -687,6 +687,15 @@ fn bomb_over_the_ridge(
 /// The placement named `name` in the level's file, by handle.
 fn handle(run: &Run, name: &str) -> Handle {
     run.placed(name).0
+}
+
+/// A fight gate's blocked-by-combat mark (`Lock_EnemyGate`), as the gate's
+/// `lock art` holds it (openspec AS.447).
+fn lock_art(run: &Run, gate: PlacementId) -> Option<Handle> {
+    match run.vm.local(gate, "lock art").map(|v| run.vm.value(v)) {
+        Some(Value::Entity(h)) => Some(h),
+        _ => None,
+    }
 }
 
 /// Whether `h` is beaten: off the run or its actor gone.
@@ -1642,6 +1651,10 @@ fn level_214s_third_fight_is_fought_on_the_second_island() {
         watch_charges(&run, &mut charges, (health, now));
         health = now;
     }
+    // The fight's gate and its blocked-by-combat mark (openspec AS.447).
+    let gate = run.placement("Spike_Gate_Wooden_Template(3)");
+    let mark = lock_art(&run, gate).expect("the gate's mark stands through its fight");
+    assert!(!gone(&run, mark), "the mark stands while the fight's on");
     let rest = fight(&mut run, &mut stops, &foes, 3600);
     let beaten: Vec<Option<u32>> = on_the_stick
         .iter()
@@ -1677,6 +1690,14 @@ fn level_214s_third_fight_is_fought_on_the_second_island() {
         load()
     );
     assert!(beaten.iter().all(Option::is_some), "all beaten: {beaten:?}");
+    // Its gate down and the mark gone with it: the gate sets the mark's
+    // `kill` as it lowers and the mark fades out over 0.3 s and takes
+    // itself off (off the TV's listing it stood there for good).
+    assert_eq!(
+        run.vm.behaviour(gate),
+        Some("spikes in down position - wait to be raised")
+    );
+    assert!(gone(&run, mark), "the mark went with the fight");
     assert!(!charges.is_empty(), "its ranged attack made its charge");
     for c in &charges {
         assert!(!inert.contains(&c.handle), "it runs: {c:?}");

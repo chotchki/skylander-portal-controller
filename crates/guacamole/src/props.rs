@@ -381,25 +381,42 @@ pub fn actor_shows(a: &Actor) -> bool {
 pub struct HeroDrawn {
     pub body: bool,
     pub fresh_parts: bool,
+    /// The alpha his body draws at (openspec AS.573): his tint's while his
+    /// scripts carry him, 255 otherwise.
+    pub alpha: u8,
+}
+
+impl HeroDrawn {
+    /// The placement tint his body's parts draw with: neutral grey at
+    /// [`Self::alpha`] (his tint's colour never laid on him).
+    pub fn tint(&self) -> u32 {
+        0x8080_8000 | u32::from(self.alpha)
+    }
 }
 
 /// What of a hero draws. His body: nowhere while his entry is pending
 /// (AH.224), nor, while his scripts carry him, while his actor's tint is
 /// see-through, as his scripts and the shared ones hide him (`Minion - Set
 /// Minion Tint` with alpha 0 into Ninjini's bottle, a turret's hide, an
-/// outro's; [`actor_shows`]), with what's hung on his joints; hidden or
-/// whole, never faded or coloured (stand-in ledger: `hero-tint`). Off his
-/// scripts (`scripted` false: his join off or failed, AH.151's fall-back)
-/// his tint is never read: nothing of his own could set it back. The
-/// extract's fresh parts: only while his scripts don't carry him, since
-/// joined they hang every one of them as a clone of their own and swap,
-/// let go, fade or remove it (a part drawn by both read as two blades on
-/// Chop Chop).
+/// outro's; [`actor_shows`]), with what's hung on his joints; at any
+/// other alpha faded by it (openspec AS.573: his death slides it 255 to 0
+/// over 0.35 s, Sunburn's hide and Swarm's too), never coloured (stand-in
+/// ledger: `hero-tint`). Off his scripts (`scripted` false: his join off
+/// or failed, AH.151's fall-back) his tint is never read: nothing of his
+/// own could set it back. The extract's fresh parts: only while his
+/// scripts don't carry him, since joined they hang every one of them as a
+/// clone of their own and swap, let go, fade or remove it (a part drawn by
+/// both read as two blades on Chop Chop).
 pub fn hero_drawn(entering: bool, scripted: bool, actor: Option<&Actor>) -> HeroDrawn {
-    let body = !entering && (!scripted || actor.is_none_or(actor_shows));
+    let alpha = match actor {
+        Some(a) if scripted => (a.tint & 0xFF) as u8,
+        _ => 0xFF,
+    };
+    let body = !entering && alpha != 0;
     HeroDrawn {
         body,
         fresh_parts: body && !scripted,
+        alpha,
     }
 }
 
@@ -1843,12 +1860,14 @@ mod tests {
         let both = HeroDrawn {
             body: true,
             fresh_parts: true,
+            alpha: 255,
         };
         assert_eq!(hero_drawn(false, false, Some(&a)), both, "a walker");
         assert_eq!(hero_drawn(false, false, None), both, "no actor yet");
         let carried = HeroDrawn {
             body: true,
             fresh_parts: false,
+            alpha: 255,
         };
         assert_eq!(
             hero_drawn(false, true, Some(&a)),
@@ -1858,20 +1877,49 @@ mod tests {
         let none = HeroDrawn {
             body: false,
             fresh_parts: false,
+            alpha: 255,
         };
         assert_eq!(hero_drawn(true, false, Some(&a)), none, "entering");
         assert_eq!(hero_drawn(true, true, None), none, "entering, joined");
         // Ninjini's bottle: `Minion - Set Minion Tint` grey at alpha 0.
         a.tint = 0x8080_8000;
-        assert_eq!(hero_drawn(false, true, Some(&a)), none, "in the bottle");
+        let bottled = HeroDrawn { alpha: 0, ..none };
+        assert_eq!(hero_drawn(false, true, Some(&a)), bottled, "in the bottle");
         // Off his scripts his tint isn't read: a fall-back mid-bottle would
         // otherwise leave him see-through for good (the AS.444 review).
         assert_eq!(hero_drawn(false, false, Some(&a)), both, "a walker");
-        // Any alpha over 0 draws him whole (no fade on the hero).
+        // AS.573: any alpha over 0 draws him, at it.
         a.tint = 0x8080_8001;
-        assert_eq!(hero_drawn(false, true, Some(&a)), carried);
+        let faint = HeroDrawn {
+            alpha: 1,
+            ..carried
+        };
+        assert_eq!(hero_drawn(false, true, Some(&a)), faint);
         a.tint = 0x0000_00FF;
         assert_eq!(hero_drawn(false, true, Some(&a)), carried, "colour alone");
+    }
+
+    /// AS.573: his death's fade (alpha 240, 127, 14 on its way to 0) draws
+    /// his body at each alpha, on a neutral tint (his colour never laid on
+    /// him); off his scripts, or entering, the tint isn't read.
+    #[test]
+    fn a_heros_body_draws_at_his_tints_alpha_while_his_scripts_carry_him() {
+        let mut a = Actor::blank();
+        for alpha in [240u32, 127, 14] {
+            a.tint = 0x2040_6000 | alpha;
+            let d = hero_drawn(false, true, Some(&a));
+            assert_eq!((d.body, d.alpha), (true, alpha as u8), "fading at {alpha}");
+            assert_eq!(d.tint(), 0x8080_8000 | alpha, "neutral at {alpha}");
+            let off = hero_drawn(false, false, Some(&a));
+            assert_eq!((off.body, off.alpha, off.tint()), (true, 255, 0x8080_80FF));
+        }
+        a.tint = 0x8080_80FF;
+        assert_eq!(
+            hero_drawn(false, true, Some(&a)).tint(),
+            0x8080_80FF,
+            "whole"
+        );
+        assert_eq!(hero_drawn(false, true, None).alpha, 255, "no actor yet");
     }
 
     /// AS.444: his drawn scale is his actor's per axis, Ninjini's squeeze

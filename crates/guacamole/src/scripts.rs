@@ -3643,12 +3643,17 @@ pub const GOAT_SCRIPTS: [&str; 1] = ["Goat_Jumping_Pit.ai"];
 /// the spike gate Norticus' trigger wakes, and its holes; the camera's pan
 /// to the cannon as he comes near it, and the pit's intro cutscene the
 /// controller wakes as the hero lands (both on the cutscene system,
-/// [`crate::player_loop::UPDATES`]).
-pub const ROUTE_SCRIPTS: [&str; 6] = [
+/// [`crate::player_loop::UPDATES`]). And a fight gate's blocked-by-combat
+/// mark (openspec AS.447, `Lock_EnemyGate.ai`): the gate clones it at its
+/// start and sets its `kill` as it opens, and the mark then fades its tint
+/// to nothing over 0.3 s and takes itself off. Off the listing it stood
+/// over every opened gate for good.
+pub const ROUTE_SCRIPTS: [&str; 7] = [
     "Canon_Ball.ai",
     "Push_Block_End.ai",
     "Gate_Spikes.ai",
     "Gate_Spikes_Hole.ai",
+    "Lock_EnemyGate.ai",
     "Pan_Show_Cannon.ai",
     "Pan_Show_Norticu.ai",
 ];

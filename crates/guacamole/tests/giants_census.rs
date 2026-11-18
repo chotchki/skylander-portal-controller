@@ -512,8 +512,18 @@ fn the_census_is_the_discs() {
         "the measured walkers among them"
     );
     let heroes = once(cards.heroes.iter().flat_map(|(_, k)| k.iter().copied()));
-    let (hero_skinned, hero_static): (Vec<WarmKey>, Vec<WarmKey>) =
+    let (mut hero_skinned, hero_static): (Vec<WarmKey>, Vec<WarmKey>) =
         colour(&heroes).into_iter().partition(|k| k.mesh.skinned);
+    // AS.573: his body fades by his tint (his death's 0.35 s slide to 0),
+    // each opaque colour key of his skinned body blending as it does; what
+    // he carries on a static mesh draws only off his scripts, never faded.
+    for k in hero_skinned.clone() {
+        let mut f = k;
+        f.material.states = k.material.states.faded();
+        if !hero_skinned.contains(&f) {
+            hero_skinned.push(f);
+        }
+    }
     // A part no light or fog reaches keys as it does on a card: the
     // cards' table holds those.
     let hero_skinned = beyond(&hero_skinned, &[census::TURNTABLE]);
@@ -712,8 +722,9 @@ fn the_census_is_the_discs() {
         // their static keys 7 before AG.23's receiving level keys left 16
         // of them to the heroes' table; 29 glow masks before AS.63's rule;
         // 37 masks and the heroes' 8 static ones before openspec AU.1's
-        // every character's spawn models (whose masks hold those 8).
-        (78, 33, 23, 17, 0),
+        // every character's spawn models (whose masks hold those 8); his
+        // skinned keys 33 before AS.573's faded twins.
+        (78, 52, 23, 17, 0),
         "the level's glow masks, the heroes' keys and their glow masks"
     );
     assert_eq!(
@@ -721,8 +732,9 @@ fn the_census_is_the_discs() {
         // AH.139: 5 keys before each opaque one's faded twin; 10 before
         // every character's keys as the hero took 8 of them; 4 models, 2
         // keys and no glow mask while AG.150's names said which skinned
-        // clones draw (AS.63).
-        (32, 21, 1),
+        // clones draw (AS.63); 21 before AS.573's fading hero took 6 into
+        // the heroes' table.
+        (32, 15, 1),
         "the first fight's creatures' and the skinned clones' models (the Chompies', Norticus', every skinned template's whose clones draw), their keys past the heroes', their glow masks"
     );
 }
