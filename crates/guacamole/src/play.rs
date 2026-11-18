@@ -2522,6 +2522,9 @@ pub(crate) fn fade_hero(
         Option<&crate::tints::TintedPart>,
     )>,
     mut materials: ResMut<Assets<CharacterMaterial>>,
+    children: Query<&Children>,
+    mut glows: Query<&mut Visibility, With<crate::level::GlowTwin>>,
+    runtime: Option<Res<ScriptRuntime>>,
 ) {
     let Some(h) = play.on_stage() else {
         return;
@@ -2532,14 +2535,37 @@ pub(crate) fn fade_hero(
         run.is_some_and(|r| matches!(r.join, Join::Joined(_))),
         world.as_deref().and_then(|w| w.actor(h.hero.to_bits())),
     );
+    // His glow masks write his whole silhouette into the frame's alpha
+    // whatever his tint, so faded they'd bloom what's behind him in his
+    // shape (openspec AS.592: Eruptor's clear egg): off under 255, as his
+    // shadow is (ledger `hero-tint`).
+    let glow = if drawn.alpha == 255 {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
+    // His replace colour while his scripts carry him (openspec AS.590: his
+    // death's element-colour wash).
+    let wash = runtime
+        .as_deref()
+        .filter(|_| run.is_some_and(|r| matches!(r.join, Join::Joined(_))))
+        .and_then(|r| guacamole::props::actor_wash(&r.vm, h.hero.to_bits()));
     for &segment in &h.segments {
-        crate::tints::tint_part(
+        crate::tints::wash_part(
             segment,
             drawn.tint(),
+            wash,
             &mut commands,
             &mut parts,
             &mut materials,
         );
+        for child in children.get(segment).into_iter().flatten() {
+            if let Ok(mut v) = glows.get_mut(*child)
+                && *v != glow
+            {
+                *v = glow;
+            }
+        }
     }
     if alphas.get(h.hero).ok() != Some(&HeroAlpha(drawn.alpha)) {
         commands.entity(h.hero).insert(HeroAlpha(drawn.alpha));
@@ -7993,6 +8019,123 @@ mod tests {
             assert_eq!(blend, was, "segment {k}: its own states again");
         }
         assert_eq!(alpha(&app), Some(HeroAlpha(255)));
+    }
+
+    /// openspec AS.590: a joined hero's replace colour, as his scripts leave
+    /// it in his actor's cells, washes every segment of his body by its
+    /// percent, and at 0 percent his segments draw the scene's again.
+    #[test]
+    fn a_joined_heros_replace_colour_washes_his_body() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = joined_eruptor(tmp.path());
+        let e = app.world().resource::<Play>().hero().unwrap();
+        app.update();
+        let segments = app
+            .world()
+            .resource::<Play>()
+            .on_stage()
+            .unwrap()
+            .segments
+            .clone();
+        let replace = |app: &App| -> Vec<Vec4> {
+            let materials = app.world().resource::<Assets<CharacterMaterial>>();
+            segments
+                .iter()
+                .map(|&s| {
+                    let h = &app
+                        .world()
+                        .entity(s)
+                        .get::<MeshMaterial3d<CharacterMaterial>>()
+                        .unwrap()
+                        .0;
+                    materials.get(h).unwrap().uniform.replace
+                })
+                .collect()
+        };
+        let scene = replace(&app);
+        let set = |app: &mut App, percent: i32| {
+            let mut rt = app.world_mut().resource_mut::<ScriptRuntime>();
+            let at = Some(guac_script::Value::Entity(e.to_bits()));
+            rt.vm.set_value_cell(
+                at,
+                guac_script::MemberId::named("actorinfo", "replace color"),
+                guac_script::Value::Color(0xFF7A_00FF),
+            );
+            rt.vm.set_value_cell(
+                at,
+                guac_script::MemberId::named("actorinfo", "replace color percentage"),
+                guac_script::Value::Int(percent),
+            );
+            app.update();
+        };
+        set(&mut app, 100);
+        let want = Vec4::from_array(
+            guacamole::props::replace_wash(
+                Some(guac_script::Value::Color(0xFF7A_00FF)),
+                Some(guac_script::Value::Int(100)),
+            )
+            .unwrap(),
+        );
+        assert!(
+            replace(&app).iter().all(|r| *r == want),
+            "washed: {:?}",
+            replace(&app)
+        );
+        set(&mut app, 0);
+        assert_eq!(replace(&app), scene, "the scene's again");
+    }
+
+    /// openspec AS.592: a fading hero's glow masks go while he fades (each
+    /// writes his whole silhouette into the frame's alpha, which bloomed
+    /// what stood behind him in his shape) and come back at 255.
+    #[test]
+    fn a_fading_heros_glow_masks_go_while_he_fades() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _pad) = joined_eruptor(tmp.path());
+        let e = app.world().resource::<Play>().hero().unwrap();
+        app.update();
+        let segments = app
+            .world()
+            .resource::<Play>()
+            .on_stage()
+            .unwrap()
+            .segments
+            .clone();
+        let twins: Vec<Entity> = segments
+            .iter()
+            .map(|&s| {
+                app.world_mut()
+                    .spawn((crate::level::GlowTwin, Visibility::Inherited, ChildOf(s)))
+                    .id()
+            })
+            .collect();
+        let shown = |app: &App| -> Vec<Visibility> {
+            twins
+                .iter()
+                .map(|&t| *app.world().entity(t).get::<Visibility>().unwrap())
+                .collect()
+        };
+        app.update();
+        assert!(
+            shown(&app).iter().all(|v| *v == Visibility::Inherited),
+            "whole"
+        );
+        for (tint, want) in [
+            (0x8080_80FEu32, Visibility::Hidden),
+            (0x8080_8001, Visibility::Hidden),
+            (0x8080_80FF, Visibility::Inherited),
+        ] {
+            {
+                let mut w = app.world_mut().resource_mut::<ScriptWorld>();
+                assert!(w.set_tint(e.to_bits(), tint));
+            }
+            app.update();
+            assert!(
+                shown(&app).iter().all(|v| *v == want),
+                "{tint:08x}: {:?}",
+                shown(&app)
+            );
+        }
     }
 
     /// AS.573's review: a fade makes one copy of each segment's material,

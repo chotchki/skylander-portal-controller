@@ -420,6 +420,44 @@ pub fn hero_drawn(entering: bool, scripted: bool, actor: Option<&Actor>) -> Hero
     }
 }
 
+/// An actor's replace colour as its scripts hold it (openspec AS.590), in
+/// the shader's terms: the colour (packed RGBA, red high) in linear light
+/// and its percent as the amount it covers the shaded colour, 0 to 1;
+/// `None` at 0 percent, or with either unwritten. A beaten hero's death
+/// writes his element's colour and pulses its percent 0 to 41 through his
+/// hop, then 100 while he fades (headless on chapter 1's fight, Eruptor and
+/// Hot Head alike), on him and on all that hangs on him.
+pub fn replace_wash(
+    colour: Option<guac_script::Value>,
+    percent: Option<guac_script::Value>,
+) -> Option<[f32; 4]> {
+    let amount = percent?.as_f32()?.clamp(0.0, 100.0) / 100.0;
+    let guac_script::Value::Color(packed) = colour? else {
+        return None;
+    };
+    if amount <= 0.0 {
+        return None;
+    }
+    let [r, g, b, _] = packed.to_be_bytes();
+    let lin = |c: u8| (f32::from(c) / 255.0).powf(2.2);
+    Some([lin(r), lin(g), lin(b), amount])
+}
+
+/// [`replace_wash`] off the VM's cells for actor `h`.
+pub fn actor_wash(vm: &guac_script::Vm, h: guac_script::Handle) -> Option<[f32; 4]> {
+    let at = Some(guac_script::Value::Entity(h));
+    replace_wash(
+        vm.value_cell(
+            at,
+            guac_script::MemberId::named("actorinfo", "replace color"),
+        ),
+        vm.value_cell(
+            at,
+            guac_script::MemberId::named("actorinfo", "replace color percentage"),
+        ),
+    )
+}
+
 /// A hero's drawn scale off his actor's (percent per axis): each axis as a
 /// fraction while all three are over 0 (Ninjini squeezed to half across as
 /// she's drawn into her bottle), else `fallback`, the uniform one his
@@ -1902,6 +1940,28 @@ mod tests {
     /// AS.573: his death's fade (alpha 240, 127, 14 on its way to 0) draws
     /// his body at each alpha, on a neutral tint (his colour never laid on
     /// him); off his scripts, or entering, the tint isn't read.
+    /// openspec AS.590: an actor's replace colour washes by its percent,
+    /// its colour in linear light, red the high byte; none at 0 percent
+    /// or with either cell unwritten, and the percent clamped to 100.
+    #[test]
+    fn a_replace_colour_washes_by_its_percent() {
+        use guac_script::Value;
+        let orange = Some(Value::Color(0xFF7A_00FF));
+        let w = replace_wash(orange, Some(Value::Int(41))).unwrap();
+        assert!((w[0] - 1.0).abs() < 1e-6, "{w:?}");
+        assert!((w[1] - (122.0f32 / 255.0).powf(2.2)).abs() < 1e-6, "{w:?}");
+        assert_eq!(w[2], 0.0);
+        assert!((w[3] - 0.41).abs() < 1e-6, "{w:?}");
+        assert_eq!(replace_wash(orange, Some(Value::Int(250))).unwrap()[3], 1.0);
+        assert_eq!(replace_wash(orange, Some(Value::Int(0))), None);
+        assert_eq!(replace_wash(None, Some(Value::Int(50))), None);
+        assert_eq!(replace_wash(orange, None), None);
+        assert_eq!(
+            replace_wash(Some(Value::Int(3)), Some(Value::Int(50))),
+            None
+        );
+    }
+
     #[test]
     fn a_heros_body_draws_at_his_tints_alpha_while_his_scripts_carry_him() {
         let mut a = Actor::blank();
