@@ -7879,6 +7879,114 @@ mod fight_tests {
         );
     }
 
+    /// The as-hero-carry review (openspec AS.540): what carries a hero
+    /// climbs ground he could walk (a 30° ramp) and stops at a slope he
+    /// couldn't (60°), the walk's own bound: a slide along any face it met
+    /// would carry him up a cliff a walk holds him under.
+    #[test]
+    fn a_carrier_slides_up_a_walkable_ramp_and_stops_at_a_steep_one() {
+        for (deg, climbs) in [(30.0f32, true), (60.0, false)] {
+            let rise = deg.to_radians().tan() * 10.0;
+            // A floor from x = -10 to 10, then a ramp to x = 20.
+            let vertices = vec![
+                Vec3::new(-10.0, 0.0, -10.0),
+                Vec3::new(-10.0, 0.0, 10.0),
+                Vec3::new(10.0, 0.0, -10.0),
+                Vec3::new(10.0, 0.0, 10.0),
+                Vec3::new(20.0, rise, -10.0),
+                Vec3::new(20.0, rise, 10.0),
+            ];
+            let triangles = vec![[0, 1, 3], [0, 3, 2], [2, 3, 5], [2, 5, 4]];
+            let ground = Body {
+                id: BodyId(1),
+                kind: BodyKind::Static,
+                pose: Pose::at(Vec3::ZERO),
+                collider: Collider::Mesh(std::sync::Arc::new(
+                    Mesh::new(vertices, triangles, vec![0; 4]).unwrap(),
+                )),
+            };
+            let mut e = Pit {
+                world: ParryWorld::new(&[ground]).unwrap(),
+                hero: Some(Hero::actor(eruptor_solid(), Vec3::ZERO, 0.0)),
+                bodies: HashMap::new(),
+            };
+            let mut w = world();
+            let mut dummy = Actor::blank();
+            dummy.launched = true;
+            dummy.physics.gravity_acceleration = 128.0;
+            dummy.physics.gravity_max_speed = 128.0;
+            dummy.solid = Solid {
+                width: 3.0,
+                length: 3.0,
+                height: 3.0,
+                interacts_with_level_mesh: 1,
+                interacts_with_actors: 1,
+                shape: 3,
+                ..Solid::default()
+            };
+            w.actors.insert(C1, dummy);
+            let mut rider = Actor::blank();
+            rider.attach = Value::Entity(C1);
+            w.actors.insert(HERO, rider);
+            e.hero.as_mut().unwrap().hung = true;
+            let (mut far, mut high) = (f32::MIN, f32::MIN);
+            for _ in 0..60 {
+                w.actors.get_mut(&C1).unwrap().velocity.x = 50.0;
+                w.advance(STEP, &mut e);
+                let at = w.actor(C1).unwrap().position;
+                far = far.max(at.x);
+                high = high.max(at.y);
+            }
+            if climbs {
+                assert!(high > 0.5 * rise, "{deg}°: up {high} of {rise}");
+            } else {
+                assert!(far < 10.5 && high < 0.3, "{deg}°: to {far}, up {high}");
+            }
+        }
+    }
+
+    /// The as-hero-carry review: `carries_hero` follows each hero's own
+    /// hang in co-op. One hero hung on a dummy and one standing: the dummy
+    /// carries, a launched actor beside it doesn't; hang the second hero on
+    /// that one and both do.
+    #[test]
+    fn carries_hero_follows_each_heros_own_hang() {
+        const OTHER: Handle = 0x6100_0011;
+        struct Two(ParryWorld);
+        impl Engine for Two {
+            fn hero(&mut self, _: Handle) -> Option<&mut Hero> {
+                None
+            }
+            fn heroes(&self) -> Vec<Handle> {
+                vec![HERO, OTHER]
+            }
+            fn seam(&self) -> &dyn PhysicsSeam {
+                &self.0
+            }
+            fn view_heading(&self) -> f32 {
+                0.0
+            }
+            fn pad(&self, _: usize) -> Pad {
+                Pad::default()
+            }
+        }
+        let e = Two(ParryWorld::new(&[]).unwrap());
+        let mut w = world();
+        for c in [C1, C3] {
+            let mut a = Actor::blank();
+            a.launched = true;
+            w.actors.insert(c, a);
+        }
+        let mut hung = Actor::blank();
+        hung.attach = Value::Entity(C1);
+        w.actors.insert(HERO, hung);
+        w.actors.insert(OTHER, Actor::blank());
+        assert!(w.carries_hero(C1, &e));
+        assert!(!w.carries_hero(C3, &e), "the first's hang slides only his");
+        w.actors.get_mut(&OTHER).unwrap().attach = Value::Entity(C3);
+        assert!(w.carries_hero(C1, &e) && w.carries_hero(C3, &e));
+    }
+
     /// AS.166: one of the people the TV draws, its solid meeting the level,
     /// led up a slope by `move to` stands on the ground under each step, as
     /// chapter 1's Norticus at the quarry climbs its slope; a scene's actor
