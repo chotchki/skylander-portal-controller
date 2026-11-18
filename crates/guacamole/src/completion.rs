@@ -21,9 +21,10 @@
 //! The tabs come up in turn, as its scripts run them, until the last or the
 //! player's first left or right ([`TabCycle`]). Not drawn: its animation (the
 //! rows sliding in, the checkmarks slammed in, the fireworks for three
-//! stars), the dots between a line and its count, and the tab titles' place,
-//! which the generic menu's items set and nobody has read (on the column's
-//! head, ours), there being no recording of a completion screen.
+//! stars) and the dots between a line and its count, there being no
+//! recording of a completion screen. The focused tab's name joins the
+//! screen's title in the scripts' yellow and no title stands under a column
+//! (`UI - Objectives Menu - Item Focus`, openspec AS.585).
 //!
 //! Its pads as the original's menu takes them: left and right move between
 //! the tabs, the accept button (South) on any tab is the screen's continue,
@@ -543,7 +544,33 @@ pub(crate) fn spawn(
         ))
         .with_children(|root| {
             let title = r.title.clone().unwrap_or_else(|| "Level complete".into());
-            words(root, art, pen, &title, 52.0, gold, Step::Lg, Role::Accent);
+            // The focused tab's name after the screen's title, a space
+            // between, in its own colour (`UI - Objectives Menu - Item
+            // Focus`, openspec AS.585).
+            root.spawn((
+                ScreenTitle,
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: px(16),
+                    ..default()
+                },
+            ))
+            .with_children(|line| {
+                words(line, art, pen, &title, 52.0, gold, Step::Lg, Role::Accent);
+                let mut name = line.spawn((TabTitle, Node::default()));
+                name.with_children(|name| match art {
+                    Some(a) => bitmap_text(name, a, &tab_name(r, tab), 52.0, TAB_TITLE_COLOUR),
+                    None => {
+                        name.spawn(pen.inked(
+                            &tab_name(r, tab),
+                            Step::Lg,
+                            TAB_TITLE_COLOUR,
+                            bevy::text::Justify::Center,
+                        ));
+                    }
+                });
+            });
             panel(root, art, pen, r, tab);
             if art.is_none() {
                 stars(root, pen, &r.stars);
@@ -579,6 +606,27 @@ pub(crate) fn spawn(
             });
         })
         .id()
+}
+
+/// The screen's title line (openspec AS.585).
+#[derive(Component)]
+pub(crate) struct ScreenTitle;
+
+/// The focused tab's name in the title line (openspec AS.585).
+#[derive(Component)]
+pub(crate) struct TabTitle;
+
+/// The colour `UI - Objectives Menu - Item Focus` gives the focused tab's
+/// name in the title: the file's literal, a yellow.
+pub(crate) const TAB_TITLE_COLOUR: Color = Color::srgb_u8(240, 240, 20);
+
+/// Tab `i`'s name: the scripts' own, else ours.
+pub(crate) fn tab_name(r: &LevelResults, i: usize) -> String {
+    r.tabs
+        .get(i)
+        .cloned()
+        .flatten()
+        .unwrap_or_else(|| ["Story", "Challenges", "Finds"][i.min(2)].to_owned())
 }
 
 /// A line of text: in the disc's bitmap font at `size` design pixels high
@@ -771,24 +819,12 @@ fn panel(
             }
             for (i, id) in TABS.iter().enumerate() {
                 let focused = i == tab;
-                let name = r
-                    .tabs
-                    .get(i)
-                    .cloned()
-                    .flatten()
-                    .unwrap_or_else(|| ["Story", "Challenges", "Finds"][i].to_owned());
                 let mut button = row.spawn((
                     Button,
                     FocusId(id),
                     Node {
                         width: px(head.map_or(160.0, |p| p.size.x * UNIT)),
                         height: px(height),
-                        flex_direction: FlexDirection::Column,
-                        align_items: AlignItems::Center,
-                        // The column's head is its foot once the art is the
-                        // right way up: the title on it.
-                        justify_content: JustifyContent::FlexEnd,
-                        padding: UiRect::bottom(px(14.0 * UNIT)),
                         flex_shrink: 0.0,
                         ..default()
                     },
@@ -811,23 +847,6 @@ fn panel(
                         ));
                     }
                 }
-                let color = if focused {
-                    theme.gold_bright
-                } else {
-                    Color::WHITE.with_alpha(0.7)
-                };
-                button.with_children(|head| {
-                    words(
-                        head,
-                        art,
-                        pen,
-                        &name,
-                        26.0,
-                        color,
-                        Step::Body,
-                        if focused { Role::Accent } else { Role::Muted },
-                    );
-                });
             }
             if let Some(a) = art {
                 piece(row, a, TAB_TILE, Some(TILE_WIDTH), 1.0);
@@ -1314,10 +1333,10 @@ mod tests {
             ]
         );
         assert_eq!(r.stars, [true, false, false]);
-        // What's drawn: the title, the tabs' names, the focused tab's
-        // objectives alone, each with its tally.
+        // What's drawn: the title with the focused tab's name, the focused
+        // tab's objectives alone, each with its tally.
         let texts = drawn_texts(&mut app);
-        for want in ["All done", "One", "Two", "Three", "Meet him"] {
+        for want in ["All done", "One", "Meet him"] {
             assert!(texts.iter().any(|t| t == want), "{want} drawn: {texts:?}");
         }
         assert!(
@@ -1381,6 +1400,56 @@ mod tests {
             !app.world().resource::<LevelEnding>().0,
             "let go at the ask"
         );
+    }
+
+    /// The texts under every entity `of` matches, in tree order.
+    fn texts_under<F: bevy::ecs::query::QueryFilter>(app: &mut App) -> Vec<String> {
+        let mut roots = app.world_mut().query_filtered::<Entity, F>();
+        let mut stack: Vec<Entity> = roots.iter(app.world()).collect();
+        let mut out = Vec::new();
+        while let Some(e) = stack.pop() {
+            if let Some(t) = app.world().get::<Text>(e) {
+                out.push(t.0.clone());
+            }
+            if let Some(kids) = app.world().get::<Children>(e) {
+                stack.extend(kids.iter());
+            }
+        }
+        out
+    }
+
+    /// openspec AS.585: `UI - Objectives Menu - Item Focus` writes the
+    /// focused tab's name into the screen's title after its own, in the
+    /// file's yellow; no title stands under a column. A move to the next
+    /// tab moves its name into the title.
+    #[test]
+    fn the_focused_tabs_name_is_in_the_title_and_none_under_the_columns() {
+        let (mut app, presses) = screen_app();
+        for _ in 0..3 {
+            app.update();
+        }
+        let mut title = texts_under::<With<ScreenTitle>>(&mut app);
+        title.sort();
+        assert_eq!(title, ["All done", "One"]);
+        let named = texts_under::<With<TabTitle>>(&mut app);
+        assert_eq!(named, ["One"]);
+        let mut q = app.world_mut().query_filtered::<&TextColor, With<Text>>();
+        assert!(
+            q.iter(app.world()).any(|c| c.0 == TAB_TITLE_COLOUR),
+            "in its own colour"
+        );
+        assert!(
+            texts_under::<With<FocusId>>(&mut app).is_empty(),
+            "no title under a column"
+        );
+        let all = drawn_texts(&mut app);
+        assert!(!all.iter().any(|t| t == "Two" || t == "Three"), "{all:?}");
+        presses.push(TestPress::Right);
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(texts_under::<With<TabTitle>>(&mut app), ["Two"]);
+        assert!(texts_under::<With<FocusId>>(&mut app).is_empty());
     }
 
     /// The screen's lines: a time's `@` filled with its target, its tally
