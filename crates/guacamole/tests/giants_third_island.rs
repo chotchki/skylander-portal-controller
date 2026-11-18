@@ -440,10 +440,91 @@ fn visit_persephone(run: &mut Run, stops: &mut Vec<String>) {
     );
 }
 
+/// The actor a field of `of` names.
+fn field_actor(run: &Run, of: Value, name: &str) -> Option<Handle> {
+    match run.vm.value(run.vm.field(of, name)?) {
+        Value::Entity(h) => Some(h),
+        Value::Object(o) => run.world.handles().get(&o).copied(),
+        _ => None,
+    }
+}
+
+/// The TV's origin nodes for the turret's own models (`hero_scripts`
+/// reads every static model's from the level's nodes part; a headless run
+/// sets none, so its barrel hangs at the ball's pivot, unturned).
+fn turret_origin_nodes(run: &mut Run) {
+    let usr = dump().join("PS3_GAME/USRDIR");
+    let bytes = guac_extract::scripts::entry(&usr, &format!("level/{LEVEL_214}.bld")).unwrap();
+    let igz = guac_formats::igz::Igz::parse(&bytes).unwrap();
+    let mut part = guac_extract::levels::nodes(&igz, LEVEL_214, identity())
+        .expect("the level's nodes")
+        .ir;
+    part.models
+        .retain(|m| m.load_file.to_ascii_lowercase().contains("/turret_"));
+    assert!(part.models.len() >= 3, "the turret's body, ball and barrel");
+    run.world
+        .set_origin_nodes(guacamole::scripts::origin_nodes(&part));
+}
+
+/// openspec AS.445: the pointer swept to the screen's four corners, the
+/// first player's barrel aims where its ray lands each time: its drawn
+/// facing the heading from its ball to the target `New Turret - Find
+/// Target` puts there and its tilt the pitch, as `New Turret - Track Target
+/// With Barrel` turns the ball it hangs on. Then back to the middle.
+fn barrel_follows_pointer(run: &mut Run, stops: &mut Vec<String>) {
+    let t = turret::active(&run.vm).expect("a turret running");
+    let p1 = run.vm.value(run.vm.field(t, "p1 player data").unwrap());
+    let ball = field_actor(run, p1, "turret ball").expect("its ball");
+    let barrel = field_actor(run, p1, "turret barrel").expect("its barrel");
+    let corners = [
+        [-200.0f32, -150.0],
+        [200.0, -150.0],
+        [200.0, 150.0],
+        [-200.0, 150.0],
+    ];
+    let mut aims = Vec::new();
+    for c in corners.into_iter().chain([[0.0, 0.0]]) {
+        for _ in 0..90 {
+            let p = turret::view(&run.vm, &run.world)
+                .and_then(|v| v.pointer)
+                .expect("its pointer");
+            let s = Stick::new(
+                ((c[0] - p[0]) / 40.0).clamp(-1.0, 1.0),
+                (-(c[1] - p[1]) / 40.0).clamp(-1.0, 1.0),
+            );
+            step(run, stops, s, [false; 4]);
+        }
+        let adr = run.vm.value(run.vm.field(p1, "attack data ref").unwrap());
+        let target = field_actor(run, adr, "target").expect("its target");
+        let to =
+            run.world.actor(target).unwrap().position - run.world.actor(ball).unwrap().position;
+        let heading = to.x.atan2(to.z).to_degrees().rem_euclid(360.0);
+        let pitch = to.y.atan2(to.x.hypot(to.z)).to_degrees();
+        let drawn = guacamole::props::actor_transform(run.world.actor(barrel).unwrap()).rotation;
+        let ahead = drawn * Vec3::Z;
+        let facing = ahead.x.atan2(ahead.z).to_degrees().rem_euclid(360.0);
+        let tilt = ahead.y.atan2(ahead.x.hypot(ahead.z)).to_degrees();
+        let off = |a: f32, b: f32| ((a - b + 540.0).rem_euclid(360.0) - 180.0).abs();
+        println!(
+            "pointer at {c:?}: the target's heading {heading:.1} pitch {pitch:.1}, the barrel's {facing:.1} {tilt:.1}"
+        );
+        assert!(
+            off(facing, heading) < 1.5 && (tilt - pitch).abs() < 1.5,
+            "the barrel at {c:?}: {facing} {tilt} against {heading} {pitch}"
+        );
+        aims.push((facing, tilt));
+    }
+    let off = |a: f32, b: f32| ((a - b + 540.0).rem_euclid(360.0) - 180.0).abs();
+    // Left against right and top against bottom, it moved with the pointer.
+    assert!(off(aims[0].0, aims[1].0) > 20.0, "across: {aims:?}");
+    assert!(aims[1].1 - aims[2].1 > 20.0, "down: {aims:?}");
+}
+
 /// A turret entered by its prompt (△) from where he stands, its pointer
 /// calibrated on the circle, each target shot in turn, then out.
 fn play_turret(run: &mut Run, stops: &mut Vec<String>, count: usize) -> u32 {
     into_turret(run, stops);
+    barrel_follows_pointer(run, stops);
     shoot_padlocks(run, stops, count);
     out_of_turret(run, stops)
 }
@@ -663,6 +744,7 @@ fn level_214s_third_island_is_walked_to_its_end() {
     // Up to the turret's sphere, solid to him (its 26 ft its scripts give
     // it, openspec AS.168), short of its middle.
     walk(&mut run, &mut stops, &[[665.2, 457.6]]);
+    turret_origin_nodes(&mut run);
     // Lost first, as its health running out loses it: out by its spot, its
     // prompt back and into it again from there (openspec AS.189).
     into_turret(&mut run, &mut stops);

@@ -1152,8 +1152,12 @@ impl ScriptWorld {
             return self.angles_within(a, engine, depth);
         }
         let a = self.actors.get(&h)?;
+        // Hung on a node, it turns as the node does, unless a script wrote
+        // its turn there (openspec AS.445: a turret's ball, aimed each step
+        // by `New Turret - Track Target With Barrel`).
         if depth > 0
             && !a.removed
+            && !a.turned
             && let Some(Object::Node(owner, i)) = self.object(Some(a.attach))
             && owner != h
             && let Some(q) = self.node_turn(owner, i, engine, depth - 1)
@@ -4054,7 +4058,13 @@ impl ScriptWorld {
                 && let Some(a) = self.actors.get_mut(&h)
             {
                 a.position = p;
-                if let Some(q) = turn {
+                // A turn a script wrote while it hangs on a node is drawn as
+                // written too (openspec AS.445: the turret's ball, aimed at
+                // its pointer's target each step, took its body's node turn
+                // back each placing, so the barrel on it never moved).
+                if let Some(q) = turn
+                    && !written
+                {
                     a.angles = angles_of(q);
                 }
                 if let (Some(now), Some(last)) = (owner_facing, a.hung_facing)
@@ -6473,6 +6483,81 @@ mod tests {
         let posed = Vec3::new(1.0, 0.0, 0.0)
             + Quat::from_rotation_y(30f32.to_radians()) * Vec3::new(0.0, 4.0, 10.0);
         assert!(at.distance(posed) < 1e-4, "{at}");
+    }
+
+    /// openspec AS.445: a turret's ball hangs on its body's static node and
+    /// its barrel on the ball's; `New Turret - Track Target With Barrel`
+    /// writes the ball's facing and tilt each step. The ball keeps the turn
+    /// written (a script reads it back so) and the barrel turns with it;
+    /// unwritten, the ball turns as its node does.
+    #[test]
+    fn a_turn_written_on_a_node_hung_actor_turns_what_hangs_on_it() {
+        const BODY_T: Obj = Obj { unit: 9, index: 7 };
+        const BALL_T: Obj = Obj { unit: 9, index: 8 };
+        const BODY: Handle = 0x6000_0071;
+        const BALL: Handle = 0x6000_0072;
+        const BARREL: Handle = 0x6000_0073;
+        let mut e = bench();
+        let mut w = world();
+        for (t, name, model) in [
+            (BODY_T, "New_Turret_Body", "body.mdl"),
+            (BALL_T, "New_Turret_Ball", "ball.mdl"),
+        ] {
+            let mut template = crate::scripts::Placed::named(t, name, None, 5);
+            template.model = Some(model.into());
+            w.templates.insert(t, template);
+        }
+        w.set_origin_nodes(HashMap::from([
+            (
+                "body.mdl".to_owned(),
+                vec![NodePose {
+                    at: Vec3::new(0.0, 2.0, 0.0),
+                    turn: euler([-45.0, 81.0, 0.0]),
+                }],
+            ),
+            (
+                "ball.mdl".to_owned(),
+                vec![NodePose::at(Vec3::new(0.0, 0.0, 1.0))],
+            ),
+        ]));
+        let mut body = Actor::blank();
+        body.template = Some(BODY_T);
+        w.actors.insert(BODY, body);
+        let mut ball = Actor::blank();
+        ball.template = Some(BALL_T);
+        ball.attach = w.objs.value(Object::Node(BODY, 0));
+        w.actors.insert(BALL, ball);
+        let mut barrel = Actor::blank();
+        barrel.attach = w.objs.value(Object::Node(BALL, 0));
+        w.actors.insert(BARREL, barrel);
+        let close = |a: Quat, b: Quat| a.dot(b).abs() > 1.0 - 1e-5;
+        let drawn = |w: &ScriptWorld, h| crate::props::actor_transform(&w.actors[&h]).rotation;
+        w.place_hung(&mut e);
+        let rest = euler([-45.0, 81.0, 0.0]);
+        assert!(close(drawn(&w, BALL), rest), "unwritten: its node's");
+        assert!(close(drawn(&w, BARREL), rest), "the barrel with it");
+        // Aimed: the scripts' facing and tilt, kept through the placing.
+        let turn = w.objs.value(Object::Facet(BALL, Facet::Orientation));
+        let facing = at("orientationmeasurement", "facing", Some(turn), None);
+        let tilt = at("orientationmeasurement", "tilt", Some(turn), None);
+        w.set_member(&facing, Member::Facing, Value::Float(107.0), &mut e)
+            .unwrap();
+        w.set_member(&tilt, Member::Tilt, Value::Float(-26.0), &mut e)
+            .unwrap();
+        w.place_hung(&mut e);
+        let aimed = euler([-26.0, 107.0, 0.0]);
+        assert!(close(drawn(&w, BALL), aimed), "the ball as written");
+        assert!(close(drawn(&w, BARREL), aimed), "the barrel follows it");
+        assert_eq!(
+            w.get_member(&facing, Member::Facing, &mut e),
+            Ok(Value::Float(107.0)),
+            "read back as written"
+        );
+        // Swept the other way, it follows again.
+        w.set_member(&facing, Member::Facing, Value::Float(57.0), &mut e)
+            .unwrap();
+        w.place_hung(&mut e);
+        assert!(close(drawn(&w, BARREL), euler([-26.0, 57.0, 0.0])));
     }
 
     /// AU.37: what hangs on an actor itself turns as he turns (Pop Fizz's
