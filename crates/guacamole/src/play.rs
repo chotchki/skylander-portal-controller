@@ -7959,6 +7959,11 @@ mod tests {
         };
         let whole = drawn(&app);
         let whole_rgb = rgb(&app);
+        let neutral = crate::tints::tint_of(crate::tints::NEUTRAL).truncate();
+        assert!(
+            (whole_rgb - neutral).length() < 1e-6,
+            "neutral grey: {whole_rgb}"
+        );
         assert!(
             whole.iter().all(|(a, _)| (*a - 1.0).abs() < 1e-6),
             "{whole:?}"
