@@ -667,7 +667,7 @@ pub(crate) fn rgba_of_ktx2(ktx2: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
 /// alpha it adds about what it would added (and dims what's under it by
 /// the same).
 pub(crate) fn added_as_alpha(rgba: &mut [u8]) {
-    for px in rgba.chunks_exact_mut(4) {
+    for px in rgba.as_chunks_mut::<4>().0 {
         let a = f32::from(px[3]) / 255.0;
         let rgb = [px[0], px[1], px[2]].map(|c| f32::from(c) / 255.0 * a);
         let m = rgb.iter().copied().fold(0.0f32, f32::max);
