@@ -25,8 +25,12 @@
 //! lives out its life: the throw's flash is taken off a step after it
 //! comes (AH.87's probe), so the original's particles outlive their clone.
 //! One taken off before it made its most alive still makes them, at its
-//! rate (the eruption's sparks and smoke go a step after they come, and
-//! the disc gives them 25 and 12): our reading, not a measurement.
+//! rate, for at most one of its particles' lives after it stops (the
+//! eruption's sparks and smoke go a step after they come, and the disc
+//! gives them 25 and 12 at 120 and 60 a second, so they're all made in
+//! 0.2 s of their 2 s lives; Slam Bam's entry's `waterRing`, 2 and 3 a
+//! second against 50 most, went on 16 to 24 s after its clones were taken
+//! off before that bound, openspec AS.627): our reading, not a measurement.
 //!
 //! Every random number a particle takes is the particles' own
 //! ([`Cosmetic`]), never the session's generator: the original's particles
@@ -145,6 +149,8 @@ pub struct GeneratorState {
     pub particles: Vec<Particle>,
     pub points: Vec<Point>,
     pub since_point: f32,
+    /// Seconds since its emitter stopped (0 while it's on).
+    pub off_for: f32,
 }
 
 /// The middle key's place in a life, `None` where it has none.
@@ -289,7 +295,8 @@ impl GeneratorState {
         }
         let most = u32::from(s.max_alive);
         let room = most.saturating_sub(self.particles.len() as u32);
-        let owed = if !on && self.made >= most {
+        self.off_for = if on { 0.0 } else { self.off_for + dt };
+        let owed = if !on && (self.made >= most || self.off_for > s.lifespan.max(SHORTEST_LIFE)) {
             0
         } else if s.spawn_rate >= BURST_RATE {
             room

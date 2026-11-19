@@ -127,6 +127,19 @@ pub(crate) struct ParticleReport {
     pub level_clones_started: usize,
     /// What the level's file places itself (openspec AS.17).
     pub placed: PlacedReport,
+    /// Each clone's system drawing now (the first 64): its emitter, where it
+    /// stands and where its clone's actor is, metres (openspec AS.626: a
+    /// system that doesn't follow its clone shows here).
+    pub places: Vec<SystemPlace>,
+}
+
+/// One clone's system as `/api/_test/tv` reports where it is.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub(crate) struct SystemPlace {
+    pub name: String,
+    pub at: [f32; 3],
+    pub actor: Option<[f32; 3]>,
+    pub on: bool,
 }
 
 /// The level's own emitters as `/api/_test/tv` reports them (openspec
@@ -469,9 +482,20 @@ pub(crate) fn step_systems(
         let (count, names) = match system.source {
             // One waiting, spent, draws nothing: its quads are hidden below.
             Source::Clone(_) if spent => (&mut now.particles, &mut unnamed),
-            Source::Clone(_) => {
+            Source::Clone(clone) => {
                 now.systems += 1;
                 now.level_clones += usize::from(system.level_own);
+                if now.places.len() < 64 {
+                    now.places.push(SystemPlace {
+                        name: system.name.clone(),
+                        at: system.place.at.to_array(),
+                        actor: world
+                            .as_deref()
+                            .and_then(|w| w.actor(clone.to_bits()))
+                            .map(|a| a.position.to_array()),
+                        on: system.on,
+                    });
+                }
                 (&mut now.particles, &mut now.emitters)
             }
             Source::Placed(_) => {

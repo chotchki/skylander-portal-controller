@@ -124,6 +124,29 @@ fn a_stream_makes_its_rate_and_each_particle_dies_at_the_end_of_its_life() {
     assert!(s.particles.iter().all(|p| p.age < p.life));
 }
 
+/// openspec AS.627: a slow stream taken off long before its most is made
+/// (Slam Bam's entry's `waterRing`: 2 a second, 50 most, 1 s lives) makes
+/// what it owes for one life after it stops, then nothing, and is spent a
+/// life later: not the 24 s its most would take at its rate.
+#[test]
+fn a_slow_stream_taken_off_stops_making_after_one_life() {
+    let mut sprite = stream();
+    sprite.spawn_rate = 2.0;
+    sprite.max_alive = 50;
+    sprite.lifespan = 1.0;
+    let g = generator(Kind::Sprite(sprite));
+    let mut s = GeneratorState::default();
+    run(&mut s, &g, true, 60, 1.0 / 60.0);
+    assert_eq!(s.made, 2);
+    let mut off = s.clone();
+    run(&mut off, &g, false, 60, 1.0 / 60.0);
+    assert!((2..=4).contains(&off.made), "{} made in its life", off.made);
+    let made = off.made;
+    run(&mut off, &g, false, 66, 1.0 / 60.0);
+    assert_eq!(off.made, made, "none after a life off");
+    assert!(!off.live(), "spent a life after its last");
+}
+
 #[test]
 fn a_stream_holds_at_its_most_alive() {
     let mut sprite = stream();
