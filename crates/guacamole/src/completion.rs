@@ -81,7 +81,7 @@ pub(crate) const FONT_ARCHIVE: &str = "permanent/global.bld";
 /// The original's screen units to the TV's design pixels (its 640 by 480
 /// containers on a 1920 by 1080 design: 2.25 a unit on the height, kept at
 /// 2 so the panel sits clear of the title and the prompt).
-const UNIT: f32 = 2.0;
+pub(crate) const UNIT: f32 = 2.0;
 
 /// The screen's templates the layout draws, by name.
 const TAB_FOCUS: &str = "UI_EOL_Tab_focus";
@@ -199,7 +199,13 @@ impl Plugin for CompletionPlugin {
             .add_observer(on_continue)
             .add_systems(
                 Update,
-                (open_completion, tab_moves, tally_sounds, show_completion)
+                (
+                    open_completion,
+                    tab_moves,
+                    tally_sounds,
+                    show_completion,
+                    crate::completion_motion::pose_tally,
+                )
                     .chain()
                     .after(PlaySystems),
             );
@@ -247,7 +253,7 @@ fn open_completion(
             .and_then(|c| c.results.as_ref().ok());
         *cycle = TabCycle {
             left: Some(tab_time(results, 0)),
-            fireworks: false,
+            ..TabCycle::default()
         };
         *sounds = TallySounds::default();
         sounds.tab_shown(results, 0, false);
@@ -275,6 +281,9 @@ pub(crate) struct TabCycle {
     pub(crate) left: Option<f32>,
     /// Holding for the fireworks (three stars, the last tab's time out).
     pub(crate) fireworks: bool,
+    /// Seconds since the tally started: what its motion is timed on
+    /// ([`crate::completion_motion`], openspec AS.607).
+    pub(crate) clock: f32,
 }
 
 impl TabCycle {
@@ -295,9 +304,13 @@ pub(crate) const MOVE_SOUND: &str = "snd_gbl_fx_navigate_movement_global";
 /// row comes in, with its checkmark's slam.
 pub(crate) const CHECKED_SOUND: &str = "snd_gbl_ui_object_checked";
 /// `Create Entry`'s for every row as it comes in: the objectives screen's
-/// own, which the extract's sounds part doesn't hold (asked all the same,
-/// so `/api/_test/tv` says it played nothing).
+/// own, in the extract's sounds part since AS.606.
 pub(crate) const COUNT_SOUND: &str = "fx_objectives_count";
+/// `Create Star`'s as a tab's earned star is made in the tally, the
+/// screen's own.
+pub(crate) const STAR_SOUND: &str = "fx_objectives_star_land";
+/// `Start Fireworks`', the screen's own.
+pub(crate) const FIREWORKS_SOUND: &str = "fx_objectives_fireworks";
 /// The checked sound's delay after its row's.
 pub(crate) const CHECKED_DELAY: f32 = 0.2;
 
@@ -335,6 +348,13 @@ impl TallySounds {
                 self.owed.push((at + CHECKED_DELAY, CHECKED_SOUND));
             }
         }
+        // The tab's earned star made once its last row's in, its landing
+        // sound with it (`Objective Entry Anims Complete`, AS.607).
+        if let Some(Some(made)) = crate::completion_motion::star_made(results, tab) {
+            let at = made - crate::completion_motion::tab_start(results, tab);
+            self.owed.push((at, STAR_SOUND));
+        }
+        self.owed.sort_by(|a, b| a.0.total_cmp(&b.0));
     }
 }
 
@@ -376,6 +396,7 @@ fn tab_moves(
         .and_then(|w| w.sequence.completion.as_ref())
         .and_then(|c| c.results.as_ref().ok());
     if let Some(left) = cycle.left {
+        cycle.clock += time.delta_secs();
         let left = left - time.delta_secs();
         if left > 0.0 {
             cycle.left = Some(left);
@@ -388,7 +409,10 @@ fn tab_moves(
             *cycle = TabCycle {
                 left: Some(FIREWORKS_TIME),
                 fireworks: true,
+                clock: cycle.clock,
             };
+            let now = sounds.clock;
+            sounds.owed.push((now, FIREWORKS_SOUND));
         } else {
             info!("the tally's over: the pads handed back");
             *cycle = TabCycle::default();
@@ -723,7 +747,7 @@ pub(crate) fn spawn(
                     }
                 });
             });
-            panel(root, art, pen, r, tab);
+            panel(root, art, pen, r, (tab, tallying));
             if art.is_none() {
                 stars(root, pen, &r.stars);
             }
@@ -954,8 +978,14 @@ fn panel(
     art: Option<&Art>,
     pen: &Pen,
     r: &LevelResults,
-    tab: usize,
+    (tab, tallying): (usize, bool),
 ) {
+    use crate::completion_motion::{
+        Anim, TallyMotion, TallyShake, star_made, tab_start, tab_times,
+    };
+    // While the tally runs, each piece comes in on its clock (AS.607).
+    let start = tab_start(Some(r), tab);
+    let times = tab_times(Some(r), tab);
     let theme = &pen.theme;
     let head = art.and_then(|a| a.pieces.get(TAB_FOCUS));
     let height = head.map_or(327.0, |p| p.size.y) * UNIT;
@@ -967,11 +997,14 @@ fn panel(
         height / UNIT,
     );
     parent
-        .spawn(Node {
-            flex_direction: FlexDirection::Row,
-            height: px(height),
-            ..default()
-        })
+        .spawn((
+            TallyShake,
+            Node {
+                flex_direction: FlexDirection::Row,
+                height: px(height),
+                ..default()
+            },
+        ))
         .with_children(|row| {
             if let Some(a) = art {
                 piece(row, a, TAB_LEFT, None, 1.0);
@@ -1022,7 +1055,23 @@ fn panel(
                 .filter(|o| o.category as usize == tab)
                 .enumerate()
             {
-                objective(row, art, pen, o, Places::row(i));
+                let motion = times
+                    .rows
+                    .get(i)
+                    .filter(|_| tallying)
+                    .map(|&(slide, slam)| {
+                        (
+                            TallyMotion {
+                                anim: Anim::Slide,
+                                start: start + slide,
+                            },
+                            slam.map(|s| TallyMotion {
+                                anim: Anim::Slam,
+                                start: start + s,
+                            }),
+                        )
+                    });
+                objective(row, art, pen, o, Places::row(i), motion);
             }
             // Each tab's star in its well, an earned one alone (the well's
             // own art shows an empty one).
@@ -1033,7 +1082,17 @@ fn panel(
                         continue;
                     }
                     let at = Places::star(i, size);
-                    row.spawn((
+                    let mut star_node = row.spawn_empty();
+                    // In the tally a star is made once its tab's rows are in
+                    // and slams in 0.2 s on; a tab without rows shows its at
+                    // once.
+                    if tallying && let Some(Some(made)) = star_made(Some(r), i) {
+                        star_node.insert(TallyMotion {
+                            anim: Anim::Star,
+                            start: made + crate::completion_motion::STAR_DELAY,
+                        });
+                    }
+                    star_node.insert((
                         Node {
                             position_type: PositionType::Absolute,
                             left: px((at.x - side / 2.0) * UNIT),
@@ -1074,6 +1133,10 @@ fn objective(
     pen: &Pen,
     o: &Objective,
     at: Vec2,
+    motion: Option<(
+        crate::completion_motion::TallyMotion,
+        Option<crate::completion_motion::TallyMotion>,
+    )>,
 ) {
     let theme = &pen.theme;
     let mut row = parent.spawn(Node {
@@ -1084,6 +1147,10 @@ fn objective(
         height: px(Places::ROW_STEP * UNIT),
         ..default()
     });
+    let (slide, slam) = motion.map_or((None, None), |(s, c)| (Some(s), c));
+    if let Some(s) = slide {
+        row.insert(s);
+    }
     if art.is_none() {
         row.insert(BackgroundColor(theme.panel[0].with_alpha(0.8)));
     }
@@ -1101,7 +1168,7 @@ fn objective(
                     .and_then(|a| a.pieces.get(CHECK_DONE))
                     .map_or(p.size.x, |d| d.size.x);
                 line.spawn(on_line(0.0, side, side)).with_children(|c| {
-                    c.spawn((
+                    let mut mark = c.spawn((
                         Node {
                             width: px(p.size.x * UNIT),
                             height: px(p.size.y * UNIT),
@@ -1110,6 +1177,9 @@ fn objective(
                         },
                         upright(p, 1.0),
                     ));
+                    if let Some(m) = slam {
+                        mark.insert(m);
+                    }
                 });
             }
             None => {
@@ -1872,6 +1942,7 @@ mod tests {
             [
                 COUNT_SOUND,
                 CHECKED_SOUND,
+                STAR_SOUND,
                 MOVE_SOUND,
                 COUNT_SOUND,
                 MOVE_SOUND,
@@ -1894,8 +1965,8 @@ mod tests {
             app.update();
         }
         let r = report(&app);
-        assert_eq!((r.tab, r.sounds.len()), (1, 7));
-        assert!(r.sounds[6].starts_with(MOVE_SOUND), "{:?}", r.sounds);
+        assert_eq!((r.tab, r.sounds.len()), (1, 8));
+        assert!(r.sounds[7].starts_with(MOVE_SOUND), "{:?}", r.sounds);
         presses.push(TestPress::South);
         for _ in 0..3 {
             app.update();
@@ -1923,9 +1994,152 @@ mod tests {
             .expect("the fireworks");
         assert!((32..=40).contains(&to_fireworks), "{to_fireworks} frames");
         assert!(report(&app).tallying, "held for them");
+        app.update();
+        assert!(
+            report(&app)
+                .sounds
+                .last()
+                .is_some_and(|s| s.starts_with(FIREWORKS_SOUND)),
+            "the fireworks' sound: {:?}",
+            report(&app).sounds
+        );
         let held = past_the_tally(&mut app);
         assert!((78..=82).contains(&held), "{held} frames of fireworks");
         assert!(!report(&app).fireworks);
+    }
+
+    /// The screen's art for a test: each piece an empty image at a size.
+    fn test_art(app: &mut App) -> HashMap<&'static str, Handle<Image>> {
+        let mut pieces = HashMap::new();
+        let mut images = app.world_mut().resource_mut::<Assets<Image>>();
+        for (name, side) in [
+            (TAB_FOCUS, 103.0),
+            (TAB_OFF, 103.0),
+            (STAR, 128.0),
+            (CHECK_EMPTY, 25.0),
+            (CHECK_DONE, 32.0),
+        ] {
+            pieces.insert(
+                name,
+                Piece {
+                    image: images.add(Image::default()),
+                    size: Vec2::splat(side),
+                },
+            );
+        }
+        let handles = pieces.iter().map(|(n, p)| (*n, p.image.clone())).collect();
+        app.insert_resource(Loaded(Some(Ok(Art::for_tests(pieces)))));
+        handles
+    }
+
+    /// The pose and alpha of the one drawn image `image` names, if drawn.
+    fn image_pose(app: &mut App, image: &Handle<Image>) -> Option<(UiTransform, f32)> {
+        let mut q = app.world_mut().query::<(&ImageNode, &UiTransform)>();
+        let found: Vec<(UiTransform, f32)> = q
+            .iter(app.world())
+            .filter(|(i, _)| i.image == *image)
+            .map(|(i, t)| (*t, i.color.alpha()))
+            .collect();
+        assert!(found.len() <= 1, "{} drawn", found.len());
+        found.first().copied()
+    }
+
+    /// AS.607: the tally in motion on the TV. The first tab's row comes in
+    /// at 0.15 s sliding down from above, unseen before; its check (done
+    /// this run) slams in from nothing, 3 times its size on the way; the
+    /// tab's earned star is unseen until its slam, which runs on after the
+    /// second tab is up (made once the first tab's row is in), turned and
+    /// large, then lands and the panel shakes; once the tally's over every
+    /// piece stands still and whole.
+    #[test]
+    fn the_tally_slides_its_rows_in_slams_its_check_and_star_and_shakes() {
+        let (mut app, _) = screen_app();
+        let art = test_art(&mut app);
+        let (check, star) = (art[CHECK_DONE].clone(), art[STAR].clone());
+        let mut seen = (false, false, false, false, false);
+        let mut star_before = true;
+        for _ in 0..40 {
+            app.update();
+            let cycle = *app.world().resource::<TabCycle>();
+            if !cycle.running() {
+                break;
+            }
+            let c = cycle.clock;
+            let mut rows = app
+                .world_mut()
+                .query::<(&crate::completion_motion::TallyMotion, &UiTransform)>();
+            let slides: Vec<(f32, UiTransform)> = rows
+                .iter(app.world())
+                .filter(|(m, _)| m.anim == crate::completion_motion::Anim::Slide)
+                .map(|(m, t)| (m.start, *t))
+                .collect();
+            if app.world().resource::<CompletionTab>().0 == 0 {
+                assert_eq!(slides.len(), 1, "the first tab's one row");
+                let up = match slides[0].1.translation.y {
+                    Val::Px(y) => -y,
+                    v => panic!("{v:?}"),
+                };
+                if c < 0.15 {
+                    assert!((up - 40.0).abs() < 0.01, "above its line: {up}");
+                    seen.0 = true;
+                } else if c < 0.15 + 0.1666 {
+                    assert!(up > 0.0 && up < 40.0, "sliding: {up} at {c}");
+                    seen.1 = true;
+                } else {
+                    assert_eq!(up, 0.0, "on its line at {c}");
+                }
+                if let Some((t, alpha)) = image_pose(&mut app, &check) {
+                    if c < 0.35 {
+                        assert_eq!((t.scale.x, alpha), (0.0, 0.0), "the check unseen at {c}");
+                    } else if t.scale.x > 2.5 {
+                        seen.2 = true;
+                    }
+                }
+            }
+            let shook = {
+                let mut q = app
+                    .world_mut()
+                    .query_filtered::<&UiTransform, With<crate::completion_motion::TallyShake>>();
+                q.iter(app.world()).any(|t| t.translation != Val2::ZERO)
+            };
+            if let Some((t, alpha)) = image_pose(&mut app, &star) {
+                if c < 1.014 + 0.2 {
+                    assert_eq!(t.scale.x, 0.0, "the star unseen at {c}");
+                    assert_eq!(alpha, 0.0);
+                    assert!(!shook, "no shake before the star at {c}");
+                } else {
+                    star_before = false;
+                    if t.scale.x > 2.5 && t.rotation != Rot2::IDENTITY {
+                        seen.3 = true;
+                    }
+                }
+            }
+            seen.4 |= shook;
+        }
+        assert!(!star_before, "the star's slam reached");
+        assert_eq!(
+            seen,
+            (true, true, true, true, true),
+            "(above, sliding, check slammed, star turning large, shaken)"
+        );
+        past_the_tally(&mut app);
+        for _ in 0..2 {
+            app.update();
+        }
+        let (t, alpha) = image_pose(&mut app, &star).expect("the star after the tally");
+        assert_eq!(
+            (t, alpha),
+            (UiTransform::IDENTITY, 1.0),
+            "the star still and whole"
+        );
+        let mut q = app
+            .world_mut()
+            .query::<&crate::completion_motion::TallyMotion>();
+        assert_eq!(
+            q.iter(app.world()).count(),
+            0,
+            "nothing moves after the tally"
+        );
     }
 
     /// AS.446: the panel's pieces where the screen's scripts put them:

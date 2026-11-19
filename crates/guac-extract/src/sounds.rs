@@ -1,5 +1,6 @@
 //! The sounds chapter 1 can play (openspec AR.5): for `global.bld`, each
-//! modelled character's archive and each level the build plays, every
+//! modelled character's archive, each level the build plays and the
+//! objectives screen's archive (AS.606), every
 //! `tfbSoundInfo` of its `level.bld` and every `tfbSoundDataInfo` of its
 //! `level.bld` and `ENGLISH.pak`, through guac-formats' [`sound`] reader,
 //! into `sounds/<stem>.<ron|postcard>`, and each data info's bank remuxed
@@ -29,7 +30,7 @@ use sha2::Digest;
 
 use crate::intros::IrFormat;
 use crate::stages::{Event, Files, count_kept, held, put};
-use crate::{ExtractError, IdentityDir, Result, levels, models, roster, scripts};
+use crate::{ExtractError, IdentityDir, Result, levels, models, roster, screens, scripts};
 
 /// The extract-wide part ([`crate::PARTS`]).
 pub const PART: &str = "sounds";
@@ -50,7 +51,9 @@ pub fn path(ir: IrFormat, archive: &str) -> String {
 }
 
 /// The archives the part reads, under `PS3_GAME/USRDIR`: `global.bld`,
-/// each modelled character's in the roster's order, each level's.
+/// each modelled character's in the roster's order, each level's, then the
+/// screens a level's end streams in ([`screens::ARCHIVES`]: the objectives
+/// screen's own row, star and fireworks sounds, openspec AS.606).
 pub fn archives(roster: &Roster) -> Vec<String> {
     std::iter::once(roster::GLOBAL.to_owned())
         .chain(
@@ -63,6 +66,7 @@ pub fn archives(roster: &Roster) -> Vec<String> {
                 .iter()
                 .map(|l| format!("{}/{l}.bld", levels::LEVEL_FOLDER)),
         )
+        .chain(screens::ARCHIVES.iter().map(|a| (*a).to_owned()))
         .collect()
 }
 
