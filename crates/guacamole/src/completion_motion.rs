@@ -269,7 +269,11 @@ fn px_of(units: f32) -> f32 {
 
 /// Each piece of the tally posed at the tally's clock (still once it's
 /// over), its alpha laid on it and everything under it; the panel shaken.
-#[allow(clippy::type_complexity)]
+/// A piece inside another (a check in its row) fades by both: each image's
+/// and text's alpha is its own times every enclosing piece's, walked once a
+/// frame from the outermost piece, so no walk reads an alpha another just
+/// laid as the image's own.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(crate) fn pose_tally(
     mut commands: Commands,
     cycle: Res<TabCycle>,
@@ -277,6 +281,7 @@ pub(crate) fn pose_tally(
     mut pieces: Query<(Entity, &TallyMotion, &mut UiTransform)>,
     mut panels: Query<&mut UiTransform, (With<TallyShake>, Without<TallyMotion>)>,
     children: Query<&Children>,
+    parents: Query<&ChildOf>,
     mut images: Query<(&mut ImageNode, Option<&OwnAlpha>)>,
     mut texts: Query<(&mut TextColor, Option<&OwnAlpha>), Without<ImageNode>>,
 ) {
@@ -285,6 +290,7 @@ pub(crate) fn pose_tally(
     } else {
         f32::INFINITY
     };
+    let mut alphas = std::collections::HashMap::new();
     for (entity, motion, mut transform) in &mut pieces {
         let p = if clock.is_finite() {
             pose(motion.anim, clock - motion.start)
@@ -296,14 +302,24 @@ pub(crate) fn pose_tally(
             scale: Vec2::splat(p.scale),
             rotation: Rot2::degrees(p.turn),
         });
-        let mut stack = vec![entity];
-        while let Some(e) = stack.pop() {
+        alphas.insert(entity, p.alpha);
+    }
+    let inside_another = |e: Entity| parents.iter_ancestors(e).any(|a| alphas.contains_key(&a));
+    let roots: Vec<Entity> = alphas
+        .keys()
+        .copied()
+        .filter(|e| !inside_another(*e))
+        .collect();
+    for root in roots {
+        let mut stack = vec![(root, 1.0f32)];
+        while let Some((e, above)) = stack.pop() {
+            let alpha = above * alphas.get(&e).copied().unwrap_or(1.0);
             if let Ok((mut image, own)) = images.get_mut(e) {
                 let base = own.map_or(image.color.alpha(), |o| o.0);
                 if own.is_none() {
                     commands.entity(e).insert(OwnAlpha(base));
                 }
-                let want = base * p.alpha;
+                let want = base * alpha;
                 if image.color.alpha() != want {
                     image.color.set_alpha(want);
                 }
@@ -312,12 +328,12 @@ pub(crate) fn pose_tally(
                 if own.is_none() {
                     commands.entity(e).insert(OwnAlpha(base));
                 }
-                let want = base * p.alpha;
+                let want = base * alpha;
                 if text.0.alpha() != want {
                     text.0.set_alpha(want);
                 }
             }
-            stack.extend(children.get(e).into_iter().flatten());
+            stack.extend(children.get(e).into_iter().flatten().map(|c| (*c, alpha)));
         }
     }
     let results = world

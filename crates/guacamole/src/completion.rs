@@ -2092,6 +2092,10 @@ mod tests {
                     if c < 0.35 {
                         assert_eq!((t.scale.x, alpha), (0.0, 0.0), "the check unseen at {c}");
                     } else if t.scale.x > 2.5 {
+                        // Seen as it slams, inside its row's fade: the
+                        // row's alpha laid over the check's own, never in
+                        // place of it (the as-tally review's TV strip).
+                        assert!(alpha > 0.5, "the check slammed unseen at {c}: {alpha}");
                         seen.2 = true;
                     }
                 }
