@@ -169,6 +169,10 @@ fn let_go(world: &mut ScriptWorld, engine: &mut dyn Engine) {
 pub struct TurretView {
     /// `turret state`'s macro.
     pub state: String,
+    /// Its `attack disabled` (its objective's intro, getting in): the
+    /// scripts hide the pointer then, so its graphic holds where it was
+    /// last laid out (openspec AS.608).
+    pub attack_disabled: bool,
     /// The pointer's offset from the screen's middle, interface units.
     pub pointer: Option<[f32; 2]>,
     /// Calibrating, the circle's offset; its line's English when it reads.
@@ -330,6 +334,10 @@ pub fn view(vm: &Vm, world: &ScriptWorld) -> Option<TurretView> {
         aim,
         target: target.map(|t| t.to_array()),
         graphic,
+        attack_disabled: vm
+            .field(turret, "attack disabled")
+            .and_then(|v| vm.value(v).as_i32())
+            .is_some_and(|d| d != 0),
     })
 }
 
