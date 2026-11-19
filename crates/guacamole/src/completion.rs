@@ -23,12 +23,10 @@
 //! title and the continue prompt hidden until it's over, each tab after the
 //! first coming up with the menu's move sound and each objective the run
 //! completed with the checked sound 0.2 s after its row ([`TallySounds`]),
-//! three stars holding it the fireworks' 8 s more. Not drawn or heard: its
-//! animation (the rows sliding in, the checkmarks and stars slammed in, the
-//! screen's shake, the fireworks), each row's count sound and the
-//! fireworks' (the objectives screen's own sounds, which the extract's
-//! sounds part doesn't hold), and the dots between a line and its count,
-//! there being no recording of a completion screen. The focused tab's name joins the
+//! three stars holding it for the fireworks ([`crate::fireworks`], openspec
+//! AS.621: 8 s, then until the last rocket's gone). Its motion is
+//! [`crate::completion_motion`]'s (AS.607). Not drawn: the dots between a
+//! line and its count, there being no recording of a completion screen. The focused tab's name joins the
 //! screen's title in the scripts' yellow and no title stands under a column
 //! (`UI - Objectives Menu - Item Focus`, openspec AS.585).
 //!
@@ -351,7 +349,8 @@ fn open_completion(
 /// - Update` and `Set Show Next Tab Timer`, openspec AS.446, AS.601): each
 /// tab shown, its rows coming in 0.15 s apart, then after the screen's
 /// one-second delay the next, the last's too; then, with three stars, the
-/// fireworks' 8 s (`Start Fireworks`' timeout), and `End Animation Mode`
+/// fireworks' hold (`Start Fireworks`' 8 s timeout and `Update Fireworks`
+/// waiting on its last rocket, [`crate::fireworks`]), and `End Animation Mode`
 /// hands the pads back. While it runs (`allow user control` 0) the pads do
 /// nothing and the title and the continue prompt are hidden (`Show`,
 /// `Prompt Display`).
