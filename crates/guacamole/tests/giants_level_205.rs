@@ -7,9 +7,8 @@
 //!
 //! No recording of 205 exists: every step is the level's own scripts.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
-use guac_motion::ground;
 use guac_motion::seam::Vec3;
 use guac_motion::stick::Stick;
 use guac_script::Mode;
@@ -236,75 +235,6 @@ fn level_205s_intro_skipped_hands_him_over_and_he_walks() {
     walks_on(&mut run, &mut stops);
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
-}
-
-/// How far from a wall at knee height a cell of [`way_to`]'s lies, metres.
-const CLEAR: f32 = 0.6;
-
-/// The ground a hero walks to from `from` as `giants_swap_fit`'s flood has
-/// it (cells a metre across, a step up to 0.7 m and down to 4 m, never
-/// through a wall at knee height, here none within [`CLEAR`] of one), with the props and the clones standing
-/// as the run has them now; the way from `from` to the cell nearest `to`,
-/// first to last, and how far that cell is from `to`.
-fn way_to(run: &Run, from: Vec3, to: Vec3) -> (Vec<Vec3>, f32) {
-    let key = |p: Vec3| {
-        (
-            p.x.floor() as i32,
-            (p.y / 1.5).floor() as i32,
-            p.z.floor() as i32,
-        )
-    };
-    let world = &run.bench.world;
-    let mut seen = HashMap::from([(key(from), 0usize)]);
-    let (mut cells, mut parent) = (vec![from], vec![0usize]);
-    let mut queue = VecDeque::from([0usize]);
-    while let Some(at) = queue.pop_front() {
-        let p = cells[at];
-        for (dx, dz) in [(1.0f32, 0.0f32), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
-            let over = p + Vec3::new(dx, 0.7, dz);
-            let Some(hit) = ground::ray(world, over, Vec3::NEG_Y, 4.7, &[HERO_BODY]) else {
-                continue;
-            };
-            if hit.normal.y < 0.65 || p.y - hit.point.y > 4.0 {
-                continue;
-            }
-            let to = hit.point;
-            let (a, b) = (
-                p + Vec3::Y * 0.8,
-                Vec3::new(to.x, to.y.max(p.y) + 0.8, to.z),
-            );
-            if ground::ray(world, a, b - a, (b - a).length(), &[HERO_BODY]).is_some() {
-                continue;
-            }
-            // Room for him: nothing within `CLEAR` of the cell at knee
-            // height, which the flood's cell-to-cell ray alone lets a way
-            // hug (a railing up the crane deck's ramp).
-            let knee = to + Vec3::Y * 0.8;
-            let walled = [Vec3::X, Vec3::NEG_X, Vec3::Z, Vec3::NEG_Z]
-                .iter()
-                .any(|d| ground::ray(world, knee, *d, CLEAR, &[HERO_BODY]).is_some());
-            if walled {
-                continue;
-            }
-            if let std::collections::hash_map::Entry::Vacant(v) = seen.entry(key(to)) {
-                v.insert(cells.len());
-                cells.push(to);
-                parent.push(at);
-                queue.push_back(cells.len() - 1);
-            }
-        }
-    }
-    let end = (0..cells.len())
-        .min_by(|a, b| cells[*a].distance(to).total_cmp(&cells[*b].distance(to)))
-        .unwrap();
-    let mut way = vec![cells[end]];
-    let mut at = end;
-    while at != 0 {
-        at = parent[at];
-        way.push(cells[at]);
-    }
-    way.reverse();
-    (way, cells[end].distance(to))
 }
 
 /// The stick held along `way` (the view turned to the first cell 1.5 m off past
