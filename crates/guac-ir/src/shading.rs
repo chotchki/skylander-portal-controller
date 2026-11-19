@@ -293,7 +293,8 @@ pub struct Scene {
     /// Up to three.
     pub point_lights: Vec<PointLight>,
     pub placement_tint: Rgba,
-    /// RGB, and its amount in alpha.
+    /// RGB as stored (the colour's code over 255, never decoded), and its
+    /// amount in alpha: [`replace_mix`].
     pub replace: Rgba,
     /// The power that takes the directional sum, twice the stored lights
     /// added up, into the working space before it multiplies the colour
@@ -689,7 +690,7 @@ pub fn shade(
     }
 
     // Replace colour, then fog.
-    colour = mix(colour, rgb(scene.replace), scene.replace[3]);
+    colour = replace_mix(colour, scene.replace, scene.light_power);
     if on.fog {
         let f = fog_factor(fragment.depth, scene.fog_near, scene.fog_far);
         colour = mix(colour, scene.fog_colour, f);
@@ -822,6 +823,24 @@ fn vertex_colour(material: &Material, fragment: &Fragment) -> Rgba {
 
 fn need(texture: Option<&dyn Texture>, role: Role) -> Result<&dyn Texture, Error> {
     texture.ok_or(Error::Missing(role))
+}
+
+/// The replace colour over `colour` by its amount, as the original mixes
+/// it: on stored values (openspec AS.614). Its effect works on what the
+/// disc stores, so it lerps the stored shaded colour toward the stored
+/// replace colour; a lerp doesn't commute with the encoding as a product
+/// does, so in a working space `power` takes a colour into (2.2 for the
+/// remaster's linear light, 1 for stored) the colour goes out to stored at
+/// `1 / power`, mixes, and comes back. `replace` is RGB as stored and the
+/// amount in alpha; at 0 the colour is untouched, at 1 it's the replace
+/// colour in the working space.
+pub fn replace_mix(colour: Vec3, replace: Rgba, power: f32) -> Vec3 {
+    let amount = replace[3];
+    if amount <= 0.0 {
+        return colour;
+    }
+    let stored = colour.map(|c| c.max(0.0).powf(1.0 / power));
+    mix(stored, rgb(replace), amount).map(|c| c.max(0.0).powf(power))
 }
 
 fn rgb(c: Rgba) -> Vec3 {
@@ -2350,6 +2369,46 @@ mod tests {
     }
 
     // Replace colour and fog.
+
+    /// openspec AS.614: the mix on stored values, held to the review's
+    /// table (`as-play-comments-2-review/reads/mix-table.txt`): a body
+    /// stored at 0.15 under Hot Head's fire orange (255, 122, 0), in the
+    /// remaster's linear light; 25 percent reads 0.36 red stored, where a
+    /// mix in linear light read 0.54.
+    #[test]
+    fn a_replace_colour_mixes_on_stored_values() {
+        let orange = [1.0, 122.0 / 255.0, 0.0];
+        let p = 2.2;
+        let body = 0.15f32;
+        let lit = [body.powf(p); 3];
+        let table = [
+            (0.0, [0.15, 0.15, 0.15]),
+            (0.25, [0.36, 0.23, 0.11]),
+            (0.5, [0.57, 0.31, 0.07]),
+            (1.0, [1.0, 0.48, 0.0]),
+        ];
+        for (amount, want) in table {
+            let out = replace_mix(lit, [orange[0], orange[1], orange[2], amount], p);
+            let stored = out.map(|c| c.powf(1.0 / p));
+            for i in 0..3 {
+                assert!(
+                    (stored[i] - want[i]).abs() < 0.006,
+                    "{amount}: {stored:?} against {want:?}"
+                );
+            }
+        }
+        // At 0 the colour is untouched, past what stored values hold too.
+        assert_eq!(
+            replace_mix([1.7, 0.2, 0.0], [1.0, 0.0, 0.0, 0.0], p),
+            [1.7, 0.2, 0.0]
+        );
+        // On stored values (power 1) it's the plain mix.
+        near(
+            &replace_mix([0.4, 0.8, 0.2], [1.0, 0.0, 0.5, 0.25], 1.0),
+            &[0.55, 0.6, 0.275],
+            1e-6,
+        );
+    }
 
     #[test]
     fn the_replace_colour_mixes_by_its_amount() {

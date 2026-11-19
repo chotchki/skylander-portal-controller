@@ -679,3 +679,17 @@ A joined hero SHALL be drawn nowhere while his tint's alpha is 0 and at that alp
 #### Scenario: Stealth Elf's stealth
 - **WHEN** Stealth Elf goes unseen with her second action
 - **THEN** she and her knives are drawn nowhere until her scripts' stealth runs out, and drawn again after
+
+### Requirement: A replace colour mixes on stored values
+A replace colour SHALL be mixed over a part's shaded colour as the original's effect mixes it, on stored values: the shaded colour taken out of linear light to stored, lerped toward the replace colour as stored by its amount, and taken back. At amount 0 the colour SHALL be unchanged and at full it SHALL be the replace colour.
+
+#### Scenario: A quarter wash on a dark body
+- **WHEN** a body stored at 0.15 grey is washed fire orange at 25 percent
+- **THEN** its red reads about 0.36 stored, not the 0.54 a mix in linear light gives
+
+### Requirement: A creature's replace colour is drawn
+A drawn creature and a drawn clone SHALL take their own replace colour by its percent, as a joined hero does: a hit's red flash on a bitten Chompy or elf, a kill's white, a Chompy's armour flashing as it's bitten. Drawing it SHALL change nothing the scripts read.
+
+#### Scenario: A bitten Chompy
+- **WHEN** a hit writes red at 100 percent on a Chompy and slides it to 0 over 0.2 s
+- **THEN** the Chompy flashes red and fades back to its own colours over those steps

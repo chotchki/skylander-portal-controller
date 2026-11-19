@@ -770,6 +770,10 @@ pub(crate) struct HeroReport {
     pub drawn: Option<bool>,
     /// The alpha his body draws at (openspec AS.573, [`fade_hero`]).
     pub drawn_alpha: Option<u8>,
+    /// The replace colour's percent laid on his body and the scripts' step
+    /// it was read at, as [`fade_hero`] last laid them (openspec AS.616).
+    pub drawn_wash: Option<u8>,
+    pub drawn_step: Option<u64>,
     pub fresh_parts: Vec<FreshPartReport>,
 }
 
@@ -1191,6 +1195,8 @@ impl Play {
             gold: inside.then(|| progress.map_or(0, |p| p.gold)),
             drawn: on_stage.map(|h| drawn(h.hero)),
             drawn_alpha: None,
+            drawn_wash: None,
+            drawn_step: None,
             fresh_parts: on_stage
                 .map(|h| {
                     h.model
@@ -1237,6 +1243,7 @@ pub(crate) struct PlayShots<'w, 's> {
     source: Option<Res<'w, ScriptSource>>,
     shown: Query<'w, 's, &'static Visibility>,
     alphas: Query<'w, 's, &'static HeroAlpha>,
+    washes: Query<'w, 's, &'static HeroWash>,
 }
 
 impl PlayShots<'_, '_> {
@@ -1276,6 +1283,9 @@ impl PlayShots<'_, '_> {
                     .on_stage()
                     .and_then(|h| self.alphas.get(h.hero).ok())
                     .map(|a| a.0);
+                let wash = p.on_stage().and_then(|h| self.washes.get(h.hero).ok());
+                r.drawn_wash = wash.map(|w| w.percent);
+                r.drawn_step = wash.map(|w| w.step);
                 r
             })
         })
@@ -2500,10 +2510,20 @@ fn show_hero(
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct HeroAlpha(pub(crate) u8);
 
+/// The wash [`fade_hero`] last laid on his body, in whole percent (0 for
+/// none), and the scripts' step count it was read at: `/api/_test/tv`'s
+/// `drawn_wash` and `drawn_step`, and an asked shot's name (openspec
+/// AS.616: each frame of a death beside the step it drew).
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct HeroWash {
+    pub(crate) percent: u8,
+    pub(crate) step: u64,
+}
+
 /// His tint's alpha on his body (openspec AS.573,
 /// [`guacamole::props::hero_drawn`]): each segment on a copy of its
 /// material at a neutral tint carrying it, the opaque ones blending under
-/// 255 ([`crate::tints::tint_part`], the clones' and creatures' path), so
+/// 255 ([`crate::tints::wash_part`], the clones' and creatures' path), so
 /// his death's 0.35 s slide to 0 draws as a fade rather than a pop at its
 /// end. A blended part casts no shadow (`shadow::mark_casters`), so a
 /// fading hero's shadow goes at the fade's first step (ledger
@@ -2517,6 +2537,7 @@ pub(crate) fn fade_hero(
     world: Option<Res<ScriptWorld>>,
     runs: Query<&HeroRun>,
     alphas: Query<&HeroAlpha>,
+    washes: Query<&HeroWash>,
     mut parts: Query<(
         &mut MeshMaterial3d<CharacterMaterial>,
         Option<&crate::tints::TintedPart>,
@@ -2569,6 +2590,13 @@ pub(crate) fn fade_hero(
     }
     if alphas.get(h.hero).ok() != Some(&HeroAlpha(drawn.alpha)) {
         commands.entity(h.hero).insert(HeroAlpha(drawn.alpha));
+    }
+    let laid = HeroWash {
+        percent: wash.map_or(0, |w| (w[3] * 100.0).round() as u8),
+        step: runtime.as_deref().map_or(0, |r| r.steps),
+    };
+    if washes.get(h.hero).ok() != Some(&laid) {
+        commands.entity(h.hero).insert(laid);
     }
 }
 
@@ -8081,8 +8109,14 @@ mod tests {
             "washed: {:?}",
             replace(&app)
         );
+        // The test view's read of what was laid (openspec AS.616).
+        let laid = |app: &App| app.world().entity(e).get::<HeroWash>().copied();
+        assert_eq!(laid(&app).map(|w| w.percent), Some(100));
+        set(&mut app, 41);
+        assert_eq!(laid(&app).map(|w| w.percent), Some(41));
         set(&mut app, 0);
         assert_eq!(replace(&app), scene, "the scene's again");
+        assert_eq!(laid(&app).map(|w| w.percent), Some(0));
     }
 
     /// openspec AS.592: a fading hero's glow masks go while he fades (each
