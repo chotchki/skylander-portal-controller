@@ -290,6 +290,25 @@ pub fn exports(usrdir: &Path) -> std::result::Result<Exports, String> {
     Exports::new(&boot, &global).map_err(|e| e.to_string())
 }
 
+/// Whether `m`'s part holds each of [`screens::ARCHIVES`] its dump has
+/// (openspec AS.624): the manifest's currency check asks it, so an extract
+/// whose part landed before the objectives screen's sounds were read opens
+/// as a resume and its next start reads the part again, its audio kept by
+/// hash. A part not recorded is the keys' check's to refuse.
+pub fn complete(m: &crate::extract::Manifest) -> bool {
+    let Some(files) = m.parts.get(PART) else {
+        return true;
+    };
+    screens::ARCHIVES
+        .iter()
+        .filter(|a| m.sources.iter().any(|s| s.path == **a))
+        .all(|a| {
+            [IrFormat::Ron, IrFormat::Postcard]
+                .iter()
+                .any(|ir| files.contains(&path(*ir, a)))
+        })
+}
+
 /// What the part did.
 #[derive(Debug, Clone, Default)]
 pub struct SoundStage {
