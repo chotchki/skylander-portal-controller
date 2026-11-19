@@ -40,13 +40,11 @@ const LEVEL_201: &str = "level_201";
 /// fights the awake foes within `r` m on his storey for at most `n` steps,
 /// `cs` waits out a scene. A fight is followed by a walk to where this walk's
 /// fight ended, so the Mac's driver, whose chase wanders off it, goes on
-/// from the same place; where an idle Chompy's run ends a fight elsewhere
-/// (openspec AS.613), by the way 2.0's walk went from that fight (the first
-/// island's ledge, Setup_005's).
+/// from the same place.
 const WAY: [(&str, &str); 18] = [
     (
         "the landing to Setup_001",
-        "w 157 -168; w 156 -171; w 144 -170; f 40 3000; w 135.1 -166.5; w 130 -168; f 40 2000; w 130.3 -167.8; w 124 -150; f 40 2000; w 120 -140; w 115 -143; w 111.5 -155.8; w 108.6 -162.0; w 109 -152; w 109.2 -148.2; w 107.8 -145.8; w 103.8 -145.8; w 101.8 -147.8; w 101.8 -151.8; w 101.8 -155.8; w 101.8 -159.8; w 103.2 -162.2; w 104.2 -165.2; w 104.2 -169.2; w 104.2 -173.2; w 104.2 -174.8; f 45 5000; w 98.3 -174.7",
+        "w 157 -168; w 156 -171; w 144 -170; f 40 3000; w 135.1 -166.5; w 130 -168; f 40 2000; w 130.3 -167.8; w 124 -150; f 40 2000; w 108.6 -162.0; w 109 -152; w 109.2 -148.2; w 107.8 -145.8; w 103.8 -145.8; w 101.8 -147.8; w 101.8 -151.8; w 101.8 -155.8; w 101.8 -159.8; w 103.2 -162.2; w 104.2 -165.2; w 104.2 -169.2; w 104.2 -173.2; w 104.2 -174.8; f 45 5000; w 98.3 -174.7",
     ),
     (
         "round the plateau to its key",
@@ -106,7 +104,7 @@ const WAY: [(&str, &str); 18] = [
     ),
     (
         "the second door and Setup_005's fight",
-        "w -101 -12; w -100.5 -20; w -100.5 -26; w -101.5 -30.8; w -102.2 -34.8; w -102.2 -38.8; w -102.2 -42.8; w -102.8 -46.2; w -103.8 -49.2; w -104.8 -51.8; w -104.8 -56.2; w -103.2 -58.8; w -99.2 -58.8; w -95.2 -58.8; w -92.2 -57.8; w -89.8 -56.2; w -89.8 -52.2; w -90.8 -50.8; w -90.6 -46; w -90.6 -40; w -90.6 -34; w -90.6 -28; w -90.6 -23.5; push -90.6 0 60; s 200; w -91.5 -21; s 60; f 30 2000; w -91.5 -21.2; w -92 -14; w -92 -9; w -90.6 -5.7; s 60; f 40 5000; w -98.8 3; w -98.7 14; w -90.9 20.1; w -83.5 24.5; w -83.4 36.9; f 60 5000; w -83.4 36.9; cs; s 200",
+        "w -101 -12; w -100.5 -20; w -100.5 -26; w -101.5 -30.8; w -102.2 -34.8; w -102.2 -38.8; w -102.2 -42.8; w -102.8 -46.2; w -103.8 -49.2; w -104.8 -51.8; w -104.8 -56.2; w -103.2 -58.8; w -99.2 -58.8; w -95.2 -58.8; w -92.2 -57.8; w -89.8 -56.2; w -89.8 -52.2; w -90.8 -50.8; w -90.6 -46; w -90.6 -40; w -90.6 -34; w -90.6 -28; w -90.6 -23.5; push -90.6 0 60; s 200; w -91.5 -21; s 60; f 30 2000; w -91.5 -21.2; w -92 -14; w -92 -9; w -90.6 -5.7; s 60; f 40 5000; w -83.4 36.9; f 60 5000; w -83.4 36.9; cs; s 200",
     ),
     (
         "the fifth gate, the eyeballs and the arena's intro",
@@ -123,14 +121,6 @@ const WAY: [(&str, &str); 18] = [
 /// where an aim 20 m out let him drift a metre and more off it, round the
 /// dam's south side into the channel once the top block was down.
 const KID_AIM: f32 = 5.0;
-
-/// Steps a walk is held up (no 0.2 m nearer) before he steps aside
-/// (openspec AS.613): the swings every 7 steps from the half second on had
-/// a second to clear what holds him.
-const HELD_UP: u32 = 90;
-
-/// Steps a step aside holds the stick square to the way.
-const ASIDE: u32 = 30;
 
 /// The placements whose behaviour, wake and range the walk records: the
 /// setups' controllers, the life wall's controller and its two triggers,
@@ -217,9 +207,6 @@ struct Walked {
     brock: Vec<(u32, [f32; 3], bool)>,
     /// Each kid's push (`k`, openspec AS.219), in order.
     pushes: Vec<Pushed>,
-    /// Each step aside a walk took, held up past [`HELD_UP`] steps
-    /// (openspec AS.613): the step and where he stood.
-    asides: Vec<(u32, [f32; 2])>,
     /// Each stretch's name and the hero's lowest height on it.
     lowest: Vec<(&'static str, f32)>,
     /// The hero's lowest height since the stretch began.
@@ -457,18 +444,11 @@ impl Walker {
     }
 
     /// Walked to within 1 m of `to`, his first attack every 7 steps while
-    /// he's been held up half a second; held up past [`HELD_UP`] steps
-    /// the swings haven't cleared it, so he fights a creature within 4 m
-    /// where it stands, then steps aside for [`ASIDE`] steps, the side
-    /// alternating each try: a kid steps round a creature or a ledge's lip
-    /// rather than swinging into it (openspec AS.613: with the
-    /// idle Chompies' runs a fight ends elsewhere than 2.0's did, and the
-    /// straight line from there to where 2.0's ended meets a wall); false
-    /// if 2400 steps don't get him there.
+    /// he's been held up half a second; false if 2400 steps don't get him
+    /// there.
     fn walk(&mut self, to: [f32; 2]) -> bool {
-        let (mut best, mut since, mut side) = (f32::MAX, 0u32, 1.0f32);
-        let mut k = 0u32;
-        while k < 2400 {
+        let (mut best, mut since) = (f32::MAX, 0u32);
+        for k in 0..2400u32 {
             let at = self.run.hero().pivot;
             let d = (to[0] - at.x).hypot(to[1] - at.z);
             if d <= 1.0 {
@@ -479,36 +459,8 @@ impl Walker {
             } else {
                 since += 1;
             }
-            if since > HELD_UP {
-                // A creature on him first, fought where it stands, the
-                // stick on it rather than on the way.
-                if self.foe_within(4.0) {
-                    let before = self.run.steps;
-                    let mut trail = Vec::new();
-                    self.fight_for(8.0, ASIDE * 6, &mut trail);
-                    k += self.run.steps - before;
-                }
-                // Then a step aside, the side alternating each try.
-                let at = self.run.hero().pivot;
-                self.walked.asides.push((self.run.steps, [at.x, at.z]));
-                let d = d.max(1e-3);
-                let (dx, dz) = ((to[0] - at.x) / d, (to[1] - at.z) / d);
-                let aside = [at.x + dz * side * 10.0, at.z - dx * side * 10.0];
-                for _ in 0..ASIDE {
-                    let stick = self.toward(aside, 1.0);
-                    self.step(stick, [false; 4]);
-                }
-                k += ASIDE;
-                side = -side;
-                (best, since) = (f32::MAX, 0);
-                continue;
-            }
             let stick = self.toward(to, 1.0);
-            self.step(
-                stick,
-                [since > 30 && k.is_multiple_of(7), false, false, false],
-            );
-            k += 1;
+            self.step(stick, [since > 30 && k % 7 == 0, false, false, false]);
         }
         false
     }
@@ -569,27 +521,6 @@ impl Walker {
         println!("  push {pushed:?}, hero at {}", self.run.hero().pivot);
         self.walked.pushes.push(pushed);
         moved
-    }
-
-    /// Whether an awake foe stands within `reach` m of him on his storey.
-    fn foe_within(&self, reach: f32) -> bool {
-        let run = &self.run;
-        let me = run.hero().pivot;
-        run.world
-            .creatures()
-            .into_iter()
-            .chain(run.world.clones())
-            .filter(|h| is_foe(&run.world.name(*h)))
-            .filter(|h| {
-                run.vm
-                    .placement_of(*h)
-                    .is_some_and(|i| !run.vm.removed(i) && !run.vm.asleep(i))
-            })
-            .filter_map(|h| run.world.actor(h).filter(|a| !a.removed))
-            .any(|a| {
-                let p = a.position;
-                (p.y - me.y).abs() < 6.0 && (p.x - me.x).hypot(p.z - me.z) < reach
-            })
     }
 
     /// The awake foes within `reach` m on his storey fought, nearest first,
@@ -807,9 +738,6 @@ fn walked() -> &'static Walked {
         );
         for (n, a, b) in &walked.scenes {
             println!("  scene {n} {a}-{b}");
-        }
-        for (k, at) in &walked.asides {
-            println!("  aside at step {k} from {:.1} {:.1}", at[0], at[1]);
         }
         for (k, f) in walked.fights.iter().enumerate() {
             let way: Vec<String> = f

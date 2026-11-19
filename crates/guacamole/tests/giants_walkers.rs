@@ -6051,14 +6051,6 @@ fn fight_presses(l: &Level, load: &str, actions: &[usize], out: &mut Fought) -> 
                 return None;
             }
         }
-        // Set there again for the press: an idle Chompy runs round where
-        // it stands (openspec AS.613), about 3 m of its circle in the quiet
-        // steps, out of a short attack's reach.
-        w.world.place(
-            target,
-            spot,
-            guacamole::script_engine::heading_of(-along).rem_euclid(360.0),
-        );
         let background: Vec<u32> = w
             .world
             .started_since(quiet)
