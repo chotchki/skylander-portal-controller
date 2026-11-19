@@ -2176,7 +2176,7 @@ mod tests {
                 report(&app).fireworks
             })
             .expect("the fireworks");
-        let (mut most, mut frames, mut made) = (0, 0, 0);
+        let (mut most, mut frames, mut made, mut last) = (0, 0, 0, None);
         while report(&app).tallying {
             app.update();
             frames += 1;
@@ -2186,10 +2186,17 @@ mod tests {
                 most = most.max(f.drawn);
                 made = f.made;
                 assert_eq!(fireworks_roots(&mut app), 1);
+                last = Some(f);
             }
         }
         assert!(most > 0, "the fireworks drew");
         assert!(made > 1, "{made} rockets");
+        // Held past 8 s until the last rocket was gone.
+        let last = last.expect("a report of them");
+        assert!(
+            last.up == 0 && last.secs > crate::fireworks::TIMEOUT + 0.5,
+            "{last:?}"
+        );
         app.update();
         assert_eq!(report(&app).fireworks_drawn, None);
         assert_eq!(fireworks_roots(&mut app), 0, "nothing left drawn");
