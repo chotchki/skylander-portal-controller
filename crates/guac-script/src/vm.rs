@@ -1880,6 +1880,9 @@ impl Vm {
 
     /// Writes a value cell from outside the scripts, making it if no path
     /// has yet (an embedder's test setting what a script would leave).
+    /// Test-only (the `test-fixtures` feature): nothing that ships writes a
+    /// script's cell from outside.
+    #[cfg(feature = "test-fixtures")]
     pub fn set_value_cell(&mut self, receiver: Option<Value>, member: MemberId, value: Value) {
         let key = (receiver.map_or(Recv::Head, recv), member);
         let slot = *self.value_cells.entry(key).or_insert_with(|| {

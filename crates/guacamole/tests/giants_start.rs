@@ -194,6 +194,11 @@ fn level_214s_start_clones_draw_by_the_rule() {
         assert!(drawn.contains(name), "{name} drawn");
     }
     assert_eq!(clones["0_Push_Block_Art_Stone_Red"], 6);
-    assert_eq!(clones["Enemy_ChompySpawner_Pod"], 2);
+    // Three: each spawner clones its pod in its STARTUP whatever its state,
+    // and the activity rule wakes all three of the first island's as the
+    // level starts, the Root Runner its scene introduces (openspec AS.450,
+    // `Enemy_Chompy_Spawner(3)`) with the other two, so its pod stands on
+    // its ledge from the start; the scene only turns the camera on it.
+    assert_eq!(clones["Enemy_ChompySpawner_Pod"], 3);
     assert!(stops.is_empty(), "{stops:?}");
 }
