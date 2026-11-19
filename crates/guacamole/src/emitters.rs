@@ -187,6 +187,18 @@ impl Plugin for EmittersPlugin {
     }
 }
 
+/// `seg`'s vertex alphas times `alpha` out of 255.
+pub(crate) fn faded(mut seg: guac_ir::model::Segment, alpha: u8) -> guac_ir::model::Segment {
+    if alpha < 255
+        && let Some(colours) = seg.colors.as_mut()
+    {
+        for c in colours {
+            c[3] = ((u16::from(c[3]) * u16::from(alpha) + 127) / 255) as u8;
+        }
+    }
+    seg
+}
+
 /// Where a clone's emitter stands: its entity's place and turn as drawn
 /// (`drawn`, eased between steps), else its actor's, and its actor's scale.
 fn place_of(entity: Entity, world: &ScriptWorld, drawn: Option<&GlobalTransform>) -> Option<Place> {
@@ -507,6 +519,15 @@ pub(crate) fn step_systems(
             names.push(system.name.clone());
         }
         let mut quads = 0;
+        // A clone's tint alpha fades what its system draws (openspec AS.626:
+        // the Magic entry slides its pixies' to 0 before taking them off).
+        let alpha = match system.source {
+            Source::Clone(clone) => world
+                .as_deref()
+                .and_then(|w| w.actor(clone.to_bits()))
+                .map_or(255, |a| (a.tint & 0xFF) as u8),
+            Source::Placed(_) => 255,
+        };
         for ((state, g), mesh) in system
             .generators
             .iter()
@@ -522,7 +543,10 @@ pub(crate) fn step_systems(
             };
             // The level's root and the system carry no turn or scale.
             let from = placed_at.translation();
-            let laid = view.and_then(|v| particles::segment(state, g, system.place, v, from, 0));
+            let laid = view
+                .filter(|_| alpha > 0)
+                .and_then(|v| particles::segment(state, g, system.place, v, from, 0))
+                .map(|seg| faded(seg, alpha));
             let shown = match laid.as_ref().map(static_mesh) {
                 Some(Ok(m)) => {
                     quads += m.count_vertices() / 4;
@@ -726,6 +750,59 @@ mod tests {
         let mut q = app.world_mut().query::<&ParticleSystem>();
         assert_eq!(q.iter(app.world()).count(), 0);
         assert!(app.world().get_entity(system).is_err());
+    }
+
+    /// openspec AS.626: a clone's tint alpha fades its system's quads (the
+    /// Magic entry slides its pixies' to 0): half at 128, hidden at 0 while
+    /// its particles still live, whole again at 255.
+    #[test]
+    fn an_emitters_clone_fades_with_its_tint() {
+        let (mut app, clone, _, _tmp) = loaded();
+        for _ in 0..30 {
+            app.update();
+        }
+        let (shown, mesh) = {
+            let mut q = app.world_mut().query::<&ParticleSystem>();
+            q.single(app.world()).unwrap().meshes[0].clone().unwrap()
+        };
+        let alphas = |app: &App| -> Vec<u8> {
+            let m = app.world().resource::<Assets<Mesh>>().get(&mesh).unwrap();
+            match m.attribute(Mesh::ATTRIBUTE_COLOR) {
+                Some(bevy::mesh::VertexAttributeValues::Float32x4(v)) => {
+                    v.iter().map(|c| (c[3] * 255.0).round() as u8).collect()
+                }
+                other => panic!("{other:?}"),
+            }
+        };
+        let whole = alphas(&app);
+        assert!(whole.iter().any(|a| *a > 100), "{whole:?}");
+        let set = |app: &mut App, alpha: u32| {
+            assert!(
+                app.world_mut()
+                    .resource_mut::<ScriptWorld>()
+                    .set_tint(clone.to_bits(), 0x8080_8000 | alpha)
+            );
+            app.update();
+        };
+        set(&mut app, 128);
+        let half = alphas(&app);
+        let most = |v: &[u8]| v.iter().copied().max().unwrap_or(0);
+        assert!(
+            most(&half) <= most(&whole) / 2 + 2 && most(&half) > 0,
+            "{whole:?} then {half:?}"
+        );
+        set(&mut app, 0);
+        assert_eq!(
+            app.world().get::<Visibility>(shown),
+            Some(&Visibility::Hidden),
+            "hidden at 0"
+        );
+        assert!(report(&app).particles > 0, "its particles still live");
+        set(&mut app, 255);
+        assert_eq!(
+            app.world().get::<Visibility>(shown),
+            Some(&Visibility::Inherited)
+        );
     }
 
     /// openspec AS.186: an emitter's clone hung on an actor taken off is
