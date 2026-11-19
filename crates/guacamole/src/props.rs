@@ -459,6 +459,20 @@ pub fn actor_wash(vm: &guac_script::Vm, h: guac_script::Handle) -> Option<[f32; 
     )
 }
 
+/// A drawn clone's tint and its own wash ([`actor_wash`]), as the scripts'
+/// world and VM hold them (openspec AS.590: a beaten hero's death washes
+/// what hangs on him, Hot Head's hand grills; AS.611: a lone clone's too, a
+/// Chompy's armour flashing as it's bitten); none for an actor the world
+/// doesn't hold.
+pub fn clone_tint(
+    world: &crate::scripts::ScriptWorld,
+    vm: Option<&guac_script::Vm>,
+    h: guac_script::Handle,
+) -> Option<(u32, Option<[f32; 4]>)> {
+    let tint = world.actor(h)?.tint;
+    Some((tint, vm.and_then(|vm| actor_wash(vm, h))))
+}
+
 /// A hero's drawn scale off his actor's (percent per axis): each axis as a
 /// fraction while all three are over 0 (Ninjini squeezed to half across as
 /// she's drawn into her bottle), else `fallback`, the uniform one his
@@ -1936,6 +1950,58 @@ mod tests {
         assert_eq!(hero_drawn(false, true, Some(&a)), faint);
         a.tint = 0x0000_00FF;
         assert_eq!(hero_drawn(false, true, Some(&a)), carried, "colour alone");
+    }
+
+    /// openspec AS.611: a clone takes its own wash, hung on something or
+    /// not, whether what it hangs on is washed or not; its tint with it.
+    #[test]
+    fn a_clone_washes_by_its_own_cells() {
+        use guac_script::{MemberId, Value};
+        let handles = HashMap::new();
+        let mut world = crate::scripts::ScriptWorld::new(
+            &crate::scripts::Files::default(),
+            &handles,
+            crate::scripts::headless_objects(&handles),
+        );
+        let (hero, grill, loose) = (0x51, 0x52, 0x53);
+        for h in [hero, grill, loose] {
+            world.actors.insert(h, Actor::blank());
+        }
+        world.actors.get_mut(&grill).unwrap().attach = Value::Entity(hero);
+        world.actors.get_mut(&loose).unwrap().tint = 0x8080_80C0;
+        let program = std::sync::Arc::new(guac_script::Program::link(&[]).unwrap());
+        let mut vm =
+            guac_script::Vm::new(program, guac_script::Config::new(guac_script::Mode::Strict));
+        let wash = |vm: &mut guac_script::Vm, h, pct| {
+            let at = Some(Value::Entity(h));
+            vm.set_value_cell(
+                at,
+                MemberId::named("actorinfo", "replace color"),
+                Value::Color(0xFF00_00FF),
+            );
+            vm.set_value_cell(
+                at,
+                MemberId::named("actorinfo", "replace color percentage"),
+                Value::Int(pct),
+            );
+        };
+        assert_eq!(
+            clone_tint(&world, Some(&vm), loose),
+            Some((0x8080_80C0, None)),
+            "unwashed"
+        );
+        wash(&mut vm, loose, 100);
+        wash(&mut vm, grill, 25);
+        let of = |h| {
+            clone_tint(&world, Some(&vm), h)
+                .and_then(|t| t.1)
+                .map(|w| w[3])
+        };
+        assert_eq!(of(loose), Some(1.0), "a lone clone's own");
+        assert_eq!(of(grill), Some(0.25), "hung, its hero unwashed");
+        assert_eq!(of(hero), None);
+        assert_eq!(clone_tint(&world, None, loose).map(|t| t.1), Some(None));
+        assert_eq!(clone_tint(&world, Some(&vm), 0x99), None, "no actor");
     }
 
     /// openspec AS.590: an actor's replace colour washes by its percent,

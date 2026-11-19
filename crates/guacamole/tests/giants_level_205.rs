@@ -480,13 +480,18 @@ impl Fought {
     }
 }
 
+/// The health a fight tops him up under: past 201's 60, since with the
+/// idle Chompies running (openspec AS.613) Setup_002's two lobbers' volleys
+/// and its heavy elf took him from over 60 to 0 in one step.
+const TOP_UP: f32 = 120.0;
+
 /// A setup fought as a kid fights it, until its controller takes itself
 /// off or `cap` steps pass: the nearest of `foes` awake within 40 m and
 /// 12 m of his height chased over the flood's cells ([`way_to`]) and hit,
 /// stepping back out after 4 s pressed into one; with none awake near, on
 /// to `goal` (the trigger a controller waits on before it counts its
-/// enemies). Cutscenes wait out with the stick let go. A hero under 60
-/// health is topped up to 200, counted, as on 201.
+/// enemies). Cutscenes wait out with the stick let go. A hero under
+/// [`TOP_UP`] health is topped up to 200, counted.
 fn fight(
     run: &mut Run,
     stops: &mut Vec<String>,
@@ -549,7 +554,7 @@ fn fight_to(
             continue;
         }
         if let (Some(hp), Some(m)) = (run.health(), run.minion)
-            && hp < 60.0
+            && hp < TOP_UP
         {
             guacamole::scripts::set_health(&mut run.vm, m, 200);
             fought.topups.push((run.steps, hp));

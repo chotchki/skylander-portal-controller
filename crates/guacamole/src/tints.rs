@@ -122,11 +122,9 @@ pub(crate) fn tint_clones(
     parts: Query<(&mut MeshMaterial3d<CharacterMaterial>, Option<&TintedPart>)>,
     materials: ResMut<Assets<CharacterMaterial>>,
 ) {
-    let wash = |h: guac_script::Handle| guacamole::props::actor_wash(&runtime.as_deref()?.vm, h);
     tint_parts(
         |clone| {
-            let h = clone.to_bits();
-            world.actor(h).map(|a| (a.tint, wash(h)))
+            guacamole::props::clone_tint(&world, runtime.as_deref().map(|r| &r.vm), clone.to_bits())
         },
         commands,
         clones,
