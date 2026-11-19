@@ -2427,7 +2427,9 @@ the colour's, added or blended by it, writing no depth and owning the level's fo
 and a generator with a bloom glows by its alpha in the frame's mask, so the census holds one new key and
 its mask and nothing compiles mid-fight. An emitter the scripts take off stops and what it made lives out
 its life (the throw's flash is taken off a step after it comes); one taken off before it made its most
-alive still makes them, which is our reading of the eruption's sparks and smoke, not a measurement. A
+alive still makes them, for at most one of its particles' lives after it stops (AS.627: Slam Bam's
+entry's slow drops otherwise ran 16-24 s on), which is our reading of the eruption's sparks and smoke, not
+a measurement; a clone's tint alpha fades what its emitter draws (AS.626: the Magic entry's pixies). A
 generator at a burst's rate (9999 a second) fills its room at once and again as its particles die while
 it's on (AS.17), as a 999-a-second stream already did: the experience orb's one particle stays lit while
 the orb is out, as AH.10's frames show the original's, and a level's falling dust keeps its 2-9 alive. A level's own
