@@ -28,7 +28,7 @@
 use bevy::prelude::*;
 use guacamole::level_end::{LevelResults, Status};
 
-use crate::completion::{NEXT_TAB_DELAY, ROW_DELAY, TABS, TabCycle, tab_time};
+use crate::completion::{ROW_DELAY, TABS, TabCycle, tab_time};
 
 /// One key of a keyframer: reached `secs` after the key before it.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -236,7 +236,7 @@ pub(crate) fn shake(results: Option<&LevelResults>, clock: f32) -> Vec2 {
             continue;
         }
         let left = 1.0 - t / SHAKE_SECS;
-        let side = if (t / SHAKE_STEP) as u32 % 2 == 0 {
+        let side = if ((t / SHAKE_STEP) as u32).is_multiple_of(2) {
             1.0
         } else {
             -1.0
@@ -347,6 +347,7 @@ pub(crate) fn tally_secs(results: Option<&LevelResults>) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::completion::NEXT_TAB_DELAY;
     use guacamole::level_end::{Objective, ObjectiveKind};
 
     fn o(category: i32, status: Status) -> Objective {
