@@ -4502,11 +4502,16 @@ fn on_to_setup_004s_end(setup: Setup) -> AtCali {
     for (step, n, b) in &last.log {
         println!("  {step} {n} {b}");
     }
+    let stood: Vec<String> = lobbers
+        .iter()
+        .map(|n| format!("{n} at {}", run.at(n)))
+        .collect();
     assert!(
         last.ended,
-        "Setup_004's lobbers: {:?} at {}",
+        "Setup_004's lobbers: {:?} at {}; {stood:?}; his last trail {:?}",
         last.log,
-        run.hero().pivot
+        run.hero().pivot,
+        &last.trail[last.trail.len().saturating_sub(8)..]
     );
     assert_eq!(behaviour(&run, "Setup_004_Controller"), "removed");
     println!("Setup_004's end at step {}", run.steps);
