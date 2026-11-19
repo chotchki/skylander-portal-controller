@@ -30,6 +30,7 @@ mod dev_entry;
 mod driver;
 mod emitters;
 mod extraction;
+mod fireworks;
 mod flags;
 mod held_band;
 mod hero;
@@ -156,6 +157,7 @@ fn main() -> Result<()> {
     let entry_asks = (
         dev_entry::EntryAsks::default(),
         level_choice::LevelAsks::default(),
+        completion::StarAsks::default(),
     );
     // AS.440's playtest flags, asked over the test hooks and taken by the TV.
     let flag_asks = flags::FlagAsks::default();
@@ -461,7 +463,11 @@ impl Plugin for TvPacing {
 fn test_routes(
     mirror: &TvMirror,
     (health, xp): &(hero_scripts::AskedHealth, hero_scripts::AskedExperience),
-    (entry_asks, level_asks): &(dev_entry::EntryAsks, level_choice::LevelAsks),
+    (entry_asks, level_asks, star_asks): &(
+        dev_entry::EntryAsks,
+        level_choice::LevelAsks,
+        completion::StarAsks,
+    ),
     flag_asks: &flags::FlagAsks,
 ) -> Option<axum::Router<std::sync::Arc<guac_server::state::AppState>>> {
     cfg!(feature = "test-hooks").then(|| {
@@ -470,7 +476,8 @@ fn test_routes(
             .merge(hero_scripts::health_routes(health))
             .merge(hero_scripts::experience_routes(xp))
             .merge(dev_entry::routes(entry_asks))
-            .merge(level_choice::routes(level_asks));
+            .merge(level_choice::routes(level_asks))
+            .merge(completion::star_routes(star_asks));
         // A lane's build that plays the card game (openspec AS.367's first
         // rung) quits it over a route of its own; no landed build has it.
         #[cfg(all(feature = "test-hooks", feature = "played-card-games"))]
@@ -524,10 +531,14 @@ fn run_tv(
     root: PathBuf,
     job: Option<ExtractJob>,
     latency: OutputLatency,
-    (mirror, (asked_health, asked_xp), (entry_asks, level_asks)): (
+    (mirror, (asked_health, asked_xp), (entry_asks, level_asks, star_asks)): (
         TvMirror,
         (hero_scripts::AskedHealth, hero_scripts::AskedExperience),
-        (dev_entry::EntryAsks, level_choice::LevelAsks),
+        (
+            dev_entry::EntryAsks,
+            level_choice::LevelAsks,
+            completion::StarAsks,
+        ),
     ),
     (level_hero, story, flags): (
         Option<guac_server::progress::LevelHero>,
@@ -648,6 +659,7 @@ fn run_tv(
     app.add_plugins(shots::Shots);
     if cfg!(feature = "test-hooks") {
         app.insert_resource(mirror)
+            .insert_resource(star_asks)
             .insert_resource(asked_health)
             .insert_resource(asked_xp)
             .add_plugins(mirror::Mirror);
