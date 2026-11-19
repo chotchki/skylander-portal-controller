@@ -193,6 +193,11 @@ pub struct TurretView {
     /// camera: on 214's first turret at the ray's far end, 45.7 m out, at
     /// every corner (openspec AS.445's review, AS.608).
     pub target: Option<[f32; 3]>,
+    /// The first player's pointer graphic's `screen location` as the
+    /// interface's layout last left it, pixels off the screen's top-left:
+    /// what `New Turret - Find Target` sends its ray through, less its
+    /// nudge (openspec AS.608).
+    pub graphic: Option<[f32; 2]>,
 }
 
 /// The heading and pitch of `d`, degrees: heading 0 along +Z, 90 along +X.
@@ -244,11 +249,15 @@ pub fn view(vm: &Vm, world: &ScriptWorld) -> Option<TurretView> {
     let turret = active(vm)?;
     let state = state(vm, turret);
     let number = |v: Value, name: &str| vm.field(v, name).and_then(|f| vm.value(f).as_f32());
-    let pointer = player(vm, turret)
+    let pointer_data = player(vm, turret)
         .and_then(|p| vm.field(p, "wii pointer data"))
         .map(|p| vm.value(p))
-        .filter(|p| *p != Value::Null)
-        .and_then(|p| Some([number(p, "xrem")?, number(p, "yrem")?]));
+        .filter(|p| *p != Value::Null);
+    let pointer = pointer_data.and_then(|p| Some([number(p, "xrem")?, number(p, "yrem")?]));
+    let graphic = pointer_data
+        .and_then(|p| vm.field(p, "pointer graphic"))
+        .map(|g| vm.value(g))
+        .and_then(|g| graphic_place(world, g));
     let calibrating = vm
         .field(turret, "calibration data")
         .map(|c| vm.value(c))
@@ -320,7 +329,26 @@ pub fn view(vm: &Vm, world: &ScriptWorld) -> Option<TurretView> {
         barrel,
         aim,
         target: target.map(|t| t.to_array()),
+        graphic,
     })
+}
+
+/// Sprite `g`'s `screen location` off the run's interface model, pixels.
+fn graphic_place(world: &ScriptWorld, g: Value) -> Option<[f32; 2]> {
+    let keeper = world.interface()?;
+    let id = keeper.model().sprite_of(g)?;
+    let member = guac_interface::members::find("spriteinfo", "screen location")?;
+    match keeper
+        .model()
+        .get(id, member, &guac_interface::NoWorld)
+        .ok()?
+    {
+        guac_interface::Answer::Value(Value::Screen(s)) => {
+            let (x, y) = crate::viewport::unpack_screen(s);
+            Some([x, y])
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]
