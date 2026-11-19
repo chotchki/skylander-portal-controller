@@ -3603,21 +3603,24 @@ fn on_to_the_galleon_in(setup: Setup) -> AtCali {
         &TO_THE_PEG,
         900,
     ) {
-        // Held: eight headings from the spot, metres moved in 1.5 s.
+        // Held (openspec AS.613: with the idle Chompies running he comes
+        // up from Setup_003 on the far side of a wall from the straight
+        // line): on round over the flood's cells, as 201's walk goes round.
         let at = run.hero().pivot;
-        let mut moved = Vec::new();
-        for k in 0..8 {
-            run.put(at, 0.0);
-            run.bench.view = 45.0 * k as f32;
-            run.bench.hold_view = true;
-            for _ in 0..90 {
-                step(&mut run, &mut stops, Stick::new(0.0, 1.0), [false; 4]);
-            }
-            moved.push(format!("{:.2}", run.hero().pivot.distance(at)));
-        }
-        panic!(
-            "held at {at} short of the peg; eight headings {moved:?}; trail {:?}",
-            &trail.0[trail.0.len().saturating_sub(12)..]
+        let by: Vec<String> = run
+            .world
+            .actors()
+            .filter(|(_, a)| !a.removed && a.position.distance(at) < 3.0)
+            .map(|(h, a)| format!("{} at {}", run.world.name(h), a.position))
+            .collect();
+        println!("held at {at} short of the peg, within 3 m {by:?}: round by the flood");
+        walk_to(
+            &mut run,
+            &mut stops,
+            &mut scenes,
+            &mut trail,
+            BY_THE_PEG,
+            1.5,
         );
     }
     for _ in 0..30 {
