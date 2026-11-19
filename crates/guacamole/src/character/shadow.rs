@@ -123,7 +123,7 @@ impl Plugin for CastersPlugin {
 /// a character's opaque skinned ones. In `Last`, so a part spawned or given
 /// a new material (a fade's copy) anywhere in the frame has it before the
 /// render world extracts it. A skinned part whose material changed in place
-/// (a tint's copy rewritten as it fades, `tints::tint_part`) is marked again
+/// (a tint's copy rewritten as it fades, `tints::wash_part`) is marked again
 /// the frame its asset event comes, the frame the render world takes the new
 /// key too: kept casting on a faded key, it would draw the whole part dark
 /// into the cascades and compile a shadow pipeline the warm never did.

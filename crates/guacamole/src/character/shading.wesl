@@ -46,7 +46,7 @@ struct Character {
     // x near, y far.
     fog_range: vec4<f32>,
     placement_tint: vec4<f32>,
-    // RGB and its amount.
+    // RGB as stored and its amount.
     replace: vec4<f32>,
     // x the original's full shadow on stored values, y the power that takes
     // it into linear light (AG.23).
@@ -535,8 +535,16 @@ fn shade(in: Interpolants) -> vec4<f32> {
 @if(CHAR_POINT_LIGHTS_3)
     colour += point_light(2u, n, in.position);
 
-    // The replace colour by its amount, then fog by depth along the view.
-    colour = lerp3(colour, character.replace.rgb, character.replace.a);
+    // The replace colour by its amount, mixed on stored values as the
+    // original's (AS.614, `guac_ir::shading::replace_mix`): the colour out
+    // to stored at the working space's power, toward the replace colour
+    // as stored, and back; then fog by depth along the view.
+    if character.replace.a > 0.0 {
+        let p = character.shadow.y;
+        let stored = pow(max(colour, vec3<f32>(0.0)), vec3<f32>(1.0 / p));
+        let mixed = lerp3(stored, character.replace.rgb, character.replace.a);
+        colour = pow(max(mixed, vec3<f32>(0.0)), vec3<f32>(p));
+    }
 @if(CHAR_FOG) {
     let depth = -in.position.z;
     let range = fog_range();

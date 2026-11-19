@@ -620,6 +620,7 @@ fn draw_creatures(
 fn tint_creatures(
     mut commands: Commands,
     world: Res<ScriptWorld>,
+    runtime: Option<Res<guacamole::scripts::ScriptRuntime>>,
     creatures: Query<&DrawnCreature>,
     mut parts: Query<(
         &mut MeshMaterial3d<CharacterMaterial>,
@@ -631,8 +632,13 @@ fn tint_creatures(
         let Some(tint) = world.actor(c.actor).map(|a| a.tint) else {
             continue;
         };
+        // Its replace colour as its scripts write it (openspec AS.611: a
+        // bitten Chompy's or elf's red hit flash, a kill's white).
+        let wash = runtime
+            .as_deref()
+            .and_then(|r| guacamole::props::actor_wash(&r.vm, c.actor));
         for &part in &c.segments {
-            crate::tints::tint_part(part, tint, &mut commands, &mut parts, &mut materials);
+            crate::tints::wash_part(part, tint, wash, &mut commands, &mut parts, &mut materials);
         }
     }
 }
@@ -1271,6 +1277,39 @@ mod tests {
         assert_eq!(
             lit_after.uniform.placement_tint,
             lit_before.uniform.placement_tint
+        );
+        // openspec AS.611: its hit flash, the red its scripts write at 100
+        // and slide to 0, lands on its copy's replace term and goes with it.
+        let flash = |app: &mut App, percent: i32| {
+            let mut rt = app
+                .world_mut()
+                .resource_mut::<guacamole::scripts::ScriptRuntime>();
+            let at = Some(guac_script::Value::Entity(c));
+            rt.vm.set_value_cell(
+                at,
+                guac_script::MemberId::named("actorinfo", "replace color"),
+                guac_script::Value::Color(0xFF00_00FF),
+            );
+            rt.vm.set_value_cell(
+                at,
+                guac_script::MemberId::named("actorinfo", "replace color percentage"),
+                guac_script::Value::Int(percent),
+            );
+            app.update();
+        };
+        flash(&mut app, 100);
+        assert_eq!(
+            drawn(&app).uniform.replace,
+            bevy::math::Vec4::new(1.0, 0.0, 0.0, 1.0),
+            "flashed red"
+        );
+        flash(&mut app, 25);
+        assert_eq!(drawn(&app).uniform.replace.w, 0.25);
+        flash(&mut app, 0);
+        assert_eq!(
+            drawn(&app).uniform.replace,
+            lit_before.uniform.replace,
+            "the scene's again"
         );
     }
 

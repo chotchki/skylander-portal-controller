@@ -20,7 +20,7 @@
 //! last step left, a copy kept while its clone lives (its parts go with the
 //! clone) and rewritten only when the tint or its shared material's numbers
 //! (a relight) moved. A clone left neutral draws on the shared material. A
-//! creature's parts take its tint the same way ([`tint_part`], openspec
+//! creature's parts take its tint the same way ([`wash_part`], openspec
 //! AH.139): a beaten Chompy's death takes its alpha from 255 to nothing over
 //! the 0.18 s before its going, so it fades out where it fell.
 
@@ -111,9 +111,9 @@ impl Plugin for CloneTintsPlugin {
 }
 
 /// Each drawn clone's tint onto its parts, as the scripts' world holds it,
-/// and its replace colour where it hangs on an actor washed too (openspec
-/// AS.590: a beaten hero's death washes all that hangs on him with him,
-/// Hot Head's hand grills; a clone's own wash elsewhere isn't drawn).
+/// and its own replace colour (openspec AS.590: a beaten hero's death
+/// washes all that hangs on him with him, Hot Head's hand grills; AS.611:
+/// a lone clone's too, a Chompy's armour flashing as it's bitten).
 pub(crate) fn tint_clones(
     commands: Commands,
     world: Res<ScriptWorld>,
@@ -122,8 +122,7 @@ pub(crate) fn tint_clones(
     parts: Query<(&mut MeshMaterial3d<CharacterMaterial>, Option<&TintedPart>)>,
     materials: ResMut<Assets<CharacterMaterial>>,
 ) {
-    let wash =
-        |h: guac_script::Handle| guacamole::props::hung_wash(&world, &runtime.as_deref()?.vm, h);
+    let wash = |h: guac_script::Handle| guacamole::props::actor_wash(&runtime.as_deref()?.vm, h);
     tint_parts(
         |clone| {
             let h = clone.to_bits();
@@ -158,11 +157,12 @@ fn tint_parts(
     }
 }
 
-/// `tint` onto a drawn part: a tinted part on a copy of its shared material
-/// carrying it, made the first time it isn't neutral and rewritten when it
-/// or the shared one's numbers move; a neutral part never tinted stays on
-/// the shared one. What a clone's parts take (AH.67) and a creature's
-/// (AH.139, `crate::creatures`).
+/// [`wash_part`] with no wash: `tint` onto a drawn part, a tinted part on a
+/// copy of its shared material carrying it, made the first time it isn't
+/// neutral and rewritten when it or the shared one's numbers move; a
+/// neutral part never tinted stays on the shared one. The tests' since
+/// creatures and clones lay their wash with it (openspec AS.611).
+#[cfg(test)]
 pub(crate) fn tint_part(
     part: Entity,
     tint: u32,
@@ -173,7 +173,8 @@ pub(crate) fn tint_part(
     wash_part(part, tint, None, commands, parts, materials);
 }
 
-/// [`tint_part`] with the actor's replace colour over it (openspec AS.590,
+/// A part's tint (AH.67: a clone's parts, AH.139: a creature's) with the
+/// actor's replace colour over it (openspec AS.590,
 /// [`guacamole::props::replace_wash`]): the copy's replace term the wash's
 /// while there is one, the shared material's (the scene's) otherwise.
 pub(crate) fn wash_part(

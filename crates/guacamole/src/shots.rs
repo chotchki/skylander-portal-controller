@@ -249,7 +249,7 @@ fn snap(
     extraction: Option<Res<Extraction>>,
     intros: Option<Res<IntroQueue>>,
     mut redrawn: MessageReader<Redrawn>,
-    (play, heroes, time, overlays, (alerts, clones, asked, log)): (
+    (play, heroes, time, overlays, (alerts, clones, asked, log), drawn): (
         Option<Res<Play>>,
         Query<&HeroBody>,
         Res<Time>,
@@ -260,6 +260,7 @@ fn snap(
             Option<Res<crate::mirror::AskedShots>>,
             Option<Res<crate::hero_scripts::ScriptLog>>,
         ),
+        Query<(&crate::play::HeroAlpha, Option<&crate::play::HeroWash>)>,
     ),
     mut walked: Local<Option<(Duration, Vec3)>>,
 ) {
@@ -277,9 +278,20 @@ fn snap(
     };
     if let Some(label) = asked.as_deref().and_then(crate::mirror::AskedShots::take) {
         state.seq += 1;
+        // The hero's drawn wash, alpha and step beside the frame (openspec
+        // AS.616): laid in `PostUpdate`, so what this frame draws.
+        let read = play
+            .as_deref()
+            .and_then(Play::hero)
+            .and_then(|e| drawn.get(e).ok())
+            .map(|(a, w)| match w {
+                Some(w) => format!("-w{}-a{}-s{}", w.percent, a.0, w.step),
+                None => format!("-a{}", a.0),
+            })
+            .unwrap_or_default();
         let path = state
             .dir
-            .join(format!("{:02}-asked-{label}.png", state.seq));
+            .join(format!("{:02}-asked-{label}{read}.png", state.seq));
         info!(path = %path.display(), "asked screenshot requested");
         commands
             .spawn(Screenshot::image(target))

@@ -9,9 +9,9 @@
 //! drawn through the real pipeline (the IR's mesh, Bevy's GPU skinning on
 //! one identity joint, the WESL shader specialized for the key) into an
 //! `Rgba16Float` target with tonemapping off, and every channel of every
-//! pixel is compared with [`guac_ir::shading`] fed the same inputs: light,
-//! fog and replace colours decoded through `bevy_color`, tints and vertex
-//! colours as stored.
+//! pixel is compared with [`guac_ir::shading`] fed the same inputs: light
+//! and fog colours decoded through `bevy_color`, the replace colour, tints
+//! and vertex colours as stored.
 //!
 //! Three passes share one set of random inputs:
 //! 1. half-float textures holding the exact decodes, so the shader and the
@@ -864,8 +864,10 @@ fn random_scene(rng: &mut Rng) -> Scene {
             })
             .collect(),
         placement_tint: [0, 1, 2, 3].map(|_| f32::from(64 + rng.byte() / 2) / 255.0),
+        // The replace colour as stored: both sides mix it on stored
+        // values (openspec AS.614).
         replace: {
-            let c = rng.colour(255);
+            let c = rng.stored(255);
             let amount = if rng.chance(0.5) {
                 0.0
             } else {

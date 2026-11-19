@@ -8,12 +8,14 @@
 //! What's decoded and what isn't (the remaster-look spec's decoding
 //! requirement):
 //! - colours the disc stores encoded for display: the lights' ambient,
-//!   diffuse and specular, the fog's and the replace colour, each held as
-//!   `Srgba::rgb_u8` and converted with `LinearRgba::from` ([`linear`],
-//!   [`light`], [`replace`]); the colour, spec and rim maps and the other
+//!   diffuse and specular and the fog's, each held as `Srgba::rgb_u8` and
+//!   converted with `LinearRgba::from` ([`linear`], [`light`]); the colour,
+//!   spec and rim maps and the other
 //!   layers' colour maps, sampled through `*UnormSrgb` views so the hardware
 //!   decodes before it filters ([`is_srgb`], [`texture`]);
-//! - as stored: normal maps (`Unorm`), a level's gloss map, which is a
+//! - as stored: the replace colour, which the shader mixes on stored
+//!   values as the original does ([`replace`], AS.614); normal maps
+//!   (`Unorm`), a level's gloss map, which is a
 //!   weight ([`samples_srgb`], AG.22), and tints and vertex colours, which
 //!   are multipliers centred on half grey (×4·tint·material tint,
 //!   ×2·vertex colour), not colours ([`tint`]): decoded, a neutral tint's
@@ -114,10 +116,11 @@ pub fn scene() -> Scene {
     }
 }
 
-/// The replace colour decoded, its amount (a number) as given: the scene's
-/// `replace`.
+/// The replace colour as stored, its amount (a number) as given: the
+/// scene's `replace`, mixed on stored values (openspec AS.614,
+/// [`guac_ir::shading::replace_mix`]), so never decoded.
 pub fn replace(code: [u8; 3], amount: f32) -> [f32; 4] {
-    let [r, g, b] = linear(code);
+    let [r, g, b] = code.map(|c| f32::from(c) / 255.0);
     [r, g, b, amount]
 }
 
@@ -330,8 +333,8 @@ mod tests {
         assert_eq!(rgb(u.light_ambient[0]), linear([39, 42, 67]));
         assert_eq!(rgb(u.light_specular[0]), linear([75, 85, 107]));
         assert_eq!(rgb(u.fog_colour), linear([115, 83, 49]));
-        let r = linear([255, 128, 0]);
-        assert_eq!(u.replace.to_array(), [r[0], r[1], r[2], 0.25]);
+        // The replace colour as stored: the shader mixes it so (AS.614).
+        assert_eq!(u.replace.to_array(), [1.0, 128.0 / 255.0, 0.0, 0.25]);
         // The travel and the amount are numbers, kept as given.
         assert_eq!(rgb(u.light_travel[0]), [0.0, 0.0, -1.0]);
         // The directional sum's copies as stored (AG.286).
