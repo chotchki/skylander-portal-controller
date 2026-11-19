@@ -670,7 +670,7 @@ const SPAWN_TRIES: usize = 4;
 /// picked port, `BIND_PORT` rewritten, up to [`SPAWN_TRIES`] spawns.
 fn start_server(dir: &Path, repo: &Path, package: &str) -> Result<(String, ChildGuard)> {
     let exe = built::server_binary(repo, package)?;
-    let mut last = None;
+    let mut taken_ports = Vec::new();
     for _ in 0..SPAWN_TRIES {
         let (rx, mut guard) = spawn_server_once(dir, &exe)?;
         match wait_for_url(&rx, Duration::from_secs(120))? {
@@ -682,13 +682,21 @@ fn start_server(dir: &Path, repo: &Path, package: &str) -> Result<(String, Child
                     "[e2e] port {taken} was taken before {package} bound it; spawning again on {next}"
                 );
                 set_bind_port(&dir.join(".env.dev"), next)?;
-                last = Some(taken);
+                taken_ports.push(taken);
             }
         }
     }
-    Err(anyhow!(
-        "{package}'s port was taken under it {SPAWN_TRIES} times running (last {last:?})"
-    ))
+    Err(anyhow!("{}", all_taken(package, &taken_ports)))
+}
+
+/// The error once every spawn's port was taken, naming each.
+fn all_taken(package: &str, ports: &[u16]) -> String {
+    let ports: Vec<String> = ports.iter().map(u16::to_string).collect();
+    format!(
+        "{package}'s port was taken under it {} times running: {}",
+        ports.len(),
+        ports.join(", ")
+    )
 }
 
 /// One spawn of `exe` in `dir`, both its streams read onto the channel.
@@ -3845,7 +3853,16 @@ mod chrome_version_tests {
 
 #[cfg(test)]
 mod port_tests {
-    use super::{taken_port, with_bind_port};
+    use super::{all_taken, taken_port, with_bind_port};
+
+    /// Four taken ports in a row end in an error naming all four.
+    #[test]
+    fn every_taken_port_is_named() {
+        assert_eq!(
+            all_taken("guacamole", &[61001, 61002, 61003, 61004]),
+            "guacamole's port was taken under it 4 times running: 61001, 61002, 61003, 61004"
+        );
+    }
 
     /// guac-server's bind line names the port it couldn't have; any other
     /// bind error, or a line that isn't a bind's, names none (openspec AS.628).

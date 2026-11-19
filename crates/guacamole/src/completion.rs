@@ -2196,8 +2196,19 @@ mod tests {
             last.up == 0 && last.secs > crate::fireworks::TIMEOUT + 0.5,
             "{last:?}"
         );
+        // The pads are back; the last bursts' particles live out their
+        // 1.5 s over the screen, no rocket made, then nothing's left.
+        let mut fading = 0;
+        while report(&app).fireworks_drawn.is_some() {
+            app.update();
+            fading += 1;
+            assert!(fading <= 100, "the last bursts never finish");
+            assert!(!report(&app).tallying, "the pads stay back");
+            if let Some(f) = report(&app).fireworks_drawn {
+                assert_eq!((f.up, f.made), (0, made), "{f:?}");
+            }
+        }
         app.update();
-        assert_eq!(report(&app).fireworks_drawn, None);
         assert_eq!(fireworks_roots(&mut app), 0, "nothing left drawn");
         let f = app.world().resource::<crate::fireworks::Fireworks>();
         assert_eq!(f.drawn, 0);

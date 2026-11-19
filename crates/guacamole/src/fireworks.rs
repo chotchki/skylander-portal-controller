@@ -26,11 +26,16 @@
 //! as images over the panel (every template of the screen sits at the same
 //! depth, so they draw in the order made: after the panel), each the
 //! generator's texture tinted by its keyed colour and the rocket's.
+//! A trail or burst the scripts take off makes no more and what it made
+//! lives out its life, as a level's emitter clone's does (AH.87's probe):
+//! a burst's glows live 1.5 s against the 0.9 s it's up, so they fade by
+//! their own keys rather than being cut, and the last bursts' finish over
+//! the screen once the pads are back (at most 1.5 s), then nothing's left.
 //! Stand-ins (the design doc's ledger, `fireworks`): a template's scale
 //! (20) read as 20 screen units a metre, the screen container's origin as
-//! the screen's middle, a sprite taken off taking its particles with it,
-//! and an added generator drawn by an alpha its texture's brightness gives
-//! (Bevy's UI blends by alpha only).
+//! the screen's middle, a UI sprite's particles outliving it as a level
+//! clone's do, and an added generator drawn by an alpha its texture's
+//! brightness gives (Bevy's UI blends by alpha only).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -108,6 +113,14 @@ impl Lit {
             generators: vec![GeneratorState::default(); emitter.map_or(0, |e| e.generators.len())],
         }
     }
+
+    /// One step of its generators, making while `on`.
+    fn step(&mut self, emitter: &Emitter, on: bool, rng: &mut Cosmetic) {
+        let frame = frame_at(self.at);
+        for (state, g) in self.generators.iter_mut().zip(&emitter.generators) {
+            state.step(g, frame, on, STEP, rng);
+        }
+    }
 }
 
 /// One rocket of the scripts' particle set.
@@ -145,6 +158,9 @@ pub(crate) struct Show {
     pub(crate) steps: u32,
     /// Draws taken off the generator.
     pub(crate) draws: u32,
+    /// Trails and bursts the scripts took off (0 a trail, 1 a burst),
+    /// making no more while what they made lives out its life.
+    pub(crate) fading: Vec<(usize, Lit)>,
 }
 
 /// What the scripts' rolls draw on, counted.
@@ -184,6 +200,7 @@ impl Show {
             most_up: 0,
             steps: 0,
             draws: 0,
+            fading: Vec::new(),
         };
         let mut draws = Draws { draw, taken: 0 };
         show.make(colours, emitters, &mut draws);
@@ -240,11 +257,13 @@ impl Show {
                 if r.burst.is_none() {
                     let tint = draws.colour(colours);
                     r.burst = Some(Lit::new(r.at, tint, emitters.map(|e| e.burst.as_ref())));
-                    r.trail = None;
+                    if let Some(trail) = r.trail.take() {
+                        self.fading.push((0, trail));
+                    }
                     self.bursts += 1;
                 }
-            } else {
-                self.rockets.remove(i);
+            } else if let Some(burst) = self.rockets.remove(i).burst {
+                self.fading.push((1, burst));
             }
         }
         if now < TIMEOUT {
@@ -255,22 +274,30 @@ impl Show {
         }
         self.draws += draws.taken;
         if let Some(e) = emitters {
+            let emitter = |k: usize| if k == 0 { &e.trail } else { &e.burst };
             for r in &mut self.rockets {
-                for (lit, emitter) in [(&mut r.trail, &e.trail), (&mut r.burst, &e.burst)] {
+                for (k, lit) in [(0, &mut r.trail), (1, &mut r.burst)] {
                     let Some(lit) = lit else { continue };
-                    let frame = frame_at(lit.at);
-                    for (state, g) in lit.generators.iter_mut().zip(&emitter.generators) {
-                        state.step(g, frame, true, STEP, rng);
-                    }
+                    lit.step(emitter(k), true, rng);
                 }
             }
+            for (k, lit) in &mut self.fading {
+                lit.step(emitter(*k), false, rng);
+            }
         }
+        self.fading
+            .retain(|(_, lit)| lit.generators.iter().any(GeneratorState::live));
     }
 
     /// The hold's over: the timeout reached and no rocket left
     /// (`End Animation Mode`).
     pub(crate) fn over(&self) -> bool {
         self.clock >= TIMEOUT && self.rockets.is_empty()
+    }
+
+    /// Over, and nothing it made is still alive to draw.
+    pub(crate) fn spent(&self) -> bool {
+        self.over() && self.fading.is_empty()
     }
 }
 
@@ -302,11 +329,18 @@ pub(crate) struct Quad {
 /// Every particle `show` draws this step.
 pub(crate) fn quads(show: &Show, emitters: &Emitters) -> Vec<Quad> {
     let mut out = Vec::new();
-    for r in &show.rockets {
-        for (k, lit, emitter) in [
-            (0, &r.trail, &emitters.trail),
-            (1, &r.burst, &emitters.burst),
-        ] {
+    let lits = show
+        .rockets
+        .iter()
+        .flat_map(|r| [(0, r.trail.as_ref()), (1, r.burst.as_ref())])
+        .chain(show.fading.iter().map(|(k, lit)| (*k, Some(lit))));
+    for (k, lit) in lits {
+        let emitter = if k == 0 {
+            &emitters.trail
+        } else {
+            &emitters.burst
+        };
+        {
             let Some(lit) = lit else { continue };
             let frame = frame_at(lit.at);
             for (generator, (state, g)) in
@@ -511,7 +545,7 @@ impl Fireworks {
         let mut steps = 0;
         let own = &mut self.own;
         let mut runtime = runtime;
-        while self.owed >= STEP && steps < MOST_STEPS && !show.over() {
+        while self.owed >= STEP && steps < MOST_STEPS && !show.spent() {
             self.owed -= STEP;
             steps += 1;
             match runtime.as_deref_mut() {
@@ -695,8 +729,20 @@ pub(crate) fn step_fireworks(
     let mut runtime = runtime;
     // Gone with the screen: its continue, or the level leaving.
     let at_screen = world.as_deref().is_some_and(crate::completion::is_open);
-    if !cycle.fireworks || !at_screen {
+    if !at_screen {
         fireworks.end();
+        return;
+    }
+    // Past the hold (the pads handed back), what the last bursts made
+    // lives out its life over the screen, then nothing's left.
+    if !cycle.fireworks {
+        match &fireworks.show {
+            Some(show) if show.over() && !show.spent() && open.0 => {
+                fireworks.advance(time.delta_secs(), runtime.as_deref_mut());
+            }
+            Some(show) if show.over() && !show.spent() => {}
+            _ => fireworks.end(),
+        }
         return;
     }
     if !open.0 {
@@ -1019,6 +1065,45 @@ pub(crate) mod tests {
             "over at {}",
             show.clock
         );
+        assert!(quads(&show, &e).is_empty(), "nothing left drawn");
+    }
+
+    /// A burst the scripts take off at its 0.9 s makes no more and its
+    /// particles live out their 1.5 s, fading, not cut (the as-fireworks
+    /// review); past the hold the last ones finish and the show is spent.
+    #[test]
+    fn a_burst_taken_off_fades_out_its_particles() {
+        let e = test_emitters();
+        let mut rng = Cosmetic::new(1);
+        let mut first = [0u32, 2, 1, 3, 0].into_iter();
+        let mut show = Show::start(&COLOURS3, Some(&e), &mut || first.next().unwrap_or(0));
+        let off = TRAIL_LIFE + BURST_LIFE;
+        let (mut after_off, mut alphas) = (0, Vec::new());
+        while show.clock < off + 1.4 {
+            show.step(&COLOURS3, Some(&e), &mut || 0, &mut rng);
+            if show.clock > off + STEP {
+                assert!(show.rockets.is_empty(), "the rocket's out of the set");
+                let q = quads(&show, &e);
+                after_off += usize::from(!q.is_empty());
+                alphas.push(q.iter().map(|q| q.colour[3]).fold(0.0, f32::max));
+                let made: u32 = show
+                    .fading
+                    .iter()
+                    .flat_map(|(_, l)| &l.generators)
+                    .map(|g| g.made)
+                    .sum();
+                assert!(made <= 30, "{made} made: a taken-off burst makes no more");
+            }
+        }
+        assert!(after_off > 20, "its particles drew after it was taken off");
+        assert!(
+            alphas.windows(2).all(|w| w[1] <= w[0] + 1e-4),
+            "fading: {alphas:?}"
+        );
+        while !show.spent() {
+            assert!(show.clock < TIMEOUT + 1.6, "never spent");
+            show.step(&COLOURS3, Some(&e), &mut || 0, &mut rng);
+        }
         assert!(quads(&show, &e).is_empty(), "nothing left drawn");
     }
 

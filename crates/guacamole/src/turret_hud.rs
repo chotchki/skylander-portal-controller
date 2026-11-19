@@ -37,6 +37,14 @@ pub(crate) fn place(at: [f32; 2]) -> [f32; 2] {
     ]
 }
 
+/// Where the pointer's ring draws: where the scripts hold the pointer,
+/// none while the turret's attack is disabled (its intro, getting in), when
+/// `Update Player's Wii Mote` hides the pointer (openspec AS.608's review:
+/// the ring followed the stick to a corner the barrel didn't aim at).
+pub(crate) fn pointer_ring(view: &TurretView) -> Option<[f32; 2]> {
+    view.pointer.filter(|_| !view.attack_disabled)
+}
+
 /// The turret's view as the TV last read it, its part of `/api/_test/tv`.
 #[derive(Resource, Debug, Clone, Default, PartialEq)]
 pub struct TurretReport(pub Option<TurretView>);
@@ -133,7 +141,7 @@ fn show_turret(
                     ));
                 }
             }
-            if let Some(at) = view.pointer {
+            if let Some(at) = pointer_ring(&view) {
                 b.spawn(ring(POINTER, at, pen.theme.gold));
             }
         })
@@ -154,5 +162,30 @@ mod tests {
         let [left, top] = place([-100.0, 60.0]);
         assert!((left / 100.0 * 1280.0 - (640.0 - 150.0)).abs() < 1e-3);
         assert!((top / 100.0 * 720.0 - (360.0 + 90.0)).abs() < 1e-3);
+    }
+
+    /// AS.608's review: no ring while the scripts hide the pointer (the
+    /// attack disabled), where they hold it once it's enabled.
+    #[test]
+    fn the_ring_hides_while_the_attack_is_disabled() {
+        let mut view = TurretView {
+            state: String::new(),
+            attack_disabled: true,
+            pointer: Some([-384.0, -216.0]),
+            calibration: None,
+            message: None,
+            hits: 0,
+            targets: Vec::new(),
+            get_out: None,
+            barrel: None,
+            aim: None,
+            target: None,
+            graphic: Some([640.0, 210.0]),
+        };
+        assert_eq!(pointer_ring(&view), None);
+        view.attack_disabled = false;
+        assert_eq!(pointer_ring(&view), Some([-384.0, -216.0]));
+        view.pointer = None;
+        assert_eq!(pointer_ring(&view), None);
     }
 }

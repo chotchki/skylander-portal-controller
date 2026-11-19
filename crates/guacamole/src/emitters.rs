@@ -474,8 +474,37 @@ pub(crate) fn step_systems(
                 system.on = placed.stands.get(i).copied().unwrap_or(false);
             }
         }
-        for (state, g) in system.generators.iter_mut().zip(&system.emitter.generators) {
+        for (k, (state, g)) in system
+            .generators
+            .iter_mut()
+            .zip(&system.emitter.generators)
+            .enumerate()
+        {
+            let was_off_for = state.off_for;
             state.step(g, system.place, system.on, dt, &mut rng.0);
+            // Where the one-life bound stops a stream that would have gone
+            // on making (openspec AS.627; the as-fireworks review's census).
+            if let guac_ir::particle::Kind::Sprite(s) = &g.kind {
+                let life = s.lifespan.max(particles::SHORTEST_LIFE);
+                let most = u32::from(s.max_alive);
+                if !system.on
+                    && was_off_for <= life
+                    && state.off_for > life
+                    && state.made < most
+                    && s.spawn_rate > 0.0
+                    && s.spawn_rate < particles::BURST_RATE
+                {
+                    debug!(
+                        emitter = %system.name,
+                        generator = k,
+                        made = state.made,
+                        most,
+                        rate = s.spawn_rate,
+                        owed_secs = f64::from(most - state.made) / f64::from(s.spawn_rate),
+                        "a stopped stream's last life is out: it makes no more"
+                    );
+                }
+            }
         }
         let spent = !system.on && system.generators.iter().all(|g| !g.live());
         if spent && !waits {
