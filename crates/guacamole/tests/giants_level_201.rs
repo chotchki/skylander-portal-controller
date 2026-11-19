@@ -661,6 +661,10 @@ impl Walker {
             interface: true,
             props: true,
             sounds: true,
+            // The intro's flyover carries him off as the TV's does, so the
+            // first island's four sleep and wake reading their hp (openspec
+            // AS.630).
+            posed_rigs: true,
             ..Setup::default()
         };
         let (run, _) = run_on_level(Mode::Play, LEVEL_201, setup);
@@ -849,6 +853,84 @@ fn its_life_wall_follows_its_two_triggers() {
     );
 }
 
+/// AS.630: from 201's start, its intro skipped as a kid skips it, every
+/// creature its first three fights meet holds its hp and is beaten: the
+/// first island's two Chompies and two ghost lobbers set up on the load's
+/// first step, before the enemy system has filled the stats they read, and
+/// hold 0, which no hit takes down; the intro's flyover carries him off,
+/// they sleep, and wake reading theirs (the TV's way: the rigs posed). Each
+/// fight's creatures within 40 m are read at its start, and every one met
+/// must be gone by the third's end (the first fight sees the island's two
+/// on their ledge).
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_201s_first_three_fights_can_be_beaten() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let mut w = fresh();
+    let fights = [
+        "w 157 -168; w 156 -171; w 144 -170; f 40 3000",
+        "w 135.1 -166.5; w 130 -168; f 40 2000",
+        "w 130.3 -167.8; w 124 -150; f 40 2000",
+    ];
+    let mut met = Vec::new();
+    for (k, plan) in fights.iter().enumerate() {
+        let (walk, fight) = plan.rsplit_once(';').unwrap();
+        assert!(w.stretch(walk), "fight {k}: the walk to it");
+        let me = w.run.hero().pivot;
+        let run = &w.run;
+        let here: Vec<(String, Handle, Option<i32>)> = run
+            .world
+            .creatures()
+            .into_iter()
+            .filter(|h| is_foe(&run.world.name(*h)))
+            .filter_map(|h| {
+                let id = run.vm.placement_of(h)?;
+                let a = run.world.actor(h)?;
+                let near = (a.position.y - me.y).abs() < 6.0
+                    && (a.position.x - me.x).hypot(a.position.z - me.z) < 40.0;
+                (near && !a.removed && !run.vm.removed(id) && !run.vm.asleep(id)).then(|| {
+                    (
+                        run.world.name(h),
+                        h,
+                        guacamole::scripts::health(&run.vm, id),
+                    )
+                })
+            })
+            .collect();
+        println!("fight {k} at step {}: {here:?}", w.run.steps);
+        for (name, h, hp) in here {
+            if met.iter().all(|(m, _, _)| *m != name) {
+                assert!(
+                    hp.is_some_and(|hp| hp > 0),
+                    "fight {k}: {name} holds hp {hp:?}"
+                );
+                met.push((name, h, k));
+            }
+        }
+        assert!(w.stretch(fight), "fight {k}");
+    }
+    for (name, h, k) in &met {
+        let gone = w.run.world.actor(*h).is_none_or(|a| a.removed);
+        assert!(
+            gone,
+            "{name} (met at fight {k}) still up at step {}",
+            w.run.steps
+        );
+    }
+    let met: Vec<&String> = met.iter().map(|(n, _, _)| n).collect();
+    println!(
+        "beaten {} creatures: {met:?}; {} steps, {:.1} s, load {}",
+        met.len(),
+        w.run.steps,
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    for name in ["Enemy_Chompy(1)", "Enemy_Chompy(2)"] {
+        assert!(met.iter().any(|m| *m == name), "{name} never met");
+    }
+}
+
 /// AS.136's half on level 201: its four enemy intros each put up their
 /// enemy's card in their own scene for their scripts' time, a line of its
 /// own each; by name and timing only.
@@ -1016,6 +1098,7 @@ fn fresh_as(character: Option<Character>) -> Walker {
         props: true,
         sounds: true,
         character,
+        posed_rigs: true,
         // GUAC_TEST_WAKE=every runs the suite on the original's wake rule
         // (openspec AS.246, AS.268).
         wake: match std::env::var("GUAC_TEST_WAKE").as_deref() {
