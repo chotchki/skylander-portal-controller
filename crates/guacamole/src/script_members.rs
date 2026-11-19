@@ -2977,18 +2977,24 @@ impl ScriptWorld {
             None => (named("_LHS").ok_or(HostFault::Nothing)?, true),
         };
         let point = self.point(target, engine).ok_or(HostFault::Nothing)?;
-        let walks = self.actors.get(&mover).is_some_and(|a| a.walker.is_some());
+        // A `move from` itself is never clear of its own place: the mover
+        // goes on along its facing (a reading, `steer::input` already
+        // heading a mover at its point along its facing), a scene actor's
+        // always (openspec AU.34: the hub's fairies), a creature's on a step
+        // its scripts turn it too (AS.448: an idle Chompy's turn and run, a
+        // circle, as AH.10 recorded it; a Root Runner's retreat). A
+        // creature's with no turn that step is clear at once, as before: on
+        // 201 one run on so went straight 15 m into the walk's way.
+        let own = !toward && self.actor_of(Some(target)) == Some(mover);
+        let turning = self
+            .actors
+            .get(&mover)
+            .and_then(|a| a.walker.as_deref())
+            .is_none_or(|w| matches!(w.aim, Aim::Face(_)));
         let done = if toward {
             guac_motion::steer::reached(at, point, distance)
         } else {
-            // One a scene moves from itself goes on along its facing, never
-            // clear of its own place (openspec AU.34: the hub's fairies; a
-            // reading, `steer::input` already heading a mover at its point
-            // along its facing). A creature's is clear at once: the Chompies
-            // ask it all through a fight, and walked on it they'd eat and
-            // chase on other steps.
-            (walks || self.actor_of(Some(target)) != Some(mover))
-                && guac_motion::steer::cleared(at, point, distance)
+            !(own && turning) && guac_motion::steer::cleared(at, point, distance)
         };
         if self
             .actors
@@ -3042,10 +3048,16 @@ impl ScriptWorld {
                 result: None,
             });
         }
-        w.aim = if toward {
-            Aim::To(point)
-        } else {
-            Aim::From(point)
+        w.aim = match w.aim {
+            // From itself along the facing a turn asked this step (openspec
+            // AS.448): the idle's `turn to` its facing and 3 more, then its
+            // `move from` itself, the two control ops of one step.
+            Aim::Face(f) if own => Aim::Along {
+                heading: f,
+                strength: 1.0,
+            },
+            _ if toward => Aim::To(point),
+            _ => Aim::From(point),
         };
         Ok(Answer::Done)
     }
@@ -7688,7 +7700,9 @@ mod fight_tests {
             ask(&mut w, &mut e, &from(Value::Object(WP), 0)),
             Answer::Run { .. }
         ));
-        // A creature's own place it's clear of at once, and it stands.
+        // A creature's own place, with no turn asked that step, it's clear
+        // of at once, and it stands (AS.448: a turn the same step runs it
+        // on, the next test).
         let creature = chompy(Vec3::new(0.0, 3.0, 0.0), 90.0);
         w.actors.insert(C1, creature);
         assert!(matches!(
@@ -7698,6 +7712,61 @@ mod fight_tests {
         w.advance(STEP, &mut e);
         let at = w.actor(C1).unwrap().position;
         assert!(at.x.abs() < 1e-3, "it stands: {at}");
+    }
+
+    /// openspec AS.448: an idle Chompy's step, `turn to` its facing and 3
+    /// more then `move from` itself, runs it round a circle: the turn holds
+    /// while it moves, 3 degrees a step, and its run never ends.
+    #[test]
+    fn an_idle_chompys_turn_and_move_from_itself_run_it_round_a_circle() {
+        let mut e = pit();
+        let mut w = world();
+        let start = Vec3::ZERO;
+        w.actors.insert(C1, chompy(start, 0.0));
+        let from = op(
+            Class::MoveFrom,
+            C1,
+            vec![
+                ("_indexRHS", None),
+                ("_LHS", Some(Value::Entity(C1))),
+                ("_RHS", Some(Value::Int(0))),
+                ("_NP", None),
+            ],
+            Vec::new(),
+        );
+        let mut far = 0.0f32;
+        let mut turned = 0.0f32;
+        let mut last = 0.0f32;
+        for k in 0..120 {
+            let facing = w.actor(C1).unwrap().angles.facing;
+            let turn = OpCall {
+                placement: C1,
+                receiver: Value::Entity(C1),
+                class: Class::TurnTo,
+                operands: vec![("_facingRHS", Some(Value::Float(facing + 3.0)))],
+                words: Vec::new(),
+                sets: Vec::new(),
+            };
+            assert_eq!(ask(&mut w, &mut e, &turn), Answer::Done, "step {k}");
+            assert_eq!(ask(&mut w, &mut e, &from), Answer::Done, "step {k}");
+            w.advance(STEP, &mut e);
+            let a = w.actor(C1).unwrap();
+            if k > 0 {
+                turned += wrap(a.angles.facing - last);
+            }
+            last = a.angles.facing;
+            far = far.max(Vec3::new(a.position.x, 0.0, a.position.z).length());
+        }
+        // 3 degrees a step, all the way round in 120.
+        assert!((turned - 357.0).abs() < 1.0, "turned {turned}");
+        // At its 20 ft/s, 180 degrees a second: a circle about 3.9 m across,
+        // back by where it started.
+        let at = w.actor(C1).unwrap().position;
+        assert!((3.4..4.2).contains(&far), "across {far}");
+        assert!(
+            Vec3::new(at.x, 0.0, at.z).length() < 1.0,
+            "back by its start: {at}"
+        );
     }
 
     /// openspec AU.34: of those the engine doesn't walk, the people whose

@@ -2364,3 +2364,112 @@ fn level_214s_key_floats_over_its_taker_until_the_door_takes_it() {
     assert!(left.is_empty(), "nothing of it left: {left:?}");
     assert!(stops.is_empty(), "{stops:#?}");
 }
+
+/// openspec AS.448: the Bone Chompies past level 214's second door, out of
+/// the hero's range (set where chotchki's warp put him, by `Enemy_Elf_Near_A`
+/// on the second island, his shot of 10:26), run their idle as their script
+/// asks: each step `Teeth_RunChomp` playing, a turn of 3 degrees and a step
+/// along the facing at their run's speed (about 0.1 m a step), round a
+/// circle about 4 m across, so none walks off; on 2.0 they played the run
+/// where they stood, facing fixed (the op answered a creature's move from
+/// itself as done at once).
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_214s_idle_bone_chompies_run_round_where_they_stand() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, mut stops) = joined_214();
+    run.put(Vec3::new(-249.3, -20.0, 743.0), 219.0);
+    let names = [
+        "Enemy_Chompy(4)",
+        "Enemy_Chompy(5)",
+        "Enemy_Chompy(7)",
+        "Enemy_Chompy(9)",
+        "Enemy_Chompy(10)",
+        "Enemy_Chompy(11)",
+        "Enemy_Chompy(12)",
+    ];
+    let hs: Vec<Handle> = names.iter().map(|n| handle(&run, n)).collect();
+    let mut first: Vec<Vec3> = Vec::new();
+    let mut last: Vec<(Vec3, f32)> = hs
+        .iter()
+        .map(|h| {
+            let a = run.world.actor(*h).unwrap();
+            (a.position, a.angles.facing)
+        })
+        .collect();
+    let (mut runs, mut turns, mut steps, mut far) = (0, 0, 0, 0.0f32);
+    for k in 0..180 {
+        step(&mut run, &mut stops, [false; 4]);
+        let me = run.hero().pivot;
+        for (i, h) in hs.iter().enumerate() {
+            let a = run.world.actor(*h).unwrap();
+            assert_eq!(
+                behaviour(&run, *h).as_deref(),
+                Some("idle"),
+                "{} at {k}",
+                names[i]
+            );
+            assert!(
+                (a.position - me).length() > 30.0,
+                "{} out of range",
+                names[i]
+            );
+            let clips: Vec<String> = run
+                .world
+                .clips_on(*h)
+                .into_iter()
+                .filter_map(|c| c.name)
+                .collect();
+            if clips.iter().any(|c| c.starts_with("Teeth_RunChomp")) {
+                runs += 1;
+            }
+            let moved = (a.position - last[i].0).length();
+            let turned = ((a.angles.facing - last[i].1 + 180.0).rem_euclid(360.0) - 180.0).abs();
+            if k >= 30 {
+                if (2.9..=3.1).contains(&turned) {
+                    turns += 1;
+                }
+                if (0.09..=0.11).contains(&moved) {
+                    steps += 1;
+                }
+            }
+            if k % 30 == 0 {
+                println!(
+                    "{k} {}: at {:?} facing {:.1}, moved {moved:.3}, turned {turned:.1}, {clips:?}",
+                    names[i], a.position, a.angles.facing
+                );
+            }
+            // Past their run's first 30 steps (the closets' Chompies still
+            // landing at the warp): no farther from where they were then
+            // than the circle's 4 m across and the bumps of seven run side by side.
+            if k == 30 {
+                first.push(a.position);
+            }
+            if k >= 30 {
+                far = far.max(
+                    Vec3::new(a.position.x - first[i].x, 0.0, a.position.z - first[i].z).length(),
+                );
+            }
+            last[i] = (a.position, a.angles.facing);
+        }
+    }
+    let n = hs.len() * 150;
+    println!(
+        "runs {runs} of {}, turns {turns} and steps {steps} of {n}, farthest {far:.2} m",
+        hs.len() * 180
+    );
+    assert_eq!(runs, hs.len() * 180, "the run plays every step");
+    assert!(turns * 10 >= n * 9, "3 degrees a step: {turns} of {n}");
+    assert!(
+        steps * 10 >= n * 9,
+        "a run's step each step: {steps} of {n}"
+    );
+    assert!(far < 6.0, "round where they stand, never off: {far} m");
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!(
+        "{:.1} s; load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
