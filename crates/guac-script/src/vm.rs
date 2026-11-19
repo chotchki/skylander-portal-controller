@@ -1878,6 +1878,20 @@ impl Vm {
         self.value_cell_values.get(slot as usize).copied()
     }
 
+    /// Writes a value cell from outside the scripts, making it if no path
+    /// has yet (an embedder's test setting what a script would leave).
+    /// Test-only (the `test-fixtures` feature): nothing that ships writes a
+    /// script's cell from outside.
+    #[cfg(feature = "test-fixtures")]
+    pub fn set_value_cell(&mut self, receiver: Option<Value>, member: MemberId, value: Value) {
+        let key = (receiver.map_or(Recv::Head, recv), member);
+        let slot = *self.value_cells.entry(key).or_insert_with(|| {
+            self.value_cell_values.push(value);
+            (self.value_cell_values.len() - 1) as u32
+        });
+        self.value_cell_values[slot as usize] = value;
+    }
+
     /// Every member a path has named since the VM was made, the VM's own
     /// included: the count's "reached".
     pub fn reached(&self) -> &HashSet<MemberId> {

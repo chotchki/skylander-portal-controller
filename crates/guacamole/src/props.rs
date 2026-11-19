@@ -420,6 +420,61 @@ pub fn hero_drawn(entering: bool, scripted: bool, actor: Option<&Actor>) -> Hero
     }
 }
 
+/// An actor's replace colour as its scripts hold it (openspec AS.590), in
+/// the shader's terms: the colour (packed RGBA, red high) in linear light
+/// and its percent as the amount it covers the shaded colour, 0 to 1;
+/// `None` at 0 percent, or with either unwritten. A beaten hero's death
+/// writes his element's colour and pulses its percent 0 to 41 through his
+/// hop, then 100 while he fades (headless on chapter 1's fight, Eruptor and
+/// Hot Head alike), on him and on all that hangs on him.
+pub fn replace_wash(
+    colour: Option<guac_script::Value>,
+    percent: Option<guac_script::Value>,
+) -> Option<[f32; 4]> {
+    let amount = percent?.as_f32()?.clamp(0.0, 100.0) / 100.0;
+    let guac_script::Value::Color(packed) = colour? else {
+        return None;
+    };
+    if amount <= 0.0 {
+        return None;
+    }
+    let [r, g, b, _] = packed.to_be_bytes();
+    let lin = |c: u8| (f32::from(c) / 255.0).powf(2.2);
+    Some([lin(r), lin(g), lin(b), amount])
+}
+
+/// [`replace_wash`] off the VM's cells for actor `h`.
+pub fn actor_wash(vm: &guac_script::Vm, h: guac_script::Handle) -> Option<[f32; 4]> {
+    let at = Some(guac_script::Value::Entity(h));
+    replace_wash(
+        vm.value_cell(
+            at,
+            guac_script::MemberId::named("actorinfo", "replace color"),
+        ),
+        vm.value_cell(
+            at,
+            guac_script::MemberId::named("actorinfo", "replace color percentage"),
+        ),
+    )
+}
+
+/// A clone's wash where what it hangs on (itself or by a node) is washed
+/// too (openspec AS.590: the death washes all that hangs on the beaten
+/// hero with him, Hot Head's hand grills); a clone's own wash elsewhere
+/// isn't drawn (a creature's hurt flash, the backlog's).
+pub fn hung_wash(
+    world: &crate::scripts::ScriptWorld,
+    vm: &guac_script::Vm,
+    h: guac_script::Handle,
+) -> Option<[f32; 4]> {
+    let owner = match world.actor(h)?.attach {
+        guac_script::Value::Entity(o) => o,
+        v => world.node_owner(v)?,
+    };
+    actor_wash(vm, owner)?;
+    actor_wash(vm, h)
+}
+
 /// A hero's drawn scale off his actor's (percent per axis): each axis as a
 /// fraction while all three are over 0 (Ninjini squeezed to half across as
 /// she's drawn into her bottle), else `fallback`, the uniform one his
@@ -1902,6 +1957,74 @@ mod tests {
     /// AS.573: his death's fade (alpha 240, 127, 14 on its way to 0) draws
     /// his body at each alpha, on a neutral tint (his colour never laid on
     /// him); off his scripts, or entering, the tint isn't read.
+    /// openspec AS.590: a clone washes with what it hangs on, and not on
+    /// its own.
+    #[test]
+    fn a_hung_clone_washes_only_with_what_it_hangs_on() {
+        use guac_script::{MemberId, Value};
+        let handles = HashMap::new();
+        let mut world = crate::scripts::ScriptWorld::new(
+            &crate::scripts::Files::default(),
+            &handles,
+            crate::scripts::headless_objects(&handles),
+        );
+        let (hero, grill, loose) = (0x51, 0x52, 0x53);
+        for h in [hero, grill, loose] {
+            world.actors.insert(h, Actor::blank());
+        }
+        world.actors.get_mut(&grill).unwrap().attach = Value::Entity(hero);
+        world.actors.get_mut(&loose).unwrap().attach = Value::Entity(0x99);
+        let program = std::sync::Arc::new(guac_script::Program::link(&[]).unwrap());
+        let mut vm =
+            guac_script::Vm::new(program, guac_script::Config::new(guac_script::Mode::Strict));
+        let wash = |vm: &mut guac_script::Vm, h, pct| {
+            let at = Some(Value::Entity(h));
+            vm.set_value_cell(
+                at,
+                MemberId::named("actorinfo", "replace color"),
+                Value::Color(0xFF7A_00FF),
+            );
+            vm.set_value_cell(
+                at,
+                MemberId::named("actorinfo", "replace color percentage"),
+                Value::Int(pct),
+            );
+        };
+        wash(&mut vm, grill, 100);
+        wash(&mut vm, loose, 100);
+        assert_eq!(hung_wash(&world, &vm, grill), None, "its hero unwashed");
+        wash(&mut vm, hero, 60);
+        assert_eq!(
+            hung_wash(&world, &vm, grill).map(|w| w[3]),
+            Some(1.0),
+            "its own percent"
+        );
+        assert_eq!(hung_wash(&world, &vm, loose), None, "on nothing washed");
+        assert_eq!(hung_wash(&world, &vm, hero), None, "hangs on nothing");
+    }
+
+    /// openspec AS.590: an actor's replace colour washes by its percent,
+    /// its colour in linear light, red the high byte; none at 0 percent
+    /// or with either cell unwritten, and the percent clamped to 100.
+    #[test]
+    fn a_replace_colour_washes_by_its_percent() {
+        use guac_script::Value;
+        let orange = Some(Value::Color(0xFF7A_00FF));
+        let w = replace_wash(orange, Some(Value::Int(41))).unwrap();
+        assert!((w[0] - 1.0).abs() < 1e-6, "{w:?}");
+        assert!((w[1] - (122.0f32 / 255.0).powf(2.2)).abs() < 1e-6, "{w:?}");
+        assert_eq!(w[2], 0.0);
+        assert!((w[3] - 0.41).abs() < 1e-6, "{w:?}");
+        assert_eq!(replace_wash(orange, Some(Value::Int(250))).unwrap()[3], 1.0);
+        assert_eq!(replace_wash(orange, Some(Value::Int(0))), None);
+        assert_eq!(replace_wash(None, Some(Value::Int(50))), None);
+        assert_eq!(replace_wash(orange, None), None);
+        assert_eq!(
+            replace_wash(Some(Value::Int(3)), Some(Value::Int(50))),
+            None
+        );
+    }
+
     #[test]
     fn a_heros_body_draws_at_his_tints_alpha_while_his_scripts_carry_him() {
         let mut a = Actor::blank();

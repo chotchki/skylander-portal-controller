@@ -73,6 +73,19 @@ pub(crate) fn tinted(shared: &CharacterMaterial, packed: u32) -> CharacterMateri
     m
 }
 
+/// [`tinted`], its replace term `wash` where there is one.
+pub(crate) fn washed(
+    shared: &CharacterMaterial,
+    packed: u32,
+    wash: Option<[f32; 4]>,
+) -> CharacterMaterial {
+    let mut m = tinted(shared, packed);
+    if let Some(w) = wash {
+        m.uniform.replace = Vec4::from_array(w);
+    }
+    m
+}
+
 /// Whether `copy` draws as `want`: its numbers and its key.
 fn same(copy: &CharacterMaterial, want: &CharacterMaterial) -> bool {
     copy.uniform == want.uniform && copy.key == want.key
@@ -97,16 +110,25 @@ impl Plugin for CloneTintsPlugin {
     }
 }
 
-/// Each drawn clone's tint onto its parts, as the scripts' world holds it.
+/// Each drawn clone's tint onto its parts, as the scripts' world holds it,
+/// and its replace colour where it hangs on an actor washed too (openspec
+/// AS.590: a beaten hero's death washes all that hangs on him with him,
+/// Hot Head's hand grills; a clone's own wash elsewhere isn't drawn).
 pub(crate) fn tint_clones(
     commands: Commands,
     world: Res<ScriptWorld>,
+    runtime: Option<Res<guacamole::scripts::ScriptRuntime>>,
     clones: Query<(Entity, &CloneDrawn, &Children), With<ScriptClone>>,
     parts: Query<(&mut MeshMaterial3d<CharacterMaterial>, Option<&TintedPart>)>,
     materials: ResMut<Assets<CharacterMaterial>>,
 ) {
+    let wash =
+        |h: guac_script::Handle| guacamole::props::hung_wash(&world, &runtime.as_deref()?.vm, h);
     tint_parts(
-        |clone| world.actor(clone.to_bits()).map(|a| a.tint),
+        |clone| {
+            let h = clone.to_bits();
+            world.actor(h).map(|a| (a.tint, wash(h)))
+        },
         commands,
         clones,
         parts,
@@ -114,9 +136,10 @@ pub(crate) fn tint_clones(
     );
 }
 
-/// Each drawn clone's tint (`tint_of_clone`) onto its parts ([`tint_part`]).
+/// Each drawn clone's tint and wash (`tint_of_clone`) onto its parts
+/// ([`wash_part`]).
 fn tint_parts(
-    tint_of_clone: impl Fn(Entity) -> Option<u32>,
+    tint_of_clone: impl Fn(Entity) -> Option<(u32, Option<[f32; 4]>)>,
     mut commands: Commands,
     clones: Query<(Entity, &CloneDrawn, &Children), With<ScriptClone>>,
     mut parts: Query<(&mut MeshMaterial3d<CharacterMaterial>, Option<&TintedPart>)>,
@@ -126,11 +149,11 @@ fn tint_parts(
         if !drawn.draws {
             continue;
         }
-        let Some(tint) = tint_of_clone(clone) else {
+        let Some((tint, wash)) = tint_of_clone(clone) else {
             continue;
         };
         for &part in children {
-            tint_part(part, tint, &mut commands, &mut parts, &mut materials);
+            wash_part(part, tint, wash, &mut commands, &mut parts, &mut materials);
         }
     }
 }
@@ -147,15 +170,29 @@ pub(crate) fn tint_part(
     parts: &mut Query<(&mut MeshMaterial3d<CharacterMaterial>, Option<&TintedPart>)>,
     materials: &mut Assets<CharacterMaterial>,
 ) {
+    wash_part(part, tint, None, commands, parts, materials);
+}
+
+/// [`tint_part`] with the actor's replace colour over it (openspec AS.590,
+/// [`guacamole::props::replace_wash`]): the copy's replace term the wash's
+/// while there is one, the shared material's (the scene's) otherwise.
+pub(crate) fn wash_part(
+    part: Entity,
+    tint: u32,
+    wash: Option<[f32; 4]>,
+    commands: &mut Commands,
+    parts: &mut Query<(&mut MeshMaterial3d<CharacterMaterial>, Option<&TintedPart>)>,
+    materials: &mut Assets<CharacterMaterial>,
+) {
     let Ok((mut material, tinted_part)) = parts.get_mut(part) else {
         return;
     };
     let shared = match tinted_part {
         Some(t) => t.shared.clone(),
-        None if tint == NEUTRAL => return,
+        None if tint == NEUTRAL && wash.is_none() => return,
         None => material.0.clone(),
     };
-    let Some(want) = materials.get(&shared).map(|m| tinted(m, tint)) else {
+    let Some(want) = materials.get(&shared).map(|m| washed(m, tint, wash)) else {
         return;
     };
     if tinted_part.is_none() {
@@ -243,7 +280,7 @@ mod tests {
 
     /// The tints a test hands the parts, by clone.
     #[derive(Resource, Default)]
-    struct Tints(std::collections::HashMap<Entity, u32>);
+    struct Tints(std::collections::HashMap<Entity, (u32, Option<[f32; 4]>)>);
 
     fn tint_from_test(
         tints: Res<Tints>,
@@ -298,8 +335,8 @@ mod tests {
         let (hidden, hidden_part) = spawn(false);
         let set_tint = |app: &mut App, tint: u32| {
             let mut tints = app.world_mut().resource_mut::<Tints>();
-            tints.0.insert(clone, tint);
-            tints.0.insert(hidden, tint);
+            tints.0.insert(clone, (tint, None));
+            tints.0.insert(hidden, (tint, None));
             app.update();
         };
         let drawn = |app: &App, part: Entity| {
@@ -362,5 +399,30 @@ mod tests {
             .clone();
         assert_eq!(shared_now.uniform.placement_tint, tint_of(NEUTRAL));
         assert_eq!(shared_now.key.states, StateKey::OPAQUE);
+        // openspec AS.590: a wash lands on the copy's replace term, even at
+        // a neutral tint, and goes back to the shared one's with it.
+        let replace = |app: &App| {
+            let handle = &app
+                .world()
+                .entity(part)
+                .get::<MeshMaterial3d<CharacterMaterial>>()
+                .unwrap()
+                .0;
+            let m = app.world().resource::<Assets<CharacterMaterial>>();
+            m.get(handle).unwrap().uniform.replace
+        };
+        let wash = [1.0, 0.2, 0.0, 0.6];
+        app.world_mut()
+            .resource_mut::<Tints>()
+            .0
+            .insert(clone, (NEUTRAL, Some(wash)));
+        app.update();
+        assert_eq!(replace(&app), Vec4::from_array(wash), "washed");
+        set_tint(&mut app, NEUTRAL);
+        assert_eq!(
+            replace(&app),
+            shared_now.uniform.replace,
+            "the scene's again"
+        );
     }
 }

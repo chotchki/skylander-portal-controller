@@ -646,7 +646,7 @@ A yes on the hub to a screen the TV hasn't built (the Heroic Challenges, the sto
 - **THEN** the talk ends and the log names the Heroic Challenges as not built, once
 
 ### Requirement: A hero draws as his scripts show him
-A joined hero SHALL be drawn nowhere while his tint's alpha is 0 and at that alpha otherwise, never in its colour, and each part he carries SHALL draw once: the clone his scripts hang, never also the part the extract lists for a fresh figure. His drawn model SHALL take each axis of his scale; his solid stays uniform.
+A joined hero SHALL be drawn nowhere while his tint's alpha is 0 and at that alpha otherwise, never in its colour, and each part he carries SHALL draw once: the clone his scripts hang, never also the part the extract lists for a fresh figure. His drawn model SHALL take each axis of his scale; his solid stays uniform. His replace colour SHALL cover him and what hangs on him by its percent: a hit's red, 100 to 0 over 12 steps, and his death's element colour.
 
 #### Scenario: Ninjini's bottle
 - **WHEN** Ninjini goes into her bottle
@@ -655,6 +655,14 @@ A joined hero SHALL be drawn nowhere while his tint's alpha is 0 and at that alp
 #### Scenario: A hero beaten
 - **WHEN** a beaten hero's death slides his tint's alpha to 0
 - **THEN** his body fades step by step with it and is gone once it reaches 0
+
+#### Scenario: A bitten hero's flash
+- **WHEN** a bite on him writes red at 100 percent and slides it to 0 over 0.2 s
+- **THEN** he draws covered in red by that percent each step
+
+#### Scenario: A beaten hero's wash
+- **WHEN** his death writes his element's colour and its percent on him and what hangs on him
+- **THEN** each draws covered by that colour by that percent, step by step, and his glow goes while he fades
 
 #### Scenario: Chop Chop's sword
 - **WHEN** Chop Chop swings

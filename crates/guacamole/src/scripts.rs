@@ -3106,8 +3106,9 @@ pub struct Encounter {
 /// The first encounters the TV runs past chapter 1's. Level 214's: the
 /// Chompy pods on the first island past the dock, Setup_001's controller
 /// (it plays the pods' scene as the hero passes its first trigger, then
-/// wakes them) and its two spawners, each cloning its pod at its start and
-/// Chompies from the undead Chompy template (its `chompy type`) once woken;
+/// wakes them) and its three spawners (the scene's own Root Runner too,
+/// AS.450), each cloning its pod at its start and Chompies from the
+/// undead Chompy template (its `chompy type`) once woken;
 /// then its second fight past the pods (openspec AS.58), Setup_002's
 /// controller (at its first trigger it sets its four undead Chompies going
 /// and waits for Eon's elemental hint, `Explain_Elemental`, to take itself
@@ -3142,6 +3143,10 @@ pub const ENCOUNTERS: [Encounter; 1] = [Encounter {
         "Setup_001_Controller",
         "Enemy_Chompy_Spawner(1)",
         "Enemy_Chompy_Spawner(5)",
+        // The Root Runner the pods' scene introduces (openspec AS.450):
+        // the controller's `enemy h`, the scene's one actor, set spawning
+        // at its trigger.
+        "Enemy_Chompy_Spawner(3)",
         // Setup_002 (openspec AS.58).
         "Setup_002_Controller",
         "Setup_002_Controller_Helper",

@@ -4309,9 +4309,15 @@ fn bites_on_him_on_a_schedule_follow_his_reactions_rule() {
         }
         let p = push.expect("a push");
         let staged = schedule.contains(&k);
-        // Into a wall a push stops short: only open ground is held to a
-        // profile.
-        let open = p.speeds.len() >= 8 && p.speeds[..8].iter().all(|v| *v > 1.0);
+        // Into a wall (or a body) a push stops short: only open ground is
+        // held to a profile. A stop shows as a speed down to nothing or a
+        // step losing more than either profile ever loses in one (openspec
+        // AS.448: F0 + 300's push meets something at its second step, 24.4
+        // to 6.5 ft/s, and with the pit's Chompies elsewhere it slows to
+        // 3.7 by its eighth rather than 0).
+        let open = p.speeds.len() >= 8
+            && p.speeds[..8].iter().all(|v| *v > 1.0)
+            && p.speeds[..8].windows(2).all(|w| w[0] - w[1] < 5.0);
         if running || since_end.is_some_and(|t| t < 1.0) {
             seen.insert(if running { "inside" } else { "within 1 s" });
             assert!(!started, "a bite at F0 + {k} started his reaction");
@@ -5477,6 +5483,9 @@ fn a_beaten_heros_body_fades_by_his_tints_alpha() {
         let minion = run.minion;
         let mut fell: Option<i64> = None;
         let mut by_step: Vec<(i64, u32, guacamole::props::HeroDrawn)> = Vec::new();
+        // His wash by step (openspec AS.590), and whether each part on his
+        // nodes holds the same.
+        let mut washes: Vec<(i64, Option<[f32; 4]>, bool)> = Vec::new();
         // What hangs on his nodes, each step: alive with its alpha, or gone.
         let mut parts: Vec<(i64, Vec<Option<u32>>)> = Vec::new();
         let mut last_change = 40i64;
@@ -5506,6 +5515,18 @@ fn a_beaten_heros_body_fades_by_his_tints_alpha() {
                     .map(|(c, _)| (!c.removed).then_some(c.tint & 0xFF))
                     .collect();
                 parts.push((f - b, hung));
+                let wash = guacamole::props::actor_wash(&run.vm, run.hero);
+                let alike = run
+                    .world
+                    .clones()
+                    .into_iter()
+                    .filter(|h| {
+                        run.world.actor(*h).is_some_and(|c| {
+                            !c.removed && run.world.node_owner(c.attach) == Some(run.hero)
+                        })
+                    })
+                    .all(|h| guacamole::props::actor_wash(&run.vm, h) == wash);
+                washes.push((f - b, wash, alike));
             }
             if minion.is_some_and(|m| run.vm.removed(m)) {
                 break;
@@ -5522,6 +5543,33 @@ fn a_beaten_heros_body_fades_by_his_tints_alpha() {
             .unwrap_or_else(|| panic!("{who}: his alpha never reached 0"));
         for (k, a, d) in &by_step[first.saturating_sub(1)..=(zero + 1).min(by_step.len() - 1)] {
             println!("{who} +{k}: alpha {a}, drawn {} at {}", d.body, d.alpha);
+        }
+        // The wash: his element's colour pulsing (8 to 41 percent) through
+        // his hop and rising as the fade comes, whole from its first step to
+        // its end; all that hangs on him washed as he is.
+        for (k, w, _) in washes.iter().filter(|(k, ..)| k % 4 == 0 && *k <= 68) {
+            println!("{who} +{k}: wash {w:?}");
+        }
+        let before = by_step[first].0;
+        let pulse: Vec<f32> = washes
+            .iter()
+            .filter(|(k, ..)| *k < before)
+            .filter_map(|(_, w, _)| w.map(|w| w[3]))
+            .collect();
+        assert!(
+            pulse.iter().all(|a| *a < 0.7) && pulse.iter().any(|a| *a < 0.1),
+            "{who}: a pulse, rising toward whole only as the fade comes: {pulse:?}"
+        );
+        for (k, w, alike) in washes
+            .iter()
+            .filter(|(k, ..)| (before..=by_step[zero].0).contains(k))
+        {
+            assert_eq!(
+                w.map(|w| w[3]),
+                Some(1.0),
+                "{who} +{k}: whole while he fades"
+            );
+            assert!(*alike, "{who} +{k}: what hangs on him washed with him");
         }
         let mut between = 0;
         for w in by_step[first..=zero].windows(2) {
