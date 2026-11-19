@@ -18,7 +18,6 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
 
-use guac_motion::seam::Vec3;
 use guac_motion::stick::Stick;
 use guac_script::{Handle, Mode, Value};
 use guacamole::script_engine::Pad;
@@ -460,10 +459,9 @@ impl Walker {
     /// Walked to within 1 m of `to`, his first attack every 7 steps while
     /// he's been held up half a second; held up past [`HELD_UP`] steps
     /// the swings haven't cleared it, so he fights a creature within 4 m
-    /// where it stands, then walks round over the ground the flood finds
-    /// ([`way_to`]), or with no way there steps aside for [`ASIDE`] steps,
-    /// the side alternating each try: a kid steps round a creature or a
-    /// ledge's lip rather than swinging into it (openspec AS.613: with the
+    /// where it stands, then steps aside for [`ASIDE`] steps, the side
+    /// alternating each try: a kid steps round a creature or a ledge's lip
+    /// rather than swinging into it (openspec AS.613: with the
     /// idle Chompies' runs a fight ends elsewhere than 2.0's did, and the
     /// straight line from there to where 2.0's ended meets a wall); false
     /// if 2400 steps don't get him there.
@@ -490,29 +488,18 @@ impl Walker {
                     self.fight_for(8.0, ASIDE * 6, &mut trail);
                     k += self.run.steps - before;
                 }
-                // Then round what holds him over the ground he can walk
-                // ([`way_to`], 205's flood), else a step aside.
+                // Then a step aside, the side alternating each try.
                 let at = self.run.hero().pivot;
-                let (way, off) = way_to(&self.run, at, Vec3::new(to[0], at.y, to[1]));
                 self.walked.asides.push((self.run.steps, [at.x, at.z]));
-                if off < 1.5 && way.len() > 1 {
-                    k += self.follow(&way, ASIDE * 20);
-                    println!(
-                        "  round to {to:?} from {at} over {} cells: at {}",
-                        way.len(),
-                        self.run.hero().pivot
-                    );
-                } else {
-                    let d = d.max(1e-3);
-                    let (dx, dz) = ((to[0] - at.x) / d, (to[1] - at.z) / d);
-                    let aside = [at.x + dz * side * 10.0, at.z - dx * side * 10.0];
-                    for _ in 0..ASIDE {
-                        let stick = self.toward(aside, 1.0);
-                        self.step(stick, [false; 4]);
-                    }
-                    k += ASIDE;
-                    side = -side;
+                let d = d.max(1e-3);
+                let (dx, dz) = ((to[0] - at.x) / d, (to[1] - at.z) / d);
+                let aside = [at.x + dz * side * 10.0, at.z - dx * side * 10.0];
+                for _ in 0..ASIDE {
+                    let stick = self.toward(aside, 1.0);
+                    self.step(stick, [false; 4]);
                 }
+                k += ASIDE;
+                side = -side;
                 (best, since) = (f32::MAX, 0);
                 continue;
             }
@@ -579,31 +566,6 @@ impl Walker {
         println!("  push {pushed:?}, hero at {}", self.run.hero().pivot);
         self.walked.pushes.push(pushed);
         moved
-    }
-
-    /// The stick along `way` (on the first cell 1.5 m off past the nearest
-    /// of the next six, as 205's walk aims) until he's within 0.7 m of its
-    /// last cell or `cap` steps pass: the steps it took.
-    fn follow(&mut self, way: &[Vec3], cap: u32) -> u32 {
-        let flat = |a: Vec3, b: Vec3| Vec3::new(a.x - b.x, 0.0, a.z - b.z).length();
-        let mut next = 0;
-        for k in 0..cap {
-            let at = self.run.hero().pivot;
-            let last = *way.last().unwrap();
-            if flat(at, last) < 0.7 {
-                return k;
-            }
-            next = (next..(next + 6).min(way.len()))
-                .min_by(|a, b| flat(at, way[*a]).total_cmp(&flat(at, way[*b])))
-                .unwrap();
-            let aim = way[next..]
-                .iter()
-                .find(|c| flat(at, **c) > 1.5)
-                .unwrap_or(&last);
-            let stick = self.toward([aim.x, aim.z], 1.0);
-            self.step(stick, [false; 4]);
-        }
-        cap
     }
 
     /// Whether an awake foe stands within `reach` m of him on his storey.

@@ -2209,8 +2209,8 @@ pub const CLEAR: f32 = 0.6;
 /// it (cells a metre across, a step up to 0.7 m and down to 4 m, never
 /// through a wall at knee height, here none within [`CLEAR`] of one), with the props and the clones standing
 /// as the run has them now; the way from `from` to the cell nearest `to`,
-/// first to last, and how far that cell is from `to`. Shared by 205's walks
-/// and 201's held-up walk (openspec AS.613).
+/// first to last, and how far that cell is from `to`. 205's walks' (moved
+/// here, openspec AS.613).
 pub fn way_to(run: &Run, from: Vec3, to: Vec3) -> (Vec<Vec3>, f32) {
     let key = |p: Vec3| {
         (

@@ -3605,7 +3605,7 @@ fn on_to_the_galleon_in(setup: Setup) -> AtCali {
     ) {
         // Held (openspec AS.613: with the idle Chompies running he comes
         // up from Setup_003 on the far side of a wall from the straight
-        // line): on round over the flood's cells, as 201's walk goes round.
+        // line): on round over the flood's cells.
         let at = run.hero().pivot;
         let by: Vec<String> = run
             .world
