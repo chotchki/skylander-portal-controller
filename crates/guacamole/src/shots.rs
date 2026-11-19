@@ -260,7 +260,10 @@ fn snap(
             Option<Res<crate::mirror::AskedShots>>,
             Option<Res<crate::hero_scripts::ScriptLog>>,
         ),
-        Query<(&crate::play::HeroAlpha, Option<&crate::play::HeroWash>)>,
+        (
+            Query<(&crate::play::HeroAlpha, Option<&crate::play::HeroWash>)>,
+            Query<&crate::creatures::CreatureWash>,
+        ),
     ),
     mut walked: Local<Option<(Duration, Vec3)>>,
 ) {
@@ -283,15 +286,19 @@ fn snap(
         let read = play
             .as_deref()
             .and_then(Play::hero)
-            .and_then(|e| drawn.get(e).ok())
+            .and_then(|e| drawn.0.get(e).ok())
             .map(|(a, w)| match w {
                 Some(w) => format!("-w{}-a{}-s{}", w.percent, a.0, w.step),
                 None => format!("-a{}", a.0),
             })
             .unwrap_or_default();
-        let path = state
-            .dir
-            .join(format!("{:02}-asked-{label}{read}.png", state.seq));
+        // The strongest wash on a drawn creature this frame (openspec
+        // AS.634: a hit flash's frames named by what they draw).
+        let creature = drawn.1.iter().map(|w| w.percent).max().unwrap_or(0);
+        let path = state.dir.join(format!(
+            "{:02}-asked-{label}{read}-cw{creature}.png",
+            state.seq
+        ));
         info!(path = %path.display(), "asked screenshot requested");
         commands
             .spawn(Screenshot::image(target))
