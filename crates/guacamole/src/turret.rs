@@ -189,9 +189,9 @@ pub struct TurretView {
     /// `New Turret - Find Target` put where the pointer's ray lands: what
     /// `New Turret - Track Target With Barrel` aims the ball at.
     pub aim: Option<[f32; 2]>,
-    /// Where that target stands, metres: on the pointer's ray from the
-    /// camera, where it met the level or a prop, else 250 ft out (openspec
-    /// AS.445's review, a corner the TV and headless aimed apart at).
+    /// Where that target stands, metres, on the pointer's ray from the
+    /// camera: on 214's first turret at the ray's far end, 45.7 m out, at
+    /// every corner (openspec AS.445's review, AS.608).
     pub target: Option<[f32; 3]>,
 }
 

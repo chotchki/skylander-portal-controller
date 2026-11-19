@@ -1086,6 +1086,20 @@ fn level_214s_earth_cave_takes_any_hero_in_its_wall_stops_another_and_he_walks_o
             inside < FRAMED,
             "element {element}: the eye {inside} m off him inside"
         );
+        // One target a warp, as the activation makes one: the target made
+        // on him at the landing holds while he stands.
+        let target = |w: &mut Walk| {
+            let player = w.player();
+            let control = w.field(player, "cam control data");
+            w.field(control, "cam target")
+        };
+        let made = target(&mut w);
+        w.still(30);
+        assert_eq!(
+            target(&mut w),
+            made,
+            "element {element}: his camera target made again inside"
+        );
         // North at the wall.
         let start = w.run.hero().pivot;
         for _ in 0..360 {
