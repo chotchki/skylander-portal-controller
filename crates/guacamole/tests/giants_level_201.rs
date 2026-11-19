@@ -504,7 +504,10 @@ impl Walker {
                 continue;
             }
             let stick = self.toward(to, 1.0);
-            self.step(stick, [since > 30 && k % 7 == 0, false, false, false]);
+            self.step(
+                stick,
+                [since > 30 && k.is_multiple_of(7), false, false, false],
+            );
             k += 1;
         }
         false
