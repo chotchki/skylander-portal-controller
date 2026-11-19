@@ -39,6 +39,10 @@ When a level's own scripts record its end, the TV SHALL run the original's end-o
 - **WHEN** the scripts that run the sequencing have stopped in play, its completion screen up or not
 - **THEN** the screen goes, and the TV still plays the movie the end queued and asks for the level it named
 
+#### Scenario: The completion screen's tally
+- **WHEN** the completion screen comes up and its tally runs through the tabs
+- **THEN** each row slides in with its count sound, a row done this run has its check slammed in with the checked sound, a tab's earned star slams in with its landing sound and shakes the screen, and the pads do nothing until the tally's over
+
 ### Requirement: The TV says why it holds a level
 While the TV holds a level for its end's movie to convert on its first play (FMV02's 26.9 s on the Mac), or for the next level to be read, it SHALL show over the held level what it's getting ready and, for a level's read, how far it has got.
 

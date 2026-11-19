@@ -319,7 +319,7 @@ fn a_bank_that_isnt_one_mpeg_sample_is_refused_by_name() {
 }
 
 #[test]
-fn the_part_reads_global_each_modelled_character_and_each_level() {
+fn the_part_reads_global_each_modelled_character_each_level_and_the_screen() {
     use guac_ir::{Category, FigureKind, RosterFigure, Text};
     let figure = |load: &str, category| RosterFigure {
         toy_type: 0,
@@ -354,6 +354,7 @@ fn the_part_reads_global_each_modelled_character_and_each_level() {
             "character/minionload_009_eruptor.bld",
             "character/minionload_110_robotgiant.bld",
             "level/level_213_tutotial.bld",
+            "misc/ui_objectivesscreen.bld",
         ]
     );
     assert_eq!(

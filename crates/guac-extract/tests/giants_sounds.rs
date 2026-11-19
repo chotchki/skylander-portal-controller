@@ -1,7 +1,8 @@
 //! The sounds part on the real Giants dump (openspec AR.5, AR.6): the roster's
 //! stage and then the part alone into a throwaway identity dir, then kept
 //! on a second run. Checked: `global.bld`, the 67 modelled characters and
-//! level 213 read with none missing, every sound of the 69 resolving to an
+//! level 213 and the objectives screen (AS.606) read with none missing,
+//! every sound of the 70 resolving to an
 //! audio file the part holds (none unresolved, none whose bank didn't
 //! read), each audio file an MPEG stream on disk, and every sound answered
 //! by `guac-sound`'s lookup over the part. Printed: the part's
@@ -73,7 +74,8 @@ fn the_sounds_chapter_1_plays_extract_and_resolve() {
     );
     assert!(s.failed.is_none(), "{:?}", s.failed);
     assert!(s.missing.is_empty(), "{:?}", s.missing);
-    assert_eq!(s.archives, 1 + 67 + 1);
+    // global.bld, the 67 characters, level 213 and the objectives screen.
+    assert_eq!(s.archives, 1 + 67 + 1 + 1);
     for (what, why) in s.refused.iter().take(20) {
         println!("  refused: {what}: {why}");
     }
@@ -217,4 +219,62 @@ fn the_sounds_chapter_1_plays_extract_and_resolve() {
     drop(opened);
     drop(tmp);
     println!("load average at the end: {}", load_average());
+}
+
+/// The objectives screen's own sounds (openspec AS.606), its archive alone
+/// through the part's reader: each row's count, a star's landing and the
+/// fireworks, each with an MPEG recording from the screen's own banks.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn the_objectives_screens_own_sounds_read_with_their_audio() {
+    let dump = PathBuf::from(env_or_dotenv("GUAC_GIANTS_DUMP").expect("set GUAC_GIANTS_DUMP"));
+    let usr = dump.join("PS3_GAME/USRDIR");
+    let [screen] = guac_extract::screens::ARCHIVES;
+    let bld = std::fs::read(usr.join(screen)).unwrap();
+    let arc = std::fs::read(usr.join(screen).with_extension("arc")).ok();
+    let exports = sounds::exports(&usr).unwrap();
+    let known = KNOWN_DUMPS[0];
+    let identity = guac_ir::DumpIdentity {
+        title_id: known.title_id.into(),
+        app_ver: known.app_ver.into(),
+        manifest_hash: guac_ir::Sha256([0; 32]),
+    };
+    let r = sounds::read(screen, &bld, arc.as_deref(), &exports, identity).unwrap();
+    println!(
+        "  {screen}: {} sounds, {} data infos, {} audio files, refused {:?}; load average {}",
+        r.ir.sounds.len(),
+        r.ir.data.len(),
+        r.audio.len(),
+        r.ir.refused,
+        load_average()
+    );
+    assert!(r.ir.refused.is_empty(), "{:?}", r.ir.refused);
+    for name in [
+        "fx_objectives_count",
+        "fx_objectives_star_land",
+        "fx_objectives_fireworks",
+    ] {
+        let snd =
+            r.ir.sounds
+                .iter()
+                .find(|s| s.name.as_deref() == Some(name))
+                .unwrap_or_else(|| panic!("{name} in the screen's sounds"));
+        let audio = match snd.data {
+            DataRef::Here(home, o) => r.ir.data_at(home, o).and_then(|d| d.audio.as_ref()),
+            other => panic!("{name}: its data {other:?}, not the screen's own"),
+        }
+        .unwrap_or_else(|| panic!("{name} has no audio"));
+        assert!(audio.samples > 0 && audio.rate > 0, "{name}: {audio:?}");
+        let bytes = &r.audio.iter().find(|(f, _)| *f == audio.file).unwrap().1;
+        assert!(
+            bytes.len() > 4 && bytes[0] == 0xFF && bytes[1] & 0xE0 == 0xE0,
+            "{name}: not MPEG frames"
+        );
+        println!(
+            "  {name}: {} samples at {} Hz ({:.2} s)",
+            audio.samples,
+            audio.rate,
+            audio.samples as f32 / audio.rate as f32
+        );
+    }
 }

@@ -22,6 +22,7 @@ mod cards;
 mod cli;
 mod collected_box;
 mod completion;
+mod completion_motion;
 mod creatures;
 mod darkness;
 mod defeat;

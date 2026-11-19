@@ -274,7 +274,8 @@ pub fn find_current(
 /// Marked complete, its intros for this build's target, every level the
 /// build plays whole and every other part in (the progression, the
 /// palettes, the scripts and the spawn models), the interface's two parts
-/// in this build's record (AT.27).
+/// in this build's record (AT.27), the sounds part holding the screens the
+/// dump has (AS.624).
 fn current(m: &Manifest) -> bool {
     m.complete
         && m.transcode
@@ -284,6 +285,7 @@ fn current(m: &Manifest) -> bool {
         && crate::PARTS.iter().all(|p| m.parts.contains_key(*p))
         && crate::scripts::complete(m)
         && crate::particles::complete(m)
+        && crate::sounds::complete(m)
         && crate::interface::record_current(m)
 }
 

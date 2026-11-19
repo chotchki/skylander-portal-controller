@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use guac_extract::intros::IrFormat;
 use guac_extract::known::KnownDump;
 use guac_extract::sounds::{self, AUDIO_DIR, PART};
-use guac_extract::{DirState, ExtractRoot, levels, open, stages};
+use guac_extract::{DirState, ExtractRoot, levels, open, screens, stages};
 use guac_formats::fsb::builder::{BankSpec, SampleSpec, write};
 use guac_formats::iga::builder::IgaBuilder;
 use guac_formats::mpeg::builder::stream;
@@ -89,6 +89,11 @@ fn make_dump(tmp: &Path) -> PathBuf {
     fs::create_dir_all(level.parent().unwrap()).unwrap();
     fs::write(&level, &bld).unwrap();
     fs::write(level.with_extension("arc"), &arc).unwrap();
+    // The objectives screen's archive (AS.606), the same sounds.
+    let screen = usr.join(screens::ARCHIVES[0]);
+    fs::create_dir_all(screen.parent().unwrap()).unwrap();
+    fs::write(&screen, &bld).unwrap();
+    fs::write(screen.with_extension("arc"), &arc).unwrap();
     dump
 }
 
@@ -143,19 +148,22 @@ fn the_part_lands_each_archives_sounds_and_each_bank_once() {
         "{:?}",
         st.failed
     );
-    // global.bld, the two characters with archives, the level.
-    assert_eq!(st.archives, 4);
+    // global.bld, the two characters with archives, the level, the screen.
+    assert_eq!(st.archives, 5);
     let loads = guac_extract::models::character_loads(&roster.roster).len();
     assert_eq!(st.missing.len(), loads - WITH_SOUNDS.len());
-    // Three of the four archives hold the sample's six sounds; global.bld none.
-    assert_eq!(st.sounds, 3 * 6);
+    assert!(!st.missing.iter().any(|a| a == screens::ARCHIVES[0]));
+    // Four of the five archives hold the sample's six sounds; global.bld none.
+    assert_eq!(st.sounds, 4 * 6);
     // The embedded bank, the music, two English lines and the Swedish one:
-    // five banks, each written once though three archives name them.
+    // five banks, each written once though four archives name them.
     assert_eq!(st.audio, 5);
     assert_eq!((st.audio_files.written, st.audio_files.kept), (5, 0));
     assert_eq!(audio_outputs(&opened.dir).len(), 5);
     let part = &opened.dir.manifest().parts[PART];
-    assert_eq!(part.len(), 4 + 5, "the IR files and the audio");
+    assert_eq!(part.len(), 5 + 5, "the IR files and the audio");
+    assert!(part.contains(&sounds::path(IrFormat::Ron, screens::ARCHIVES[0])));
+    assert!(sounds::complete(opened.dir.manifest()));
     for f in part {
         assert!(opened.dir.output_done(f).unwrap(), "{f}");
     }
@@ -170,6 +178,31 @@ fn the_part_lands_each_archives_sounds_and_each_bank_once() {
     }
 }
 
+/// A part that landed before the objectives screen's sounds were read
+/// (openspec AS.624), as on a family's extract from an older build: not
+/// complete, and the stage reads the part again, the screen's IR in and
+/// every bank kept by its bytes.
+#[test]
+fn a_part_without_the_screens_sounds_reads_again() {
+    let s = setup();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    let roster = stages::roster_stage(&mut opened.dir, IrFormat::Ron, &|_| {}).unwrap();
+    sounds::sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron, &|_| {}).unwrap();
+    let screen = sounds::path(IrFormat::Ron, screens::ARCHIVES[0]);
+    let older: Vec<String> = opened.dir.manifest().parts[PART]
+        .iter()
+        .filter(|f| **f != screen)
+        .cloned()
+        .collect();
+    opened.dir.record_part(PART, older).unwrap();
+    assert!(!sounds::complete(opened.dir.manifest()));
+    let st = sounds::sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron, &|_| {}).unwrap();
+    assert!(st.read && !st.kept, "{:?}", st.failed);
+    assert_eq!((st.audio_files.written, st.audio_files.kept), (0, 5));
+    assert!(opened.dir.manifest().parts[PART].contains(&screen));
+    assert!(sounds::complete(opened.dir.manifest()));
+}
+
 #[test]
 fn a_second_run_keeps_the_part() {
     let s = setup();
@@ -180,7 +213,7 @@ fn a_second_run_keeps_the_part() {
         sounds::sound_stage(&mut opened.dir, &roster.roster, IrFormat::Ron, &|_| {}).unwrap();
     assert!(again.kept && !again.read);
     assert_eq!(again.files.written, 0);
-    assert_eq!(again.files.kept, 4 + 5);
+    assert_eq!(again.files.kept, 5 + 5);
 }
 
 /// An audio file damaged at its own size (one byte flipped) no longer

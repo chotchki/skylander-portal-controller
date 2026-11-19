@@ -1291,6 +1291,37 @@ fn a_roster_naming_another_dump_or_unreadable_is_refused() {
     assert!(guac_extract::roster::load(&found, IrFormat::Ron).is_err());
 }
 
+/// A sounds part recorded before the objectives screen's archive was read
+/// (openspec AS.624), on a dump that holds the archive: the extract isn't
+/// current, so a family's next Giants pick reads the part again rather
+/// than leaving the tally silent until the cache is deleted. The dump's
+/// record of the archive is written into the manifest by hand: the
+/// synthetic dump has no screen archive of its own.
+#[test]
+fn a_sounds_part_without_a_screen_the_dump_holds_resumes() {
+    let s = setup();
+    let mut opened = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
+    stages::run(&mut opened.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
+    let dir = opened.dir.path().to_path_buf();
+    drop(opened);
+    assert_eq!(
+        open(&s.dump, &s.root, &s.known, &|_| {}).unwrap().state,
+        DirState::Current
+    );
+    let path = dir.join("manifest.json");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let sources = json["sources"].as_array_mut().unwrap();
+    let mut screen = sources[0].clone();
+    screen["path"] = guac_extract::screens::ARCHIVES[0].into();
+    sources.push(screen);
+    fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+    assert_eq!(
+        open(&s.dump, &s.root, &s.known, &|_| {}).unwrap().state,
+        DirState::Resume
+    );
+}
+
 /// A part the extract lacks, as an extract made before the part existed
 /// does (AG.27's script data will be one): the extract isn't current, and
 /// the next run reads that part alone, the roster's, models' and intros'
