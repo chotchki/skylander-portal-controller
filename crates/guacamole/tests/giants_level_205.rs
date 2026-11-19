@@ -480,8 +480,12 @@ impl Fought {
     }
 }
 
-/// The health a fight tops him up under, as on 201.
-const TOP_UP: f32 = 60.0;
+/// The health a fight tops him up under: past 201's 60, since Setup_002's
+/// heavy elf hits for about 60 a blow (59 and 63 headless on the idle
+/// rule, openspec AS.613, then 61 from 61 to 0 in one step at 14,345, no
+/// lobber's arrow landed), so a hero topped up only under 60 dies to its
+/// next blow; a blow and a volley in one step take 81.
+const TOP_UP: f32 = 120.0;
 
 /// A setup fought as a kid fights it, until its controller takes itself
 /// off or `cap` steps pass: the nearest of `foes` awake within 40 m and
@@ -4486,34 +4490,7 @@ fn on_to_setup_004s_end(setup: Setup) -> AtCali {
         run.steps,
         behaviour(&run, "Setup_004_Controller")
     );
-    // Up to them by the way 2.0's walk went (openspec AS.632, off its
-    // per-step trail): east up the ramp off the lower town, south along the
-    // upper street, west to their ledge. The fight's flood finds no way up
-    // from where the left door's fights leave him.
-    let up: Vec<&str> = lobbers
-        .iter()
-        .copied()
-        .filter(|n| behaviour(&run, n) != "removed")
-        .collect();
-    if !up.is_empty() {
-        let way = [
-            (-17.2, 1.0),
-            (-1.7, -4.5),
-            (4.6, -5.2),
-            (4.7, -20.0),
-            (2.7, -35.4),
-            (-2.4, -38.2),
-            (-14.1, -38.1),
-            (-20.1, -38.0),
-        ];
-        let went = go_by(&mut run, &mut stops, &mut scenes, &mut trail, &way, 900);
-        println!(
-            "up to the lobbers {up:?}: {went} at {}, step {}",
-            run.hero().pivot,
-            run.steps
-        );
-    }
-    let up_there = up.first().map_or(run.at(lobbers[0]), |n| run.at(n));
+    let up_there = run.at(lobbers[0]);
     let last = fight(
         &mut run,
         &mut stops,
