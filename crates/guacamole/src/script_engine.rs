@@ -216,6 +216,13 @@ pub struct Actor {
     /// hub's talk button, turned toward the camera each tick, drew turned
     /// away by its person's facing).
     pub turned: bool,
+    /// Which of its facing, tilt and roll ([`Actor::FACING`], [`Actor::TILT`],
+    /// [`Actor::ROLL`]) a script wrote since it was hung: hung on a node,
+    /// those hold as written and the rest go with the node (openspec AS.445:
+    /// a turret's ball aimed each step; the as-turrets review: level 201's
+    /// crane baskets, whose scripts write their sway's tilt alone and turn
+    /// with their cranes).
+    pub turned_axes: u8,
     /// `actorinfo.controller`.
     pub controller: Value,
     /// Its clones, made from it as a template, in the order made.
@@ -295,6 +302,25 @@ pub struct Contact {
 }
 
 impl Actor {
+    /// [`Actor::turned_axes`]' bits.
+    pub const FACING: u8 = 1;
+    pub const TILT: u8 = 2;
+    pub const ROLL: u8 = 4;
+
+    /// `node`'s turn with the axes a script wrote held as written
+    /// ([`Actor::turned_axes`]).
+    pub fn held_on(&self, node: Angles) -> Angles {
+        let keep = |bit: u8, own: f32, theirs: f32| match self.turned_axes & bit {
+            0 => theirs,
+            _ => own,
+        };
+        Angles {
+            facing: keep(Self::FACING, self.angles.facing, node.facing),
+            tilt: keep(Self::TILT, self.angles.tilt, node.tilt),
+            roll: keep(Self::ROLL, self.angles.roll, node.roll),
+        }
+    }
+
     /// Whether this clone stands in the world as something a hero meets
     /// and stands on (openspec AS.168): its collision a shape (box,
     /// capsule, sphere or cylinder), solid to actors and an actor surface,
@@ -338,6 +364,7 @@ impl Actor {
             hung_facing: None,
             carried: None,
             turned: false,
+            turned_axes: 0,
             controller: Value::Null,
             clones: Vec::new(),
             parent: Value::Null,

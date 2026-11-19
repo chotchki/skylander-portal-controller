@@ -63,7 +63,7 @@ use guac_motion::stick::Push;
 use guac_script::{Access, Answer, Handle, HostFault, MemberId, Obj, OpCall, Value};
 
 use crate::script_engine::{
-    Angles, Button, Contact, Engine, FEET_PER_METRE, Facet, METRES_PER_FOOT, Normal, Object,
+    Actor, Angles, Button, Contact, Engine, FEET_PER_METRE, Facet, METRES_PER_FOOT, Normal, Object,
     Sequence, Walker, angles_of, direction, heading_of, normalized, pitch_of,
 };
 use crate::scripts::{ClipInfo, ClipState, HeroWrite, ScriptWorld, Spawner};
@@ -1152,13 +1152,17 @@ impl ScriptWorld {
             return self.angles_within(a, engine, depth);
         }
         let a = self.actors.get(&h)?;
+        // Hung on a node, it turns as the node does, but for the axes a
+        // script wrote there (openspec AS.445: a turret's ball, aimed each
+        // step by `New Turret - Track Target With Barrel`; a crane's basket
+        // swaying by its tilt alone).
         if depth > 0
             && !a.removed
             && let Some(Object::Node(owner, i)) = self.object(Some(a.attach))
             && owner != h
             && let Some(q) = self.node_turn(owner, i, engine, depth - 1)
         {
-            return Some(angles_of(q));
+            return Some(a.held_on(angles_of(q)));
         }
         // Hung from another actor, it turns with it (openspec AS.76: a
         // turret's body on its base, whose facing `New Turret - Find Target`
@@ -2046,6 +2050,12 @@ impl ScriptWorld {
                 };
                 let a = self.actors.get_mut(&h).ok_or(HostFault::Nothing)?;
                 a.turned |= matches!(m, Member::Facing | Member::Tilt | Member::Roll);
+                a.turned_axes |= match m {
+                    Member::Facing => Actor::FACING,
+                    Member::Tilt => Actor::TILT,
+                    Member::Roll => Actor::ROLL,
+                    _ => 0,
+                };
                 match m {
                     Member::Facing => a.angles.facing = x,
                     // One hung from nothing turns by it about its own axis
@@ -2227,6 +2237,7 @@ impl ScriptWorld {
                     // and hung; AS.443).
                     if a.attach != v {
                         a.turned = false;
+                        a.turned_axes = 0;
                     }
                     a.attach = v;
                     a.hung = Vec3::ZERO;
@@ -4067,8 +4078,14 @@ impl ScriptWorld {
                 && let Some(a) = self.actors.get_mut(&h)
             {
                 a.position = p;
+                // Hung on a node, the axes a script wrote are drawn as
+                // written and the rest as the node turns (openspec AS.445: the
+                // turret's ball, aimed at its pointer's target each step, took
+                // its body's node turn back each placing, so the barrel on it
+                // never moved; the as-turrets review: a crane's basket, its
+                // tilt written alone, held at facing 0 as its crane swung).
                 if let Some(q) = turn {
-                    a.angles = angles_of(q);
+                    a.angles = a.held_on(angles_of(q));
                 }
                 if let (Some(now), Some(last)) = (owner_facing, a.hung_facing)
                     && now != last
@@ -6486,6 +6503,149 @@ mod tests {
         let posed = Vec3::new(1.0, 0.0, 0.0)
             + Quat::from_rotation_y(30f32.to_radians()) * Vec3::new(0.0, 4.0, 10.0);
         assert!(at.distance(posed) < 1e-4, "{at}");
+    }
+
+    /// openspec AS.445: a turret's ball hangs on its body's static node and
+    /// its barrel on the ball's; `New Turret - Track Target With Barrel`
+    /// writes the ball's facing and tilt each step. The ball keeps the turn
+    /// written (a script reads it back so) and the barrel turns with it;
+    /// unwritten, the ball turns as its node does.
+    #[test]
+    fn a_turn_written_on_a_node_hung_actor_turns_what_hangs_on_it() {
+        const BODY_T: Obj = Obj { unit: 9, index: 7 };
+        const BALL_T: Obj = Obj { unit: 9, index: 8 };
+        const BODY: Handle = 0x6000_0071;
+        const BALL: Handle = 0x6000_0072;
+        const BARREL: Handle = 0x6000_0073;
+        let mut e = bench();
+        let mut w = world();
+        for (t, name, model) in [
+            (BODY_T, "New_Turret_Body", "body.mdl"),
+            (BALL_T, "New_Turret_Ball", "ball.mdl"),
+        ] {
+            let mut template = crate::scripts::Placed::named(t, name, None, 5);
+            template.model = Some(model.into());
+            w.templates.insert(t, template);
+        }
+        w.set_origin_nodes(HashMap::from([
+            (
+                "body.mdl".to_owned(),
+                vec![NodePose {
+                    at: Vec3::new(0.0, 2.0, 0.0),
+                    turn: euler([-45.0, 81.0, 0.0]),
+                }],
+            ),
+            (
+                "ball.mdl".to_owned(),
+                vec![NodePose::at(Vec3::new(0.0, 0.0, 1.0))],
+            ),
+        ]));
+        let mut body = Actor::blank();
+        body.template = Some(BODY_T);
+        w.actors.insert(BODY, body);
+        let mut ball = Actor::blank();
+        ball.template = Some(BALL_T);
+        ball.attach = w.objs.value(Object::Node(BODY, 0));
+        w.actors.insert(BALL, ball);
+        let mut barrel = Actor::blank();
+        barrel.attach = w.objs.value(Object::Node(BALL, 0));
+        w.actors.insert(BARREL, barrel);
+        let close = |a: Quat, b: Quat| a.dot(b).abs() > 1.0 - 1e-5;
+        let drawn = |w: &ScriptWorld, h| crate::props::actor_transform(&w.actors[&h]).rotation;
+        w.place_hung(&mut e);
+        let rest = euler([-45.0, 81.0, 0.0]);
+        assert!(close(drawn(&w, BALL), rest), "unwritten: its node's");
+        assert!(close(drawn(&w, BARREL), rest), "the barrel with it");
+        // Aimed: the scripts' facing and tilt, kept through the placing.
+        let turn = w.objs.value(Object::Facet(BALL, Facet::Orientation));
+        let facing = at("orientationmeasurement", "facing", Some(turn), None);
+        let tilt = at("orientationmeasurement", "tilt", Some(turn), None);
+        w.set_member(&facing, Member::Facing, Value::Float(107.0), &mut e)
+            .unwrap();
+        w.set_member(&tilt, Member::Tilt, Value::Float(-26.0), &mut e)
+            .unwrap();
+        w.place_hung(&mut e);
+        let aimed = euler([-26.0, 107.0, 0.0]);
+        assert!(close(drawn(&w, BALL), aimed), "the ball as written");
+        assert!(close(drawn(&w, BARREL), aimed), "the barrel follows it");
+        assert_eq!(
+            w.get_member(&facing, Member::Facing, &mut e),
+            Ok(Value::Float(107.0)),
+            "read back as written"
+        );
+        // Swept the other way, it follows again.
+        w.set_member(&facing, Member::Facing, Value::Float(57.0), &mut e)
+            .unwrap();
+        w.place_hung(&mut e);
+        assert!(close(drawn(&w, BARREL), euler([-26.0, 57.0, 0.0])));
+    }
+
+    /// The as-turrets review: on a node that turns after the write, an axis
+    /// a script wrote holds in the level and the rest turn with the node.
+    /// Level 201's crane baskets write their sway's tilt alone and turn with
+    /// their cranes (held whole, they stood at facing 0, up to 180° off
+    /// their crane as it swung); a turret's ball, its facing written each
+    /// step, keeps that facing as its body turns under it.
+    #[test]
+    fn a_written_axis_holds_and_the_rest_turn_with_the_node() {
+        const CRANE_T: Obj = Obj { unit: 9, index: 9 };
+        const CRANE: Handle = 0x6000_0081;
+        const BASKET: Handle = 0x6000_0082;
+        const BALL: Handle = 0x6000_0083;
+        let mut e = bench();
+        let mut w = world();
+        let mut template = crate::scripts::Placed::named(CRANE_T, "Crane", None, 5);
+        template.model = Some("crane.mdl".into());
+        w.templates.insert(CRANE_T, template);
+        w.set_origin_nodes(HashMap::from([(
+            "crane.mdl".to_owned(),
+            vec![NodePose::at(Vec3::new(0.0, 8.0, 6.0))],
+        )]));
+        let mut crane = Actor::blank();
+        crane.template = Some(CRANE_T);
+        crane.angles.facing = 130.0;
+        w.actors.insert(CRANE, crane);
+        for h in [BASKET, BALL] {
+            let mut a = Actor::blank();
+            a.attach = w.objs.value(Object::Node(CRANE, 0));
+            w.actors.insert(h, a);
+        }
+        let member = |w: &mut ScriptWorld, h: Handle, name: &str| {
+            let turn = w.objs.value(Object::Facet(h, Facet::Orientation));
+            at("orientationmeasurement", name, Some(turn), None)
+        };
+        let tilt = member(&mut w, BASKET, "tilt");
+        w.set_member(&tilt, Member::Tilt, Value::Float(4.0), &mut e)
+            .unwrap();
+        let facing = member(&mut w, BALL, "facing");
+        w.set_member(&facing, Member::Facing, Value::Float(20.0), &mut e)
+            .unwrap();
+        w.place_hung(&mut e);
+        let drawn = |w: &ScriptWorld, h| w.actors[&h].angles;
+        let near = |a: f32, b: f32| ((a - b + 540.0).rem_euclid(360.0) - 180.0).abs() < 1e-3;
+        assert!(
+            near(drawn(&w, BASKET).facing, 130.0),
+            "{:?}",
+            drawn(&w, BASKET)
+        );
+        assert!(near(drawn(&w, BASKET).tilt, 4.0), "its sway");
+        assert!(near(drawn(&w, BALL).facing, 20.0), "as written");
+        // The crane swings 90°: the basket with it, its sway kept; the
+        // ball's written facing stays where it was written.
+        w.actors.get_mut(&CRANE).unwrap().angles.facing = 220.0;
+        w.place_hung(&mut e);
+        assert!(
+            near(drawn(&w, BASKET).facing, 220.0),
+            "{:?}",
+            drawn(&w, BASKET)
+        );
+        assert!(near(drawn(&w, BASKET).tilt, 4.0), "its sway kept");
+        assert!(near(drawn(&w, BALL).facing, 20.0), "{:?}", drawn(&w, BALL));
+        // A script reads them so.
+        assert_eq!(
+            w.angles(BASKET, &mut e).map(|a| near(a.facing, 220.0)),
+            Some(true)
+        );
     }
 
     /// AU.37: what hangs on an actor itself turns as he turns (Pop Fizz's
