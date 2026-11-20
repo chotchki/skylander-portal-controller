@@ -2899,6 +2899,15 @@ lane's (`~/workspace/guacamole-research/as-cards-board/notes/table.md`), read of
 - **His hand on his turn** (AS.584): by the board's script as read, the opponent's stones rest 20 ft up
   past the far side, in none of its four framings; what his turn shows is the stone he plays, slid to
   10 ft before the camera. Whether the original shows more waits on one of its frames (AS.662).
+- **Built, ours** (AS.555-AS.557, the as-cards-pad lane, 2026-11-20): the hand select, the score header
+  and the quit confirm are Bevy pieces over the VM's state in the disc's images (`card_screens.rs`, ledger
+  `card-hand-select`, `card-score`, `card-quit`), as this section's verdict has it; each runs the scripts'
+  own actions (Play, the build-hand page's Begin, the back-out, `Quit - Yes`). What a move to the
+  interface path (AS.559) would replace: their layout, the focus look and the confirm's line, all ours.
+- **After a win** (AS.368): the pirate's loot holds on its reports, which wait on the controller's accept
+  button; the host serves only `action 1`-`4`, so the TV passes them on the player's own accept
+  (`card-loot-accept`) and his script goes on to his win scene, `CardTheatricsDone` and his next talk.
+  The reports themselves aren't drawn.
 - **A departure, not settled** (the as-cards-board review, 2026-11-17): the interface records hold no
   layout. Every template in the board's and the hand select's records sits at (0, 0), only an image, its
   size, scale and colour (the board's: `ScoreBox_Cap`/`_Tile` and their strokes, 16 and 1 by 44 px, the
