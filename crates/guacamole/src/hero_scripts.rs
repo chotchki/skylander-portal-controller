@@ -525,6 +525,9 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     // never a landed build, which leaves the feature to the disc tests.
     #[cfg(feature = "played-card-games")]
     script_world.card_streams.play_games();
+    // The hand select's page waits for the TV's own (openspec AS.555,
+    // `crate::card_screens`); on a run that plays no game it never comes up.
+    script_world.card_streams.answer_hands_on_screen();
     // The sounds its starts play (openspec AR.9).
     if let Some(s) = &source.sounds {
         script_world.set_sounds(s.book.clone(), s.stems.clone());

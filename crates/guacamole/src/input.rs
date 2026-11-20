@@ -156,7 +156,8 @@ pub(crate) struct ModalOpen(pub(crate) bool);
 /// Whether a modal holds the pads, the router's one notion of it: Restart
 /// chapter's ([`ModalOpen`]), a dialogue's yes-or-no question (AU.6,
 /// `crate::yes_no::PromptOpen`) or the level's completion screen (AU.5,
-/// `crate::completion::CompletionOpen`). The question and the completion
+/// `crate::completion::CompletionOpen`) or the card game's hand select and
+/// quit confirm (openspec AS.555, AS.557, `crate::card_screens`). The question and the completion
 /// screen each step aside while the portal holds the level (its alert, an
 /// arrival card), so neither is answered blind under it.
 #[derive(SystemParam)]
@@ -164,6 +165,7 @@ pub(crate) struct Modals<'w> {
     restart: Option<Res<'w, ModalOpen>>,
     prompt: Option<Res<'w, crate::yes_no::PromptOpen>>,
     completion: Option<Res<'w, crate::completion::CompletionOpen>>,
+    cards: Option<Res<'w, crate::card_screens::CardScreensOpen>>,
 }
 
 impl Modals<'_> {
@@ -171,6 +173,7 @@ impl Modals<'_> {
         self.restart.as_ref().is_some_and(|m| m.0)
             || self.prompt.as_ref().is_some_and(|p| p.0)
             || self.completion.as_ref().is_some_and(|c| c.0)
+            || self.cards.as_ref().is_some_and(|c| c.0)
     }
 }
 

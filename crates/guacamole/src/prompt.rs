@@ -32,11 +32,12 @@
 //!   branch the menu's back button picks the step it waits (stand-in ledger:
 //!   `cutscene-menu`).
 //! - **A screen a yes brings up** (Auric's and Hatterson's stores, Brock's
-//!   arenas, Cali's challenges, Dreadbeard's cards: [`SCREENS`]): each queues
+//!   arenas, Cali's challenges, every card pirate's game: [`SCREENS`]): each queues
 //!   a screen on the update macros the TV doesn't run, and every dialogue
 //!   refuses its talk button from then on, Flynn's way on among them. The
 //!   macro is answered with nothing shown ([`answer_screen`]; stand-in
-//!   ledger: `hub-screens`). Only the card pirate waits on what his screen
+//!   ledger: `hub-screens`). Only a card pirate (Dreadbeard on the hub,
+//!   Fangs and the others on 205, 211's and 215's) waits on what his screen
 //!   would have done, his game's end: he's told it's quit
 //!   ([`quit_card_game`]), which plays his quit scene and gives his talk
 //!   back, nothing won, lost or saved.
@@ -73,7 +74,10 @@ pub const UNBUILT: [(&str, &str); 4] = [
     (SCREENS[0], "the stores (Auric's, Hatterson's)"),
     (SCREENS[1], "the arenas (Brock's)"),
     (SCREENS[2], "the Heroic Challenges (Cali's)"),
-    (SCREENS[3], "the card game (Dreadbeard's)"),
+    (
+        SCREENS[3],
+        "the card game (a card pirate's: Dreadbeard's on the hub, Fangs' and the other pirates' on 205, 211's, 215's)",
+    ),
 ];
 
 /// The card game among [`SCREENS`], whose pirate waits on its end.
@@ -277,6 +281,20 @@ mod tests {
     use guac_script::{Config, Generator, Mode, Obj, Program, Role, Unit, Whitelist};
 
     use super::*;
+
+    /// openspec AS.453's line names every card pirate who waits on his game,
+    /// not the hub's alone (the as-cards-play review: Fangs' and the jail's
+    /// yes logged Dreadbeard's).
+    #[test]
+    fn the_card_games_unbuilt_line_names_every_card_pirate() {
+        let (_, what) = UNBUILT
+            .iter()
+            .find(|(s, _)| *s == CARD_GAME)
+            .expect("the card game's line");
+        for pirate in ["Dreadbeard", "Fangs", "205", "211", "215"] {
+            assert!(what.contains(pirate), "{what}");
+        }
+    }
     use crate::script_engine::NoEngine;
     use crate::scripts::{Files, Placed, headless_objects, headless_spawner};
 

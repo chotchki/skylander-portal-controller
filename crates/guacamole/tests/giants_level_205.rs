@@ -4618,8 +4618,18 @@ struct FangsPlayed {
     /// (`story` runs only: the session served each step as the TV serves it).
     stones_at_board: Option<Vec<usize>>,
     writes: Vec<(u32, guac_server::saves::SaveValues)>,
+    /// Each hand the hand select offered, in order, a story run's (it
+    /// answers the page as the TV does; openspec AS.555).
+    offers: Vec<guacamole::card_game::HandOffer>,
     run: Run,
 }
+
+/// Fangs' behaviours while his loot's reports are up (openspec AS.368).
+const LOOT_WAITS: [&str; 3] = [
+    "wait for loot to be awarded",
+    "wait for 2d sprites to be ready",
+    "wait for loot theatrics",
+];
 
 /// The stones the run's save holds collected (`collection - cards`, read as
 /// the scripts' `Save - Collection Get/Set - Card` reads it), by index.
@@ -4684,8 +4694,12 @@ fn fangs_games_with(
     };
     serve(&mut run, &mut writes);
     run.world.card_streams.play_games();
+    if story {
+        run.world.card_streams.answer_hands_on_screen();
+    }
     let mut boards = std::collections::BTreeSet::new();
     let (mut stones_before, mut stones_at_board) = (None, None);
+    let mut offers: Vec<guacamole::card_game::HandOffer> = Vec::new();
     for _ in 0..600 {
         if run.hero().pivot.y < -300.0 {
             break;
@@ -4718,10 +4732,32 @@ fn fangs_games_with(
         let on = games.iter().position(|g| g.1 == 0);
         let plan = plans.get(on.unwrap_or(games.len())).copied();
         let board = cards::board(&run);
+        // A story run answers the hand select as the TV does: the offer
+        // read between steps, Play run on it (openspec AS.555).
+        if let Some(o) = guacamole::card_game::hand_offer(&run.vm) {
+            offers.push(o);
+            let played = run
+                .with_host(|vm, host| {
+                    guacamole::card_game::play_hand(
+                        vm,
+                        host,
+                        &guacamole::card_game::HandChoice::Recommended,
+                    )
+                })
+                .unwrap_or_else(|h| panic!("the hand select's answer: {h}"));
+            assert!(played, "the hand select answered");
+        }
         if board.is_some() {
             player.policy = plan.and_then(|p| p.0).unwrap_or(cards::Policy::Naive);
             run.bench.pads[0] = player.pad(&run);
             stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+        } else if LOOT_WAITS
+            .contains(&behaviour(&run, guacamole::level_205::CARD_HOUSE_PIRATE).as_str())
+        {
+            // His loot's reports wait on a player's accept (openspec AS.368):
+            // pressed as a player reads each one.
+            let press = run.steps % 20 < 2;
+            still(&mut run, &mut stops, [press, false, false, false]);
         } else if cutscene_name(&run).as_deref() == Some("Casino Prompt") {
             // His prompt after a game waits for the talk button.
             let press = plan.is_some() && run.steps.is_multiple_of(20);
@@ -4866,6 +4902,7 @@ fn fangs_games_with(
         stones_before,
         stones_at_board,
         writes,
+        offers,
         run,
     }
 }
@@ -5193,6 +5230,70 @@ fn fangs_game_won_ends_in_his_loot() {
     assert_eq!(g.2.as_deref(), Some(cards::WON), "{g:?}");
     assert!(g.3.starts_with("wait for loot"), "{g:?}");
     println!("load at end: {}", load());
+}
+
+/// openspec AS.368: on a fresh save Fangs' first game is the tutorial; won,
+/// his loot's reports pass on the player's accept and his own script takes
+/// it from there: `CardTheatricsDone` set by his script, the starter stones
+/// in the save, his outro scene played and the gate's killer woken by it,
+/// Fangs back at his wait for the player, nothing of ours setting a flag or a win. The tutorial deals
+/// its hand with no hand select.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn fangs_win_runs_his_theatrics_to_his_own_end() {
+    println!("load at start: {}", load());
+    let started = std::time::Instant::now();
+    let p = fangs_games_with(
+        &[(Some(cards::Policy::Strong), FANGS_SEEDS[2])],
+        30_000,
+        // Past his outro (his scene's, after his wait for the player): his
+        // prompt as the hero comes back to him.
+        &|r| cutscene_name(r).as_deref() == Some("Casino Prompt"),
+        true,
+    );
+    for g in &p.games {
+        println!("game {g:?}, {} steps", g.1 - g.0);
+    }
+    for o in &p.offers {
+        println!("offered {o:?}");
+    }
+    assert!(p.stops.is_empty(), "{:#?}", p.stops);
+    assert_eq!(p.stood_in, 0, "a played game is never stood in won");
+    assert_eq!(p.games.len(), 1, "{:?}", p.games);
+    assert_eq!(
+        p.games[0].2.as_deref(),
+        Some(cards::WON),
+        "{:?}",
+        p.games[0]
+    );
+    assert_eq!(p.games[0].3, "wait for player", "{:?}", p.games[0]);
+    assert_eq!(
+        global(&p.run, "CardTheatricsDone"),
+        Some(guac_script::Value::Int(1)),
+        "his win's theatrics ended by his own script"
+    );
+    let (killer, _) = p.run.placed("Gate_Killer");
+    let killer = p.run.vm.placement_of(killer).expect("the gate's killer");
+    println!(
+        "gate killer removed {} asleep {} behaviour {:?}",
+        p.run.vm.removed(killer),
+        p.run.vm.asleep(killer),
+        p.run.vm.behaviour(killer)
+    );
+    assert!(
+        p.run.vm.removed(killer) || !p.run.vm.asleep(killer),
+        "the gate's killer woke after the win"
+    );
+    const STARTERS: [usize; 6] = [0, 12, 15, 29, 46, 53];
+    assert_eq!(stones_collected(&p.run).expect("the save"), STARTERS);
+    // The tutorial deals its hand with no hand select page: none offered,
+    // the board at the step it starts without the TV's answer.
+    assert!(p.offers.is_empty(), "{:?}", p.offers);
+    println!(
+        "took {:.1} s, load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
 }
 
 /// The steps a run of the rolls' test may take a game, about five

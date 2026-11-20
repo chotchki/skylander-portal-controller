@@ -136,6 +136,9 @@ pub struct TvSnapshot {
     /// A dialogue's yes-or-no question (openspec AU.6): the one up, as the
     /// modal draws it, and those answered; none before one is asked.
     pub prompt: Option<crate::yes_no::PromptsShot>,
+    /// The card game's screens (openspec AS.555-AS.557): the hand select,
+    /// the score header and the quit confirm; none before a game is played.
+    pub card_game: Option<crate::card_screens::CardScreensShot>,
     /// A collected item's box the scripts hold the level on (openspec
     /// AS.441): its strings by name, the lines drawn; none while none is.
     pub collected: Option<crate::collected_box::CollectedShot>,
@@ -1338,6 +1341,7 @@ fn mirror_tv(
         (
             crate::yes_no::PromptShots,
             crate::collected_box::CollectedShots,
+            crate::card_screens::CardShots,
         ),
     ),
     (warm, level, prepare, arrival, movies, story): (
@@ -1400,6 +1404,7 @@ fn mirror_tv(
         defeat: defeat.shot(),
         prompt: prompt.0.shot(),
         collected: prompt.1.shot(),
+        card_game: prompt.2.shot(),
         particles: particles.map(|p| p.clone()),
         sounds: sounds.map(|s| s.clone()),
         watch: watch.shot(),

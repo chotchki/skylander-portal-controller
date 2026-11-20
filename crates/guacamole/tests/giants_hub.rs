@@ -1614,6 +1614,10 @@ struct Played {
     card_clones: std::collections::BTreeMap<String, Option<String>>,
     /// The card archives joined to the run, in order.
     joined: Vec<String>,
+    /// Each hand select's offer the run answered as the TV does, and the
+    /// player's hand at each quit's first pick, by stone (openspec AS.555).
+    offers: Vec<guacamole::card_game::HandOffer>,
+    hands: Vec<Vec<u16>>,
 }
 
 /// One game's end.
@@ -1647,6 +1651,13 @@ enum Plan {
     /// His question answered no: no game, his talk over at his `wait for
     /// player` (the run a game is set beside).
     Decline,
+    /// The hand select backed out of as its back button does (openspec
+    /// AS.557): no board, his talk over at his `wait for player`.
+    BackOut,
+    /// The hand select answered with this hand of the player's own as the
+    /// TV's hand select answers it (openspec AS.555), then quit at the first
+    /// pick.
+    Custom([u16; 5]),
 }
 
 /// Hub stage 2's intro played, the hero set by Dreadbeard, his talk button
@@ -1736,6 +1747,39 @@ fn dreadbeards_games_with(
     // The last game's end (or the start): a run with no game over in
     // [`STALL`] steps is a stuck board and ends there.
     let mut last_end = start;
+    // A custom hand needs stones collected: the save given the starter
+    // stones (a fresh save's first win at Fangs collects them) through the
+    // scripts' own `Save - Collection Get/Set - Card`, as a family's save
+    // after that win would hold them.
+    if plans.iter().any(|(p, _)| matches!(p, Plan::Custom(_))) {
+        run.with_host(|vm, host| {
+            let gs = guacamole::scripts::running(vm, host.world, "GameSystems.ai")
+                .expect("the game systems");
+            for stone in STARTERS {
+                vm.call_for(
+                    gs,
+                    "Save - Collection Get/Set - Card",
+                    &[
+                        ("card id", Value::Int(i32::from(stone))),
+                        ("collected", Value::Int(1)),
+                    ],
+                    &[],
+                    host,
+                )?;
+            }
+            Ok::<(), guac_script::Halt>(())
+        })
+        .unwrap_or_else(|h| panic!("the collection: {h}"));
+    }
+    // The TV's hand select answers the page where a plan asks it to.
+    if plans
+        .iter()
+        .any(|(p, _)| matches!(p, Plan::BackOut | Plan::Custom(_)))
+    {
+        run.world.card_streams.answer_hands_on_screen();
+    }
+    let mut offers = Vec::new();
+    let mut hands = Vec::new();
     while run.steps - start < cap && run.steps - last_end < STALL {
         // The game on, else the next one asked for.
         let on = games.iter().position(|g| g.ended == 0);
@@ -1745,6 +1789,31 @@ fn dreadbeards_games_with(
         if on.is_none() && !asked {
             let press = cutscene_name(&run).is_none() && run.steps.is_multiple_of(20);
             talk_button(&mut run, press);
+        } else if let Plan::BackOut | Plan::Custom(_) = plan
+            && let Some(offer) = guacamole::card_game::hand_offer(&run.vm)
+        {
+            offers.push(offer);
+            let done = run
+                .with_host(|vm, host| match plan {
+                    Plan::Custom(hand) => guacamole::card_game::play_hand(
+                        vm,
+                        host,
+                        &guacamole::card_game::HandChoice::Custom(hand.to_vec()),
+                    ),
+                    _ => guacamole::card_game::back_out_of_hand_select(vm, host),
+                })
+                .unwrap_or_else(|h| panic!("the hand select's answer: {h}"));
+            assert!(done, "the hand select answered");
+            if plan == Plan::BackOut {
+                games.push(Game {
+                    seed: 0,
+                    started: run.steps,
+                    ended: 0,
+                    board: None,
+                    pirate: None,
+                    loot: Vec::new(),
+                });
+            }
         } else if let Plan::Play(policy) = plan {
             player.policy = policy;
             let mut pad = player.pad(&run);
@@ -1846,7 +1915,9 @@ fn dreadbeards_games_with(
         // loot's wait, a loss at the replay's start.
         if let Some(i) = on {
             let over = match plan {
-                Plan::Quit | Plan::Decline => pirate.as_deref() == Some("wait for player"),
+                Plan::Quit | Plan::Decline | Plan::BackOut | Plan::Custom(_) => {
+                    pirate.as_deref() == Some("wait for player")
+                }
                 Plan::Play(_) => {
                     pirate.as_deref() == Some("wait for player")
                         || (was_board.as_deref() == Some(cards::LOST)
@@ -1862,7 +1933,7 @@ fn dreadbeards_games_with(
                 // A quit's next game is asked for again, the hero set by
                 // him again as a talk sets him; a loss's replay starts on
                 // its own.
-                asked = !matches!(plan, Plan::Quit);
+                asked = !matches!(plan, Plan::Quit | Plan::BackOut | Plan::Custom(_));
                 if !asked {
                     run.put(at, 0.0);
                 }
@@ -1902,10 +1973,11 @@ fn dreadbeards_games_with(
             quit_sent = false;
         }
         if games.last().is_some_and(|g| g.ended == 0)
-            && matches!(plans[games.len() - 1].0, Plan::Quit)
+            && matches!(plans[games.len() - 1].0, Plan::Quit | Plan::Custom(_))
             && now.as_deref() == Some(cards::PICK_STONE)
             && !quit_sent
         {
+            hands.push(cards::hand(&run));
             quit_sent = run
                 .with_host(guacamole::card_game::quit)
                 .unwrap_or_else(|h| panic!("the quit: {h}"));
@@ -2038,6 +2110,8 @@ fn dreadbeards_games_with(
             .iter()
             .map(|(a, _)| (*a).to_owned())
             .collect(),
+        offers,
+        hands,
     }
 }
 
@@ -2145,6 +2219,69 @@ fn dreadbeards_game_quit_lost_and_won_each_end_in_his_own_next_behaviour() {
         played.steps,
         load()
     );
+}
+
+/// The starter stones a first win at Fangs collects (`giants_level_205`'s
+/// first-game test).
+const STARTERS: [u16; 6] = [0, 12, 15, 29, 46, 53];
+
+/// openspec AS.557: backed out of at the hand select (its own back button's
+/// action, as the TV's hand select runs it), the game ends before a board:
+/// Dreadbeard back at his `wait for player`, no board joined, his talk his
+/// again, nothing stopped.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_back_out_at_the_hand_select_ends_in_his_wait_for_player() {
+    println!("load at start: {}", load());
+    let played = dreadbeards_games(&[(Plan::BackOut, 0)], 20_000);
+    println!("games {:?}, offers {:?}", played.games, played.offers);
+    assert_eq!(played.offers.len(), 1, "{:?}", played.offers);
+    assert_eq!(played.games.len(), 1, "{:?}", played.games);
+    assert_eq!(played.games[0].pirate.as_deref(), Some("wait for player"));
+    assert!(played.games[0].ended > 0, "{:?}", played.games);
+    assert!(
+        !played
+            .joined
+            .iter()
+            .any(|j| j == guacamole::card_game::BOARD),
+        "no board: {:?}",
+        played.joined
+    );
+    assert!(played.stops.is_empty(), "{:#?}", played.stops);
+    assert!(played.running.is_empty(), "{:?}", played.running);
+    assert!(played.free, "free after the back-out");
+    println!("load at end: {}", load());
+}
+
+/// openspec AS.555: a save holding six stones offers them, and a hand of
+/// the player's own (one slot changed off the recommended) played as the
+/// TV's hand select plays it is the hand the board deals him.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_custom_hand_is_the_hand_the_board_deals() {
+    println!("load at start: {}", load());
+    let mine = [53, 12, 15, 29, 46];
+    let played = dreadbeards_games(&[(Plan::Custom(mine), 1)], 20_000);
+    println!(
+        "games {:?}, offers {:?}, hands {:?}",
+        played.games, played.offers, played.hands
+    );
+    assert_eq!(played.offers.len(), 1, "{:?}", played.offers);
+    assert_eq!(played.offers[0].collection, STARTERS);
+    assert!(
+        guacamole::card_game::hand_takes(&played.offers[0].recommended, &STARTERS),
+        "recommended off the collection: {:?}",
+        played.offers[0]
+    );
+    assert_ne!(played.offers[0].recommended, mine, "a changed hand");
+    let mut dealt = played.hands.first().cloned().expect("a hand dealt");
+    dealt.sort_unstable();
+    let mut want = mine.to_vec();
+    want.sort_unstable();
+    assert_eq!(dealt, want, "the board deals the hand played");
+    assert_eq!(played.games[0].pirate.as_deref(), Some("wait for player"));
+    assert!(played.stops.is_empty(), "{:#?}", played.stops);
+    println!("load at end: {}", load());
 }
 
 /// The longest any board behaviour but the player's own waits may last

@@ -565,3 +565,51 @@ pub fn chances(run: &Run) -> Option<(i32, i32)> {
     let b = local(run, m, "best move - 2 %")?.as_i32()?;
     Some((a, b))
 }
+
+/// The player's hand on the board, by stone index (openspec AS.555): the
+/// manager's game data's `my hand`, each card's stone by its `card name`,
+/// as the board deals them. Empty with no board.
+pub fn hand(run: &Run) -> Vec<u16> {
+    let Some(m) = manager(run) else {
+        return Vec::new();
+    };
+    let Some(data) = local(run, m, "game data ref") else {
+        return Vec::new();
+    };
+    let Some(mine) = field(run, data, "my hand") else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for c in set_of(run, mine) {
+        let fields = run.vm.fields(c);
+        if std::env::var_os("AS555_DEBUG").is_some() {
+            println!(
+                "AS555 hand card {c:?}: {:?}",
+                fields
+                    .iter()
+                    .map(|(n, v)| format!("{n}={:?}", run.vm.value(*v)))
+                    .collect::<Vec<_>>()
+            );
+        }
+        // Its `card name`, the stone's name object, ends in its index in
+        // brackets (`Card_Name_(NNN)`).
+        let n = fields
+            .iter()
+            .find(|(n, _)| *n == "card name")
+            .and_then(|(_, v)| match run.vm.value(*v) {
+                Value::Object(o) => run.vm.program().name_of(o),
+                _ => None,
+            })
+            .and_then(|name| {
+                name.rsplit_once('(')?
+                    .1
+                    .strip_suffix(')')?
+                    .parse::<i32>()
+                    .ok()
+            });
+        if let Some(n) = n.and_then(|n| u16::try_from(n).ok()) {
+            out.push(n);
+        }
+    }
+    out
+}
