@@ -18,11 +18,13 @@ pub(crate) struct ReducedMotion(pub(crate) bool);
 
 impl ReducedMotion {
     /// From `GUAC_SHOT_DIR`'s value: set at all, even to a folder `shots`
-    /// then refuses, means reduced. A release build has no shots and never
-    /// reduces.
+    /// then refuses, means reduced, unless `GUAC_SHOT_MOTION` is set too
+    /// (`moving`, openspec AS.451: a strip of what moves on its own, a
+    /// level material's scroll or tint track, which reduced motion holds at
+    /// its start). A release build has no shots and never reduces.
     #[cfg(any(feature = "dev-tools", test))]
-    pub(crate) fn for_shots(shot_dir: Option<&std::ffi::OsStr>) -> Self {
-        Self(shot_dir.is_some())
+    pub(crate) fn for_shots(shot_dir: Option<&std::ffi::OsStr>, moving: bool) -> Self {
+        Self(shot_dir.is_some() && !moving)
     }
 }
 
@@ -134,14 +136,19 @@ mod tests {
 
     #[test]
     fn reduced_motion_follows_guac_shot_dir() {
-        assert_eq!(ReducedMotion::for_shots(None), ReducedMotion(false));
+        assert_eq!(ReducedMotion::for_shots(None, false), ReducedMotion(false));
         assert_eq!(
-            ReducedMotion::for_shots(Some(OsStr::new("/Users/someone/shots"))),
+            ReducedMotion::for_shots(Some(OsStr::new("/Users/someone/shots")), false),
             ReducedMotion(true)
+        );
+        // AS.451: a strip of what moves keeps it moving.
+        assert_eq!(
+            ReducedMotion::for_shots(Some(OsStr::new("/Users/someone/shots")), true),
+            ReducedMotion(false)
         );
         // Set but empty is still set, as `shots` reads it.
         assert_eq!(
-            ReducedMotion::for_shots(Some(OsStr::new(""))),
+            ReducedMotion::for_shots(Some(OsStr::new("")), false),
             ReducedMotion(true)
         );
         assert_eq!(ReducedMotion::default(), ReducedMotion(false));

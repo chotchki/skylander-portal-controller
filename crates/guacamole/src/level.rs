@@ -6818,6 +6818,52 @@ mod tests {
         );
     }
 
+    /// openspec AS.451: a level material's tint track plays on the shown
+    /// level: the sky's uniform tint moves off its first key as time runs,
+    /// and holds it under reduced motion.
+    #[test]
+    fn a_shown_levels_tint_track_moves_its_material_tint() {
+        for reduced in [false, true] {
+            let tmp = tempfile::tempdir().unwrap();
+            let source = write_level(tmp.path(), &lights());
+            let path = tmp.path().join(source.ir.level_path(LEVEL, SCENE));
+            let mut scene: guac_ir::level::Scene =
+                guac_ir::from_ron(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let LevelMaterial::Multi2(sky) = &mut scene.scenes[0].materials[2] else {
+                panic!("the sky");
+            };
+            sky.tracks = vec![guac_ir::model::MaterialTrack::Tint {
+                style: 0,
+                rate: 1.0,
+                frames: vec![0, 6, 12],
+                colors: vec![[0, 0, 0, 255], [255, 255, 255, 255], [0, 0, 0, 255]],
+            }];
+            std::fs::write(&path, guac_ir::to_ron(&scene).unwrap()).unwrap();
+            let mut app = level_app(tmp.path(), source, false);
+            app.insert_resource(LevelView(true))
+                .insert_resource(ReducedMotion(reduced));
+            app.world_mut().spawn(TvCamera);
+            until(&mut app, &["shown"], |_| {});
+            let sky = app.world().resource::<Level>().loaded().unwrap().materials[1].clone();
+            let tint = |app: &App| {
+                app.world()
+                    .resource::<Assets<CharacterMaterial>>()
+                    .get(&sky)
+                    .unwrap()
+                    .uniform
+                    .material_tint
+            };
+            let mut seen = Vec::new();
+            for _ in 0..6 {
+                std::thread::sleep(std::time::Duration::from_millis(23));
+                app.update();
+                seen.push(tint(&app).x);
+            }
+            let moved = seen.iter().any(|x| *x > 0.05);
+            assert_eq!(moved, !reduced, "reduced {reduced}: {seen:?}");
+        }
+    }
+
     /// AG.22: a gloss map is a weight, so the level loads it through a
     /// linear view, even where the same texture is another material's
     /// third layer, decoded; the gloss-mapped material draws on its own key.
