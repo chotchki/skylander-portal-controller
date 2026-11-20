@@ -242,33 +242,10 @@ fn the_card_games_art_extracts_and_resumes_alone() {
     }
     let refused: usize = record.archives.iter().map(|l| l.refused.len()).sum();
     assert_eq!(refused, art.refused.len(), "the record names every refusal");
-    // Models, images and sounds: none refused. Attach lists (AS.554): four
-    // presented creatures' weapon models in eight assets hold a list the
-    // attach reader refuses (an element it doesn't know); nothing of the
-    // board hangs on them, so each stays listed by name.
-    let (lists, rest): (Vec<_>, Vec<_>) = art
-        .refused
-        .iter()
-        .partition(|(what, _)| what.contains(": nodes "));
-    assert!(rest.is_empty(), "{rest:?}");
-    let mut weapons: Vec<&str> = lists
-        .iter()
-        .map(|(what, _)| what.rsplit('/').next().unwrap())
-        .collect();
-    weapons.dedup();
-    assert_eq!(lists.len(), 8, "{lists:?}");
-    for w in &weapons {
-        assert!(
-            [
-                "CrystalTrogHeavy.mdl",
-                "CyclopsBomber.mdl",
-                "SeaDogHeavyGun.mdl",
-                "ArkeyanSniperRifle.mdl"
-            ]
-            .contains(w),
-            "{lists:?}"
-        );
-    }
+    // Models, images, sounds and attach lists: none refused (AS.562: the
+    // four presented creatures' weapon models in eight assets refused
+    // their lists whole over an empty slot until it read as one).
+    assert!(art.refused.is_empty(), "{:?}", art.refused);
     assert_eq!(art.models, 244, "the 238 AS.365 read and AS.530's six");
 
     // An extract made before the part reads it alone at its next start.
