@@ -290,6 +290,11 @@ fn answer_and_read(
     mut ask: ResMut<CardAsk>,
     mut read: ResMut<CardRead>,
 ) {
+    // A run that plays no game (every landed build) reads nothing: the
+    // board's read walks every placement, three times a step.
+    if !world.card_streams.plays_games() {
+        return;
+    }
     let hand = ask.hand.take();
     let quit = std::mem::take(&mut ask.quit);
     if hand.is_some() || quit {

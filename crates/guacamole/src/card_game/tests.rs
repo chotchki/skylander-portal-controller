@@ -427,3 +427,25 @@ fn the_restore_is_owed_once_the_replacement_is_set_and_cleared() {
     assert_eq!(streams.restore(), Restore::Idle);
     assert_eq!(streams.restore().next(false), Restore::Idle);
 }
+
+/// openspec AS.368's scope (the as-cards-pad review): the loot reports'
+/// accept pass is a pirate's loot alone. People playing, waiting, talking
+/// or in no behaviour pass nothing, a story level's own reward report
+/// included; any one person in a loot wait opens it.
+#[test]
+fn a_loot_report_passes_only_while_a_pirate_is_in_his_loot() {
+    for none in [
+        &[][..],
+        &[None][..],
+        &[Some("play the game"), Some("wait for player")][..],
+        &[Some("wait for igc"), Some("idle"), None][..],
+    ] {
+        assert!(!in_pirates_loot(none), "{none:?}");
+    }
+    for wait in LOOT_WAITS {
+        assert!(
+            in_pirates_loot(&[Some("wait for player"), Some(wait), None]),
+            "{wait}"
+        );
+    }
+}

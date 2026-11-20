@@ -34,7 +34,7 @@
 //!   pirate's win; nothing draws the streams' sprites or the board (AS.365 to
 //!   AS.368).
 
-use guac_script::{Halt, PlacementId, Program, Value, Vm};
+use guac_script::{Halt, Handle, PlacementId, Program, Value, Vm};
 use tracing::info;
 
 use crate::scripts::{Files, ScriptWorld, WorldHost, running};
@@ -452,6 +452,18 @@ pub fn hero_owed(vm: &Vm, world: &ScriptWorld, minion_off: bool) -> bool {
     world.card_streams.restore == Restore::Asked && minion_off && !crate::anchors::scene_holds(vm)
 }
 
+/// Whether `actor` is a clone of one of the card game's streams' templates
+/// (a stone's stock, its face, the board's pieces): [`crate::hands::posing`]
+/// holds its last clip's end (openspec AS.672).
+pub fn card_clone(world: &ScriptWorld, actor: Handle) -> bool {
+    let units = &world.card_streams.units;
+    !units.is_empty()
+        && world
+            .actor(actor)
+            .and_then(|a| a.template)
+            .is_some_and(|t| units.iter().any(|(_, u)| *u == t.unit))
+}
+
 /// The hand select's page, by its title's name.
 pub const HAND_SELECT_TITLE: &str = "UI_CardGame_Menu_Title_HandSelect";
 /// What the hand select's Play button runs: the recommended hand's game.
@@ -862,6 +874,16 @@ fn loot_report_waiting(vm: &Vm, def: Value) -> Option<Value> {
         .find(|h| field(vm, *h, "stage").and_then(|s| s.as_i32()) == Some(*waits))
 }
 
+/// Whether a person's behaviour (the level's people, `behaviours`) is one
+/// of a pirate's loot waits ([`LOOT_WAITS`]): the only time
+/// [`pass_loot_reports`] passes anything. Another level's reward card or
+/// coins report (the same update macros) stays the scripts' own.
+fn in_pirates_loot(behaviours: &[Option<&str>]) -> bool {
+    behaviours
+        .iter()
+        .any(|b| b.is_some_and(|b| LOOT_WAITS.contains(&b)))
+}
+
 /// A card loot's report waiting on the accept passed on a player's own
 /// accept press, as the press would pass it (the report's stage moved on
 /// one, its own next stages slide it out and end it); stand-in ledger:
@@ -870,12 +892,12 @@ fn pass_loot_reports(vm: &mut Vm, world: &ScriptWorld) -> usize {
     if !accept_pressed(world) {
         return 0;
     }
-    let pirates_loot = world.people().into_iter().any(|h| {
-        vm.placement_of(h)
-            .and_then(|p| vm.behaviour(p))
-            .is_some_and(|b| LOOT_WAITS.contains(&b))
-    });
-    if !pirates_loot {
+    let behaviours: Vec<Option<&str>> = world
+        .people()
+        .into_iter()
+        .map(|h| vm.placement_of(h).and_then(|p| vm.behaviour(p)))
+        .collect();
+    if !in_pirates_loot(&behaviours) {
         return 0;
     }
     let mut waiting = Vec::new();

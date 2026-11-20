@@ -1621,6 +1621,9 @@ struct Played {
     /// At each of the score header's updates, the score as the TV reads it
     /// and the board's stones a side (openspec AS.556).
     scores: Vec<ScoreUpdate>,
+    /// At each of those updates, the board's stones drawn on the other side
+    /// from their owner's (openspec AS.672), with the step.
+    frames_off: Vec<(u32, Vec<((i32, i32), i32, Option<u32>)>)>,
 }
 
 /// At a score header update: the score as the TV reads it and the board's
@@ -1788,6 +1791,7 @@ fn dreadbeards_games_with(
     let mut offers = Vec::new();
     let mut hands = Vec::new();
     let mut scores = Vec::new();
+    let mut frames_off = Vec::new();
     // Each hand select the TV's screen answers is answered once.
     let screen_plans = plans
         .iter()
@@ -1926,6 +1930,7 @@ fn dreadbeards_games_with(
                 guacamole::card_game::score(&run.vm, &run.world),
                 cards::on_board(&run),
             ));
+            frames_off.push((run.steps, cards::frames_off_owner(&run)));
         }
         let pirate = run.vm.behaviour(id).map(str::to_owned);
         if let Some(g) = games.last_mut().filter(|g| g.ended == 0)
@@ -2137,6 +2142,7 @@ fn dreadbeards_games_with(
         offers,
         hands,
         scores,
+        frames_off,
     }
 }
 
@@ -2228,6 +2234,14 @@ fn dreadbeards_game_quit_lost_and_won_each_end_in_his_own_next_behaviour() {
     for (read, board) in &played.scores {
         assert!(read.is_some() && read == board, "{:?}", played.scores);
     }
+    // And every stone's frame on its owner's side at each of them: its
+    // stock held at its last turn, not back at its idle (openspec AS.672).
+    let off: Vec<_> = played
+        .frames_off
+        .iter()
+        .filter(|(_, o)| !o.is_empty())
+        .collect();
+    assert!(off.is_empty(), "frames off their owner: {off:?}");
     assert_eq!(
         played.backs, 2,
         "the hero put back after the quit and the win"
