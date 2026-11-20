@@ -1693,6 +1693,9 @@ fn dreadbeards_games_with(
     let (stage, intro) = STAGES[1];
     let (mut run, _found) = run_on_level(Mode::Play, stage, setup(&[]));
     run.world.card_streams.play_games();
+    if LOOT_TO_ACCEPT.get() {
+        run.world.card_streams.leave_loot_to_accept();
+    }
     let card_stems: std::collections::HashSet<String> = match card_extract {
         Some(dir) => {
             let (book, stems) = card_book(&run, dir).0;
@@ -2259,6 +2262,46 @@ fn dreadbeards_game_quit_lost_and_won_each_end_in_his_own_next_behaviour() {
         played.stays.longest
     );
     assert!(stay <= STAY_CAP, "{longest}: {stay} steps");
+    println!(
+        "{:.1} s, {} steps, load at end: {}",
+        started.elapsed().as_secs_f64(),
+        played.steps,
+        load()
+    );
+}
+
+thread_local! {
+    /// This test thread's games leave the pirate's loot to the scripts' own
+    /// accept (openspec AS.670), the TV's pass off.
+    static LOOT_TO_ACCEPT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// openspec AS.670: Dreadbeard's won game's loot passes on the player's own
+/// presses with the TV's pass (`card-loot-accept`) off: the bottom face is
+/// the scripts' `accept button` while the pad's actions reach the run, so
+/// both reports pass and his win runs on to `wait for player`. (On the TV the
+/// hero isn't joined during his loot, so there the pass still stands.)
+#[test]
+#[ignore = "reads the Giants dump"]
+fn dreadbeards_loot_passes_on_the_scripts_own_accept() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    LOOT_TO_ACCEPT.set(true);
+    let played = dreadbeards_games(
+        &[
+            (Plan::Quit, DREADBEARDS_SEEDS[0]),
+            (Plan::Play(cards::Policy::Naive), DREADBEARDS_SEEDS[1]),
+            (Plan::Play(cards::Policy::Strong), DREADBEARDS_SEEDS[2]),
+        ],
+        40_000,
+    );
+    assert_eq!(played.games.len(), 3, "{:?}", played.games);
+    let won = &played.games[2];
+    println!("game {won:?}");
+    assert_eq!(won.board.as_deref(), Some(cards::WON), "{won:?}");
+    assert_eq!(won.loot, LOOT_WAITS[1..], "{won:?}");
+    assert_eq!(won.pirate.as_deref(), Some("wait for player"), "{won:?}");
+    assert!(played.stops.is_empty(), "{:#?}", played.stops);
     println!(
         "{:.1} s, {} steps, load at end: {}",
         started.elapsed().as_secs_f64(),

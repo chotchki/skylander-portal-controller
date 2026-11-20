@@ -556,6 +556,36 @@ impl Member {
 
 /// `pressure state`'s labels: just released, released, pressed, just
 /// pressed.
+/// Whether `pad` holds named button `b` as the scripts read it (openspec
+/// AS.670). The attacks are its actions; `accept button` is its first
+/// action, the pad's bottom face as the original's accept is, held only
+/// while that pad's hero is joined (a pad's actions are empty otherwise), so
+/// no press reaches the portal manager's join of a pad no player holds.
+/// Every other named button reads released: `cancel button` is the third
+/// action, pressed in every fight, and a script on the hub reads it in
+/// play; start, select and the d-pad belong to the TV's own pause, skip and
+/// menus, and the d-pad is all the hub's cheat, the levels' warps and the
+/// debug scripts read, so none of those is ever served.
+pub(crate) fn served(pad: &crate::script_engine::Pad, b: Button) -> bool {
+    match b {
+        Button::Action(n) => pad
+            .actions
+            .get(usize::from(n).wrapping_sub(1))
+            .copied()
+            .unwrap_or(false),
+        Button::Accept => pad.actions[0],
+        Button::Cancel
+        | Button::Alt
+        | Button::Pause
+        | Button::Start
+        | Button::Select
+        | Button::DpadLeft
+        | Button::DpadRight
+        | Button::DpadUp
+        | Button::DpadDown => false,
+    }
+}
+
 fn pressure(was: bool, now: bool) -> i32 {
     match (was, now) {
         (true, false) => 0,
@@ -1801,12 +1831,7 @@ impl ScriptWorld {
                 let Some(Object::Button(pad, b)) = object else {
                     return Err(HostFault::Nothing);
                 };
-                let held = |p: &crate::script_engine::Pad| match b {
-                    Button::Action(n) => {
-                        p.actions.get(usize::from(n) - 1).copied().unwrap_or(false)
-                    }
-                    _ => false,
-                };
+                let held = |p: &crate::script_engine::Pad| served(p, b);
                 let (was, now) = if pad == u8::MAX {
                     (false, false)
                 } else {
@@ -6515,6 +6540,60 @@ mod tests {
         let posed = Vec3::new(1.0, 0.0, 0.0)
             + Quat::from_rotation_y(30f32.to_radians()) * Vec3::new(0.0, 4.0, 10.0);
         assert!(at.distance(posed) < 1e-4, "{at}");
+    }
+
+    /// openspec AS.670: the named buttons as the scripts read them off pad
+    /// 0. `accept button` is its first action, pressed (3), held (2), let go
+    /// (0); a pad whose hero isn't joined reads no action, so no accept
+    /// either. Every other named button reads released (1) whatever's held,
+    /// the d-pad the hub's cheat and the levels' warps read among them.
+    #[test]
+    fn the_accept_button_is_the_first_action_and_the_others_read_released() {
+        let mut e = bench();
+        let mut w = world();
+        let state = |w: &mut ScriptWorld, e: &mut Bench, b: Button| {
+            let button = w.objs.value(Object::Button(0, b));
+            w.get_member(
+                &at("buttonmeasurement", "pressure state", Some(button), None),
+                Member::PressureState,
+                e,
+            )
+        };
+        let pad = |actions: [bool; 4]| Pad {
+            actions,
+            connected: true,
+            ..Pad::default()
+        };
+        let others = [
+            Button::Cancel,
+            Button::Alt,
+            Button::Pause,
+            Button::Start,
+            Button::Select,
+            Button::DpadLeft,
+            Button::DpadRight,
+            Button::DpadUp,
+            Button::DpadDown,
+        ];
+        let mut seen = Vec::new();
+        for held in [[true; 4], [true; 4], [false; 4], [false; 4]] {
+            w.read_pads([pad(held), Pad::default()]);
+            seen.push(state(&mut w, &mut e, Button::Accept));
+            for b in others {
+                assert_eq!(state(&mut w, &mut e, b), Ok(Value::Int(1)), "{b:?}");
+            }
+        }
+        assert_eq!(
+            seen,
+            [3, 2, 0, 1].map(|v| Ok(Value::Int(v))),
+            "pressed, held, let go, released"
+        );
+        // Only the first action: the second alone is no accept.
+        w.read_pads([pad([false, true, false, false]), Pad::default()]);
+        assert_eq!(state(&mut w, &mut e, Button::Accept), Ok(Value::Int(1)));
+        assert!(served(&pad([true, false, false, false]), Button::Accept));
+        assert!(!served(&pad([false; 4]), Button::Accept));
+        assert!(served(&pad([false, false, true, false]), Button::Action(3)));
     }
 
     /// openspec AS.661: a hero's static spawn's attach nodes, added at his

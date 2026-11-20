@@ -1409,3 +1409,57 @@ fn a_teleporter_woken_again_takes_the_giant_swapped_in_after() {
 }
 
 const WAITING_FOR_PLAYER: &str = "wait for player";
+
+/// openspec AS.670: a hat's report passes on the player's own accept, the
+/// TV's pass (`treasure::answer_hats`, stand-in ledger `hats`) turned off.
+/// Chapter 1's first hat box mashed open with △: its report comes up and
+/// waits with nothing pressed; one press of the bottom face (the joined
+/// hero's first action, which the host serves as `accept button`) passes it
+/// and the box goes. A few tens of seconds.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_hats_report_passes_on_the_players_accept_alone() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let mut s = Story::joined(CHAPTER_1, Session::new(Some(HOST.into())));
+    s.run.world.pass_hat_reports(false);
+    past_the_intro(&mut s);
+    let (h, at, name) = first_ranged(&s, "/Hat_Pickup.ai").expect("a hat box");
+    let by = beside(&mut s, at);
+    s.run.put(by, 0.0);
+    let shown = |s: &Story| !guacamole::treasure::hats_shown(&s.run.vm, &s.run.world).is_empty();
+    let start = s.run.steps;
+    while !shown(&s) {
+        let k = s.run.steps - start;
+        assert!(k < 2400, "{name}: no report after {k} steps");
+        assert!(!s.run.world.removed(h), "{name}: gone without a report");
+        s.step(mash(k));
+    }
+    let up = s.run.steps;
+    // Unpressed, it waits.
+    for _ in 0..300 {
+        s.step([false; 4]);
+    }
+    assert!(
+        shown(&s) && !s.run.world.removed(h),
+        "{name}: passed unpressed"
+    );
+    // One press: the report passes, the box goes (its wear question told no).
+    s.step([true, false, false, false]);
+    let pressed = s.run.steps;
+    while !s.run.world.removed(h) {
+        assert!(
+            s.run.steps - pressed < 600,
+            "{name}: still up after the press"
+        );
+        s.step([false; 4]);
+    }
+    println!(
+        "{name}: report up at {up}, waited 300 steps, passed and gone {} steps after the press; stops {}; {:.1} s, load at end: {}",
+        s.run.steps - pressed,
+        s.stops.len(),
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    assert!(s.stops.is_empty(), "{:?}", s.stops);
+}

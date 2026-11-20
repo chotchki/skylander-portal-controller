@@ -2657,6 +2657,31 @@ mod tests {
         );
     }
 
+    /// openspec AS.670: the scripts' `accept button` is served off a pad only
+    /// while its hero is joined (so no unassigned pad's press reaches the
+    /// portal manager's join), never off the second pad, which the TV feeds
+    /// nothing, and the d-pad and the others never.
+    #[test]
+    fn the_scripts_accept_is_served_only_for_a_joined_hero_on_the_first_pad() {
+        use guacamole::script_engine::Button;
+        let mut w = ScriptWorld::new(&Files::default(), &HashMap::new(), [0; 7]);
+        let still = guac_motion::stick::Stick::new(0.0, 0.0);
+        feed_pads(&mut w, still, [true; 4], false, true);
+        assert!(!w.holds_named(0, Button::Accept), "not joined");
+        feed_pads(&mut w, still, [true; 4], true, true);
+        assert!(w.holds_named(0, Button::Accept), "joined");
+        assert!(!w.holds_named(1, Button::Accept), "the second pad");
+        for b in [
+            Button::Cancel,
+            Button::Start,
+            Button::Select,
+            Button::DpadUp,
+            Button::DpadDown,
+        ] {
+            assert!(!w.holds_named(0, b), "{b:?}");
+        }
+    }
+
     #[test]
     fn with_no_hero_in_activity_measures_from_where_the_last_one_left() {
         let (him, left, start) = (

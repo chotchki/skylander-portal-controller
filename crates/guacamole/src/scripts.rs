@@ -582,6 +582,10 @@ pub struct ScriptWorld {
     pub(crate) skipped_cutscene: Option<Value>,
     /// A hat's outfit registered for this run (`treasure::answer_hat_load`).
     pub(crate) hat_load_answered: bool,
+    /// Whether the TV passes a hat's and a legendary treasure's report for
+    /// the player (stand-in ledger `hats`, `treasure::answer_hats`); off, the
+    /// report waits on the player's own accept (openspec AS.670).
+    pub(crate) hat_reports_passed: bool,
     /// The ship part streams the run links and what's been done with them
     /// (openspec AS.157, [`crate::ship_parts`]).
     pub ship_parts: crate::ship_parts::ShipParts,
@@ -1042,6 +1046,7 @@ impl ScriptWorld {
             streams: Default::default(),
             skipped_cutscene: None,
             hat_load_answered: false,
+            hat_reports_passed: true,
             ship_parts: Default::default(),
             card_streams: Default::default(),
             skip_cutscenes: false,
@@ -1937,6 +1942,21 @@ impl ScriptWorld {
     /// the TV's, whose pads read no attack for a hero not joined.
     pub fn hold_accept(&mut self, accept: [bool; 2]) {
         self.accept = accept;
+    }
+
+    /// Whether the TV passes hat and legendary treasure reports for the
+    /// player ([`crate::treasure::answer_hats`]); a test turns it off to see
+    /// the report pass on the player's own accept (openspec AS.670).
+    pub fn pass_hat_reports(&mut self, on: bool) {
+        self.hat_reports_passed = on;
+    }
+
+    /// Whether pad `pad` holds named button `b` as the scripts read it this
+    /// step (openspec AS.670, `script_members::served`).
+    pub fn holds_named(&self, pad: usize, b: crate::script_engine::Button) -> bool {
+        self.pads
+            .get(pad)
+            .is_some_and(|p| crate::script_members::served(p, b))
     }
 
     /// The first pad's actions and both pads' accepts, this step's and the

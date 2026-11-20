@@ -240,6 +240,10 @@ pub struct CardStreams {
     /// ([`CardStreams::answer_hands_on_screen`]); headless it's answered by
     /// Play.
     hand_by_screen: bool,
+    /// Whether a pirate's loot reports are left to the player's own
+    /// `accept button` alone ([`CardStreams::leave_loot_to_accept`]), the
+    /// TV's pass (`card-loot-accept`) off: a test's.
+    loot_unpassed: bool,
 }
 
 /// The portal's replacement of the hero by the board (openspec AS.481):
@@ -301,6 +305,14 @@ impl CardStreams {
     /// nothing on a run that plays no game: its page never comes up.
     pub fn answer_hands_on_screen(&mut self) {
         self.hand_by_screen = true;
+    }
+
+    /// The pirate's loot reports left to the scripts' own `accept button`
+    /// (openspec AS.670), [`pass_loot_reports`] off: what a test shows a
+    /// press alone passes them by. Behind `card-game-seams`.
+    #[cfg(feature = "card-game-seams")]
+    pub fn leave_loot_to_accept(&mut self) {
+        self.loot_unpassed = true;
     }
 
     /// From here on a yes at a pirate plays the game (openspec AS.366):
@@ -889,7 +901,7 @@ fn in_pirates_loot(behaviours: &[Option<&str>]) -> bool {
 /// one, its own next stages slide it out and end it); stand-in ledger:
 /// `card-loot-accept`. Only while a pirate's loot is up. How many it passed.
 fn pass_loot_reports(vm: &mut Vm, world: &ScriptWorld) -> usize {
-    if !accept_pressed(world) {
+    if world.card_streams.loot_unpassed || !accept_pressed(world) {
         return 0;
     }
     let behaviours: Vec<Option<&str>> = world
