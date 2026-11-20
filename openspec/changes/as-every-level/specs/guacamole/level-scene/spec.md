@@ -700,3 +700,17 @@ A drawn creature and a drawn clone SHALL take their own replace colour by its pe
 #### Scenario: A bitten Chompy
 - **WHEN** a hit writes red at 100 percent on a Chompy and slides it to 0 over 0.2 s
 - **THEN** the Chompy flashes red and fades back to its own colours over those steps
+
+### Requirement: A level material's tint track plays
+A level material's tint track SHALL move its material tint through its keys from the moment the level shows, its keys at 60 frames a second times its rate and straight between them: style 0 starting again past its last key, style 1 coming back through them, another style holding its first key. Under reduced motion it SHALL hold its first key.
+
+#### Scenario: The stove's fire
+- **WHEN** 214's stove beam has run a second past its track's last key with style 1
+- **THEN** its tint comes back through the keys it passed, with no snap to the first
+
+### Requirement: A placement's replace colour is drawn
+A drawn placement SHALL take its own replace colour by its percent on its parts, as a creature does, its tint left neutral: a breakable's flash as it's hit.
+
+#### Scenario: A placement washed then clear
+- **WHEN** a placement's scripts write red at 75 percent, then 0
+- **THEN** its parts draw washed red at 75, then as their model's own
