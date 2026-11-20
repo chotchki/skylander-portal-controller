@@ -59,6 +59,8 @@ mod script_sprites;
 mod shots;
 mod slow_frames;
 mod sound_player;
+#[cfg(feature = "test-hooks")]
+mod stage;
 mod starfield;
 mod story;
 mod surfaces;
@@ -478,6 +480,9 @@ fn test_routes(
             .merge(dev_entry::routes(entry_asks))
             .merge(level_choice::routes(level_asks))
             .merge(completion::star_routes(star_asks));
+        // AS.680's creature stage.
+        #[cfg(feature = "test-hooks")]
+        let routes = routes.merge(stage::routes(stage::shared(), level_asks));
         // A lane's build that plays the card game (openspec AS.367's first
         // rung) quits it over a route of its own; no landed build has it.
         #[cfg(all(feature = "test-hooks", feature = "played-card-games"))]
@@ -663,6 +668,9 @@ fn run_tv(
             .insert_resource(asked_health)
             .insert_resource(asked_xp)
             .add_plugins(mirror::Mirror);
+        #[cfg(feature = "test-hooks")]
+        app.insert_resource(stage::shared().clone())
+            .add_plugins(stage::StagePlugin);
         if let Some(flags) = flags {
             app.add_plugins(flags);
         }

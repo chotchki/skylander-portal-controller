@@ -42,6 +42,7 @@ pub mod scripts;
 pub mod ship_parts;
 mod sound_members;
 pub mod sounds;
+pub mod staging;
 pub mod story_save;
 pub mod treasure;
 pub mod turret;

@@ -122,11 +122,18 @@ impl Plugin for StoryPlugin {
 /// A new host from the server begins a session for it and fetches its
 /// rows; none (a quit, or a launch with no profile unlocked) begins one
 /// that saves for itself alone.
-fn follow_host(link: Option<Res<StoryLink>>, mut story: ResMut<Story>) {
+fn follow_host(
+    link: Option<Res<StoryLink>>,
+    mut story: ResMut<Story>,
+    #[cfg(feature = "test-hooks")] stage: Option<Res<crate::stage::Stage>>,
+) {
     let Some(link) = link else {
         return;
     };
     let host = link.host.get().map(|h| h.profile_id);
+    // A staged creature's run writes no save (openspec AS.680).
+    #[cfg(feature = "test-hooks")]
+    let host = host.filter(|_| !crate::stage::withholds_saves(stage.as_deref()));
     if story.began_for.as_ref() == Some(&host) {
         return;
     }
