@@ -60,6 +60,27 @@ impl LevelNodes {
     }
 }
 
+impl AttachNode {
+    /// An empty slot in a model's attach list (openspec AS.562): no name, no
+    /// bone, no joint, no offset, so the points after it keep their index
+    /// and what a script hangs there stands at the model's origin. Held in
+    /// the IR as a node rather than a new field so every nodes file already
+    /// written still reads.
+    pub fn empty() -> Self {
+        Self {
+            name: None,
+            bone: None,
+            joint: None,
+            offset: Transform::IDENTITY,
+        }
+    }
+
+    /// Whether this is an [`AttachNode::empty`] slot.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::empty()
+    }
+}
+
 impl AttachNodes {
     /// Where node `i` sits in the model's space with its joints at `pose`
     /// (model space, as [`crate::model::Skeleton::blend_over`] gives them):
@@ -124,6 +145,23 @@ mod tests {
                 },
             ],
         }
+    }
+
+    #[test]
+    fn an_empty_slot_holds_its_index_at_the_origin() {
+        let mut n = nodes();
+        n.nodes.insert(0, AttachNode::empty());
+        assert!(n.nodes[0].is_empty());
+        assert!(!n.nodes[1].is_empty() && !n.nodes[2].is_empty());
+        assert_eq!(n.place(0, &[]), Some([0.0; 3]));
+        // The origin node after it keeps its own offset at its new index.
+        assert_eq!(n.place(1, &[]), Some([0.0, 0.5, 0.0]));
+        // A node with an offset but no name or bone isn't an empty slot.
+        let off = AttachNode {
+            offset: at([0.0, 0.0, 1.0]),
+            ..AttachNode::empty()
+        };
+        assert!(!off.is_empty());
     }
 
     #[test]

@@ -786,7 +786,8 @@ pub(crate) fn write_nodes(dir: &std::path::Path) {
         models: vec![list(FIGHT_CREATURE_MODEL), list(FIGHT_ART_MODEL)],
         refused: Vec::new(),
     };
-    let rel = IrFormat::Ron.level_path(
+    let rel = guac_extract::levels::part_path(
+        IrFormat::Ron,
         crate::test_support::hero_scripts::LEVEL,
         guac_extract::levels::NODES,
     );

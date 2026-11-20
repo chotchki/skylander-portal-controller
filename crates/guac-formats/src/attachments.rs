@@ -1112,11 +1112,12 @@ pub fn hung(fresh: &Fresh, draws: impl Fn(&Template) -> bool) -> Result<Vec<Hung
 }
 
 /// A model's attach points in list order (`tfbModelInfo._attachList`),
-/// empty when it has none.
+/// empty when it has none; an empty slot in the list is `None` in its place
+/// (openspec AS.562).
 pub fn attach_points<'a>(
     igz: &Igz<'a>,
     model: usize,
-) -> Result<Vec<BoneAttachInfo<'a>>, FormatError> {
+) -> Result<Vec<Option<BoneAttachInfo<'a>>>, FormatError> {
     let m = ModelInfo::read(igz, model)?;
     let ObjectRef::Object(list) = m.attach_list else {
         return Ok(Vec::new());
@@ -1124,7 +1125,7 @@ pub fn attach_points<'a>(
     BoneAttachInfoList::read(igz, list)?
         .nodes
         .into_iter()
-        .map(|n| BoneAttachInfo::read(igz, n))
+        .map(|n| n.map(|n| BoneAttachInfo::read(igz, n)).transpose())
         .collect()
 }
 

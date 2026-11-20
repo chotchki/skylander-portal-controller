@@ -571,6 +571,35 @@ fn every_level_part_is_named_and_complete_wants_them_all() {
         vec![crate::intros::IrFormat::Ron.level_path(LEVELS[0], "palettes.v2")],
     );
     assert!(!complete(&m), "the palettes under AS.52's name");
+    m.levels.get_mut(LEVELS[0]).unwrap().parts.insert(
+        PALETTES.to_owned(),
+        vec![part_path(crate::intros::IrFormat::Ron, LEVELS[0], PALETTES)],
+    );
+    assert!(complete(&m));
+    // AS.562: the nodes named for their rule, v2 since an attach list's
+    // empty slot reads as one; a file under the old name (v1 refused the
+    // list whole) is a part to read again, in either format.
+    assert_eq!(
+        part_path(crate::intros::IrFormat::Ron, LEVELS[0], NODES),
+        "levels/level_213_tutotial/nodes.v2.ron"
+    );
+    for ir in [
+        crate::intros::IrFormat::Ron,
+        crate::intros::IrFormat::Postcard,
+    ] {
+        m.levels
+            .get_mut(LEVELS[0])
+            .unwrap()
+            .parts
+            .insert(NODES.to_owned(), vec![ir.level_path(LEVELS[0], NODES)]);
+        assert!(!complete(&m), "the nodes under v1's name");
+        m.levels
+            .get_mut(LEVELS[0])
+            .unwrap()
+            .parts
+            .insert(NODES.to_owned(), vec![part_path(ir, LEVELS[0], NODES)]);
+        assert!(complete(&m));
+    }
     assert_eq!(
         archive_path(Path::new("/u"), LEVELS[0]),
         Path::new("/u/level/level_213_tutotial.bld")

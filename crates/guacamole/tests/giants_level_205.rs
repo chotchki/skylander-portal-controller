@@ -4580,7 +4580,29 @@ struct FangsPlayed {
     /// How often the TV's stand-in turned his game won: never, in a run
     /// that plays them.
     stood_in: u32,
+    /// Every behaviour the board's manager took (openspec AS.367's first
+    /// game: the tutorial's), and the stones the save held collected as his
+    /// first question came up.
+    boards: std::collections::BTreeSet<String>,
+    stones_before: Option<Vec<usize>>,
+    /// The collection as the board's first behaviour came up, and every
+    /// write the story session handed the store, in order, with the step
+    /// (`story` runs only: the session served each step as the TV serves it).
+    stones_at_board: Option<Vec<usize>>,
+    writes: Vec<(u32, guac_server::saves::SaveValues)>,
     run: Run,
+}
+
+/// The stones the run's save holds collected (`collection - cards`, read as
+/// the scripts' `Save - Collection Get/Set - Card` reads it), by index.
+fn stones_collected(run: &Run) -> Option<Vec<usize>> {
+    use guacamole::story_save::{File, Layout};
+    let layout = Layout::read(&run.vm)?;
+    let words = guacamole::story_save::words_of(&run.vm, File::Slot)?;
+    let fields = layout
+        .decode(File::Slot, &words)
+        .remove("collection - cards")?;
+    Some((0..fields.len()).filter(|&i| fields[i] != 0).collect())
 }
 
 /// Level 205 walked to the card house ([`to_the_card_house`]), in a run that
@@ -4595,13 +4617,47 @@ fn fangs_games(
     cap: u32,
     over: &dyn Fn(&Run) -> bool,
 ) -> FangsPlayed {
+    fangs_games_with(plans, cap, over, false)
+}
+
+/// [`fangs_games`], with `story` the run's story session started as the
+/// TV starts it for the profile that picked the game (openspec AS.367's
+/// first game: `story_save::serve`, which names the level's adventure the
+/// current one, `Current Adventure Title`); without it the harness names
+/// none, so his script reads the card house as the hub and never reaches
+/// the tutorial's choice. Served once: what follows is the harness's own.
+fn fangs_games_with(
+    plans: &[(Option<cards::Policy>, u32)],
+    cap: u32,
+    over: &dyn Fn(&Run) -> bool,
+    story: bool,
+) -> FangsPlayed {
     let AtTheCardHouse {
         mut run,
         mut stops,
         mut scenes,
         ..
     } = to_the_card_house();
+    let mut session =
+        story.then(|| guacamole::story_save::Session::new(Some("01FANGSHOST".into())));
+    let mut writes = Vec::new();
+    // The TV's system, each step: the session's requests answered, a write
+    // handed to the store (this stand-in keeps it) and done at once.
+    let mut serve = |run: &mut Run, writes: &mut Vec<(u32, guac_server::saves::SaveValues)>| {
+        let Some(session) = session.as_mut() else {
+            return;
+        };
+        run.with_host(|vm, host| guacamole::story_save::serve(vm, host, session, LEVEL_205))
+            .unwrap_or_else(|h| panic!("the story's session: {h}"));
+        if let Some((_, _, values)) = session.take_write() {
+            writes.push((run.steps, values));
+            session.written(&mut run.world.save, Ok(()));
+        }
+    };
+    serve(&mut run, &mut writes);
     run.world.card_streams.play_games();
+    let mut boards = std::collections::BTreeSet::new();
+    let (mut stones_before, mut stones_at_board) = (None, None);
     for _ in 0..600 {
         if run.hero().pivot.y < -300.0 {
             break;
@@ -4645,6 +4701,7 @@ fn fangs_games(
         } else {
             if before.is_none() && guacamole::prompt::up(&run.vm, &run.world).is_some() {
                 before = Some(cards::leftovers(&run));
+                stones_before = stones_collected(&run);
             }
             if !scene_step(&mut run, &mut stops, &mut scenes, &mut stood_in) {
                 let me = run.hero().pivot;
@@ -4666,7 +4723,14 @@ fn fangs_games(
         if cards::hero_back(&mut run) {
             backs += 1;
         }
+        serve(&mut run, &mut writes);
         let now = cards::board(&run);
+        if let Some(b) = &now {
+            boards.insert(b.clone());
+            if stones_at_board.is_none() {
+                stones_at_board = stones_collected(&run);
+            }
+        }
         let fangs = behaviour(&run, guacamole::level_205::CARD_HOUSE_PIRATE);
         let scene = behaviour(&run, "CardPirate_Casino_Cine");
         if debug && ended_at.is_some() && run.steps.is_multiple_of(50) && run.steps < 14_500 {
@@ -4770,8 +4834,215 @@ fn fangs_games(
         before: before.unwrap_or_default(),
         after,
         stood_in,
+        boards,
+        stones_before,
+        stones_at_board,
+        writes,
         run,
     }
+}
+
+/// A kid's first game (openspec AS.367's note of 2026-11-16, settled
+/// 2026-11-19, the as-cards-play lane): on the TV the profile's story
+/// session names the level's adventure, so on 205 Fangs' script reads the
+/// save's collection and, with no stone collected yet, starts the tutorial;
+/// his first win collects the starter stones into the save (the pirate's
+/// `play the game`). Dreadbeard's games are never the tutorial: his script
+/// asks the collection only when the adventure is 205's. A game played to
+/// its own win by the strong policy, as `fangs_strong_play_wins_his_game`.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn fangs_first_game_on_a_fresh_save_is_the_tutorial_and_its_win_collects_stones() {
+    println!("load at start: {}", load());
+    let started = std::time::Instant::now();
+    let p = fangs_games_with(
+        &[(Some(cards::Policy::Strong), FANGS_SEEDS[2])],
+        30_000,
+        &|_| true,
+        true,
+    );
+    for g in &p.games {
+        println!("game {g:?}, {} steps", g.1 - g.0);
+    }
+    assert!(p.stops.is_empty(), "{:#?}", p.stops);
+    assert_eq!(p.stood_in, 0, "a played game is never stood in won");
+    let before = p
+        .stones_before
+        .clone()
+        .expect("the save's collection at his question");
+    assert!(before.is_empty(), "a fresh save holds no stone: {before:?}");
+    let tutorial: Vec<&String> = p
+        .boards
+        .iter()
+        .filter(|b| b.starts_with("wait for tutorial"))
+        .collect();
+    println!("the tutorial's behaviours: {tutorial:?}");
+    assert!(tutorial.len() >= 5, "the tutorial ran: {:?}", p.boards);
+    let pirate = p.run.placement(guacamole::level_205::CARD_HOUSE_PIRATE);
+    assert_eq!(
+        p.run.vm.local(pirate, "tutorial?"),
+        Some(guac_script::Value::Int(1)),
+        "his first game his tutorial"
+    );
+    let g = p.games.first().expect("a game");
+    assert_eq!(g.2.as_deref(), Some(cards::WON), "{g:?}");
+    let after = stones_collected(&p.run).expect("the save's collection after");
+    println!(
+        "stones collected at the board's start {:?}, after the win {after:?}",
+        p.stones_at_board
+    );
+    // What the store was handed: each write's collection, as the row the
+    // TV's keeper stores holds it.
+    let won_at = g.1;
+    for (at, values) in &p.writes {
+        let stones: Vec<usize> = values
+            .params
+            .get("collection - cards")
+            .map(|f| (0..f.len()).filter(|&i| f[i] != 0).collect())
+            .unwrap_or_default();
+        println!("a write at step {at} (the win at {won_at}): stones {stones:?}");
+    }
+    // Six stones, all by the win: none collected as the board started (the
+    // tutorial grants none), and the save the scripts ask right after the
+    // win hands the store the same six (the as-cards-play review).
+    const STARTERS: [usize; 6] = [0, 12, 15, 29, 46, 53];
+    assert_eq!(
+        p.stones_at_board.as_deref(),
+        Some(&[][..]),
+        "none at the board's start"
+    );
+    assert_eq!(after, STARTERS, "the starter stones");
+    let stored = p
+        .writes
+        .iter()
+        .rev()
+        .find(|(at, _)| *at > won_at)
+        .map(|(_, v)| {
+            let f = &v.params["collection - cards"];
+            (0..f.len()).filter(|&i| f[i] != 0).collect::<Vec<_>>()
+        });
+    assert_eq!(
+        stored.as_deref(),
+        Some(&STARTERS[..]),
+        "the store's row after the win"
+    );
+    println!(
+        "took {:.1} s, load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+}
+
+/// A yes to Fangs on a fresh save in a build that doesn't play the card
+/// game (every landed build): the as-cards-play review. A fresh save's
+/// first game against him is the tutorial (the test above), a branch of his
+/// script the hub's pirate never takes, so a landed build's yes there must
+/// still end as the TV's quit: the card game's start answered with nothing
+/// shown and logged as not built, his result left a quit, no board, no
+/// card stream, the hero walking. No stand-in turns the quit here (the
+/// harness's `scene_step` would): the run is the TV's own answer.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_yes_to_fangs_on_a_fresh_save_is_still_a_quit_where_the_game_isnt_built() {
+    println!("load at start: {}", load());
+    let started = std::time::Instant::now();
+    let AtTheCardHouse {
+        mut run,
+        mut stops,
+        mut scenes,
+        ..
+    } = to_the_card_house();
+    let mut session = guacamole::story_save::Session::new(Some("01FANGSHOST".into()));
+    run.with_host(|vm, host| guacamole::story_save::serve(vm, host, &mut session, LEVEL_205))
+        .unwrap_or_else(|h| panic!("the story's start: {h}"));
+    assert!(!run.world.card_streams.plays_games());
+    for _ in 0..600 {
+        if run.hero().pivot.y < -300.0 {
+            break;
+        }
+        run.bench.view = (38.7f32 - run.hero().pivot.x)
+            .atan2(51.2 - run.hero().pivot.z)
+            .to_degrees();
+        step(&mut run, &mut stops, Stick::new(0.0, 1.0), [false; 4]);
+    }
+    assert!(run.hero().pivot.y < -300.0, "in the card house");
+    let by_fangs = Vec3::new(377.0, -304.4, 288.3);
+    let pirate = run.placement(guacamole::level_205::CARD_HOUSE_PIRATE);
+    let (mut yes_at, mut stones, mut board, mut seen) = (None, None, false, Vec::new());
+    let mut quit_seen = false;
+    let start = run.steps;
+    while run.steps - start < 6000 {
+        let b = behaviour(&run, guacamole::level_205::CARD_HOUSE_PIRATE);
+        if seen.last() != Some(&b) {
+            seen.push(b.clone());
+        }
+        if let Some(p) = guacamole::prompt::up(&run.vm, &run.world) {
+            if yes_at.is_none() {
+                stones = stones_collected(&run);
+            }
+            assert!(
+                run.with_host(|vm, host| guacamole::prompt::answer(vm, host, &p, true))
+                    .unwrap_or_else(|h| panic!("the answer: {h}"))
+            );
+            yes_at.get_or_insert(run.steps);
+        }
+        board |= cards::board(&run).is_some();
+        quit_seen |= run.vm.local(pirate, "win val") == Some(guac_script::Value::Int(-2));
+        if let Some(cs) = cutscene_name(&run) {
+            if scenes.last().is_none_or(|(_, n)| *n != cs) {
+                scenes.push((run.steps, cs));
+            }
+            still(&mut run, &mut stops, [false; 4]);
+        } else if yes_at.is_some_and(|y| run.steps > y + 600) {
+            break;
+        } else {
+            let me = run.hero().pivot;
+            let (dx, dz) = (by_fangs.x - me.x, by_fangs.z - me.z);
+            if dx.hypot(dz) < 1.0 {
+                let press = yes_at.is_none() && run.steps.is_multiple_of(20);
+                still(&mut run, &mut stops, [false, false, false, press]);
+            } else {
+                run.bench.view = dx.atan2(dz).to_degrees();
+                step(&mut run, &mut stops, Stick::new(0.0, 1.0), [false; 4]);
+            }
+        }
+    }
+    println!(
+        "his behaviours {seen:?}; scenes {scenes:?}; unbuilt {:?}",
+        run.world.unbuilt
+    );
+    assert!(stops.is_empty(), "{stops:#?}");
+    let yes = yes_at.expect("his question answered yes");
+    assert_eq!(
+        stones.as_deref(),
+        Some(&[][..]),
+        "a fresh save holds no stone at his question"
+    );
+    assert_eq!(
+        run.vm.local(pirate, "tutorial?"),
+        Some(guac_script::Value::Int(1)),
+        "a fresh save's game his tutorial"
+    );
+    assert!(
+        run.world.unbuilt.iter().any(|w| w.contains("card game")),
+        "the yes logged as not built: {:?}",
+        run.world.unbuilt
+    );
+    assert!(quit_seen, "his result left a quit");
+    assert!(!board, "no board in a build that doesn't play the game");
+    assert!(cards::streams_running(&run).is_empty(), "no card stream");
+    // The hero walks again.
+    let from = run.hero().pivot;
+    for _ in 0..90 {
+        step(&mut run, &mut stops, Stick::new(0.0, 1.0), [false; 4]);
+    }
+    let moved = run.hero().pivot.distance(from);
+    println!(
+        "yes at step {yes}; walked {moved:.2} m; took {:.1} s, load at end: {}",
+        started.elapsed().as_secs_f64(),
+        load()
+    );
+    assert!(moved > 1.0, "the hero walks again: {moved}");
 }
 
 /// The steps a played run may go without a game over before it's called

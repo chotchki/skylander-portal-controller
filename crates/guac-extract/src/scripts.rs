@@ -1379,7 +1379,7 @@ pub fn spawn_rigs(
                 load_file: path.to_owned(),
                 nodes: points
                     .iter()
-                    .map(|p| models::attach_node(p, &joints))
+                    .map(|p| models::slot_node(p.as_ref(), &joints))
                     .collect(),
             });
             Ok(SpawnRig { palette, nodes })

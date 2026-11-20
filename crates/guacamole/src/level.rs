@@ -627,7 +627,11 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
     // what hangs on their nodes at their pivots.
     let nodes: Option<guac_ir::nodes::LevelNodes> = match read_ir(
         source.ir,
-        &part(guac_extract::levels::NODES),
+        &source.dir.join(guac_extract::levels::part_path(
+            source.ir,
+            &source.level,
+            guac_extract::levels::NODES,
+        )),
     ) {
         Ok(n) => Some(n),
         Err(why) => {

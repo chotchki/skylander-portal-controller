@@ -963,6 +963,26 @@ impl<'f, 'a> View<'f, 'a> {
         list: &DataList<'a>,
         target: Option<&'static str>,
     ) -> Result<Vec<Option<usize>>, FormatError> {
+        self.elements_of(list, target, false)
+    }
+
+    /// A typed list that may hold empty slots (openspec AS.562: an attach
+    /// list): each element a `target` or null, a null `None` in its place so
+    /// the others keep their index. A stranger is still refused.
+    pub(crate) fn elements_or_empty(
+        &self,
+        list: &DataList<'a>,
+        target: &'static str,
+    ) -> Result<Vec<Option<usize>>, FormatError> {
+        self.elements_of(list, Some(target), true)
+    }
+
+    fn elements_of(
+        &self,
+        list: &DataList<'a>,
+        target: Option<&'static str>,
+        empty_slots: bool,
+    ) -> Result<Vec<Option<usize>>, FormatError> {
         let bytes = self.list_bytes(list, 4)?;
         let Some(data) = list.data else {
             return Ok(Vec::new());
@@ -972,6 +992,7 @@ impl<'f, 'a> View<'f, 'a> {
             let at = data.at.offset_by(4 * i).unwrap_or(data.at);
             match (self.igz.reference(at, "element")?, target) {
                 (Ref::Null, None) => out.push(None),
+                (Ref::Null, Some(_)) if empty_slots => out.push(None),
                 (Ref::Object(o), None) => out.push(Some(o)),
                 (Ref::Object(o), Some(t)) => {
                     self.check_type(o, t, "element")?;

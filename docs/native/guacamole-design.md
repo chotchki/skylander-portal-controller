@@ -2887,6 +2887,14 @@ lane's (`~/workspace/guacamole-research/as-cards-board/notes/table.md`), read of
   game's board holds the slot); it frames the board as the scripts mean once a packed value's halves read
   as the disc holds them (AS.560). The faces hang on the stones' attach nodes, which the art part writes
   (AS.554), and the hero comes back after a game through the TV's own swap (AS.553).
+- **A kid's first game** (the as-cards-play lane, 2026-11-19): the pirate's script asks the save's
+  collection only when the current adventure is 205's, so Fangs' first game on a fresh save is the
+  tutorial and its win collects the starter stones, and Dreadbeard's games never are. The TV's story
+  session names the level's adventure (`story_save::start_run`), so that holds on the TV as built; the
+  205 card suite starts the session the same way for its first-game test (`fangs_games_with`).
+- **His hand on his turn** (AS.584): by the board's script as read, the opponent's stones rest 20 ft up
+  past the far side, in none of its four framings; what his turn shows is the stone he plays, slid to
+  10 ft before the camera. Whether the original shows more waits on one of its frames (AS.662).
 - **A departure, not settled** (the as-cards-board review, 2026-11-17): the interface records hold no
   layout. Every template in the board's and the hand select's records sits at (0, 0), only an image, its
   size, scale and colour (the board's: `ScoreBox_Cap`/`_Tile` and their strokes, 16 and 1 by 44 px, the

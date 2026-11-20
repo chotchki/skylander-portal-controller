@@ -194,7 +194,24 @@ fn the_card_games_art_extracts_and_resumes_alone() {
         record.archives.iter().map(|l| l.nodes.len()).sum()
     };
     println!("  {record_nodes} models' attach lists in the record");
-    assert_eq!(record_nodes, 116, "the lists on the dump");
+    // 124 since an attach list's empty slot reads (openspec AS.562): the
+    // eight presented creatures' weapon models refused theirs before, 116.
+    assert_eq!(record_nodes, 124, "the lists on the dump");
+    {
+        let record: CardArtRecord =
+            serde_json::from_slice(&std::fs::read(dir_path.join(CARD_ART_RECORD)).unwrap())
+                .unwrap();
+        let refused: Vec<_> = record
+            .archives
+            .iter()
+            .flat_map(|l| {
+                l.refused
+                    .iter()
+                    .filter(|(what, _)| what.starts_with("nodes "))
+            })
+            .collect();
+        assert!(refused.is_empty(), "no attach list refused: {refused:?}");
+    }
 
     // Every stone: its deck's face model read, its asset's sound kept
     // where the TV's book looks for the asset's stem.
@@ -225,33 +242,10 @@ fn the_card_games_art_extracts_and_resumes_alone() {
     }
     let refused: usize = record.archives.iter().map(|l| l.refused.len()).sum();
     assert_eq!(refused, art.refused.len(), "the record names every refusal");
-    // Models, images and sounds: none refused. Attach lists (AS.554): four
-    // presented creatures' weapon models in eight assets hold a list the
-    // attach reader refuses (an element it doesn't know); nothing of the
-    // board hangs on them, so each stays listed by name.
-    let (lists, rest): (Vec<_>, Vec<_>) = art
-        .refused
-        .iter()
-        .partition(|(what, _)| what.contains(": nodes "));
-    assert!(rest.is_empty(), "{rest:?}");
-    let mut weapons: Vec<&str> = lists
-        .iter()
-        .map(|(what, _)| what.rsplit('/').next().unwrap())
-        .collect();
-    weapons.dedup();
-    assert_eq!(lists.len(), 8, "{lists:?}");
-    for w in &weapons {
-        assert!(
-            [
-                "CrystalTrogHeavy.mdl",
-                "CyclopsBomber.mdl",
-                "SeaDogHeavyGun.mdl",
-                "ArkeyanSniperRifle.mdl"
-            ]
-            .contains(w),
-            "{lists:?}"
-        );
-    }
+    // Models, images, sounds and attach lists: none refused (AS.562: the
+    // four presented creatures' weapon models in eight assets refused
+    // their lists whole over an empty slot until it read as one).
+    assert!(art.refused.is_empty(), "{:?}", art.refused);
     assert_eq!(art.models, 244, "the 238 AS.365 read and AS.530's six");
 
     // An extract made before the part reads it alone at its next start.

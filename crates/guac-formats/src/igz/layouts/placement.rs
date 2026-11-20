@@ -515,12 +515,15 @@ impl<'a> Layout<'a> for BoneAttachInfo<'a> {
 }
 
 /// `BoneAttachInfoList`: a model's attach points in list order, the order
-/// scripts index them by (`attach nodes [1]`). A null slot is refused.
+/// scripts index them by (`attach nodes [1]`). A null slot is an empty one,
+/// the points after it keeping their index (openspec AS.562: 96 lists over
+/// the disc's 477 archives hold one); anything but a `BoneAttachInfo` or a
+/// null is refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoneAttachInfoList<'a> {
     pub list: DataList<'a>,
-    /// Indexes of the `BoneAttachInfo` objects.
-    pub nodes: Vec<usize>,
+    /// Indexes of the `BoneAttachInfo` objects, `None` for an empty slot.
+    pub nodes: Vec<Option<usize>>,
 }
 
 impl<'a> Layout<'a> for BoneAttachInfoList<'a> {
@@ -528,10 +531,7 @@ impl<'a> Layout<'a> for BoneAttachInfoList<'a> {
 
     fn fields(v: &mut View<'_, 'a>) -> Result<Self, FormatError> {
         let list = DataList::fields(v)?;
-        let mut nodes = Vec::new();
-        for n in v.elements(&list, Some(BoneAttachInfo::TYPE))? {
-            nodes.push(n.ok_or_else(|| v.refused(DataList::DATA, "element"))?);
-        }
+        let nodes = v.elements_or_empty(&list, BoneAttachInfo::TYPE)?;
         Ok(Self { list, nodes })
     }
 }

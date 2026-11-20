@@ -809,6 +809,35 @@ fn typed_lists_refuse_nulls_strangers_and_bad_counts() {
 }
 
 #[test]
+fn an_attach_lists_empty_slot_keeps_the_others_index() {
+    // openspec AS.562: 96 attach lists on the disc hold a null slot. The
+    // list reads it as an empty one, the points after it at their index.
+    let mut b = IgzBuilder::new();
+    let blocks = b.section(0x10);
+    let list_at = b.object(0, "BoneAttachInfoList", 0x18);
+    let first = b.object(0, "BoneAttachInfo", 0x3C);
+    let third = b.object(0, "BoneAttachInfo", 0x3C);
+    builder::list(&mut b, list_at, blocks, &[Some(first), None, Some(third)]);
+    let bytes = b.build();
+    let igz = Igz::parse(&bytes).unwrap();
+    let read = BoneAttachInfoList::read(&igz, 0).unwrap();
+    assert_eq!(read.nodes, [Some(1), None, Some(2)]);
+
+    // A stranger in the list is still refused.
+    let mut b = IgzBuilder::new();
+    let blocks = b.section(0x10);
+    let list_at = b.object(0, "BoneAttachInfoList", 0x18);
+    let image = b.object(0, "igImage2", 0x60);
+    builder::list(&mut b, list_at, blocks, &[None, Some(image)]);
+    let bytes = b.build();
+    let igz = Igz::parse(&bytes).unwrap();
+    assert_eq!(
+        wrong_type(BoneAttachInfoList::read(&igz, 0).unwrap_err()),
+        ("BoneAttachInfo", "igImage2".into())
+    );
+}
+
+#[test]
 fn a_vector_count_without_data_is_refused() {
     let (mut b, seg) = one("igPS3EdgeGeometrySegment", 0xB0);
     // Every memory ref null, as the reader insists.
