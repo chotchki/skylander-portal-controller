@@ -48,6 +48,14 @@ use crate::play::Play;
 use crate::turntable::FrozenYaw;
 use crate::tv_state::{Current, Redrawn, TvCamera};
 
+/// An asked shot's file name: its count, its label, the hero's read beside
+/// it, then `-cw` and the strongest wash on a drawn creature this frame, 0
+/// for none (openspec AS.634: a hit flash's frames named by what they draw).
+fn asked_name(seq: u32, label: &str, read: &str, washes: impl Iterator<Item = u8>) -> String {
+    let creature = washes.max().unwrap_or(0);
+    format!("{seq:02}-asked-{label}{read}-cw{creature}.png")
+}
+
 /// A walk's or an attack's shot's name: its number, what it shows, where he
 /// stands, the way he faces and the scripts' step when they run.
 fn moving_name(seq: u32, attacking: bool, step: Option<u64>, pivot: Vec3, facing: f32) -> String {
@@ -292,12 +300,11 @@ fn snap(
                 None => format!("-a{}", a.0),
             })
             .unwrap_or_default();
-        // The strongest wash on a drawn creature this frame (openspec
-        // AS.634: a hit flash's frames named by what they draw).
-        let creature = drawn.1.iter().map(|w| w.percent).max().unwrap_or(0);
-        let path = state.dir.join(format!(
-            "{:02}-asked-{label}{read}-cw{creature}.png",
-            state.seq
+        let path = state.dir.join(asked_name(
+            state.seq,
+            &label,
+            &read,
+            drawn.1.iter().map(|w| w.percent),
         ));
         info!(path = %path.display(), "asked screenshot requested");
         commands
@@ -397,6 +404,24 @@ mod tests {
         assert_eq!(asked.take().as_deref(), Some("walkway"));
         assert_eq!(asked.take().as_deref(), Some("drop_before-2"));
         assert_eq!(asked.take(), None);
+    }
+
+    /// AS.634's review: an asked shot's name ends in the strongest creature
+    /// wash drawn that frame, 0 with none washed or none drawn.
+    #[test]
+    fn an_asked_shots_name_ends_in_the_strongest_creature_wash() {
+        assert_eq!(
+            asked_name(7, "t0b001", "-w100-a255-s12", [0u8, 83, 41].into_iter()),
+            "07-asked-t0b001-w100-a255-s12-cw83.png"
+        );
+        assert_eq!(
+            asked_name(12, "x", "", [0u8, 0].into_iter()),
+            "12-asked-x-cw0.png"
+        );
+        assert_eq!(
+            asked_name(3, "x", "-a255", std::iter::empty()),
+            "03-asked-x-a255-cw0.png"
+        );
     }
 
     #[test]
