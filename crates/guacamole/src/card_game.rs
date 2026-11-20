@@ -724,6 +724,70 @@ pub fn score(vm: &Vm, world: &ScriptWorld) -> Option<(i32, i32)> {
     ))
 }
 
+/// What the board's manager holds of a player's pick, for a driver's and a
+/// test's read (`/api/_test/tv`): its behaviour, the stone the hand's
+/// cursor is on, the square the board's cursor is on, how many stones the
+/// board's own preview flips there (`cards to flip this move`), the squares
+/// taken and each hand stone's pips.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+pub struct BoardRead {
+    pub behaviour: Option<String>,
+    pub card_at: Option<i32>,
+    pub cursor: Option<(i32, i32)>,
+    pub flips: usize,
+    pub taken: Vec<(i32, i32)>,
+    pub hand_pips: Vec<f32>,
+}
+
+fn square(v: Value) -> Option<(i32, i32)> {
+    match v {
+        Value::Screen(b) => {
+            let (x, y) = crate::viewport::unpack_screen(b);
+            Some((x as i32, y as i32))
+        }
+        _ => None,
+    }
+}
+
+/// The board's read ([`BoardRead`]), while a board is up.
+pub fn board_read(vm: &Vm, world: &ScriptWorld) -> Option<BoardRead> {
+    let m = manager(vm, world)?;
+    let local = |n: &str| vm.local(m, n).map(|v| vm.value(v));
+    let set = |v: Value| vm.set(v).map(<[Value]>::to_vec).unwrap_or_default();
+    let data = local("game data ref");
+    let pips = |c: Value| {
+        [
+            "north strength",
+            "east strength",
+            "south strength",
+            "west strength",
+        ]
+        .iter()
+        .filter_map(|f| field(vm, vm.value(c), f).and_then(|x| x.as_f32()))
+        .sum::<f32>()
+    };
+    Some(BoardRead {
+        behaviour: vm.behaviour(m).map(str::to_owned),
+        card_at: local("card selection index").and_then(|v| v.as_i32()),
+        cursor: local("board selection location").and_then(square),
+        flips: local("cards to flip this move").map_or(0, |v| set(v).len()),
+        taken: data
+            .and_then(|d| field(vm, d, "all objects on board"))
+            .map(set)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|o| field(vm, vm.value(o), "board location").and_then(square))
+            .collect(),
+        hand_pips: data
+            .and_then(|d| field(vm, d, "my hand"))
+            .map(set)
+            .unwrap_or_default()
+            .into_iter()
+            .map(pips)
+            .collect(),
+    })
+}
+
 /// The card loot's reports (the reward card's and the coins'), each by its
 /// update macro, the field its stage sits under and the stage at which it
 /// waits on a player's accept press (openspec AS.368). The reporter's

@@ -65,6 +65,8 @@ const SCORE_SIZE: f32 = 64.0;
 const BOX_FILL: Color = Color::srgba(0.03, 0.05, 0.16, 0.86);
 const LABEL_COLOR: Color = Color::WHITE;
 const FOCUS_RING: Color = Color::srgb(1.0, 0.82, 0.25);
+const PLAYER_TINT: Color = Color::srgb(0.35, 0.6, 1.0);
+const OPPONENT_TINT: Color = Color::srgb(1.0, 0.45, 0.35);
 
 /// The hand select's record and pieces, by template name.
 const BEGIN: &str = "UI CardGame HandSelect Button Begin";
@@ -221,6 +223,8 @@ pub(crate) enum QuitFocus {
 #[derive(Resource, Debug, Default, Clone, PartialEq)]
 pub(crate) struct CardRead {
     pub(crate) offer: Option<HandOffer>,
+    /// The board's pick state, for `/api/_test/tv`'s drivers.
+    pub(crate) pick: Option<card_game::BoardRead>,
     pub(crate) score: Option<(i32, i32)>,
     pub(crate) board: bool,
 }
@@ -314,6 +318,7 @@ fn answer_and_read(
     let vm = &runtime.vm;
     let now = CardRead {
         offer: card_game::hand_offer(vm),
+        pick: card_game::board_read(vm, &world),
         score: card_game::score(vm, &world),
         board: card_game::manager(vm, &world).is_some(),
     };
@@ -632,6 +637,8 @@ fn spawn_hand(
                             slot.with_children(|s| {
                                 let name = stone_sprite(*stone);
                                 match a.and_then(|a| a.pieces.get(name.as_str())) {
+                                    // Stored upside down, as the stones'
+                                    // faces are (openspec AS.554).
                                     Some(p) => {
                                         s.spawn((
                                             Node {
@@ -639,7 +646,11 @@ fn spawn_hand(
                                                 height: px(p.size.y * UNIT),
                                                 ..default()
                                             },
-                                            ImageNode::new(p.image.clone()),
+                                            ImageNode {
+                                                image: p.image.clone(),
+                                                flip_y: true,
+                                                ..default()
+                                            },
                                         ));
                                     }
                                     None => {
@@ -795,7 +806,9 @@ fn spawn_score(
                 ..default()
             })
             .with_children(|row| {
-                for n in [me, them] {
+                // The scripts tint each side's box; ours: blue the player's,
+                // red the opponent's, the stones' own frame colours.
+                for (n, tint) in [(me, PLAYER_TINT), (them, OPPONENT_TINT)] {
                     let tile = a.and_then(|a| a.pieces.get(SCORE_TILE));
                     let cap = a.and_then(|a| a.pieces.get(SCORE_CAP));
                     row.spawn(Node {
@@ -812,7 +825,7 @@ fn spawn_score(
                                     height: px(h),
                                     ..default()
                                 },
-                                ImageNode::new(c.image.clone()),
+                                ImageNode::new(c.image.clone()).with_color(tint),
                             ));
                         }
                         let mut mid = bx.spawn(Node {
@@ -827,6 +840,7 @@ fn spawn_score(
                                 mid.insert(ImageNode {
                                     image: t.image.clone(),
                                     image_mode: NodeImageMode::Stretch,
+                                    color: tint,
                                     ..default()
                                 });
                             }
@@ -847,6 +861,7 @@ fn spawn_score(
                                 ImageNode {
                                     image: c.image.clone(),
                                     flip_x: true,
+                                    color: tint,
                                     ..default()
                                 },
                             ));
@@ -867,6 +882,8 @@ pub struct CardScreensShot {
     /// The score header's numbers, the player's first, while a board is up.
     pub score: Option<(i32, i32)>,
     pub board: bool,
+    /// The board's pick state as the manager holds it.
+    pub pick: Option<card_game::BoardRead>,
     /// The quit confirm up, and its focus.
     pub quit: Option<QuitFocus>,
     /// What the screens answered this session, in order.
@@ -905,6 +922,7 @@ impl CardShots<'_, '_> {
             }),
             score: read.score.filter(|_| read.board),
             board: read.board,
+            pick: read.pick.clone(),
             quit: screens.quit,
             answered: screens.answered.clone(),
             drawn: self.roots.iter().map(|r| r.0).collect(),
