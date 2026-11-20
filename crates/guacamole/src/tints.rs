@@ -103,7 +103,7 @@ impl Plugin for CloneTintsPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             PostUpdate,
-            tint_clones
+            (tint_clones, wash_placed)
                 .run_if(resource_exists::<ScriptWorld>)
                 .in_set(TintSystems),
         );
@@ -151,6 +151,53 @@ fn tint_parts(
         };
         for &part in children {
             wash_part(part, tint, wash, &mut commands, &mut parts, &mut materials);
+        }
+    }
+}
+
+/// Each drawn placement's own replace colour onto its parts (openspec
+/// AS.631: a barrel, a pot or a crate flashing as it's hit, the FireBlaster),
+/// as a creature's is laid ([`wash_part`]); its tint stays the neutral one
+/// the props' path draws with. A part never washed stays on its model's
+/// shared material; one washed goes back to neutral on its copy once the
+/// percent's back at 0.
+#[allow(clippy::too_many_arguments)]
+fn wash_placed(
+    mut commands: Commands,
+    level: Option<Res<crate::level::Level>>,
+    world: Res<ScriptWorld>,
+    runtime: Option<Res<guacamole::scripts::ScriptRuntime>>,
+    source: Option<Res<crate::hero_scripts::ScriptSource>>,
+    children: Query<&Children>,
+    mut parts: Query<(&mut MeshMaterial3d<CharacterMaterial>, Option<&TintedPart>)>,
+    mut materials: ResMut<Assets<CharacterMaterial>>,
+) {
+    let (Some(level), Some(runtime), Some(unit)) = (
+        level,
+        runtime,
+        source
+            .as_deref()
+            .and_then(crate::hero_scripts::ScriptSource::level_unit),
+    ) else {
+        return;
+    };
+    for (object, draw) in level.prop_draws() {
+        let Some(&h) = world.handles().get(&guac_script::Obj {
+            unit,
+            index: object,
+        }) else {
+            continue;
+        };
+        let wash = guacamole::props::actor_wash(&runtime.vm, h);
+        for &part in children.get(draw).map(|c| &**c).unwrap_or_default() {
+            wash_part(
+                part,
+                NEUTRAL,
+                wash,
+                &mut commands,
+                &mut parts,
+                &mut materials,
+            );
         }
     }
 }
