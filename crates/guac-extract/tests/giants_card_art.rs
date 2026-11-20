@@ -194,7 +194,24 @@ fn the_card_games_art_extracts_and_resumes_alone() {
         record.archives.iter().map(|l| l.nodes.len()).sum()
     };
     println!("  {record_nodes} models' attach lists in the record");
-    assert_eq!(record_nodes, 116, "the lists on the dump");
+    // 124 since an attach list's empty slot reads (openspec AS.562): the
+    // eight presented creatures' weapon models refused theirs before, 116.
+    assert_eq!(record_nodes, 124, "the lists on the dump");
+    {
+        let record: CardArtRecord =
+            serde_json::from_slice(&std::fs::read(dir_path.join(CARD_ART_RECORD)).unwrap())
+                .unwrap();
+        let refused: Vec<_> = record
+            .archives
+            .iter()
+            .flat_map(|l| {
+                l.refused
+                    .iter()
+                    .filter(|(what, _)| what.starts_with("nodes "))
+            })
+            .collect();
+        assert!(refused.is_empty(), "no attach list refused: {refused:?}");
+    }
 
     // Every stone: its deck's face model read, its asset's sound kept
     // where the TV's book looks for the asset's stem.
