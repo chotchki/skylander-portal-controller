@@ -79,3 +79,28 @@ fn a_custom_hand_takes_five_collected_stones_none_twice() {
     assert!(!card_game::hand_takes(&[0, 12, 15, 29, 47], &STARTERS));
     assert!(!card_game::hand_takes(&[0, 12, 15, 29], &STARTERS));
 }
+
+/// openspec AS.555: a kid who presses nothing gets the hand played after
+/// [`IDLE_PLAY`], not before.
+#[test]
+fn an_unpressed_hand_select_plays_after_the_idle_wait() {
+    let open = Duration::from_secs(100);
+    assert!(!idle_due(open, open + IDLE_PLAY - Duration::from_millis(1)));
+    assert!(idle_due(open, open + IDLE_PLAY));
+    assert!(!idle_due(open, open));
+}
+
+/// openspec AS.557: Start over a board brings the confirm up on No; it
+/// stays while both hold, and goes once the level carries on or the board
+/// does; Start with no board brings nothing.
+#[test]
+fn the_quit_confirm_comes_with_start_over_a_board_on_no() {
+    assert_eq!(quit_shown(None, true, true), Some(QuitFocus::No));
+    assert_eq!(
+        quit_shown(Some(QuitFocus::Yes), true, true),
+        Some(QuitFocus::Yes)
+    );
+    assert_eq!(quit_shown(Some(QuitFocus::Yes), true, false), None);
+    assert_eq!(quit_shown(Some(QuitFocus::No), false, true), None);
+    assert_eq!(quit_shown(None, false, true), None);
+}

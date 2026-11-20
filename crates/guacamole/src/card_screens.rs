@@ -350,7 +350,7 @@ fn open(
         _ => {}
     }
     if let Some(edit) = &screens.hand
-        && time.elapsed().saturating_sub(screens.hand_since) >= IDLE_PLAY
+        && idle_due(screens.hand_since, time.elapsed())
         && ask.hand.is_none()
     {
         let choice = edit.choice();
@@ -366,12 +366,10 @@ fn open(
         .seat()
         .and_then(|s| s.pause())
         .is_some_and(|p| matches!(p, crate::pad::Pause::Start { .. }));
-    if read.board && started && screens.quit.is_none() {
+    let was = screens.quit;
+    screens.quit = quit_shown(was, read.board, started);
+    if was.is_none() && screens.quit.is_some() {
         info!("Start over a card game's board: its quit asked");
-        screens.quit = Some(QuitFocus::default());
-    }
-    if screens.quit.is_some() && (!read.board || !started) {
-        screens.quit = None;
     }
     // Answered (or the board gone): the level goes on.
     let up = screens.hand.is_some() || screens.quit.is_some();
@@ -381,6 +379,23 @@ fn open(
     let q = screens.quit.is_some();
     if quit_open.0 != q {
         quit_open.0 = q;
+    }
+}
+
+/// Whether a hand select open since `since` (the real clock) has waited
+/// [`IDLE_PLAY`] on a kid who pressed nothing by `now`.
+pub(crate) fn idle_due(since: Duration, now: Duration) -> bool {
+    now.saturating_sub(since) >= IDLE_PLAY
+}
+
+/// The quit confirm as it stands next: up (focus on No) once Start waits
+/// the level over a board, kept as it was while both hold, gone when
+/// either ends.
+pub(crate) fn quit_shown(was: Option<QuitFocus>, board: bool, started: bool) -> Option<QuitFocus> {
+    match (board && started, was) {
+        (false, _) => None,
+        (true, None) => Some(QuitFocus::default()),
+        (true, kept) => kept,
     }
 }
 

@@ -1618,6 +1618,9 @@ struct Played {
     /// player's hand at each quit's first pick, by stone (openspec AS.555).
     offers: Vec<guacamole::card_game::HandOffer>,
     hands: Vec<Vec<u16>>,
+    /// At each of the score header's updates, the score as the TV reads it
+    /// and the board's stones a side (openspec AS.556).
+    scores: Vec<(Option<(i32, i32)>, Option<(i32, i32)>)>,
 }
 
 /// One game's end.
@@ -1780,6 +1783,7 @@ fn dreadbeards_games_with(
     }
     let mut offers = Vec::new();
     let mut hands = Vec::new();
+    let mut scores = Vec::new();
     while run.steps - start < cap && run.steps - last_end < STALL {
         // The game on, else the next one asked for.
         let on = games.iter().position(|g| g.ended == 0);
@@ -1903,6 +1907,16 @@ fn dreadbeards_games_with(
             held_back |= guacamole::anchors::scene_holds(&run.vm);
         }
         let now = cards::board(&run);
+        // The score header's numbers against the board's own stones, at each
+        // of the header's updates (openspec AS.556).
+        if now.as_deref() == Some("delay after updating score header")
+            && was_board.as_deref() != now.as_deref()
+        {
+            scores.push((
+                guacamole::card_game::score(&run.vm, &run.world),
+                cards::on_board(&run),
+            ));
+        }
         let pirate = run.vm.behaviour(id).map(str::to_owned);
         if let Some(g) = games.last_mut().filter(|g| g.ended == 0)
             && let Some(b) = pirate.as_deref()
@@ -2112,6 +2126,7 @@ fn dreadbeards_games_with(
             .collect(),
         offers,
         hands,
+        scores,
     }
 }
 
@@ -2196,6 +2211,13 @@ fn dreadbeards_game_quit_lost_and_won_each_end_in_his_own_next_behaviour() {
     assert!(played.stops.is_empty(), "{:#?}", played.stops);
     // The board, the hand select and the reward card's sprites down.
     assert!(played.running.is_empty(), "{:?}", played.running);
+    // The score header's numbers are the board's stones a side at every
+    // update (openspec AS.556).
+    println!("score updates: {}", played.scores.len());
+    assert!(played.scores.len() >= 10, "{:?}", played.scores);
+    for (read, board) in &played.scores {
+        assert!(read.is_some() && read == board, "{:?}", played.scores);
+    }
     assert_eq!(
         played.backs, 2,
         "the hero put back after the quit and the win"
@@ -2249,6 +2271,13 @@ fn a_back_out_at_the_hand_select_ends_in_his_wait_for_player() {
     );
     assert!(played.stops.is_empty(), "{:#?}", played.stops);
     assert!(played.running.is_empty(), "{:?}", played.running);
+    // The score header's numbers are the board's stones a side at every
+    // update (openspec AS.556).
+    println!("score updates: {}", played.scores.len());
+    assert!(played.scores.len() >= 10, "{:?}", played.scores);
+    for (read, board) in &played.scores {
+        assert!(read.is_some() && read == board, "{:?}", played.scores);
+    }
     assert!(played.free, "free after the back-out");
     println!("load at end: {}", load());
 }

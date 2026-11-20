@@ -613,3 +613,17 @@ pub fn hand(run: &Run) -> Vec<u16> {
     }
     out
 }
+
+/// Each side's stones on the board by the board's own flag (`player's
+/// card?` on each of `all objects on board`): what the score header shows
+/// (openspec AS.556). The player's first.
+pub fn on_board(run: &Run) -> Option<(i32, i32)> {
+    let m = manager(run)?;
+    let data = local(run, m, "game data ref")?;
+    let all = set_of(run, field(run, data, "all objects on board")?);
+    let mine = all
+        .iter()
+        .filter(|o| field(run, **o, "player's card?").and_then(|v| v.as_i32()) == Some(1))
+        .count() as i32;
+    Some((mine, all.len() as i32 - mine))
+}
