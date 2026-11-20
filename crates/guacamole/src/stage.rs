@@ -15,7 +15,11 @@
 //!   written ([`withholds_saves`]);
 //! - the level's camera pinned on the creature each frame it's drawn, off
 //!   its posed joints' sphere ([`guacamole::staging::frame`]), through the
-//!   same pin `/api/_test/tv/camera` sets.
+//!   same pin `/api/_test/tv/camera` sets, and let go once it isn't.
+//!
+//! It ends once the staged run is left (another level's run, or none):
+//! its pin let go, the stage cleared, so the next pick in the same process
+//! lists nothing of it, saves for its host and follows him.
 //!
 //! Its wake is the activity rule's: the creature wakes when the hero comes
 //! into its range, as in play. A creature its file leaves at range 0 waits
@@ -84,7 +88,9 @@ pub(crate) struct StageShot {
     /// Put on the run's list and walked at its install, by name.
     pub(crate) listed: Vec<String>,
     pub(crate) walked: Vec<String>,
-    /// The entry handed over.
+    /// The staged level's run installed with it listed, and the entry
+    /// handed over (each once a stage).
+    pub(crate) installed: bool,
     pub(crate) entry: bool,
     /// The creature awake by the activity rule, drawn, and the camera on it.
     pub(crate) awake: bool,
@@ -154,7 +160,7 @@ pub(crate) fn walked(stage: Option<&Stage>, level: &str, unit: u16, world: &mut 
         .collect();
     info!(level, ?walked, "the stage's placements listed and walked");
     if let Some(s) = stage {
-        s.with(|s| s.walked = walked);
+        s.with(|s| (s.walked, s.installed) = (walked, true));
     }
 }
 
@@ -162,13 +168,52 @@ pub(crate) struct StagePlugin;
 
 impl Plugin for StagePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, hand_over_entry).add_systems(
-            PostUpdate,
-            pin_on_creature
-                .before(crate::mirror::pin_camera)
-                .before(bevy::transform::TransformSystems::Propagate),
-        );
+        app.add_systems(Update, (end_stage, hand_over_entry).chain())
+            .add_systems(
+                PostUpdate,
+                pin_on_creature
+                    .before(crate::mirror::pin_camera)
+                    .before(bevy::transform::TransformSystems::Propagate),
+            );
     }
+}
+
+/// The pin the stage last set, let go if the camera still holds it (a pin
+/// `/api/_test/tv/camera` set since is the route's).
+fn let_go(shot: &mut StageShot, pin: &Mutex<Option<CameraPin>>) {
+    if let Some([x, y, z, tilt, heading]) = shot.pin.take() {
+        let ours = CameraPin {
+            eye: [x, y, z],
+            tilt,
+            heading,
+            fov_y: None,
+        };
+        let mut held = pin.lock().unwrap_or_else(|e| e.into_inner());
+        if *held == Some(ours) {
+            *held = None;
+        }
+    }
+    (shot.centre, shot.radius) = (None, None);
+}
+
+/// The stage ended once its run is left: the staged level's run installed,
+/// then another level's or none. Its pin is let go and it's cleared, so
+/// nothing of it reaches the next pick (its list, its host-less saves, its
+/// camera).
+fn end_stage(stage: Res<Stage>, mirror: Option<Res<TvMirror>>, source: Option<Res<ScriptSource>>) {
+    let Some(ask) = stage.ask() else {
+        return;
+    };
+    if !stage.with(|s| s.installed) || source.is_some_and(|s| s.level() == ask.level) {
+        return;
+    }
+    stage.with(|s| {
+        if let Some(m) = &mirror {
+            let_go(s, &m.8);
+        }
+        *s = StageShot::default();
+    });
+    info!(creature = %ask.creature, "the stage's run left: the stage ended");
 }
 
 /// The entry handed to the dev entry once the staged level's run is in.
@@ -182,7 +227,7 @@ fn hand_over_entry(
     else {
         return;
     };
-    if source.level() != ask.level || stage.with(|s| s.entry) {
+    if source.level() != ask.level || !stage.with(|s| s.installed && !s.entry) {
         return;
     }
     *entry.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(Asked {
@@ -230,8 +275,9 @@ fn pin_on_creature(
         s.drawn = body.is_some();
     });
     let Some(body) = body.filter(|_| awake) else {
-        // Not awake or not drawn: no pin read back as if it framed it.
-        stage.with(|s| (s.pin, s.centre, s.radius) = (None, None, None));
+        // Not awake or not drawn: the camera let go, and no pin read back
+        // as if it framed it.
+        stage.with(|s| let_go(s, &mirror.8));
         return;
     };
     let points: Vec<Vec3> = body
@@ -414,6 +460,59 @@ mod tests {
         );
         assert!(own.whitelist.lists("Enemy_BombThrower(3)", "C:/x/U.ai"));
         assert_eq!(stage.0.lock().unwrap().listed, ["Enemy_BombThrower(3)"]);
+    }
+
+    /// The stage ends once its run is left, and not before: installed and
+    /// then no run, its pin is let go (a pin the camera route set since is
+    /// kept), its ask cleared, so saves have their host again and the next
+    /// install lists nothing of it.
+    #[test]
+    fn the_stage_ends_once_its_run_is_left() {
+        let ask = StageAsk {
+            level: "level_208_ice".into(),
+            creature: "Enemy_BombThrower(3)".into(),
+            trigger: None,
+            distance: None,
+            heading: None,
+            round: None,
+        };
+        let ours = CameraPin {
+            eye: [1.0, 2.0, 3.0],
+            tilt: -20.0,
+            heading: 35.0,
+            fov_y: None,
+        };
+        let route = CameraPin { tilt: -5.0, ..ours };
+        for (installed, held, ends, left) in [
+            // Posted, its run not in yet (the level still loading): kept.
+            (false, Some(ours), false, Some(ours)),
+            // Its run in and then left: ended, its pin let go.
+            (true, Some(ours), true, None),
+            // Ended with the route's own pin on the camera: that one kept.
+            (true, Some(route), true, Some(route)),
+        ] {
+            let stage = Stage::default();
+            stage.with(|s| {
+                s.ask = Some(ask.clone());
+                s.installed = installed;
+                s.pin = Some([1.0, 2.0, 3.0, -20.0, 35.0]);
+            });
+            let mirror = TvMirror::default();
+            *mirror.8.lock().unwrap() = held;
+            let mut app = App::new();
+            app.insert_resource(stage.clone())
+                .insert_resource(mirror.clone())
+                .add_systems(Update, end_stage);
+            app.update();
+            assert_eq!(stage.ask().is_none(), ends, "installed {installed}");
+            assert_eq!(withholds_saves(Some(&stage)), !ends);
+            assert_eq!(*mirror.8.lock().unwrap(), left, "installed {installed}");
+            let mut config = guacamole::scripts::smash_config(guac_script::Mode::Play);
+            assert_eq!(
+                listed(Some(&stage), "level_208_ice", &mut config).is_empty(),
+                ends
+            );
+        }
     }
 
     /// Every joint inside the sphere with the skin to spare: a limb that
