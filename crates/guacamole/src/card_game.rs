@@ -828,13 +828,15 @@ const LOOT_WAITS: [&str; 3] = [
 /// button (action 1), pressed now and not the step before. The reports ask
 /// `accept button` of `controller 1` and `controller 2`, which the host's
 /// pads don't serve (only `action 1` to `action 4`; filed AS.670), and the
-/// TV's South is both.
+/// TV's South is both, read as the player holds it
+/// ([`ScriptWorld::hold_accept`]): after a game the hero comes back under
+/// his pirate's hold, and the TV gives a hero not joined no actions.
 fn accept_pressed(world: &ScriptWorld) -> bool {
     world
-        .pads
+        .accept
         .iter()
-        .zip(world.pads_before.iter())
-        .any(|(now, was)| now.actions[0] && !was.actions[0])
+        .zip(world.accept_before.iter())
+        .any(|(now, was)| *now && !*was)
 }
 
 /// The stage `report` (a reporter's `tr def ref`) waits a press at, where

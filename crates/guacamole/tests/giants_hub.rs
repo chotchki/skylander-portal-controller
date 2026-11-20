@@ -1784,6 +1784,11 @@ fn dreadbeards_games_with(
     let mut offers = Vec::new();
     let mut hands = Vec::new();
     let mut scores = Vec::new();
+    // Each hand select the TV's screen answers is answered once.
+    let screen_plans = plans
+        .iter()
+        .filter(|(p, _)| matches!(p, Plan::BackOut | Plan::Custom(_)))
+        .count();
     while run.steps - start < cap && run.steps - last_end < STALL {
         // The game on, else the next one asked for.
         let on = games.iter().position(|g| g.ended == 0);
@@ -1794,6 +1799,7 @@ fn dreadbeards_games_with(
             let press = cutscene_name(&run).is_none() && run.steps.is_multiple_of(20);
             talk_button(&mut run, press);
         } else if let Plan::BackOut | Plan::Custom(_) = plan
+            && offers.len() < screen_plans
             && let Some(offer) = guacamole::card_game::hand_offer(&run.vm)
         {
             offers.push(offer);
