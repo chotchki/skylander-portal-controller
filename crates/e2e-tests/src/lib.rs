@@ -2295,6 +2295,20 @@ fn write_scripts(dir: &mut guac_extract::IdentityDir, fighting: bool) -> Result<
         files.push(rel);
     }
     dir.record_part(scripts::SPAWN_RIGS, files)?;
+    // AS.661's spawn nodes: none either.
+    let mut files = Vec::new();
+    for archive in scripts::rig_archives_with(&[]) {
+        let rel = ir.spawn_node_path(&archive);
+        let none = guac_ir::spawn::SpawnNodes {
+            identity: identity.clone(),
+            archive: archive.clone(),
+            models: Vec::new(),
+            refused: Vec::new(),
+        };
+        dir.write_output(&rel, &ir.encode(&none, dir, &rel)?)?;
+        files.push(rel);
+    }
+    dir.record_part(scripts::SPAWN_NODES, files)?;
     // AH.87's emitters: none either.
     let mut files = Vec::new();
     for archive in guac_extract::particles::archives() {

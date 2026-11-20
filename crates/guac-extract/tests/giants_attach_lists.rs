@@ -79,3 +79,71 @@ fn attach_lists_with_an_empty_slot_read_with_the_others_at_their_index() {
         );
     }
 }
+
+/// openspec AS.661 on the dump: a character archive's static models' attach
+/// lists, the part the TV hangs his spawns on. Before it no part carried
+/// them, so Sprocket's turret pieces and Crusher's earth crack stood at their
+/// pivots. Every character archive reads with none refused; Sprocket's
+/// turret base and Crusher's crack keep their empty slots at their index.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn every_character_archives_static_lists_read_for_the_spawn_nodes_part() {
+    let usr = usrdir();
+    let mut names: Vec<String> = std::fs::read_dir(usr.join("character"))
+        .expect("character/")
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|n| n.ends_with(".bld"))
+        .collect();
+    names.sort();
+    let (mut archives, mut with, mut lists) = (0, 0, 0);
+    let mut picked = Vec::new();
+    for n in &names {
+        let archive = format!("character/{n}");
+        let Ok(entry) = guac_extract::scripts::entry(&usr, &archive) else {
+            continue;
+        };
+        let igz = Igz::parse(&entry).expect(&archive);
+        let body = guac_extract::scripts::body(&igz, &archive);
+        let r = guac_extract::scripts::spawn_nodes(&igz, &archive, identity(), body)
+            .unwrap_or_else(|e| panic!("{archive}: {e}"));
+        assert!(r.refused.is_empty(), "{archive}: {:?}", r.refused);
+        assert!(
+            r.models
+                .iter()
+                .all(|m| m.nodes.iter().all(|n| n.joint.is_none())),
+            "{archive}: a static model's node on a joint"
+        );
+        archives += 1;
+        with += usize::from(!r.models.is_empty());
+        lists += r.models.len();
+        if matches!(n.as_str(), "111_turretmaster.bld" | "102_titan_earth.bld") {
+            picked.push(r);
+        }
+    }
+    println!("{archives} character archives, {with} with static lists, {lists} lists");
+    assert!(archives > 100, "{archives}");
+    assert!(with > 50 && lists > 250, "{with} archives, {lists} lists");
+    let find = |archive: &str, model: &str| {
+        picked
+            .iter()
+            .find(|r| r.archive == archive)
+            .and_then(|r| r.models.iter().find(|m| m.load_file.ends_with(model)))
+            .unwrap_or_else(|| panic!("{archive}: {model}"))
+            .clone()
+    };
+    let base = find(
+        "character/111_turretmaster.bld",
+        "SteamPunkGirl_Turret_01_Base.mdl",
+    );
+    assert_eq!(base.nodes.len(), 3);
+    assert!(base.nodes[0].is_empty() && !base.nodes[2].is_empty());
+    let top = find(
+        "character/111_turretmaster.bld",
+        "SteamPunkGirl_Turret_00_Unified_Top.mdl",
+    );
+    assert_eq!(top.nodes.len(), 6);
+    assert!(top.nodes.iter().all(|n| !n.is_empty()));
+    let crack = find("character/102_titan_earth.bld", "earthcrack_crack.mdl");
+    assert_eq!(crack.nodes.len(), 2);
+    assert!(crack.nodes[0].is_empty() && !crack.nodes[1].is_empty());
+}

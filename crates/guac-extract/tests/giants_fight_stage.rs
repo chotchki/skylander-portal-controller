@@ -476,6 +476,7 @@ fn the_fights_parts_extract_whole_and_resume() {
         scripts::SCRIPTS,
         scripts::SPAWNS,
         scripts::SPAWN_RIGS,
+        scripts::SPAWN_NODES,
         guac_extract::models::PALETTES,
         guac_extract::particles::PART,
     ] {
@@ -500,7 +501,7 @@ fn the_fights_parts_extract_whole_and_resume() {
         + done.levels.files.written
         + done.scripts.files.written;
     println!(
-        "  resume of the five parts: levels {} read, {} kept; scripts {} read; palettes kept {}; {written} files written; {:.2} s (models {:.2} s, level {:.2} s, scripts {:.2} s); load average {}",
+        "  resume of the six parts: levels {} read, {} kept; scripts {} read; palettes kept {}; {written} files written; {:.2} s (models {:.2} s, level {:.2} s, scripts {:.2} s); load average {}",
         done.levels.parts_read,
         done.levels.parts_kept,
         done.scripts.parts_read,
@@ -512,7 +513,7 @@ fn the_fights_parts_extract_whole_and_resume() {
         load_average()
     );
     assert_eq!(written, 0, "every file was there as recorded");
-    assert_eq!((done.levels.parts_read, done.scripts.parts_read), (2, 3));
+    assert_eq!((done.levels.parts_read, done.scripts.parts_read), (2, 4));
     assert!(done.particles.read && done.particles.files.written == 0);
     drop(again);
     assert_eq!(

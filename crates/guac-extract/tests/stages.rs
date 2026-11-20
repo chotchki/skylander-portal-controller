@@ -580,10 +580,10 @@ fn the_roster_is_written_before_any_intro_work_starts() {
     assert_eq!((pc.files.written, pc.files.kept), (MODELS, 0));
     assert!(pc.took <= md.took);
     assert!(dir.join(format!("palettes/{HEROLESS}.ron")).is_file());
-    // The script stage: the three parts read, the entries as the disc holds
+    // The script stage: the four parts read, the entries as the disc holds
     // them, the spawn models' one texture already in the store.
     let sc = &done.scripts;
-    assert_eq!((sc.parts_read, sc.parts_kept), (3, 0));
+    assert_eq!((sc.parts_read, sc.parts_kept), (4, 0));
     assert!(sc.failed.is_empty(), "{:?}", sc.failed);
     assert_eq!((sc.entries, sc.scripts), (BASE_ENTRIES + WALKERS, SCRIPTS));
     assert_eq!((sc.walkers, sc.walkers_left_out.len()), (WALKERS, 1));
@@ -604,8 +604,23 @@ fn the_roster_is_written_before_any_intro_work_starts() {
             sc.spawn_files.written,
             sc.spawn_files.kept
         ),
-        (ENTRIES, 2 + WALKERS + 1 + WALKERS, 1)
+        (ENTRIES, 2 + WALKERS + 1 + WALKERS + 1 + WALKERS, 1)
     );
+    // And its spawn nodes (AS.661): the builder's character's scripts hang
+    // their clones on one static template's list, read on no joint.
+    let nodes: guac_ir::spawn::SpawnNodes =
+        guac_ir::from_ron(&fs::read_to_string(dir.join("spawn_nodes/009_eruptor.ron")).unwrap())
+            .unwrap();
+    assert_eq!(nodes.archive, "character/009_eruptor.bld");
+    assert_eq!(
+        (
+            nodes.models.len(),
+            sc.spawn_node_lists,
+            sc.refused_spawn_nodes.len()
+        ),
+        (1, 1, 0)
+    );
+    assert!(nodes.models[0].nodes.iter().all(|n| n.joint.is_none()));
     // Every character archive's rigs (AU.37): the model builder's character
     // holds none past his body.
     let rigs: guac_ir::spawn::SpawnRigs =
@@ -910,6 +925,7 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
         "scripts",
         scripts::SPAWNS,
         scripts::SPAWN_RIGS,
+        scripts::SPAWN_NODES,
         "nodes",
         guac_extract::particles::PART,
         guac_extract::sounds::PART,
@@ -960,13 +976,13 @@ fn without_ffmpeg_the_roster_and_portraits_land_and_the_intros_are_unavailable()
         (0, MODELS)
     );
     let sc = &done.scripts;
-    assert_eq!((sc.parts_read, sc.parts_kept, sc.entries), (0, 3, 0));
+    assert_eq!((sc.parts_read, sc.parts_kept, sc.entries), (0, 4, 0));
     // The entries, the spawn models' two base files and texture, each
-    // walker's spawn models (AU.1), and the fighter's and each walker's
-    // rigs (AU.37).
+    // walker's spawn models (AU.1), the fighter's and each walker's rigs
+    // (AU.37) and their spawn nodes (AS.661).
     assert_eq!(
         (sc.files.written, sc.files.kept),
-        (0, ENTRIES + 3 + WALKERS + 1 + WALKERS)
+        (0, ENTRIES + 3 + WALKERS + 1 + WALKERS + 1 + WALKERS)
     );
     let pa = &done.particles;
     assert!(pa.kept && !pa.read);
@@ -1496,7 +1512,7 @@ fn the_progression_part_an_older_manifest_lacks_resumes_alone() {
     // read again, their files kept.
     assert_eq!(done.models.palettes.files.written, 0);
     let sc = &done.scripts;
-    assert_eq!((sc.parts_read, sc.files.written), (3, 0));
+    assert_eq!((sc.parts_read, sc.files.written), (4, 0));
     assert_eq!(done.intros.unwrap().summary.transcoded, 0);
     drop(again);
     assert_eq!(
@@ -1690,7 +1706,7 @@ fn an_extract_made_before_the_walkers_resumes_for_its_scripts_part_alone() {
     let sc = &done.scripts;
     assert_eq!(
         (sc.parts_read, sc.parts_kept),
-        (1, 2),
+        (1, 3),
         "the scripts part alone"
     );
     assert_eq!(
@@ -1765,8 +1781,8 @@ fn an_extract_made_before_au1_reads_the_walkers_spawns_and_particles_alone() {
     let sc = &done.scripts;
     assert_eq!(
         (sc.parts_read, sc.parts_kept),
-        (1, 2),
-        "the spawn models part, the scripts and the spawn rigs parts kept"
+        (1, 3),
+        "the spawn models part, the scripts, spawn rigs and spawn nodes parts kept"
     );
     assert!(done.particles.read, "the particles part read again");
     let written = done.roster.files.written
@@ -1838,7 +1854,7 @@ fn an_extract_whose_spawn_part_predates_ah39_reads_it_again() {
     let sc = &done.scripts;
     assert_eq!(
         (sc.parts_read, sc.parts_kept),
-        (1, 2),
+        (1, 3),
         "the spawn part alone"
     );
     assert_eq!(done.levels.parts_read, 0);
@@ -1973,6 +1989,9 @@ fn each_of_the_fights_parts_resumes_alone() {
         (false, scripts::SCRIPTS),
         (false, scripts::SPAWNS),
         (false, scripts::SPAWN_RIGS),
+        // AS.661: a family's extract made before the spawn nodes reads them
+        // on its next start, alone, nothing deleted by hand.
+        (false, scripts::SPAWN_NODES),
         (false, guac_extract::particles::PART),
         (false, guac_extract::sounds::PART),
     ] {
@@ -2008,7 +2027,7 @@ fn each_of_the_fights_parts_resumes_alone() {
         };
         assert_eq!(lv.parts_read, level_read, "{part}");
         assert_eq!(sc.parts_read, script_read, "{part}");
-        assert_eq!(sc.parts_kept, 3 - script_read, "{part}");
+        assert_eq!(sc.parts_kept, 4 - script_read, "{part}");
         assert_eq!(done.intros.unwrap().summary.transcoded, 0);
         for f in &gone {
             assert!(again.dir.output_done(f).unwrap(), "{part}: {f}");
@@ -2032,7 +2051,7 @@ fn each_of_the_fights_parts_resumes_alone() {
     fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
     let mut again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
     let sc = stages::script_stage(&mut again.dir, IrFormat::Ron, &|_| {}).unwrap();
-    assert_eq!((sc.parts_read, sc.parts_kept), (1, 2));
+    assert_eq!((sc.parts_read, sc.parts_kept), (1, 3));
     assert_eq!(
         (sc.script_files.written, sc.script_files.kept),
         (0, ENTRIES)
@@ -2064,7 +2083,7 @@ fn each_of_the_fights_parts_resumes_alone() {
     drop(again);
     let mut again = open(&s.dump, &s.root, &s.known, &|_| {}).unwrap();
     let sc = stages::script_stage(&mut again.dir, IrFormat::Ron, &|_| {}).unwrap();
-    assert_eq!((sc.parts_read, sc.parts_kept), (1, 2));
+    assert_eq!((sc.parts_read, sc.parts_kept), (1, 3));
     assert_eq!(sc.walkers, WALKERS);
     assert_eq!(
         (sc.script_files.written, sc.script_files.kept),
@@ -2086,7 +2105,7 @@ fn each_of_the_fights_parts_resumes_alone() {
         fs::remove_file(again.dir.path().join(f)).unwrap();
     }
     let sc = stages::script_stage(&mut again.dir, IrFormat::Ron, &|_| {}).unwrap();
-    assert_eq!((sc.parts_read, sc.parts_kept), (2, 1));
+    assert_eq!((sc.parts_read, sc.parts_kept), (2, 2));
     assert_eq!(
         (sc.script_files.written, sc.script_files.kept),
         (1, ENTRIES - 1)
@@ -2246,7 +2265,8 @@ fn script_parts_that_dont_read_leave_the_rest() {
         [
             ("scripts", "character/009_eruptor.bld"),
             (scripts::SPAWNS, "character/009_eruptor.bld"),
-            (scripts::SPAWN_RIGS, "character/009_eruptor.bld")
+            (scripts::SPAWN_RIGS, "character/009_eruptor.bld"),
+            (scripts::SPAWN_NODES, "character/009_eruptor.bld")
         ]
     );
     for f in &sc.failed {
@@ -2278,7 +2298,7 @@ fn script_parts_that_dont_read_leave_the_rest() {
     assert_eq!(again.state, DirState::Resume);
     // The next start tries them again, and nothing else is written.
     let done = stages::run(&mut again.dir, Some(&s.ffmpeg), IrFormat::Ron, &|_| {}).unwrap();
-    assert_eq!(done.scripts.failed.len(), 3);
+    assert_eq!(done.scripts.failed.len(), 4);
     assert_eq!(done.levels.parts_read, 0);
     assert_eq!(done.models.palettes.files.written, 0);
 }

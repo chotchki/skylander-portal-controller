@@ -457,6 +457,8 @@ pub(crate) struct HeroModel {
     nodes: Option<Arc<AttachNodes>>,
     /// What his skinned spawns play (openspec AU.37).
     rigs: Option<Arc<guac_ir::spawn::SpawnRigs>>,
+    /// Where what hangs on his static spawns stands (openspec AS.661).
+    spawn_nodes: Option<hero_scripts::SpawnOrigins>,
 }
 
 /// `load`'s model, its hero side, its palette and its attach nodes, on a
@@ -491,6 +493,13 @@ fn read_hero_model(
             None
         }
     };
+    let spawn_nodes = match guacamole::level_scripts::spawn_nodes(&shelf.dir, load, shelf.ir) {
+        Ok(n) => Some(Arc::new(guacamole::scripts::spawn_origin_nodes(&n))),
+        Err(why) => {
+            warn!(load_file = load, reason = %why, "his spawn nodes didn't read: what his scripts hang on his static spawns stands at their pivots");
+            None
+        }
+    };
     let solid = hero.solid;
     Ok(HeroModel {
         loaded,
@@ -499,6 +508,7 @@ fn read_hero_model(
         palette,
         nodes,
         rigs,
+        spawn_nodes,
     })
 }
 
@@ -2367,6 +2377,7 @@ fn enter(
     let clips = read.clips.clone();
     let palette = read.palette.clone();
     let rigs = read.rigs.clone();
+    let spawn_nodes = read.spawn_nodes.clone();
     let rig = read.nodes.clone().map(|nodes| hero_scripts::HandRig {
         model: drawn.model.clone(),
         clips: clips.clone(),
@@ -2392,7 +2403,10 @@ fn enter(
         hero_entity,
         walker,
         palette.clone(),
-        rigs,
+        hero_scripts::Spawns {
+            rigs,
+            nodes: spawn_nodes,
+        },
         rig,
         s.source.as_deref(),
         c.slot,
@@ -3719,6 +3733,58 @@ mod tests {
         let world = app.world().resource::<ScriptWorld>();
         assert!(world.palette(his).is_some(), "his template's clips");
         assert_eq!(world.palette(others), None, "another file's");
+    }
+
+    /// AS.661: a character's static spawns' attach lists reach the run's
+    /// origin nodes at his join, off the part read with his model, so what
+    /// his scripts hang on them stands on their nodes; none before it.
+    #[test]
+    fn a_walkers_spawn_nodes_reach_the_run_at_his_join() {
+        use guac_formats::script::builder::WalkerFault;
+        use guacamole::scripts::ScriptWorld;
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let (mut app, pad) = walker_app(dir, WalkerFault::None);
+        let palette: Palette = guac_ir::from_ron(
+            &std::fs::read_to_string(dir.join(IrFormat::Ron.palette_path(WALKER))).unwrap(),
+        )
+        .unwrap();
+        let archive = guac_extract::scripts::character_archive(WALKER);
+        let rel = dir.join(IrFormat::Ron.spawn_node_path(&archive));
+        std::fs::create_dir_all(rel.parent().unwrap()).unwrap();
+        let mut node = guac_ir::nodes::AttachNode::empty();
+        node.name = Some("seat".into());
+        node.offset.translation = [0.0, 1.5, 0.0];
+        let nodes = guac_ir::spawn::SpawnNodes {
+            identity: palette.identity.clone(),
+            archive,
+            models: vec![guac_ir::nodes::AttachNodes {
+                identity: palette.identity.clone(),
+                load_file: "turret.mdl".into(),
+                nodes: vec![guac_ir::nodes::AttachNode::empty(), node],
+            }],
+            refused: Vec::new(),
+        };
+        std::fs::write(rel, guac_ir::to_ron(&nodes).unwrap()).unwrap();
+        place(&mut app, 0, WALKER_TOY, "Synthetic");
+        until(&mut app, "the level", |a| mode(a) != Mode::Portal);
+        assert!(
+            app.world()
+                .resource::<ScriptWorld>()
+                .origin_nodes_at("turret.mdl")
+                .is_none(),
+            "not before his join"
+        );
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        until(&mut app, "his scripts", |a| {
+            join(a).as_deref() == Some("joined")
+        });
+        let world = app.world().resource::<ScriptWorld>();
+        let list = world
+            .origin_nodes_at("turret.mdl")
+            .expect("his turret's list");
+        assert_eq!(list.len(), 2, "the empty slot keeps the seat's index");
+        assert_eq!(list[1].at, Vec3::new(0.0, 1.5, 0.0));
     }
 
     /// AG.27: a character with his own scripts in the part, no table of

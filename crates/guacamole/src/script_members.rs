@@ -6517,6 +6517,58 @@ mod tests {
         assert!(at.distance(posed) < 1e-4, "{at}");
     }
 
+    /// openspec AS.661: a hero's static spawn's attach nodes, added at his
+    /// join beside the level's, put what hangs on it on its node (Sprocket's
+    /// turret top on its bottom), where before it stood at the bottom's
+    /// pivot; a path the level's own models hold keeps the level's list.
+    #[test]
+    fn a_heros_static_spawns_nodes_hang_what_his_scripts_hang_on_them() {
+        const BOTTOM_T: Obj = Obj { unit: 64, index: 3 };
+        const BOTTOM: Handle = 0x6000_0081;
+        const TOP: Handle = 0x6000_0082;
+        let mut e = bench();
+        let mut w = world();
+        let mut template =
+            crate::scripts::Placed::named(BOTTOM_T, "111_Turret_00_Bottom", None, 64);
+        template.model = Some("bottom.mdl".into());
+        w.templates.insert(BOTTOM_T, template);
+        w.set_origin_nodes(HashMap::from([(
+            "shared.mdl".to_owned(),
+            vec![NodePose::at(Vec3::new(0.0, 9.0, 0.0))],
+        )]));
+        let mut bottom = Actor::blank();
+        bottom.template = Some(BOTTOM_T);
+        bottom.position = Vec3::new(2.0, 0.0, 3.0);
+        w.actors.insert(BOTTOM, bottom);
+        let mut top = Actor::blank();
+        top.attach = w.objs.value(Object::Node(BOTTOM, 1));
+        w.actors.insert(TOP, top);
+        // Before his join's nodes, at the bottom's pivot.
+        w.place_hung(&mut e);
+        assert!(w.actors[&TOP].position.distance(Vec3::new(2.0, 0.0, 3.0)) < 1e-4);
+        let his = HashMap::from([
+            (
+                "bottom.mdl".to_owned(),
+                vec![
+                    NodePose::at(Vec3::ZERO),
+                    NodePose::at(Vec3::new(0.0, 1.5, 0.0)),
+                ],
+            ),
+            (
+                "shared.mdl".to_owned(),
+                vec![NodePose::at(Vec3::new(0.0, -9.0, 0.0))],
+            ),
+        ]);
+        assert_eq!(w.add_origin_nodes(&his), 1, "the level's own list kept");
+        assert_eq!(
+            w.origin_nodes_at("shared.mdl").map(|n| n[0].at),
+            Some(Vec3::new(0.0, 9.0, 0.0))
+        );
+        w.place_hung(&mut e);
+        let at = w.actors[&TOP].position;
+        assert!(at.distance(Vec3::new(2.0, 1.5, 3.0)) < 1e-4, "{at}");
+    }
+
     /// openspec AS.445: a turret's ball hangs on its body's static node and
     /// its barrel on the ball's; `New Turret - Track Target With Barrel`
     /// writes the ball's facing and tilt each step. The ball keeps the turn

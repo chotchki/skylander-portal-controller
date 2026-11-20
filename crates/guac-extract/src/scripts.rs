@@ -53,7 +53,7 @@ use guac_formats::script::Graph;
 use guac_ir::DumpIdentity;
 use guac_ir::level::{Prop, RefusedProp};
 use guac_ir::nodes::AttachNodes;
-use guac_ir::spawn::{SpawnModels, SpawnRig, SpawnRigs};
+use guac_ir::spawn::{SpawnModels, SpawnNodes, SpawnRig, SpawnRigs};
 
 use crate::extract::Manifest;
 use crate::levels::Read;
@@ -68,10 +68,14 @@ use crate::roster::{BOOTSTRAP, GLOBAL, INIT_SETUP, LEVEL};
 pub const SCRIPTS: &str = "scripts";
 pub const SPAWNS: &str = "spawn models";
 pub const SPAWN_RIGS: &str = "spawn rigs";
+/// A character archive's static models' attach lists (openspec AS.661): a
+/// part of its own, so an extract made before it resumes for it alone.
+pub const SPAWN_NODES: &str = "spawn nodes";
 /// Where each part's files go.
 pub const SCRIPT_DIR: &str = "scripts";
 pub const SPAWN_DIR: &str = "spawns";
 pub const SPAWN_RIG_DIR: &str = "spawn_rigs";
+pub const SPAWN_NODE_DIR: &str = "spawn_nodes";
 
 /// The characters whose archives link with the base, by load file: Eruptor,
 /// whose attacks ran on his scripts first (design decision 15; Open
@@ -1227,13 +1231,14 @@ pub fn script_path(archive: &str) -> String {
     format!("{SCRIPT_DIR}/{}.igz", stem(archive))
 }
 
-/// Whether `m` holds all three parts, the scripts one with its walkers'
+/// Whether `m` holds all four parts, the scripts one with its walkers'
 /// list ([`WALKERS_FILE`]), the spawn models one with every listed walker's
-/// models (openspec AU.1) and the spawn rigs one with every listed walker's
-/// rigs (AU.37): a start is current only then, so an extract made before
-/// the walkers resumes for the scripts part, one made before AU.1 for the
-/// spawn models part and one made before AU.37 for the spawn rigs part,
-/// alone.
+/// models (openspec AU.1), the spawn rigs one with every listed walker's
+/// rigs (AU.37) and the spawn nodes one with every listed walker's static
+/// attach lists (AS.661): a start is current only then, so an extract made
+/// before the walkers resumes for the scripts part, one made before AU.1 for
+/// the spawn models part, one made before AU.37 for the spawn rigs part and
+/// one made before AS.661 for the spawn nodes part, alone.
 pub fn complete(m: &Manifest) -> bool {
     let Some(scripts) = m.parts.get(SCRIPTS) else {
         return false;
@@ -1246,6 +1251,7 @@ pub fn complete(m: &Manifest) -> bool {
     scripts.iter().any(|f| f == WALKERS_FILE)
         && holds(SPAWNS, SPAWN_DIR)
         && holds(SPAWN_RIGS, SPAWN_RIG_DIR)
+        && holds(SPAWN_NODES, SPAWN_NODE_DIR)
 }
 
 /// The `level.bld` `archive` keeps, decompressed, under `usrdir`. Why it
@@ -1396,6 +1402,52 @@ pub fn spawn_rigs(
         identity,
         archive: archive.to_owned(),
         rigs,
+        refused,
+    })
+}
+
+/// Each static model a placement in `igz` names but `skip` (a character's
+/// own body) whose attach list holds a slot, in object order, its nodes on
+/// no joint as a level's `nodes` part reads a static prop's (openspec
+/// AS.661: what a script hangs on Sprocket's turret pieces stands on them).
+/// A skinned one's list is its rig's ([`spawn_rigs`]); one whose list won't
+/// read is listed with why.
+pub fn spawn_nodes(
+    igz: &Igz<'_>,
+    archive: &str,
+    identity: DumpIdentity,
+    skip: Option<usize>,
+) -> Result<SpawnNodes, String> {
+    let placements = Placements::read(igz).map_err(|e| e.to_string())?;
+    let (mut models, mut refused) = (Vec::new(), Vec::new());
+    for (&model, info) in &placements.models {
+        if Some(model) == skip || Hero::read(igz, model).is_ok() {
+            continue;
+        }
+        let path = info
+            .info
+            .name
+            .ok_or_else(|| format!("model #{model} has no name"))?;
+        match attach_points(igz, model) {
+            Ok(points) if points.is_empty() => {}
+            Ok(points) => models.push(AttachNodes {
+                identity: identity.clone(),
+                load_file: path.to_owned(),
+                nodes: points
+                    .iter()
+                    .map(|p| models::slot_node(p.as_ref(), &[]))
+                    .collect(),
+            }),
+            Err(e) => refused.push(RefusedProp {
+                path: path.to_owned(),
+                reason: e.to_string(),
+            }),
+        }
+    }
+    Ok(SpawnNodes {
+        identity,
+        archive: archive.to_owned(),
+        models,
         refused,
     })
 }

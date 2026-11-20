@@ -7,7 +7,8 @@
 //! archive, `spawns/<archive>.<ron|postcard>`, beside unchanged ones, so
 //! [`crate::IR_VERSION`] holds. The clips and attach lists of a character
 //! archive's skinned models are a part of their own ([`SpawnRigs`], openspec
-//! AU.37), new files again.
+//! AU.37), new files again, and so are its static models' attach lists
+//! ([`SpawnNodes`], openspec AS.661).
 
 use serde::{Deserialize, Serialize};
 
@@ -51,6 +52,22 @@ pub struct SpawnRig {
     pub nodes: Option<AttachNodes>,
 }
 
+/// The attach lists of a character archive's static models past his own
+/// body (openspec AS.661: Sprocket's turret pieces, Crusher's earth crack),
+/// each by its path, its nodes on no joint, as a level's `nodes` part keeps
+/// a static prop's: one file per character archive,
+/// `spawn_nodes/<archive>.<ron|postcard>`, none in it for an archive with
+/// none. A skinned spawn's list is its rig's ([`SpawnRig::nodes`]).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SpawnNodes {
+    pub identity: DumpIdentity,
+    /// The archive's path under `PS3_GAME/USRDIR`.
+    pub archive: String,
+    pub models: Vec<AttachNodes>,
+    /// Those whose list doesn't read, each with why.
+    pub refused: Vec<RefusedProp>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -88,6 +105,33 @@ mod tests {
         assert_eq!(from_ron::<SpawnRigs>(&to_ron(&s).unwrap()).unwrap(), s);
         assert_eq!(
             from_postcard::<SpawnRigs>(&to_postcard(&s).unwrap()).unwrap(),
+            s
+        );
+    }
+
+    #[test]
+    fn spawn_nodes_round_trip_through_both() {
+        let identity = DumpIdentity {
+            title_id: "BLUS30968".into(),
+            app_ver: "01.00".into(),
+            manifest_hash: Sha256([3; 32]),
+        };
+        let s = SpawnNodes {
+            identity: identity.clone(),
+            archive: "character/111_turretmaster.bld".into(),
+            models: vec![AttachNodes {
+                identity,
+                load_file: "Turret.mdl".into(),
+                nodes: vec![crate::nodes::AttachNode::empty()],
+            }],
+            refused: vec![RefusedProp {
+                path: "x.mdl".into(),
+                reason: "why".into(),
+            }],
+        };
+        assert_eq!(from_ron::<SpawnNodes>(&to_ron(&s).unwrap()).unwrap(), s);
+        assert_eq!(
+            from_postcard::<SpawnNodes>(&to_postcard(&s).unwrap()).unwrap(),
             s
         );
     }

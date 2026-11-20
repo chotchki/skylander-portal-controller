@@ -337,6 +337,60 @@ fn spawn_models_are_every_placements_but_the_fighters_body() {
     assert!(r.ir.props.is_empty() && r.textures.is_empty());
 }
 
+/// AS.661: a character archive's spawn nodes are its static models' attach
+/// lists past his body, each node on no joint; a skinned model's list is its
+/// rig's ([`spawn_rigs`]), not here, and a model with no list is left out.
+#[test]
+fn spawn_nodes_are_every_static_models_list_but_the_skinned() {
+    use guac_formats::attachments::builder::PointSpec;
+    use guac_formats::level::builder::{stage_level, stage_sample};
+    const GOURD: &str = "C:/tfb/Content/Models/Objects/gourd_01.mdl";
+    let mut spec = stage_sample();
+    spec.skinned_points = vec![PointSpec::bone("J_spine", 1)];
+    spec.prop_points = vec![PointSpec::bone("J_spine", 1), PointSpec::root(0.5)];
+    let bytes: &'static [u8] = Vec::leak(stage_level(&spec));
+    let igz = Igz::parse(bytes).unwrap();
+    let archive = "character/111_turretmaster.bld";
+    let r = spawn_nodes(&igz, archive, identity(), None).unwrap();
+    assert_eq!(
+        (r.archive.as_str(), r.identity.clone()),
+        (archive, identity())
+    );
+    assert!(r.refused.is_empty(), "{:?}", r.refused);
+    let [m] = &r.models[..] else {
+        panic!("{:?}", r.models);
+    };
+    assert_eq!(m.load_file, GOURD);
+    assert_eq!(m.nodes.len(), 2);
+    assert!(
+        m.nodes.iter().all(|n| n.joint.is_none()),
+        "a static model has no joints"
+    );
+    assert_eq!(m.nodes[1].offset.translation, [0.0, 0.0, 0.5]);
+    // The gourd as his body: nothing past it.
+    let gourd = Placements::read(&igz)
+        .unwrap()
+        .models
+        .iter()
+        .find(|(_, i)| i.info.name == Some(GOURD))
+        .map(|(m, _)| *m);
+    assert!(
+        spawn_nodes(&igz, archive, identity(), gourd)
+            .unwrap()
+            .models
+            .is_empty()
+    );
+    // No lists, none.
+    let bytes: &'static [u8] = Vec::leak(stage_level(&stage_sample()));
+    let igz = Igz::parse(bytes).unwrap();
+    assert!(
+        spawn_nodes(&igz, archive, identity(), None)
+            .unwrap()
+            .models
+            .is_empty()
+    );
+}
+
 /// AU.37: a character archive's rigs are its skinned models' past his body,
 /// each with its palette by the slots its scripts play and its model's path
 /// as the spawn models part names it; static models have none.
@@ -458,7 +512,7 @@ fn spawn_models_naming_their_files_own_effects_read_through_its_exports() {
 }
 
 #[test]
-fn complete_wants_the_three_parts_and_the_walkers_list() {
+fn complete_wants_the_four_parts_and_the_walkers_list() {
     let mut m: Manifest = serde_json::from_value(serde_json::json!({
         "extractor": "0", "layout": 4, "ir_version": 5,
         "identity": identity(), "source_dir": "/d", "complete": true,
@@ -470,6 +524,7 @@ fn complete_wants_the_three_parts_and_the_walkers_list() {
     assert!(!complete(&m), "the spawn models missing");
     m.parts.insert(SPAWNS.into(), Vec::new());
     m.parts.insert(SPAWN_RIGS.into(), Vec::new());
+    m.parts.insert(SPAWN_NODES.into(), Vec::new());
     // A scripts part made before the walkers has no list (AG.27): the
     // start isn't current, so the part resumes alone.
     assert!(!complete(&m), "the walkers' list missing");
@@ -480,6 +535,11 @@ fn complete_wants_the_three_parts_and_the_walkers_list() {
     let rigs = m.parts.remove(SPAWN_RIGS).unwrap();
     assert!(!complete(&m), "the spawn rigs missing");
     m.parts.insert(SPAWN_RIGS.into(), rigs);
+    // AS.661: an extract made before the spawn nodes resumes for them,
+    // nothing deleted by hand.
+    let nodes = m.parts.remove(SPAWN_NODES).unwrap();
+    assert!(!complete(&m), "the spawn nodes missing");
+    m.parts.insert(SPAWN_NODES.into(), nodes);
     // AU.1: once the scripts part holds a walker, the spawn models part
     // holds his models too, in either IR, or the start resumes for it: an
     // extract made before AU.1 read only the base's.
@@ -507,6 +567,9 @@ fn complete_wants_the_three_parts_and_the_walkers_list() {
         SPAWN_RIGS.into(),
         vec!["spawn_rigs/016_spyro.postcard".into()],
     );
+    assert!(!complete(&m), "the walker's spawn nodes missing");
+    m.parts
+        .insert(SPAWN_NODES.into(), vec!["spawn_nodes/016_spyro.ron".into()]);
     assert!(complete(&m));
     m.parts.get_mut(SPAWNS).unwrap()[2] = "spawns/016_spyro_dark.ron".into();
     assert!(!complete(&m), "another walker's file isn't his");
