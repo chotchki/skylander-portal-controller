@@ -242,6 +242,7 @@ pub(crate) struct DrawnCreature {
 impl DrawnCreature {
     /// Its skeleton's joints, by entity (openspec AS.680: the stage frames
     /// it by where they're posed).
+    #[cfg(feature = "test-hooks")]
     pub(crate) fn joints(&self) -> &[Entity] {
         &self.joints
     }
