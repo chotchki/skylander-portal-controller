@@ -923,34 +923,6 @@ pub fn sky_rank(bias: f32) -> Option<usize> {
     (bias < SKY_BIAS / 2.0 && rank > -0.5).then(|| rank.round() as usize)
 }
 
-/// A card stone's face model (`cardPic_*`, openspec AS.664): it hangs
-/// 0.14 units over its stone, both blending, and the TV sorts blended meshes
-/// by their bounds' centres, so from the frame's edge the stone's centre can
-/// sort nearer than its face and the stone draws over it: the face blank.
-pub fn is_card_face(path: &str) -> bool {
-    path.rsplit(['/', '\\'])
-        .next()
-        .is_some_and(|f| f.starts_with("cardPic_"))
-}
-
-/// The sort bias a stone's face draws with: nearer than its stone by more
-/// than the stone's own depth, far under a neighbour stone's spacing.
-pub const CARD_FACE_BIAS: f32 = 0.5;
-
-/// `bias` (one a material of `drawn`) with every material a face model's
-/// segments (`faces`, segment ranges of `drawn`) draw with sorting
-/// [`CARD_FACE_BIAS`] nearer, so a face always draws after its stone.
-pub fn lift_card_faces(bias: &mut [f32], drawn: &Drawn, faces: &[std::ops::Range<usize>]) {
-    for r in faces {
-        for s in &drawn.segments[r.clone()] {
-            let k = usize::from(s.material);
-            if let Some(b) = bias.get_mut(k) {
-                *b = b.max(CARD_FACE_BIAS);
-            }
-        }
-    }
-}
-
 /// Each material's sort bias in `drawn`: [`sky_bias`] of its rank for one
 /// the sky draws with, 0 for the rest (sorted by depth alone).
 pub fn depth_biases(drawn: &Drawn) -> Vec<f32> {
@@ -1316,44 +1288,6 @@ mod tests {
         Blend, Filter, Glow, Mask, Params, RenderStates, Sampler, TextureRole, TextureSlot, Wrap,
     };
     use guac_ir::{DumpIdentity, RigLight, Sha256};
-
-    fn seg(material: u16) -> model::Segment {
-        model::Segment {
-            material,
-            source: 0,
-            positions: Vec::new(),
-            normals: Vec::new(),
-            tangents: None,
-            uvs: Vec::new(),
-            colors: None,
-            joints: Vec::new(),
-            weights: Vec::new(),
-            indices: Vec::new(),
-        }
-    }
-
-    /// openspec AS.664: a stone's face sorts nearer than its stone by
-    /// [`CARD_FACE_BIAS`], every material its segments draw with, no other
-    /// model's, a sky's bias kept.
-    #[test]
-    fn a_card_faces_materials_sort_nearer_than_its_stones() {
-        assert!(is_card_face(
-            "C:/tfb/Content/Models/UI/CardGame/cardPic_elfNear.mdl"
-        ));
-        assert!(is_card_face("cardPic_x.mdl"));
-        assert!(!is_card_face(
-            "C:/tfb/Content/Models/UI/CardGame/skyStone.mdl"
-        ));
-        let drawn = Drawn {
-            segments: vec![seg(0), seg(1), seg(1), seg(2), seg(3)],
-            ..Drawn::default()
-        };
-        let mut bias = vec![0.0, 0.0, 0.0, SKY_BIAS];
-        // The stone's segments 0..1, the face's 1..3, another model's 3..5.
-        lift_card_faces(&mut bias, &drawn, &[1..3]);
-        assert_eq!(bias, [0.0, CARD_FACE_BIAS, 0.0, SKY_BIAS]);
-        assert!(CARD_FACE_BIAS > 0.14 && CARD_FACE_BIAS < 1.0);
-    }
 
     fn close(a: [f32; 3], b: [f32; 3], tolerance: f32) -> bool {
         a.iter().zip(b).all(|(x, y)| (x - y).abs() < tolerance)
