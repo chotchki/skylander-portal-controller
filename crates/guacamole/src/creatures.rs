@@ -621,14 +621,14 @@ fn tint_creatures(
     mut commands: Commands,
     world: Res<ScriptWorld>,
     runtime: Option<Res<guacamole::scripts::ScriptRuntime>>,
-    creatures: Query<&DrawnCreature>,
+    creatures: Query<(Entity, &DrawnCreature, Option<&CreatureWash>)>,
     mut parts: Query<(
         &mut MeshMaterial3d<CharacterMaterial>,
         Option<&crate::tints::TintedPart>,
     )>,
     mut materials: ResMut<Assets<CharacterMaterial>>,
 ) {
-    for c in &creatures {
+    for (root, c, was) in &creatures {
         let Some(tint) = world.actor(c.actor).map(|a| a.tint) else {
             continue;
         };
@@ -640,7 +640,25 @@ fn tint_creatures(
         for &part in &c.segments {
             crate::tints::wash_part(part, tint, wash, &mut commands, &mut parts, &mut materials);
         }
+        let laid = CreatureWash {
+            percent: wash.map_or(0, |w| (w[3] * 100.0).round() as u8),
+            step: runtime.as_deref().map_or(0, |r| r.steps),
+        };
+        if was != Some(&laid) {
+            commands.entity(root).insert(laid);
+        }
     }
+}
+
+/// The wash [`tint_creatures`] last laid on a drawn creature's parts, in
+/// whole percent (0 for none), and the scripts' step it was read at:
+/// `/api/_test/tv`'s creature `drawn_wash` and `drawn_step` (openspec
+/// AS.634: a hit flash timed off what was drawn, as the hero's
+/// `play::HeroWash`).
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CreatureWash {
+    pub(crate) percent: u8,
+    pub(crate) step: u64,
 }
 
 /// Each drawn creature posed: [`base_clips`] on the TV's clock since it was
@@ -684,6 +702,12 @@ pub(crate) struct CreatureShot {
     pub gone: bool,
     /// Its body in Avian's world, while it has one.
     pub body: bool,
+    /// The wash the TV last laid on its drawn parts and the step it was
+    /// read at ([`CreatureWash`]); none while it isn't drawn.
+    pub drawn_wash: Option<u8>,
+    pub drawn_step: Option<u64>,
+    #[serde(skip)]
+    pub handle: Handle,
 }
 
 /// What the scripts spawned that's still on: its template's name, where,
@@ -793,6 +817,7 @@ pub(crate) struct CreatureShots<'w, 's> {
     drawn: Option<Res<'w, DrawnCreatures>>,
     clones: Query<'w, 's, (Entity, &'static crate::hero_scripts::CloneDrawn)>,
     creatures: Query<'w, 's, &'static DrawnCreature>,
+    washes: Query<'w, 's, &'static CreatureWash>,
     time: Res<'w, Time>,
 }
 
@@ -805,6 +830,15 @@ impl CreatureShots<'_, '_> {
             drawn: self.drawn.as_ref().map_or(0, |d| d.0.len()),
             ..report(&rt.vm, world)
         };
+        for c in &mut out.creatures {
+            let laid = self
+                .drawn
+                .as_ref()
+                .and_then(|d| d.0.get(&c.handle))
+                .and_then(|&e| self.washes.get(e).ok());
+            c.drawn_wash = laid.map(|w| w.percent);
+            c.drawn_step = laid.map(|w| w.step);
+        }
         for s in &mut out.spawned {
             s.drawn = self
                 .drawn
@@ -848,6 +882,9 @@ pub(crate) fn report(vm: &guac_script::Vm, world: &ScriptWorld) -> CreaturesRepo
             awake: a.active,
             gone: a.removed,
             body: world.embodied.iter().any(|(e, _)| *e == h),
+            drawn_wash: None,
+            drawn_step: None,
+            handle: h,
         })
     };
     let creatures = world.creatures().into_iter().filter_map(shot).collect();
@@ -1297,20 +1334,25 @@ mod tests {
             );
             app.update();
         };
+        // openspec AS.634: the test view's read of what was laid.
+        let laid = |app: &App| app.world().get::<CreatureWash>(root).map(|w| w.percent);
         flash(&mut app, 100);
         assert_eq!(
             drawn(&app).uniform.replace,
             bevy::math::Vec4::new(1.0, 0.0, 0.0, 1.0),
             "flashed red"
         );
+        assert_eq!(laid(&app), Some(100));
         flash(&mut app, 25);
         assert_eq!(drawn(&app).uniform.replace.w, 0.25);
+        assert_eq!(laid(&app), Some(25));
         flash(&mut app, 0);
         assert_eq!(
             drawn(&app).uniform.replace,
             lit_before.uniform.replace,
             "the scene's again"
         );
+        assert_eq!(laid(&app), Some(0));
     }
 
     /// AG.150: the clone of a level's skinned template (AS.63's rule: a
