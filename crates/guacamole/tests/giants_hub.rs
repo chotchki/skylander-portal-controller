@@ -1620,8 +1620,12 @@ struct Played {
     hands: Vec<Vec<u16>>,
     /// At each of the score header's updates, the score as the TV reads it
     /// and the board's stones a side (openspec AS.556).
-    scores: Vec<(Option<(i32, i32)>, Option<(i32, i32)>)>,
+    scores: Vec<ScoreUpdate>,
 }
+
+/// At a score header update: the score as the TV reads it and the board's
+/// stones a side, each the player's first (openspec AS.556).
+type ScoreUpdate = (Option<(i32, i32)>, Option<(i32, i32)>);
 
 /// One game's end.
 #[derive(Debug, Clone, PartialEq)]
