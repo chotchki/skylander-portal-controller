@@ -1051,7 +1051,15 @@ fn read_spawned(
         .iter()
         .map(|s| static_mesh(s).map_err(|e| format!("a spawn model's segment {}: {e}", s.source)))
         .collect::<Result<VecDeque<_>, _>>()?;
-    let depth_bias = arithmetic::depth_biases(&drawn);
+    let mut depth_bias = arithmetic::depth_biases(&drawn);
+    // A card stone's face draws after its stone (openspec AS.664).
+    let faces: Vec<_> = models
+        .iter()
+        .zip(&ranges)
+        .filter(|(m, _)| arithmetic::is_card_face(&m.path))
+        .map(|(_, r)| r.clone())
+        .collect();
+    arithmetic::lift_card_faces(&mut depth_bias, &drawn, &faces);
     drawn
         .segments
         .iter_mut()
