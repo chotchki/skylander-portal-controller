@@ -230,6 +230,8 @@ fn pin_on_creature(
         s.drawn = body.is_some();
     });
     let Some(body) = body.filter(|_| awake) else {
+        // Not awake or not drawn: no pin read back as if it framed it.
+        stage.with(|s| (s.pin, s.centre, s.radius) = (None, None, None));
         return;
     };
     let points: Vec<Vec3> = body
