@@ -4490,7 +4490,34 @@ fn on_to_setup_004s_end(setup: Setup) -> AtCali {
         run.steps,
         behaviour(&run, "Setup_004_Controller")
     );
-    let up_there = run.at(lobbers[0]);
+    // Up to them by the way 2.0's walk went (openspec AS.632, off its
+    // per-step trail): east up the ramp off the lower town, south along the
+    // upper street, west to their ledge. The fight's flood finds no way up
+    // from where the left door's fights leave him.
+    let up: Vec<&str> = lobbers
+        .iter()
+        .copied()
+        .filter(|n| behaviour(&run, n) != "removed")
+        .collect();
+    if !up.is_empty() {
+        let way = [
+            (-17.2, 1.0),
+            (-1.7, -4.5),
+            (4.6, -5.2),
+            (4.7, -20.0),
+            (2.7, -35.4),
+            (-2.4, -38.2),
+            (-14.1, -38.1),
+            (-20.1, -38.0),
+        ];
+        let went = go_by(&mut run, &mut stops, &mut scenes, &mut trail, &way, 900);
+        println!(
+            "up to the lobbers {up:?}: {went} at {}, step {}",
+            run.hero().pivot,
+            run.steps
+        );
+    }
+    let up_there = up.first().map_or(run.at(lobbers[0]), |n| run.at(n));
     let last = fight(
         &mut run,
         &mut stops,
