@@ -1601,6 +1601,7 @@ fn probe_nodes() {
     let skeleton = &read.model.skeleton;
     let mut joints = Vec::new();
     for (i, p) in points.iter().enumerate() {
+        let p = p.as_ref().expect("Eruptor's list has no empty slot");
         let bone = p.bone_name.unwrap_or_default();
         let j = skeleton.joints.iter().position(|j| j.name == bone);
         println!(

@@ -358,7 +358,10 @@ fn the_fights_parts_extract_whole_and_resume() {
     // AH.138's nodes part: every placed model's attach list, a skinned
     // one's nodes on its joints by name, none refused; Norticus' node 2,
     // what his turban hangs on, on his head's joint.
-    let nodes: LevelNodes = read(&dir, &IrFormat::Ron.level_path(LEVELS[0], levels::NODES));
+    let nodes: LevelNodes = read(
+        &dir,
+        &levels::part_path(IrFormat::Ron, LEVELS[0], levels::NODES),
+    );
     let all = || nodes.models.iter().flat_map(|m| &m.nodes);
     let jointed = all().filter(|n| n.joint.is_some()).count();
     let loose = all().filter(|n| n.joint.is_none()).count();

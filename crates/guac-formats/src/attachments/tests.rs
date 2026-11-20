@@ -186,6 +186,7 @@ fn a_models_attach_points_read_in_list_order() {
     let placements = Placements::read(&igz).unwrap();
     let hero = placements.actor("026_Synthetic").unwrap();
     let points = attach_points(&igz, hero.info.model.unwrap()).unwrap();
+    let points: Vec<_> = points.into_iter().map(Option::unwrap).collect();
     let names: Vec<_> = points.iter().map(|p| (p.bone_name, p.bone_index)).collect();
     assert_eq!(
         names,
@@ -199,6 +200,7 @@ fn a_models_attach_points_read_in_list_order() {
     assert_eq!(points[2].transform.rotation, [0.0, 90.0, 0.0]);
     let gun = placements.actor(spec.templates[GUN].name).unwrap();
     let root = attach_points(&igz, gun.info.model.unwrap()).unwrap();
+    let root: Vec<_> = root.into_iter().map(Option::unwrap).collect();
     assert_eq!(root[0].bone_name, Some(BoneAttachInfo::ROOT));
     assert_eq!(root[0].bone_index, -1);
     // A model without a list has no points.

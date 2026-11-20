@@ -83,6 +83,7 @@ fn fresh_set(igz: &Igz<'_>, global: &Igz<'_>, exports: &Exports, load: &str) -> 
         let bone = match h.slot {
             Some(s) => points
                 .get(s)
+                .and_then(Option::as_ref)
                 .and_then(|p: &BoneAttachInfo<'_>| p.bone_name)
                 .unwrap_or("?")
                 .to_owned(),

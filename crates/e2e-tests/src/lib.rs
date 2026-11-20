@@ -1826,7 +1826,7 @@ impl IntroFixture {
             );
         }
         // A part recorded under an older shape's name (the interface's
-        // records, AS.554's `card_game/art.v2.json`) makes it stale the same
+        // records, AS.554's `card_game/art.v2.json`, AS.562's `v3`) makes it stale the same
         // way: the manifest's currency check reads it again over the fixture.
         if !guac_extract::interface::record_current(opened.dir.manifest()) {
             bail!(
@@ -2178,7 +2178,7 @@ fn write_level(dir: &mut guac_extract::IdentityDir, entry: LevelEntry) -> Result
         models: Vec::new(),
         refused: Vec::new(),
     };
-    let rel = ir.level_path(&level, guac_extract::levels::NODES);
+    let rel = guac_extract::levels::part_path(ir, &level, guac_extract::levels::NODES);
     dir.write_output(&rel, &ir.encode(&nodes, dir, &rel)?)?;
     dir.record_level_part(&level, guac_extract::levels::NODES, vec![rel])?;
     // AS.17's particles: the level places no emitter of its own.

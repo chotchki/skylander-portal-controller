@@ -354,13 +354,19 @@ pub fn nodes(
     let joints: Vec<&str> = skeleton.joints.iter().map(|j| j.name.as_str()).collect();
     let nodes = fattach::attach_points(igz, model)?
         .iter()
-        .map(|p| attach_node(p, &joints))
+        .map(|p| slot_node(p.as_ref(), &joints))
         .collect();
     Ok(AttachNodes {
         identity,
         load_file: load_file.to_owned(),
         nodes,
     })
+}
+
+/// An attach list's slot as a node: [`attach_node`]'s, or
+/// [`AttachNode::empty`] for an empty slot (openspec AS.562).
+pub fn slot_node(p: Option<&BoneAttachInfo<'_>>, joints: &[&str]) -> AttachNode {
+    p.map_or_else(AttachNode::empty, |p| attach_node(p, joints))
 }
 
 /// An attach list's point as a node on `joints` (a skeleton's joint names
@@ -603,9 +609,13 @@ fn attachments(
             Some(slot) => {
                 let points =
                     fattach::attach_points(owner_file, owner_model).map_err(|e| e.to_string())?;
-                let p = points.get(slot).ok_or_else(|| {
-                    format!("attach point {slot} past the parent's {}", points.len())
-                })?;
+                let p = points
+                    .get(slot)
+                    .ok_or_else(|| {
+                        format!("attach point {slot} past the parent's {}", points.len())
+                    })?
+                    .as_ref()
+                    .ok_or_else(|| format!("{path} hangs on the parent's empty slot {slot}"))?;
                 let bone = p.bone_name.unwrap_or_default();
                 let joint = if bone == BoneAttachInfo::ROOT {
                     None

@@ -257,6 +257,12 @@ pub const PALETTES_PAST_FIRST_RUN: u32 = 5;
 /// and nothing else, on its next start.
 pub const PALETTES_FIRST_RUN: u32 = 6;
 
+/// The nodes part's rule, which its file's name carries, `nodes.v2.<ron|postcard>`
+/// (openspec AS.562: an attach list's empty slot read as one, where v1 refused
+/// the whole list and lost a model's every node), so a level extracted under
+/// v1 reads its nodes again, and nothing else, on its next ask.
+pub const NODES_RULE: u32 = 2;
+
 /// Where the cinematics' camera rigs' models sit: an animator camera's
 /// `anim owner` places one (openspec AS.78).
 const CAMERA_MODELS: &str = "/models/cameras/";
@@ -285,6 +291,7 @@ pub fn part_path(ir: crate::intros::IrFormat, level: &str, part: &str) -> String
             ir.level_path(level, &format!("{PALETTES}.v{PALETTES_PAST_FIRST_RUN}"))
         }
         PALETTES => ir.level_path(level, &format!("{PALETTES}.v{PALETTES_FIRST_RUN}")),
+        NODES => ir.level_path(level, &format!("{NODES}.v{NODES_RULE}")),
         _ => ir.level_path(level, part),
     }
 }
@@ -316,10 +323,10 @@ pub fn complete(m: &Manifest) -> bool {
 /// `palettes.<ext>` before its rule's `palettes.v2`, AS.78 `palettes.v2`
 /// before `palettes.v3`, AS.180 a level's `v3` before `v4` and chapter 1's
 /// `v4` before `v5`, AS.442 a level's `v4` before `v5` and chapter 1's `v5`
-/// before `v6`). Any other part is
-/// held once it's recorded.
+/// before `v6`), and the nodes (AS.562, `nodes` before `nodes.v2`). Any other
+/// part is held once it's recorded.
 fn holds_current(level: &str, part: &str, files: &[String]) -> bool {
-    if part != PALETTES {
+    if part != PALETTES && part != NODES {
         return true;
     }
     [
@@ -783,7 +790,7 @@ pub fn nodes(
             };
             Ok(points
                 .iter()
-                .map(|p| models::attach_node(p, &joints))
+                .map(|p| models::slot_node(p.as_ref(), &joints))
                 .collect())
         })();
         match read {

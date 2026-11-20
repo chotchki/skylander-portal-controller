@@ -401,7 +401,11 @@ fn origin_nodes(source: &ScriptSource) -> HashMap<String, Vec<guacamole::script_
     let Some((dir, ir)) = source.extract() else {
         return HashMap::new();
     };
-    let path = dir.join(ir.level_path(source.level(), guac_extract::levels::NODES));
+    let path = dir.join(guac_extract::levels::part_path(
+        *ir,
+        source.level(),
+        guac_extract::levels::NODES,
+    ));
     match crate::turntable::read_ir::<guac_ir::nodes::LevelNodes>(*ir, &path) {
         Ok(part) => scripts::origin_nodes(&part),
         Err(why) => {

@@ -160,14 +160,15 @@ pub const CARD_ART_PART: &str = "card game art";
 pub const CARD_ART_DIR: &str = "card_game";
 
 /// The part's shape: 2 since its archives' attach nodes joined it (openspec
-/// AS.554). The record's name carries it ([`CARD_ART_RECORD`]), so an
+/// AS.554), 3 since an attach list's empty slot reads as one (AS.562: the
+/// eight weapon models' lists, refused whole under 2). The record's name carries it ([`CARD_ART_RECORD`]), so an
 /// extract an older build wrote holds another name and reads the part again
 /// ([`card_art_records_current`]).
-pub const CARD_ART_SHAPE: u32 = 2;
+pub const CARD_ART_SHAPE: u32 = 3;
 
 /// The part's record: what it read and every refusal by name, named for
 /// [`CARD_ART_SHAPE`].
-pub const CARD_ART_RECORD: &str = "card_game/art.v2.json";
+pub const CARD_ART_RECORD: &str = "card_game/art.v3.json";
 
 /// Every archive the art part reads, the streams then the stones.
 pub fn card_art_archives() -> Vec<String> {
