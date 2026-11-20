@@ -17,9 +17,11 @@
 //!   its posed joints' sphere ([`guacamole::staging::frame`]), through the
 //!   same pin `/api/_test/tv/camera` sets, and let go once it isn't.
 //!
-//! It ends once the staged run is left (another level's run, or none):
-//! its pin let go, the stage cleared, so the next pick in the same process
-//! lists nothing of it, saves for its host and follows him.
+//! It ends ([`over`]) once its level is refused, another level is asked
+//! after it, or its run is left: its pin let go, the stage cleared, so the
+//! next pick in the same process lists nothing of it, saves for its host and
+//! follows him. A stage for the level the TV already holds is a 409: its
+//! creature is listed at the level's install, which has been.
 //!
 //! Its wake is the activity rule's: the creature wakes when the hero comes
 //! into its range, as in play. A creature its file leaves at range 0 waits
@@ -92,6 +94,11 @@ pub(crate) struct StageShot {
     /// handed over (each once a stage).
     pub(crate) installed: bool,
     pub(crate) entry: bool,
+    /// The TV's level ask has been the staged level's.
+    pub(crate) seen: bool,
+    /// The level the TV holds, for the route's check.
+    #[serde(skip)]
+    pub(crate) holding: Option<String>,
     /// The creature awake by the activity rule, drawn, and the camera on it.
     pub(crate) awake: bool,
     pub(crate) drawn: bool,
@@ -196,24 +203,65 @@ fn let_go(shot: &mut StageShot, pin: &Mutex<Option<CameraPin>>) {
     (shot.centre, shot.radius) = (None, None);
 }
 
-/// The stage ended once its run is left: the staged level's run installed,
-/// then another level's or none. Its pin is let go and it's cleared, so
+/// Whether the stage for `staged` is over: the TV's level ask (`asked`,
+/// its name and state) for it refused or failed, another level asked once
+/// its own was seen, or its run installed (`installed`) and the TV's run
+/// (`run`) another level's or none.
+pub(crate) fn over(
+    staged: &str,
+    seen: bool,
+    installed: bool,
+    asked: Option<(&str, &str)>,
+    run: Option<&str>,
+) -> bool {
+    let refused =
+        asked.is_some_and(|(name, state)| name == staged && matches!(state, "refused" | "failed"));
+    let superseded = seen && asked.is_some_and(|(name, _)| name != staged);
+    refused || superseded || (installed && run != Some(staged))
+}
+
+/// The stage ended once it's [`over`]: its pin let go and cleared, so
 /// nothing of it reaches the next pick (its list, its host-less saves, its
-/// camera).
-fn end_stage(stage: Res<Stage>, mirror: Option<Res<TvMirror>>, source: Option<Res<ScriptSource>>) {
+/// camera). Keeps the level the TV holds for the route.
+fn end_stage(
+    stage: Res<Stage>,
+    mirror: Option<Res<TvMirror>>,
+    source: Option<Res<ScriptSource>>,
+    level: Option<Res<crate::level::Level>>,
+) {
+    let holding = level.as_ref().and_then(|l| l.name()).map(str::to_owned);
+    stage.with(|s| s.holding = holding);
     let Some(ask) = stage.ask() else {
         return;
     };
-    if !stage.with(|s| s.installed) || source.is_some_and(|s| s.level() == ask.level) {
+    let asked = level
+        .as_ref()
+        .and_then(|l| l.asked())
+        .map(|a| (a.name.as_str(), a.state.as_str()));
+    let seen = stage.with(|s| {
+        s.seen |= asked.is_some_and(|(name, _)| name == ask.level);
+        s.seen
+    });
+    let installed = stage.with(|s| s.installed);
+    if !over(
+        &ask.level,
+        seen,
+        installed,
+        asked,
+        source.as_ref().map(|s| s.level()),
+    ) {
         return;
     }
     stage.with(|s| {
         if let Some(m) = &mirror {
             let_go(s, &m.8);
         }
-        *s = StageShot::default();
+        *s = StageShot {
+            holding: s.holding.take(),
+            ..StageShot::default()
+        };
     });
-    info!(creature = %ask.creature, "the stage's run left: the stage ended");
+    info!(creature = %ask.creature, level = %ask.level, "the stage is over: ended");
 }
 
 /// The entry handed to the dev entry once the staged level's run is in.
@@ -334,7 +382,8 @@ pub(crate) fn sphere(points: &[Vec3]) -> Option<(Vec3, f32)> {
 }
 
 /// `POST /api/_test/tv/stage`: 202 with the stage kept and its level asked,
-/// 400 for any other body; `GET` reads it back.
+/// 409 for the level the TV already holds (its install, where the creature
+/// is listed, is past), 400 for any other body; `GET` reads it back.
 pub(crate) fn routes<S: Clone + Send + Sync + 'static>(
     stage: &Stage,
     levels: &LevelAsks,
@@ -344,25 +393,28 @@ pub(crate) fn routes<S: Clone + Send + Sync + 'static>(
     axum::Router::new().route(
         "/api/_test/tv/stage",
         axum::routing::post(move |body: Result<axum::Json<StageAsk>, JsonRejection>| {
-            let kept = match body {
-                Ok(axum::Json(ask)) if ask.valid() && levels.ask(&ask.level) => {
-                    post_stage.with(|s| {
-                        *s = StageShot {
-                            ask: Some(ask),
-                            ..StageShot::default()
-                        }
-                    });
-                    true
+            use axum::http::StatusCode;
+            let status = match body {
+                Ok(axum::Json(ask)) if ask.valid() => {
+                    let held = post_stage.with(|s| s.holding.as_deref() == Some(&ask.level));
+                    if held {
+                        StatusCode::CONFLICT
+                    } else if levels.ask(&ask.level) {
+                        post_stage.with(|s| {
+                            *s = StageShot {
+                                ask: Some(ask),
+                                holding: s.holding.take(),
+                                ..StageShot::default()
+                            }
+                        });
+                        StatusCode::ACCEPTED
+                    } else {
+                        StatusCode::BAD_REQUEST
+                    }
                 }
-                _ => false,
+                _ => StatusCode::BAD_REQUEST,
             };
-            async move {
-                if kept {
-                    axum::http::StatusCode::ACCEPTED
-                } else {
-                    axum::http::StatusCode::BAD_REQUEST
-                }
-            }
+            async move { status }
         })
         .get(move || {
             let shot = get_stage.with(|s| s.clone());
@@ -433,6 +485,47 @@ mod tests {
         assert!(withholds_saves(Some(&stage)));
         assert!(!withholds_saves(Some(&Stage::default())));
         assert!(!withholds_saves(None));
+        // The level the TV already holds: a 409, the stage kept as it was.
+        stage.with(|s| s.holding = Some("level_208_ice".into()));
+        let held = r#"{"level":"level_208_ice","creature":"Enemy_BombThrower(3)"}"#;
+        assert_eq!(post(&routes, held).await, 409);
+        assert_eq!(stage.ask().unwrap().level, "level_202_arkeyancopter");
+    }
+
+    /// The stage is over once its level is refused, another level is asked
+    /// after its own, or its run is left; not while its own ask waits or
+    /// its run plays.
+    #[test]
+    fn the_stage_is_over_when_its_level_is_refused_superseded_or_left() {
+        let s = "level_208_ice";
+        for (seen, installed, asked, run, want) in [
+            // Posted, the TV's ask still the last level's: not yet.
+            (
+                false,
+                false,
+                Some(("level_201", "ready")),
+                Some("level_201"),
+                false,
+            ),
+            // Its ask waiting, then loading.
+            (true, false, Some((s, "waiting")), Some("level_201"), false),
+            // Refused (not on the disc) or failed.
+            (true, false, Some((s, "refused")), Some("level_201"), true),
+            (true, false, Some((s, "failed")), Some("level_201"), true),
+            // Installed and playing.
+            (true, true, Some((s, "ready")), Some(s), false),
+            // Another level asked after it, installed or not.
+            (true, false, Some(("level_201", "waiting")), Some(s), true),
+            (true, true, Some(("level_201", "waiting")), Some(s), true),
+            // Its run left with no ask (a quit).
+            (true, true, Some((s, "ready")), None, true),
+        ] {
+            assert_eq!(
+                over(s, seen, installed, asked, run),
+                want,
+                "{seen} {installed} {asked:?} {run:?}"
+            );
+        }
     }
 
     /// openspec AS.680: the run lists the stage's placements only on its own

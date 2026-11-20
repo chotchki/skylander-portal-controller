@@ -1785,6 +1785,12 @@ pub(crate) struct Level {
 }
 
 impl Level {
+    /// The level the TV holds, loading or loaded, by its archive's name.
+    #[cfg(feature = "test-hooks")]
+    pub(crate) fn name(&self) -> Option<&str> {
+        self.source.as_ref().map(|s| s.level.as_str())
+    }
+
     pub(crate) fn new(gpu: bool) -> Self {
         Self {
             gpu,
