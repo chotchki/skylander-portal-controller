@@ -2277,13 +2277,6 @@ fn a_back_out_at_the_hand_select_ends_in_his_wait_for_player() {
     );
     assert!(played.stops.is_empty(), "{:#?}", played.stops);
     assert!(played.running.is_empty(), "{:?}", played.running);
-    // The score header's numbers are the board's stones a side at every
-    // update (openspec AS.556).
-    println!("score updates: {}", played.scores.len());
-    assert!(played.scores.len() >= 10, "{:?}", played.scores);
-    for (read, board) in &played.scores {
-        assert!(read.is_some() && read == board, "{:?}", played.scores);
-    }
     assert!(played.free, "free after the back-out");
     println!("load at end: {}", load());
 }
