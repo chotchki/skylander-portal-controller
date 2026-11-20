@@ -1623,7 +1623,7 @@ struct Played {
     scores: Vec<ScoreUpdate>,
     /// At each of those updates, the board's stones drawn on the other side
     /// from their owner's (openspec AS.672), with the step.
-    frames_off: Vec<(u32, Vec<((i32, i32), i32, Option<u32>)>)>,
+    frames_off: Vec<(u32, Vec<cards::FrameOff>)>,
 }
 
 /// At a score header update: the score as the TV reads it and the board's

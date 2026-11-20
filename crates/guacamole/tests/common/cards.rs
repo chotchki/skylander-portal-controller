@@ -634,10 +634,14 @@ pub fn on_board(run: &Run) -> Option<(i32, i32)> {
 pub const PLAYER_SIDE: [u32; 2] = [2, 4];
 pub const OPPONENT_SIDE: [u32; 2] = [3, 5];
 
+/// A stone drawn off its owner's side: its square, its owner
+/// (`player's card?`) and the slot its stock is posed at.
+pub type FrameOff = ((i32, i32), i32, Option<u32>);
+
 /// Each board stone whose stock the TV poses on the other side from its
 /// owner (`player's card?`): its square, owner and the slot it's posed at
 /// (openspec AS.672). Empty while every frame shows its owner's colour.
-pub fn frames_off_owner(run: &Run) -> Vec<((i32, i32), i32, Option<u32>)> {
+pub fn frames_off_owner(run: &Run) -> Vec<FrameOff> {
     let Some(m) = manager(run) else {
         return Vec::new();
     };
