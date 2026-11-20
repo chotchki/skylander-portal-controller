@@ -23,12 +23,10 @@
 //! title and the continue prompt hidden until it's over, each tab after the
 //! first coming up with the menu's move sound and each objective the run
 //! completed with the checked sound 0.2 s after its row ([`TallySounds`]),
-//! three stars holding it the fireworks' 8 s more. Not drawn or heard: its
-//! animation (the rows sliding in, the checkmarks and stars slammed in, the
-//! screen's shake, the fireworks), each row's count sound and the
-//! fireworks' (the objectives screen's own sounds, which the extract's
-//! sounds part doesn't hold), and the dots between a line and its count,
-//! there being no recording of a completion screen. The focused tab's name joins the
+//! three stars holding it for the fireworks ([`crate::fireworks`], openspec
+//! AS.621: 8 s, then until the last rocket's gone). Its motion is
+//! [`crate::completion_motion`]'s (AS.607). Not drawn: the dots between a
+//! line and its count, there being no recording of a completion screen. The focused tab's name joins the
 //! screen's title in the scripts' yellow and no title stands under a column
 //! (`UI - Objectives Menu - Item Focus`, openspec AS.585).
 //!
@@ -195,20 +193,101 @@ impl Plugin for CompletionPlugin {
             .init_resource::<TallySounds>()
             .init_resource::<CompletionReport>()
             .init_resource::<Loaded>()
+            .init_resource::<crate::fireworks::Fireworks>()
             .add_message::<TvInput>()
             .add_observer(on_continue)
             .add_systems(
                 Update,
                 (
+                    take_asked_stars,
                     open_completion,
                     tab_moves,
                     tally_sounds,
+                    crate::fireworks::step_fireworks,
                     show_completion,
                     crate::completion_motion::pose_tally,
+                    crate::fireworks::draw_fireworks,
                 )
                     .chain()
                     .after(PlaySystems),
             );
+    }
+}
+
+/// Stars asked for the run's level end over the test hooks
+/// (`POST /api/_test/tv/stars`, `{"stars": [true, true, true]}`; an empty
+/// list stops it): `test-hooks` builds only, so a TV run reaches the
+/// three-star end (openspec AS.621). Each level end's results read for the
+/// screen (the TV's copy, `ScriptWorld`'s `sequence.completion`) take
+/// them in place of the scripts' as the screen comes up; the scripts' own
+/// star set, and so the save, is never touched.
+#[derive(Resource, Clone, Default)]
+pub(crate) struct StarAsks(pub(crate) std::sync::Arc<std::sync::Mutex<Option<Vec<bool>>>>);
+
+impl StarAsks {
+    /// Keeps `stars` (one to three) for every level end from now; none
+    /// stops it.
+    pub(crate) fn ask(&self, stars: Vec<bool>) -> bool {
+        let ok = stars.len() <= TABS.len();
+        if ok {
+            *self.0.lock().unwrap_or_else(|e| e.into_inner()) =
+                (!stars.is_empty()).then_some(stars);
+        }
+        ok
+    }
+
+    fn asked(&self) -> Option<Vec<bool>> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct StarsBody {
+    stars: Vec<bool>,
+}
+
+/// `POST /api/_test/tv/stars` ([`StarAsks`]); anything else is a 400.
+pub(crate) fn star_routes<S: Clone + Send + Sync + 'static>(asks: &StarAsks) -> axum::Router<S> {
+    use axum::extract::rejection::JsonRejection;
+    let asks = asks.clone();
+    axum::Router::new().route(
+        "/api/_test/tv/stars",
+        axum::routing::post(move |body: Result<axum::Json<StarsBody>, JsonRejection>| {
+            let kept = body.is_ok_and(|axum::Json(b)| asks.ask(b.stars));
+            async move {
+                if kept {
+                    axum::http::StatusCode::ACCEPTED
+                } else {
+                    axum::http::StatusCode::BAD_REQUEST
+                }
+            }
+        }),
+    )
+}
+
+/// The asked stars laid on the screen's results before it comes up, padded
+/// with unearned ones to the scripts' count.
+fn take_asked_stars(asks: Option<Res<StarAsks>>, world: Option<ResMut<ScriptWorld>>) {
+    let (Some(asks), Some(mut world)) = (asks, world) else {
+        return;
+    };
+    let Some(stars) = asks.asked() else {
+        return;
+    };
+    let Some(Ok(r)) = world
+        .bypass_change_detection()
+        .sequence
+        .completion
+        .as_mut()
+        .map(|c| c.results.as_mut())
+    else {
+        return;
+    };
+    let mut want = stars;
+    want.resize(r.stars.len().max(want.len()), false);
+    if r.stars != want {
+        info!(?want, "the level end's stars as asked over the test hooks");
+        r.stars = want;
     }
 }
 
@@ -270,7 +349,8 @@ fn open_completion(
 /// - Update` and `Set Show Next Tab Timer`, openspec AS.446, AS.601): each
 /// tab shown, its rows coming in 0.15 s apart, then after the screen's
 /// one-second delay the next, the last's too; then, with three stars, the
-/// fireworks' 8 s (`Start Fireworks`' timeout), and `End Animation Mode`
+/// fireworks' hold (`Start Fireworks`' 8 s timeout and `Update Fireworks`
+/// waiting on its last rocket, [`crate::fireworks`]), and `End Animation Mode`
 /// hands the pads back. While it runs (`allow user control` 0) the pads do
 /// nothing and the title and the continue prompt are hidden (`Show`,
 /// `Prompt Display`).
@@ -293,8 +373,9 @@ impl TabCycle {
     }
 }
 
-/// How long `Start Fireworks` holds the tally at three stars.
-pub(crate) const FIREWORKS_TIME: f32 = 8.0;
+/// How long `Start Fireworks` holds the tally at three stars before its
+/// last rockets go ([`crate::fireworks`]).
+pub(crate) const FIREWORKS_TIME: f32 = crate::fireworks::TIMEOUT;
 
 /// The menu's move sound, `Menu - Change Selection`'s with `play sound
 /// effect` on: the tally's each tab after the first, a player's move once
@@ -386,9 +467,30 @@ fn tab_moves(
     mut tab: ResMut<CompletionTab>,
     mut cycle: ResMut<TabCycle>,
     mut sounds: ResMut<TallySounds>,
+    fireworks: Res<crate::fireworks::Fireworks>,
 ) {
     let read: Vec<TvInput> = inputs.read().copied().collect();
     if !open.0 {
+        return;
+    }
+    // The fireworks' hold: 8 s, then until the last rocket's gone
+    // (`Update Fireworks`, openspec AS.621).
+    if cycle.fireworks {
+        cycle.clock += time.delta_secs();
+        match &fireworks.show {
+            Some(show) if show.over() => {
+                info!(
+                    secs = show.clock,
+                    made = show.made,
+                    "the tally's over: the pads handed back"
+                );
+                *cycle = TabCycle::default();
+            }
+            Some(show) => {
+                cycle.left = Some((crate::fireworks::TIMEOUT - show.clock).max(0.0));
+            }
+            None => {}
+        }
         return;
     }
     let results = world
@@ -502,7 +604,12 @@ fn show_completion(
     ),
     world: Option<Res<ScriptWorld>>,
     source: Option<Res<ScriptSource>>,
-    (assets, theme, time): (Option<Res<TvAssets>>, Option<Res<TvTheme>>, Res<Time<Real>>),
+    (assets, theme, time, fireworks): (
+        Option<Res<TvAssets>>,
+        Option<Res<TvTheme>>,
+        Res<Time<Real>>,
+        Res<crate::fireworks::Fireworks>,
+    ),
     (mut images, device): (ResMut<Assets<Image>>, Option<Res<RenderDevice>>),
     (pads, gamepads): (Res<LevelPads>, Query<(&Gamepad, Option<&FacesPrinted>)>),
     mut loaded: ResMut<Loaded>,
@@ -563,6 +670,10 @@ fn show_completion(
         shown.map(|_| time.elapsed().as_secs_f64() * 1e3),
     )
     .with_tally(&cycle, &sounds);
+    let next = CompletionReport {
+        fireworks_drawn: fireworks.shot(),
+        ..next
+    };
     if *report != next {
         *report = CompletionReport {
             shown_ms: report.shown_ms.filter(|_| next.shown).or(next.shown_ms),
@@ -1362,6 +1473,8 @@ pub struct CompletionReport {
     /// Each of the tally's sounds asked, in order: its name, `: <why>`
     /// after one that played nothing.
     pub sounds: Vec<String>,
+    /// The fireworks while they run (openspec AS.621).
+    pub fireworks_drawn: Option<crate::fireworks::FireworksShot>,
 }
 
 impl CompletionReport {
@@ -2003,9 +2116,181 @@ mod tests {
             "the fireworks' sound: {:?}",
             report(&app).sounds
         );
+        // 8 s, then until the last rocket's gone: at most 1.9 s more.
         let held = past_the_tally(&mut app);
-        assert!((78..=82).contains(&held), "{held} frames of fireworks");
+        assert!((80..=100).contains(&held), "{held} frames of fireworks");
         assert!(!report(&app).fireworks);
+    }
+
+    /// Three stars on the screen's results.
+    fn three_stars(app: &mut App) {
+        app.world_mut()
+            .resource_mut::<ScriptWorld>()
+            .sequence
+            .completion
+            .as_mut()
+            .unwrap()
+            .results
+            .as_mut()
+            .unwrap()
+            .stars = vec![true; 3];
+    }
+
+    /// The fireworks' art made up: [`crate::fireworks::tests::test_emitters`]
+    /// with one empty image for every generator.
+    fn fireworks_art(app: &mut App) {
+        let image = app
+            .world_mut()
+            .resource_mut::<Assets<Image>>()
+            .add(Image::default());
+        let emitters = crate::fireworks::tests::test_emitters();
+        app.world_mut()
+            .resource_mut::<crate::fireworks::Fireworks>()
+            .art = Some(Ok(crate::fireworks::Art {
+            emitters,
+            images: [vec![Some(image.clone())], vec![Some(image)]],
+        }));
+    }
+
+    /// The fireworks' root, if one's spawned.
+    fn fireworks_roots(app: &mut App) -> usize {
+        let mut q = app.world_mut().query::<&Name>();
+        q.iter(app.world())
+            .filter(|n| n.as_str() == "fireworks")
+            .count()
+    }
+
+    /// openspec AS.621: at three stars the tally's last tab holds for the
+    /// fireworks, rockets made and drawn over it (never more than 20 up),
+    /// reported in `/api/_test/tv`; once the last is gone the pads come
+    /// back and nothing of them is left drawn.
+    #[test]
+    fn three_stars_draw_the_fireworks_and_leave_nothing_after() {
+        let (mut app, _) = screen_app();
+        three_stars(&mut app);
+        fireworks_art(&mut app);
+        (0..60)
+            .find(|_| {
+                app.update();
+                report(&app).fireworks
+            })
+            .expect("the fireworks");
+        let (mut most, mut frames, mut made, mut last) = (0, 0, 0, None);
+        while report(&app).tallying {
+            app.update();
+            frames += 1;
+            assert!(frames < 120, "the hold never ends");
+            if let Some(f) = report(&app).fireworks_drawn {
+                assert!(f.up <= crate::fireworks::MOST_UP, "{f:?}");
+                most = most.max(f.drawn);
+                made = f.made;
+                assert_eq!(fireworks_roots(&mut app), 1);
+                last = Some(f);
+            }
+        }
+        assert!(most > 0, "the fireworks drew");
+        assert!(made > 1, "{made} rockets");
+        // Held past 8 s until the last rocket was gone.
+        let last = last.expect("a report of them");
+        assert!(
+            last.up == 0 && last.secs > crate::fireworks::TIMEOUT + 0.5,
+            "{last:?}"
+        );
+        // The pads are back; the last bursts' particles live out their
+        // 1.5 s over the screen, no rocket made, then nothing's left.
+        let mut fading = 0;
+        while report(&app).fireworks_drawn.is_some() {
+            app.update();
+            fading += 1;
+            assert!(fading <= 100, "the last bursts never finish");
+            assert!(!report(&app).tallying, "the pads stay back");
+            if let Some(f) = report(&app).fireworks_drawn {
+                assert_eq!((f.up, f.made), (0, made), "{f:?}");
+            }
+        }
+        app.update();
+        assert_eq!(fireworks_roots(&mut app), 0, "nothing left drawn");
+        let f = app.world().resource::<crate::fireworks::Fireworks>();
+        assert_eq!(f.drawn, 0);
+    }
+
+    /// The level leaving mid-hold takes the fireworks with it.
+    #[test]
+    fn the_fireworks_go_with_the_level() {
+        let (mut app, _) = screen_app();
+        three_stars(&mut app);
+        fireworks_art(&mut app);
+        (0..60)
+            .find(|_| {
+                app.update();
+                report(&app).fireworks
+            })
+            .expect("the fireworks");
+        for _ in 0..10 {
+            app.update();
+        }
+        assert!(
+            app.world().resource::<crate::fireworks::Fireworks>().drawn > 0,
+            "drawn mid-hold"
+        );
+        app.world_mut().remove_resource::<ScriptWorld>();
+        for _ in 0..2 {
+            app.update();
+        }
+        assert!(
+            app.world()
+                .resource::<crate::fireworks::Fireworks>()
+                .show
+                .is_none()
+        );
+        assert_eq!(fireworks_roots(&mut app), 0, "nothing left drawn");
+    }
+
+    /// After the fireworks the level ends from every tab: the accept on
+    /// each continues.
+    #[test]
+    fn after_the_fireworks_the_level_ends_from_every_tab() {
+        for tab in 0..TABS.len() {
+            let (mut app, presses) = screen_app();
+            three_stars(&mut app);
+            past_the_tally(&mut app);
+            assert!(!report(&app).fireworks);
+            for _ in tab..TABS.len() - 1 {
+                presses.push(TestPress::Left);
+                for _ in 0..3 {
+                    app.update();
+                }
+            }
+            assert_eq!(report(&app).tab, tab);
+            presses.push(TestPress::South);
+            for _ in 0..3 {
+                app.update();
+            }
+            let world = app.world().resource::<ScriptWorld>();
+            assert!(
+                world.sequence.completion.as_ref().unwrap().continue_asked,
+                "no continue from tab {tab}"
+            );
+        }
+    }
+
+    /// The test hook's stars (openspec AS.621) are laid on the screen's
+    /// results as it comes up, padded to the scripts' count; an empty ask
+    /// stops it.
+    #[test]
+    fn asked_stars_are_the_screens() {
+        let (mut app, _) = screen_app();
+        let asks = StarAsks::default();
+        assert!(asks.ask(vec![true, true, true]));
+        assert!(!asks.ask(vec![true; 4]), "four stars refused");
+        app.insert_resource(asks.clone());
+        app.update();
+        assert_eq!(report(&app).stars, [true, true, true]);
+        assert!(asks.ask(vec![false, true]));
+        app.update();
+        assert_eq!(report(&app).stars, [false, true, false]);
+        assert!(asks.ask(Vec::new()));
+        assert_eq!(asks.asked(), None);
     }
 
     /// The screen's art for a test: each piece an empty image at a size.

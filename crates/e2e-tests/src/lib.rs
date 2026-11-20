@@ -121,6 +121,17 @@ impl TestServer {
     /// ([`E2E_ROSTER`]) is current at start (AE.4). Its window opens
     /// desktop-sized unless `extra_env` says otherwise.
     pub fn spawn_guacamole(title_ids: &[&str], extra_env: &str) -> Result<Self> {
+        Self::spawn_guacamole_first_on(title_ids, extra_env, pick_free_port()?)
+    }
+
+    /// [`spawn_guacamole`] over Giants with `port` its first spawn's
+    /// `BIND_PORT`, whatever holds it: a test of the harness's respawn on a
+    /// taken port (openspec AS.628) holds it across the call.
+    pub fn spawn_guacamole_first_on_port(port: u16) -> Result<Self> {
+        Self::spawn_guacamole_first_on(&[GIANTS_SERIAL], "", port)
+    }
+
+    fn spawn_guacamole_first_on(title_ids: &[&str], extra_env: &str, port: u16) -> Result<Self> {
         let tmp = tempfile::tempdir().context("create temp dir")?;
         let mut env = String::new();
         let dumps = if title_ids.contains(&GIANTS_SERIAL) {
@@ -139,7 +150,7 @@ impl TestServer {
         }
         std::fs::create_dir_all(&dumps)?;
         env.push_str(extra_env);
-        Self::spawn_guacamole_over(tmp, &dumps, &env)
+        Self::spawn_guacamole_over_port(tmp, &dumps, &env, port)
     }
 
     /// guacamole over a Giants dump whose [`E2E_WALKER`] walks the level
@@ -196,9 +207,17 @@ impl TestServer {
     }
 
     fn spawn_guacamole_over(tmp: TempDir, dumps: &Path, extra_env: &str) -> Result<Self> {
+        Self::spawn_guacamole_over_port(tmp, dumps, extra_env, pick_free_port()?)
+    }
+
+    fn spawn_guacamole_over_port(
+        tmp: TempDir,
+        dumps: &Path,
+        extra_env: &str,
+        port: u16,
+    ) -> Result<Self> {
         let repo = repo_root()?;
         let phone_dist = built_phone_dist(&repo)?;
-        let port = pick_free_port()?;
         // No DATA_ROOT: guacamole reads no wiki data (AE.4).
         let mut env = format!(
             "BIND_PORT={port}\nPHONE_DIST={phone}\nGUAC_DUMP_DIRS={dumps}\nWINDOW_MODE=desktop\n",
@@ -368,7 +387,7 @@ impl TestServer {
         spawn_reader("stdout", stdout, tx.clone());
         spawn_reader("stderr", stderr, tx);
 
-        let url = wait_for_url(&rx, Duration::from_secs(120))?;
+        let url = wait_for_url(&rx, Duration::from_secs(120))?.url()?;
         let guard = ChildGuard::new(child);
 
         let (chromedriver_url, chromedriver_guard) = spawn_chromedriver()?;
@@ -477,7 +496,7 @@ impl TestServer {
         spawn_reader("stdout", stdout, tx.clone());
         spawn_reader("stderr", stderr, tx);
 
-        let url = wait_for_url(&rx, Duration::from_secs(120))?;
+        let url = wait_for_url(&rx, Duration::from_secs(120))?.url()?;
         let guard = ChildGuard::new(child);
         let (chromedriver_url, chromedriver_guard) = spawn_chromedriver()?;
 
@@ -635,13 +654,54 @@ fn spawn_reader(
     });
 }
 
+/// How many times [`start_server`] spawns the server before giving up on a
+/// port taken under it (openspec AS.628).
+const SPAWN_TRIES: usize = 4;
+
 /// `package`'s server with `test-hooks` in `dir`, built before the run's
 /// first spawn with no timeout ([`built::server_binary`]), then
 /// run as built; returns once the server logs the URL it serves on, which
 /// [`wait_for_url`] gives 120 s from the spawn.
+///
+/// The port in `dir`'s `.env.dev` was free when [`pick_free_port`] let it
+/// go, but anything can take it before the server binds it (the gate's
+/// `guacamole_flags` lost one so, openspec AS.628). A server that logs its
+/// bind refused as in use is killed at once and spawned again on a newly
+/// picked port, `BIND_PORT` rewritten, up to [`SPAWN_TRIES`] spawns.
 fn start_server(dir: &Path, repo: &Path, package: &str) -> Result<(String, ChildGuard)> {
     let exe = built::server_binary(repo, package)?;
-    let mut cmd = Command::new(&exe);
+    let mut taken_ports = Vec::new();
+    for _ in 0..SPAWN_TRIES {
+        let (rx, mut guard) = spawn_server_once(dir, &exe)?;
+        match wait_for_url(&rx, Duration::from_secs(120))? {
+            Started::Url(url) => return Ok((url, guard)),
+            Started::PortTaken(taken) => {
+                guard.kill_now();
+                let next = pick_free_port()?;
+                eprintln!(
+                    "[e2e] port {taken} was taken before {package} bound it; spawning again on {next}"
+                );
+                set_bind_port(&dir.join(".env.dev"), next)?;
+                taken_ports.push(taken);
+            }
+        }
+    }
+    Err(anyhow!("{}", all_taken(package, &taken_ports)))
+}
+
+/// The error once every spawn's port was taken, naming each.
+fn all_taken(package: &str, ports: &[u16]) -> String {
+    let ports: Vec<String> = ports.iter().map(u16::to_string).collect();
+    format!(
+        "{package}'s port was taken under it {} times running: {}",
+        ports.len(),
+        ports.join(", ")
+    )
+}
+
+/// One spawn of `exe` in `dir`, both its streams read onto the channel.
+fn spawn_server_once(dir: &Path, exe: &Path) -> Result<(mpsc::Receiver<String>, ChildGuard)> {
+    let mut cmd = Command::new(exe);
     cmd.current_dir(dir)
         // guacamole's intros play muted: nobody listens to an e2e run.
         .env("GUAC_MUTE", "1")
@@ -669,12 +729,69 @@ fn start_server(dir: &Path, repo: &Path, package: &str) -> Result<(String, Child
     let (tx, rx) = mpsc::channel::<String>();
     spawn_reader("stdout", stdout, tx.clone());
     spawn_reader("stderr", stderr, tx);
-
-    let url = wait_for_url(&rx, Duration::from_secs(120))?;
-    Ok((url, ChildGuard::new(child)))
+    Ok((rx, ChildGuard::new(child)))
 }
 
-fn wait_for_url(rx: &mpsc::Receiver<String>, timeout: Duration) -> Result<String> {
+/// `BIND_PORT=` in the `.env.dev` at `path` set to `port`, every other line kept.
+fn set_bind_port(path: &Path, port: u16) -> Result<()> {
+    let env = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    std::fs::write(path, with_bind_port(&env, port))?;
+    Ok(())
+}
+
+/// `env` with its `BIND_PORT=` line (added if missing) saying `port`.
+fn with_bind_port(env: &str, port: u16) -> String {
+    let mut out = String::new();
+    let mut set = false;
+    for line in env.lines() {
+        if line.starts_with("BIND_PORT=") {
+            if !set {
+                out.push_str(&format!("BIND_PORT={port}\n"));
+                set = true;
+            }
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    if !set {
+        out.push_str(&format!("BIND_PORT={port}\n"));
+    }
+    out
+}
+
+/// The port a server's log line says it couldn't bind because something
+/// holds it: guac-server's `boot` logs `bind <addr>:<port>: <error>` when its
+/// listener's bind fails, and an in-use error names itself on every OS
+/// (macOS and Linux "Address already in use", Windows os error 10048).
+fn taken_port(line: &str) -> Option<u16> {
+    let rest = &line[line.find("bind ")? + "bind ".len()..];
+    let (addr, error) = rest.split_once(": ")?;
+    let in_use = error.contains("already in use") || error.contains("os error 10048");
+    if !in_use {
+        return None;
+    }
+    addr.rsplit_once(':')?.1.parse().ok()
+}
+
+/// How a spawn came up: serving on a URL, or refused its port.
+#[derive(Debug, PartialEq, Eq)]
+enum Started {
+    Url(String),
+    PortTaken(u16),
+}
+
+impl Started {
+    /// The URL, or an error for a spawn that doesn't retry.
+    fn url(self) -> Result<String> {
+        match self {
+            Self::Url(url) => Ok(url),
+            Self::PortTaken(port) => bail!("the server's port {port} was taken"),
+        }
+    }
+}
+
+fn wait_for_url(rx: &mpsc::Receiver<String>, timeout: Duration) -> Result<Started> {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -683,7 +800,10 @@ fn wait_for_url(rx: &mpsc::Receiver<String>, timeout: Duration) -> Result<String
                 if let Some(idx) = line.find("serving on http") {
                     let tail = &line[idx + "serving on ".len()..];
                     let url = tail.split_whitespace().next().unwrap_or(tail).trim();
-                    return Ok(url.to_string());
+                    return Ok(Started::Url(url.to_string()));
+                }
+                if let Some(port) = taken_port(&line) {
+                    return Ok(Started::PortTaken(port));
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => break,
@@ -3728,6 +3848,51 @@ mod chrome_version_tests {
         );
         assert_eq!(chrome_major_version(""), None);
         assert_eq!(chrome_major_version("Google Chrome"), None);
+    }
+}
+
+#[cfg(test)]
+mod port_tests {
+    use super::{all_taken, taken_port, with_bind_port};
+
+    /// Four taken ports in a row end in an error naming all four.
+    #[test]
+    fn every_taken_port_is_named() {
+        assert_eq!(
+            all_taken("guacamole", &[61001, 61002, 61003, 61004]),
+            "guacamole's port was taken under it 4 times running: 61001, 61002, 61003, 61004"
+        );
+    }
+
+    /// guac-server's bind line names the port it couldn't have; any other
+    /// bind error, or a line that isn't a bind's, names none (openspec AS.628).
+    #[test]
+    fn a_bind_refused_as_in_use_names_its_port() {
+        let mac =
+            "\u{1b}[31mERROR\u{1b}[0m bind 0.0.0.0:62545: Address already in use (os error 48)";
+        assert_eq!(taken_port(mac), Some(62545));
+        assert_eq!(
+            taken_port(
+                "ERROR bind 0.0.0.0:7001: Only one usage of each socket address (os error 10048)"
+            ),
+            Some(7001)
+        );
+        assert_eq!(
+            taken_port("ERROR bind 0.0.0.0:80: Permission denied (os error 13)"),
+            None
+        );
+        assert_eq!(taken_port("INFO starting guacamole port=62545"), None);
+        assert_eq!(taken_port("serving on http://127.0.0.1:62545"), None);
+    }
+
+    #[test]
+    fn the_respawn_rewrites_only_the_port() {
+        let env = "BIND_PORT=1\nPHONE_DIST=/p\nBIND_PORT=1\nWINDOW_MODE=desktop\n";
+        assert_eq!(
+            with_bind_port(env, 4242),
+            "BIND_PORT=4242\nPHONE_DIST=/p\nWINDOW_MODE=desktop\n"
+        );
+        assert_eq!(with_bind_port("A=b\n", 9), "A=b\nBIND_PORT=9\n");
     }
 }
 

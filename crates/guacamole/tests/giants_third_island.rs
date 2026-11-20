@@ -483,7 +483,11 @@ fn barrel_follows_pointer(run: &mut Run, stops: &mut Vec<String>) {
         [-200.0, 150.0],
     ];
     let mut aims = Vec::new();
-    for (k, c) in corners.into_iter().chain([[0.0, 0.0]]).enumerate() {
+    for c in corners.into_iter().chain([[0.0, 0.0]]) {
+        // Whether the turret's attack is disabled as the sweep ends (its
+        // objective's intro: `New Turret - Update Player's Wii Mote` hides
+        // the pointer then, AS.608).
+        let mut disabled = false;
         for _ in 0..90 {
             let p = turret::view(&run.vm, &run.world)
                 .and_then(|v| v.pointer)
@@ -493,6 +497,7 @@ fn barrel_follows_pointer(run: &mut Run, stops: &mut Vec<String>) {
                 (-(c[1] - p[1]) / 40.0).clamp(-1.0, 1.0),
             );
             step(run, stops, s, [false; 4]);
+            disabled = turret::view(&run.vm, &run.world).is_some_and(|v| v.attack_disabled);
         }
         let adr = run.vm.value(run.vm.field(p1, "attack data ref").unwrap());
         let target = field_actor(run, adr, "target").expect("its target");
@@ -501,14 +506,18 @@ fn barrel_follows_pointer(run: &mut Run, stops: &mut Vec<String>) {
         let shown = turret::view(&run.vm, &run.world).and_then(|v| v.target);
         assert_eq!(shown, Some(at.to_array()), "the view's target at {c:?}");
         // The pointer graphic's place (`TurretView::graphic`) at the
-        // pointer's, 1.5 pixels a unit off the 1280 by 720 screen's middle.
-        // Not on the first sweep after getting in: there the clamp's width
-        // reads small and the graphic holds near the middle (AS.608, open).
+        // pointer's, 1.5 pixels a unit off the 1280 by 720 screen's middle,
+        // at every corner but one read while the turret's attack is
+        // disabled: the scripts hide the pointer then, and a hidden sprite
+        // isn't laid out, so its graphic holds where it was (AS.608: the
+        // second turret's objective intro, its first 2.75 s after getting in).
         let v = turret::view(&run.vm, &run.world).expect("a turret running");
         let (p, g) = (v.pointer.expect("its pointer"), v.graphic);
         let want = [640.0 + 1.5 * p[0], 360.0 + 1.5 * p[1]];
-        println!("pointer at {c:?}: at {p:?}, its graphic at {g:?} against {want:?}");
-        if k > 0 {
+        println!(
+            "pointer at {c:?}: at {p:?}, its graphic at {g:?} against {want:?}, disabled {disabled}"
+        );
+        if !disabled {
             let g = g.expect("the pointer graphic's place");
             assert!(
                 (g[0] - want[0]).abs() < 3.0 && (g[1] - want[1]).abs() < 3.0,

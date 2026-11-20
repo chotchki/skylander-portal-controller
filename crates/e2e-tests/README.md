@@ -37,6 +37,11 @@ The harness spawns its own chromedriver on a free port per
 `TestServer` and kills it on drop — no need to run `chromedriver`
 manually.
 
+The server's port is picked free and let go before the server binds it, so
+something else can take it in between. When the server logs its bind refused
+as in use, the harness kills it and spawns again on a new port, up to four
+spawns, with one `[e2e] port <n> was taken` line on stderr (openspec AS.628).
+
 ## Version-mismatch gotcha
 
 Chrome and ChromeDriver must be the same major version. If the suite

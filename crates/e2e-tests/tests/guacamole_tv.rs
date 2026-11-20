@@ -240,6 +240,32 @@ async fn the_tv_shows_the_join_code_and_counts_phones() {
     phone.close().await.unwrap();
 }
 
+/// A port taken between the harness picking it and guacamole binding it
+/// (the gate's `guacamole_flags`, openspec AS.628): the harness sees the bind
+/// refused, spawns again on a new port, and the TV comes up on that one.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "requires chromedriver; E2E_APP=guacamole"]
+async fn a_port_taken_before_the_spawn_still_gets_a_running_tv() {
+    if guacamole_only() {
+        return;
+    }
+    let held = std::net::TcpListener::bind("0.0.0.0:0").expect("hold a port");
+    let taken = held.local_addr().unwrap().port();
+    let server = TestServer::spawn_guacamole_first_on_port(taken).expect("spawn guacamole");
+    let port: u16 = server
+        .url
+        .rsplit_once(':')
+        .and_then(|(_, p)| p.trim_end_matches('/').parse().ok())
+        .unwrap_or_else(|| panic!("a port in {}", server.url));
+    assert_ne!(port, taken, "{} serves on the held port", server.url);
+    wait_for_tv(&server.url, Duration::from_secs(10), |s| {
+        s["screen"] == "Join"
+    })
+    .await
+    .expect("the respawned TV reaches Join");
+    drop(held);
+}
+
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires chromedriver; E2E_APP=guacamole"]
 async fn every_profile_gets_the_same_figure_list() {
