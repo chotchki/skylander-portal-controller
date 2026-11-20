@@ -531,6 +531,9 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     // never a landed build, which leaves the feature to the disc tests.
     #[cfg(feature = "played-card-games")]
     script_world.card_streams.play_games();
+    // The hand select's page waits for the TV's own (openspec AS.555,
+    // `crate::card_screens`); on a run that plays no game it never comes up.
+    script_world.card_streams.answer_hands_on_screen();
     // The sounds its starts play (openspec AR.9).
     if let Some(s) = &source.sounds {
         script_world.set_sounds(s.book.clone(), s.stems.clone());
@@ -1376,6 +1379,27 @@ fn attack_buttons(joined: bool, held: [bool; 4]) -> [bool; 4] {
     if joined { held } else { [false; 4] }
 }
 
+/// The step's pads into the run: the attacks his (`joined`) alone
+/// ([`attack_buttons`]), the accept the player's whoever he is (openspec
+/// AS.368: the card loot's reports wait on it while the hero comes back in).
+pub(crate) fn feed_pads(
+    world: &mut ScriptWorld,
+    stick: guac_motion::stick::Stick,
+    held: [bool; 4],
+    joined: bool,
+    walking: bool,
+) {
+    world.read_pads([
+        Pad {
+            stick,
+            actions: attack_buttons(joined, held),
+            connected: walking,
+        },
+        Pad::default(),
+    ]);
+    world.hold_accept([held[0], false]);
+}
+
 /// One step of the run, before the hero's (the module docs).
 pub(crate) fn step_scripts(
     mut commands: Commands,
@@ -1622,15 +1646,10 @@ pub(crate) fn step_scripts(
     // (hero-attacks' Which characters attack, openspec AU.1): a hero not
     // joined yet, or whose join failed or whose script stopped, reads none,
     // so nothing of his file the VM still ticks throws for him.
-    let held = attack_buttons(joined.is_some() && run.is_some(), held);
-    world.read_pads([
-        Pad {
-            stick: input.0.stick,
-            actions: held,
-            connected: walking,
-        },
-        Pad::default(),
-    ]);
+    let his = joined.is_some() && run.is_some();
+    feed_pads(&mut world, input.0.stick, held, his, walking);
+    // What the run's log shows of the step: his attacks, as the run reads them.
+    let held = attack_buttons(his, held);
     // The walk in the original's order (openspec AH.59, [`guacamole::frame`]):
     // his minion first, then the awake placements as they woke, the player
     // loop's slices (AH.20) in their placements' places, its stretches past
@@ -2600,6 +2619,29 @@ mod tests {
     /// AH.280's backstop: with no hero in, the activity rule measures from
     /// where the last one came off once the level has had one, never the
     /// level's start; with heroes in, from them alone.
+    /// openspec AS.368: a hero not joined (coming back in after a card
+    /// game, under his pirate's hold) reads no attack, but the player's
+    /// accept reaches the run, which the card loot's reports wait on.
+    #[test]
+    fn the_players_accept_reaches_the_run_whoever_the_pad_walks() {
+        let mut w = ScriptWorld::new(&Files::default(), &HashMap::new(), [0; 7]);
+        let still = guac_motion::stick::Stick::new(0.0, 0.0);
+        let south = [true, false, false, false];
+        feed_pads(&mut w, still, [false; 4], false, true);
+        feed_pads(&mut w, still, south, false, true);
+        assert_eq!(
+            w.pads_read(),
+            ([false; 4], [true, false], [false, false]),
+            "no attack for a hero not joined, the accept the player's"
+        );
+        feed_pads(&mut w, still, south, true, true);
+        assert_eq!(
+            w.pads_read(),
+            (south, [true, false], [true, false]),
+            "his once joined"
+        );
+    }
+
     #[test]
     fn with_no_hero_in_activity_measures_from_where_the_last_one_left() {
         let (him, left, start) = (

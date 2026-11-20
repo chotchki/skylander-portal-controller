@@ -126,17 +126,50 @@ pub fn camera_rig_model(model: &str) -> bool {
 /// and so does a placement with no script of its own (openspec AS.371,
 /// [`ScriptWorld::scriptless`]: the chain pull's chain holds its pull clip's
 /// end, the galleon docked on its node; stand-in ledger: `held-clip`),
-/// where any other goes back to its idle.
+/// where any other goes back to its idle. A card game's clone holds its
+/// last clip too ([`holds_last_clip`]).
 pub fn posing<'p>(
     world: &ScriptWorld,
     actor: Handle,
     palette: &'p Palette,
 ) -> Vec<(&'p Clip, f64)> {
     let mut on = playing(world, actor, palette);
-    if on.is_empty() && (camera_rig(palette) || world.scriptless(actor)) {
+    if on.is_empty() && (camera_rig(palette) || holds_last_clip(world, actor)) {
         on.extend(held(world, actor, palette));
     }
     on
+}
+
+/// Whether `actor`, with no clip playing on it, holds the last one's end
+/// rather than going back to its idle: a placement with no script of its own
+/// ([`ScriptWorld::scriptless`]), and a clone of the card game's streams
+/// (openspec AS.672, the as-cards-pad review: a stone's stock turns over on
+/// a one-shot clip, its other side its new owner's colour, and nothing
+/// plays on it after; back at its idle every stone the opponent flipped
+/// showed the player's colour again). Stand-in ledger: `held-clip`.
+pub fn holds_last_clip(world: &ScriptWorld, actor: Handle) -> bool {
+    world.scriptless(actor) || crate::card_game::card_clone(world, actor)
+}
+
+/// The palette slot [`posing`] poses `actor` at last (the topmost clip):
+/// the latest clip playing on it, else the one it holds; none at its idle.
+/// What the tests read a stone's drawn side by, with no palette.
+pub fn posed_slot(world: &ScriptWorld, actor: Handle) -> Option<u32> {
+    let on = |s: &&Sequence| s.actor == actor && s.laid_over() && world.clip_of(s).is_some();
+    let playing = world
+        .sequences()
+        .iter()
+        .rev()
+        .filter(on)
+        .find(|s| s.plays());
+    let s = match playing {
+        Some(s) => s,
+        None if holds_last_clip(world, actor) => {
+            last_clip(world.sequences(), actor, |s| world.clip_of(s).is_some())?
+        }
+        None => return None,
+    };
+    world.clip_of(s).map(|(_, slot)| slot)
 }
 
 /// What poses an actor's attach nodes where nothing picks his locomotion

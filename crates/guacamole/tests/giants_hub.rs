@@ -1614,7 +1614,21 @@ struct Played {
     card_clones: std::collections::BTreeMap<String, Option<String>>,
     /// The card archives joined to the run, in order.
     joined: Vec<String>,
+    /// Each hand select's offer the run answered as the TV does, and the
+    /// player's hand at each quit's first pick, by stone (openspec AS.555).
+    offers: Vec<guacamole::card_game::HandOffer>,
+    hands: Vec<Vec<u16>>,
+    /// At each of the score header's updates, the score as the TV reads it
+    /// and the board's stones a side (openspec AS.556).
+    scores: Vec<ScoreUpdate>,
+    /// At each of those updates, the board's stones drawn on the other side
+    /// from their owner's (openspec AS.672), with the step.
+    frames_off: Vec<(u32, Vec<cards::FrameOff>)>,
 }
+
+/// At a score header update: the score as the TV reads it and the board's
+/// stones a side, each the player's first (openspec AS.556).
+type ScoreUpdate = (Option<(i32, i32)>, Option<(i32, i32)>);
 
 /// One game's end.
 #[derive(Debug, Clone, PartialEq)]
@@ -1624,7 +1638,17 @@ struct Game {
     ended: u32,
     board: Option<String>,
     pirate: Option<String>,
+    /// His loot's behaviours the game went through, in order (a win's).
+    loot: Vec<String>,
 }
+
+/// The pirate's behaviours while his loot's reports are up (openspec
+/// AS.368): a player presses accept on each.
+const LOOT_WAITS: [&str; 3] = [
+    "wait for loot to be awarded",
+    "wait for 2d sprites to be ready",
+    "wait for loot theatrics",
+];
 
 /// How a game is played and when it's over ([`dreadbeards_games`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1637,6 +1661,13 @@ enum Plan {
     /// His question answered no: no game, his talk over at his `wait for
     /// player` (the run a game is set beside).
     Decline,
+    /// The hand select backed out of as its back button does (openspec
+    /// AS.557): no board, his talk over at his `wait for player`.
+    BackOut,
+    /// The hand select answered with this hand of the player's own as the
+    /// TV's hand select answers it (openspec AS.555), then quit at the first
+    /// pick.
+    Custom([u16; 5]),
 }
 
 /// Hub stage 2's intro played, the hero set by Dreadbeard, his talk button
@@ -1726,6 +1757,46 @@ fn dreadbeards_games_with(
     // The last game's end (or the start): a run with no game over in
     // [`STALL`] steps is a stuck board and ends there.
     let mut last_end = start;
+    // A custom hand needs stones collected: the save given the starter
+    // stones (a fresh save's first win at Fangs collects them) through the
+    // scripts' own `Save - Collection Get/Set - Card`, as a family's save
+    // after that win would hold them.
+    if plans.iter().any(|(p, _)| matches!(p, Plan::Custom(_))) {
+        run.with_host(|vm, host| {
+            let gs = guacamole::scripts::running(vm, host.world, "GameSystems.ai")
+                .expect("the game systems");
+            for stone in STARTERS {
+                vm.call_for(
+                    gs,
+                    "Save - Collection Get/Set - Card",
+                    &[
+                        ("card id", Value::Int(i32::from(stone))),
+                        ("collected", Value::Int(1)),
+                    ],
+                    &[],
+                    host,
+                )?;
+            }
+            Ok::<(), guac_script::Halt>(())
+        })
+        .unwrap_or_else(|h| panic!("the collection: {h}"));
+    }
+    // The TV's hand select answers the page where a plan asks it to.
+    if plans
+        .iter()
+        .any(|(p, _)| matches!(p, Plan::BackOut | Plan::Custom(_)))
+    {
+        run.world.card_streams.answer_hands_on_screen();
+    }
+    let mut offers = Vec::new();
+    let mut hands = Vec::new();
+    let mut scores = Vec::new();
+    let mut frames_off = Vec::new();
+    // Each hand select the TV's screen answers is answered once.
+    let screen_plans = plans
+        .iter()
+        .filter(|(p, _)| matches!(p, Plan::BackOut | Plan::Custom(_)))
+        .count();
     while run.steps - start < cap && run.steps - last_end < STALL {
         // The game on, else the next one asked for.
         let on = games.iter().position(|g| g.ended == 0);
@@ -1735,9 +1806,45 @@ fn dreadbeards_games_with(
         if on.is_none() && !asked {
             let press = cutscene_name(&run).is_none() && run.steps.is_multiple_of(20);
             talk_button(&mut run, press);
+        } else if let Plan::BackOut | Plan::Custom(_) = plan
+            && offers.len() < screen_plans
+            && let Some(offer) = guacamole::card_game::hand_offer(&run.vm)
+        {
+            offers.push(offer);
+            let done = run
+                .with_host(|vm, host| match plan {
+                    Plan::Custom(hand) => guacamole::card_game::play_hand(
+                        vm,
+                        host,
+                        &guacamole::card_game::HandChoice::Custom(hand.to_vec()),
+                    ),
+                    _ => guacamole::card_game::back_out_of_hand_select(vm, host),
+                })
+                .unwrap_or_else(|h| panic!("the hand select's answer: {h}"));
+            assert!(done, "the hand select answered");
+            if plan == Plan::BackOut {
+                games.push(Game {
+                    seed: 0,
+                    started: run.steps,
+                    ended: 0,
+                    board: None,
+                    pirate: None,
+                    loot: Vec::new(),
+                });
+            }
         } else if let Plan::Play(policy) = plan {
             player.policy = policy;
-            let pad = player.pad(&run);
+            let mut pad = player.pad(&run);
+            // His loot's reports wait on a player's accept (openspec AS.368):
+            // pressed as a player reads each one.
+            if cards::manager(&run).is_none()
+                && run
+                    .vm
+                    .behaviour(id)
+                    .is_some_and(|b| LOOT_WAITS.contains(&b))
+            {
+                pad.actions[0] = run.steps % 20 < 2;
+            }
             run.bench.pads[0] = pad;
         } else {
             talk_button(&mut run, false);
@@ -1814,14 +1921,34 @@ fn dreadbeards_games_with(
             held_back |= guacamole::anchors::scene_holds(&run.vm);
         }
         let now = cards::board(&run);
+        // The score header's numbers against the board's own stones, at each
+        // of the header's updates (openspec AS.556).
+        if now.as_deref() == Some("delay after updating score header")
+            && was_board.as_deref() != now.as_deref()
+        {
+            scores.push((
+                guacamole::card_game::score(&run.vm, &run.world),
+                cards::on_board(&run),
+            ));
+            frames_off.push((run.steps, cards::frames_off_owner(&run)));
+        }
         let pirate = run.vm.behaviour(id).map(str::to_owned);
+        if let Some(g) = games.last_mut().filter(|g| g.ended == 0)
+            && let Some(b) = pirate.as_deref()
+            && LOOT_WAITS.contains(&b)
+            && !g.loot.iter().any(|l| l == b)
+        {
+            g.loot.push(b.to_owned());
+        }
         // The game on over: a quit at his wait for the player, a win at his
         // loot's wait, a loss at the replay's start.
         if let Some(i) = on {
             let over = match plan {
-                Plan::Quit | Plan::Decline => pirate.as_deref() == Some("wait for player"),
+                Plan::Quit | Plan::Decline | Plan::BackOut | Plan::Custom(_) => {
+                    pirate.as_deref() == Some("wait for player")
+                }
                 Plan::Play(_) => {
-                    pirate.as_deref() == Some("wait for loot theatrics")
+                    pirate.as_deref() == Some("wait for player")
                         || (was_board.as_deref() == Some(cards::LOST)
                             && now.as_deref() == Some(cards::GAME_START))
                 }
@@ -1835,7 +1962,7 @@ fn dreadbeards_games_with(
                 // A quit's next game is asked for again, the hero set by
                 // him again as a talk sets him; a loss's replay starts on
                 // its own.
-                asked = !matches!(plan, Plan::Quit);
+                asked = !matches!(plan, Plan::Quit | Plan::BackOut | Plan::Custom(_));
                 if !asked {
                     run.put(at, 0.0);
                 }
@@ -1854,6 +1981,7 @@ fn dreadbeards_games_with(
                 ended: run.steps,
                 board: None,
                 pirate: pirate.clone(),
+                loot: Vec::new(),
             });
             declined = None;
         }
@@ -1869,28 +1997,22 @@ fn dreadbeards_games_with(
                 ended: 0,
                 board: None,
                 pirate: None,
+                loot: Vec::new(),
             });
             quit_sent = false;
         }
         if games.last().is_some_and(|g| g.ended == 0)
-            && matches!(plans[games.len() - 1].0, Plan::Quit)
+            && matches!(plans[games.len() - 1].0, Plan::Quit | Plan::Custom(_))
             && now.as_deref() == Some(cards::PICK_STONE)
             && !quit_sent
         {
+            hands.push(cards::hand(&run));
             quit_sent = run
                 .with_host(guacamole::card_game::quit)
                 .unwrap_or_else(|h| panic!("the quit: {h}"));
         }
         if now.is_some() {
             last_board.clone_from(&now);
-        }
-        // A win ends the pirate's games: his loot waits on AS.368's
-        // theatrics, so nothing after it can start.
-        if games
-            .last()
-            .is_some_and(|g| g.ended > 0 && g.pirate.as_deref() == Some("wait for loot theatrics"))
-        {
-            break;
         }
         was_board = now;
         if games.len() == plans.len() && games.iter().all(|g| g.ended > 0) {
@@ -2017,6 +2139,10 @@ fn dreadbeards_games_with(
             .iter()
             .map(|(a, _)| (*a).to_owned())
             .collect(),
+        offers,
+        hands,
+        scores,
+        frames_off,
     }
 }
 
@@ -2091,33 +2217,40 @@ fn dreadbeards_game_quit_lost_and_won_each_end_in_his_own_next_behaviour() {
     assert_eq!(quit.pirate.as_deref(), Some("wait for player"), "{quit:?}");
     assert_eq!(lost.board.as_deref(), Some(cards::LOST), "{lost:?}");
     assert_eq!(won.board.as_deref(), Some(cards::WON), "{won:?}");
-    assert_eq!(
-        won.pirate.as_deref(),
-        Some("wait for loot theatrics"),
-        "{won:?}"
-    );
-    assert_eq!(played.pirate.as_deref(), Some("wait for loot theatrics"));
+    // His loot's reports passed on the player's accept (openspec AS.368):
+    // the win runs through his loot to his own win scene and back to his
+    // wait for the player, his script's own way, no stand-in.
+    // (`wait for loot to be awarded` passes inside its first step here.)
+    assert_eq!(won.loot, LOOT_WAITS[1..], "{won:?}");
+    assert_eq!(won.pirate.as_deref(), Some("wait for player"), "{won:?}");
+    assert_eq!(played.pirate.as_deref(), Some("wait for player"));
     assert!(played.stops.is_empty(), "{:#?}", played.stops);
-    // The board and the hand select down; the reward card's sprites, which
-    // his loot's theatrics wait on (AS.368's), up.
-    assert_eq!(
-        played.running,
-        ["2dSpritesStream_Startup", "CardArt_Macros"],
-        "{:?}",
-        played.running
-    );
+    // The board, the hand select and the reward card's sprites down.
+    assert!(played.running.is_empty(), "{:?}", played.running);
+    // The score header's numbers are the board's stones a side at every
+    // update (openspec AS.556).
+    println!("score updates: {}", played.scores.len());
+    assert!(played.scores.len() >= 10, "{:?}", played.scores);
+    for (read, board) in &played.scores {
+        assert!(read.is_some() && read == board, "{:?}", played.scores);
+    }
+    // And every stone's frame on its owner's side at each of them: its
+    // stock held at its last turn, not back at its idle (openspec AS.672).
+    let off: Vec<_> = played
+        .frames_off
+        .iter()
+        .filter(|(_, o)| !o.is_empty())
+        .collect();
+    assert!(off.is_empty(), "frames off their owner: {off:?}");
     assert_eq!(
         played.backs, 2,
         "the hero put back after the quit and the win"
     );
-    // After the win he's back but held (openspec AS.481): his pirate's `wait
-    // for loot theatrics` puts every minion under designer control each
-    // tick until the loot's reports are done, AS.368's, so his walk after
-    // a win is AS.520's. After a quit he walks
-    // ([`a_quit_game_leaves_the_hub_as_a_declined_question_does`]).
-    assert!(!played.free, "held by his loot's wait");
+    // After the win's scene he walks (openspec AS.481's hold ends with his
+    // loot's wait).
+    assert!(played.free, "free after his win");
     assert!(!played.held_back, "put back under a scene");
-    assert!(played.moved < 0.5, "walked {:.1}", played.moved);
+    assert!(played.moved > 3.0, "walked {:.1}", played.moved);
     // No behaviour of the board's, the player's own waits aside, outstays
     // the game's own longest (the stone's 3D presentation and the flips).
     let (longest, stay) = played.stays.longest_unpressed().expect("a stay");
@@ -2132,6 +2265,69 @@ fn dreadbeards_game_quit_lost_and_won_each_end_in_his_own_next_behaviour() {
         played.steps,
         load()
     );
+}
+
+/// The starter stones a first win at Fangs collects (`giants_level_205`'s
+/// first-game test).
+const STARTERS: [u16; 6] = [0, 12, 15, 29, 46, 53];
+
+/// openspec AS.557: backed out of at the hand select (its own back button's
+/// action, as the TV's hand select runs it), the game ends before a board:
+/// Dreadbeard back at his `wait for player`, no board joined, his talk his
+/// again, nothing stopped.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_back_out_at_the_hand_select_ends_in_his_wait_for_player() {
+    println!("load at start: {}", load());
+    let played = dreadbeards_games(&[(Plan::BackOut, 0)], 20_000);
+    println!("games {:?}, offers {:?}", played.games, played.offers);
+    assert_eq!(played.offers.len(), 1, "{:?}", played.offers);
+    assert_eq!(played.games.len(), 1, "{:?}", played.games);
+    assert_eq!(played.games[0].pirate.as_deref(), Some("wait for player"));
+    assert!(played.games[0].ended > 0, "{:?}", played.games);
+    assert!(
+        !played
+            .joined
+            .iter()
+            .any(|j| j == guacamole::card_game::BOARD),
+        "no board: {:?}",
+        played.joined
+    );
+    assert!(played.stops.is_empty(), "{:#?}", played.stops);
+    assert!(played.running.is_empty(), "{:?}", played.running);
+    assert!(played.free, "free after the back-out");
+    println!("load at end: {}", load());
+}
+
+/// openspec AS.555: a save holding six stones offers them, and a hand of
+/// the player's own (one slot changed off the recommended) played as the
+/// TV's hand select plays it is the hand the board deals him.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_custom_hand_is_the_hand_the_board_deals() {
+    println!("load at start: {}", load());
+    let mine = [53, 12, 15, 29, 46];
+    let played = dreadbeards_games(&[(Plan::Custom(mine), 1)], 20_000);
+    println!(
+        "games {:?}, offers {:?}, hands {:?}",
+        played.games, played.offers, played.hands
+    );
+    assert_eq!(played.offers.len(), 1, "{:?}", played.offers);
+    assert_eq!(played.offers[0].collection, STARTERS);
+    assert!(
+        guacamole::card_game::hand_takes(&played.offers[0].recommended, &STARTERS),
+        "recommended off the collection: {:?}",
+        played.offers[0]
+    );
+    assert_ne!(played.offers[0].recommended, mine, "a changed hand");
+    let mut dealt = played.hands.first().cloned().expect("a hand dealt");
+    dealt.sort_unstable();
+    let mut want = mine.to_vec();
+    want.sort_unstable();
+    assert_eq!(dealt, want, "the board deals the hand played");
+    assert_eq!(played.games[0].pirate.as_deref(), Some("wait for player"));
+    assert!(played.stops.is_empty(), "{:#?}", played.stops);
+    println!("load at end: {}", load());
 }
 
 /// The longest any board behaviour but the player's own waits may last

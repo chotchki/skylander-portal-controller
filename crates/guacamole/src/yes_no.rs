@@ -52,10 +52,10 @@ pub(crate) const UNREAD_LINE: &str = "Yes or no?";
 
 /// `global.bld`'s templates the buttons draw, by name: each focused, and
 /// off the focus.
-const YES_ON: &str = "UI_ButtonBackdrop_Yes";
-const NO_ON: &str = "UI_ButtonBackdrop_No";
-const YES_OFF: &str = "UI_ButtonBackdrop_Yes_Desat";
-const NO_OFF: &str = "UI_ButtonBackdrop_No_Desat";
+pub(crate) const YES_ON: &str = "UI_ButtonBackdrop_Yes";
+pub(crate) const NO_ON: &str = "UI_ButtonBackdrop_No";
+pub(crate) const YES_OFF: &str = "UI_ButtonBackdrop_Yes_Desat";
+pub(crate) const NO_OFF: &str = "UI_ButtonBackdrop_No_Desat";
 const PROMPT_ART: [&str; 4] = [YES_ON, NO_ON, YES_OFF, NO_OFF];
 
 /// The original's screen units to the TV's design pixels, as the completion

@@ -86,12 +86,16 @@ pub(crate) fn show_overlay(
     (assets, theme, time): (Option<Res<TvAssets>>, Option<Res<TvTheme>>, Res<Time<Real>>),
     mut redrawn: MessageWriter<Redrawn>,
     mut shown: Local<Option<(LevelOverlay, Entity)>>,
+    card_quit: Option<Res<crate::card_screens::CardQuitOpen>>,
 ) {
+    // The card game's quit confirm takes Start's place over a board
+    // (openspec AS.557).
     let want = wanted(&pads, |pad| {
         gamepads
             .get(pad)
             .map_or(Labels::Position, |(pad, printed)| labels(pad, printed))
-    });
+    })
+    .filter(|_| !card_quit.is_some_and(|q| q.0));
     if shown.map(|(o, _)| o) == want {
         return;
     }

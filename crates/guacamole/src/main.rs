@@ -17,6 +17,7 @@ mod announce;
 mod arrival;
 mod button_prompt;
 mod card_motion;
+mod card_screens;
 mod card_view;
 mod cards;
 mod cli;
@@ -610,6 +611,8 @@ fn run_tv(
             yes_no::YesNoPlugin,
             // AS.441: a collected item's box over the level.
             collected_box::CollectedBoxPlugin,
+            // AS.555-AS.557: the card game's hand select, score and quit.
+            card_screens::CardScreensPlugin,
         ),
         // The figures' progress (AH.1) and, AS.38, AU.3, AU.4: the host's
         // story save, resumed and kept.

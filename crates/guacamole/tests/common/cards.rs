@@ -565,3 +565,111 @@ pub fn chances(run: &Run) -> Option<(i32, i32)> {
     let b = local(run, m, "best move - 2 %")?.as_i32()?;
     Some((a, b))
 }
+
+/// The player's hand on the board, by stone index (openspec AS.555): the
+/// manager's game data's `my hand`, each card's stone by its `card name`,
+/// as the board deals them. Empty with no board.
+pub fn hand(run: &Run) -> Vec<u16> {
+    let Some(m) = manager(run) else {
+        return Vec::new();
+    };
+    let Some(data) = local(run, m, "game data ref") else {
+        return Vec::new();
+    };
+    let Some(mine) = field(run, data, "my hand") else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for c in set_of(run, mine) {
+        let fields = run.vm.fields(c);
+        if std::env::var_os("AS555_DEBUG").is_some() {
+            println!(
+                "AS555 hand card {c:?}: {:?}",
+                fields
+                    .iter()
+                    .map(|(n, v)| format!("{n}={:?}", run.vm.value(*v)))
+                    .collect::<Vec<_>>()
+            );
+        }
+        // Its `card name`, the stone's name object, ends in its index in
+        // brackets (`Card_Name_(NNN)`).
+        let n = fields
+            .iter()
+            .find(|(n, _)| *n == "card name")
+            .and_then(|(_, v)| match run.vm.value(*v) {
+                Value::Object(o) => run.vm.program().name_of(o),
+                _ => None,
+            })
+            .and_then(|name| {
+                name.rsplit_once('(')?
+                    .1
+                    .strip_suffix(')')?
+                    .parse::<i32>()
+                    .ok()
+            });
+        if let Some(n) = n.and_then(|n| u16::try_from(n).ok()) {
+            out.push(n);
+        }
+    }
+    out
+}
+
+/// Each side's stones on the board by the board's own flag (`player's
+/// card?` on each of `all objects on board`): what the score header shows
+/// (openspec AS.556). The player's first.
+pub fn on_board(run: &Run) -> Option<(i32, i32)> {
+    let m = manager(run)?;
+    let data = local(run, m, "game data ref")?;
+    let all = set_of(run, field(run, data, "all objects on board")?);
+    let mine = all
+        .iter()
+        .filter(|o| field(run, **o, "player's card?").and_then(|v| v.as_i32()) == Some(1))
+        .count() as i32;
+    Some((mine, all.len() as i32 - mine))
+}
+
+/// The palette slots a stone's stock is posed at (`hands::posed_slot`) for
+/// each side, by the board's scripts: placed by the player 2, turned to him
+/// 4 (`3 + player's card?`); dealt to the opponent 5, turned to him 3.
+pub const PLAYER_SIDE: [u32; 2] = [2, 4];
+pub const OPPONENT_SIDE: [u32; 2] = [3, 5];
+
+/// A stone drawn off its owner's side: its square, its owner
+/// (`player's card?`) and the slot its stock is posed at.
+pub type FrameOff = ((i32, i32), i32, Option<u32>);
+
+/// Each board stone whose stock the TV poses on the other side from its
+/// owner (`player's card?`): its square, owner and the slot it's posed at
+/// (openspec AS.672). Empty while every frame shows its owner's colour.
+pub fn frames_off_owner(run: &Run) -> Vec<FrameOff> {
+    let Some(m) = manager(run) else {
+        return Vec::new();
+    };
+    let Some(all) =
+        local(run, m, "game data ref").and_then(|d| field(run, d, "all objects on board"))
+    else {
+        return Vec::new();
+    };
+    let mut off = Vec::new();
+    for o in set_of(run, all) {
+        let at = field(run, o, "board location")
+            .and_then(square)
+            .unwrap_or((-1, -1));
+        let owner = field(run, o, "player's card?")
+            .and_then(|v| v.as_i32())
+            .unwrap_or(-1);
+        let slot = match field(run, o, "cardstock") {
+            Some(Value::Entity(h)) => guacamole::hands::posed_slot(&run.world, h),
+            _ => None,
+        };
+        let side = match owner {
+            1 => &PLAYER_SIDE,
+            0 => &OPPONENT_SIDE,
+            _ => continue,
+        };
+        if !slot.is_some_and(|s| side.contains(&s)) {
+            off.push((at, owner, slot));
+        }
+    }
+    off
+}

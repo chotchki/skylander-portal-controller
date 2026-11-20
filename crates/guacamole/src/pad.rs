@@ -401,6 +401,14 @@ impl<Id: Copy + Eq + std::fmt::Debug> Seat<Id> {
         self.holding
     }
 
+    /// Start's wait ended from outside the pads: the card game's quit
+    /// confirm answered over it (openspec AS.557). A wait for a pad stays.
+    pub(crate) fn resume(&mut self) {
+        if matches!(self.pause, Some(Pause::Start { .. })) {
+            self.pause = None;
+        }
+    }
+
     fn take_seat(&mut self, pad: &PadFrame<Id>) {
         self.walking = Some(pad.id);
         self.pause = None;

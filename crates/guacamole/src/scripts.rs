@@ -518,6 +518,12 @@ pub struct ScriptWorld {
     /// The pads as this step reads them, and as the step before did.
     pub(crate) pads: [Pad; 2],
     pub(crate) pads_before: [Pad; 2],
+    /// Each pad's accept (its bottom face button) as the player holds it,
+    /// whoever the pad walks, and the step before's (openspec AS.368: the
+    /// card loot's reports read the controller's accept, which the TV's
+    /// [`Pad`]s hold back from a hero not joined).
+    pub(crate) accept: [bool; 2],
+    pub(crate) accept_before: [bool; 2],
     pub(crate) normalized: f32,
     pub(crate) ray: Ray,
     /// The points references naming nothing keep, by the reference's cell.
@@ -1002,6 +1008,8 @@ impl ScriptWorld {
             nodes: HashMap::new(),
             pads: [Pad::default(); 2],
             pads_before: [Pad::default(); 2],
+            accept: [false; 2],
+            accept_before: [false; 2],
             normalized: 0.0,
             ray: Ray::default(),
             kept_points: HashMap::new(),
@@ -1908,6 +1916,20 @@ impl ScriptWorld {
     pub fn read_pads(&mut self, pads: [Pad; 2]) {
         self.pads_before = self.pads;
         self.pads = pads;
+        self.accept_before = self.accept;
+        self.accept = [pads[0].actions[0], pads[1].actions[0]];
+    }
+
+    /// Each pad's accept as the player holds it, after [`Self::read_pads`]:
+    /// the TV's, whose pads read no attack for a hero not joined.
+    pub fn hold_accept(&mut self, accept: [bool; 2]) {
+        self.accept = accept;
+    }
+
+    /// The first pad's actions and both pads' accepts, this step's and the
+    /// step before's, as the run reads them.
+    pub fn pads_read(&self) -> ([bool; 4], [bool; 2], [bool; 2]) {
+        (self.pads[0].actions, self.accept, self.accept_before)
     }
 
     /// Each palette slot's clip length for `template`'s clones and itself.
