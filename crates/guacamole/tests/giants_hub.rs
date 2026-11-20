@@ -1624,7 +1624,17 @@ struct Game {
     ended: u32,
     board: Option<String>,
     pirate: Option<String>,
+    /// His loot's behaviours the game went through, in order (a win's).
+    loot: Vec<String>,
 }
+
+/// The pirate's behaviours while his loot's reports are up (openspec
+/// AS.368): a player presses accept on each.
+const LOOT_WAITS: [&str; 3] = [
+    "wait for loot to be awarded",
+    "wait for 2d sprites to be ready",
+    "wait for loot theatrics",
+];
 
 /// How a game is played and when it's over ([`dreadbeards_games`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1737,7 +1747,17 @@ fn dreadbeards_games_with(
             talk_button(&mut run, press);
         } else if let Plan::Play(policy) = plan {
             player.policy = policy;
-            let pad = player.pad(&run);
+            let mut pad = player.pad(&run);
+            // His loot's reports wait on a player's accept (openspec AS.368):
+            // pressed as a player reads each one.
+            if cards::manager(&run).is_none()
+                && run
+                    .vm
+                    .behaviour(id)
+                    .is_some_and(|b| LOOT_WAITS.contains(&b))
+            {
+                pad.actions[0] = run.steps % 20 < 2;
+            }
             run.bench.pads[0] = pad;
         } else {
             talk_button(&mut run, false);
@@ -1815,13 +1835,20 @@ fn dreadbeards_games_with(
         }
         let now = cards::board(&run);
         let pirate = run.vm.behaviour(id).map(str::to_owned);
+        if let Some(g) = games.last_mut().filter(|g| g.ended == 0)
+            && let Some(b) = pirate.as_deref()
+            && LOOT_WAITS.contains(&b)
+            && !g.loot.iter().any(|l| l == b)
+        {
+            g.loot.push(b.to_owned());
+        }
         // The game on over: a quit at his wait for the player, a win at his
         // loot's wait, a loss at the replay's start.
         if let Some(i) = on {
             let over = match plan {
                 Plan::Quit | Plan::Decline => pirate.as_deref() == Some("wait for player"),
                 Plan::Play(_) => {
-                    pirate.as_deref() == Some("wait for loot theatrics")
+                    pirate.as_deref() == Some("wait for player")
                         || (was_board.as_deref() == Some(cards::LOST)
                             && now.as_deref() == Some(cards::GAME_START))
                 }
@@ -1854,6 +1881,7 @@ fn dreadbeards_games_with(
                 ended: run.steps,
                 board: None,
                 pirate: pirate.clone(),
+                loot: Vec::new(),
             });
             declined = None;
         }
@@ -1869,6 +1897,7 @@ fn dreadbeards_games_with(
                 ended: 0,
                 board: None,
                 pirate: None,
+                loot: Vec::new(),
             });
             quit_sent = false;
         }
@@ -1883,14 +1912,6 @@ fn dreadbeards_games_with(
         }
         if now.is_some() {
             last_board.clone_from(&now);
-        }
-        // A win ends the pirate's games: his loot waits on AS.368's
-        // theatrics, so nothing after it can start.
-        if games
-            .last()
-            .is_some_and(|g| g.ended > 0 && g.pirate.as_deref() == Some("wait for loot theatrics"))
-        {
-            break;
         }
         was_board = now;
         if games.len() == plans.len() && games.iter().all(|g| g.ended > 0) {
@@ -2091,33 +2112,25 @@ fn dreadbeards_game_quit_lost_and_won_each_end_in_his_own_next_behaviour() {
     assert_eq!(quit.pirate.as_deref(), Some("wait for player"), "{quit:?}");
     assert_eq!(lost.board.as_deref(), Some(cards::LOST), "{lost:?}");
     assert_eq!(won.board.as_deref(), Some(cards::WON), "{won:?}");
-    assert_eq!(
-        won.pirate.as_deref(),
-        Some("wait for loot theatrics"),
-        "{won:?}"
-    );
-    assert_eq!(played.pirate.as_deref(), Some("wait for loot theatrics"));
+    // His loot's reports passed on the player's accept (openspec AS.368):
+    // the win runs through his loot to his own win scene and back to his
+    // wait for the player, his script's own way, no stand-in.
+    // (`wait for loot to be awarded` passes inside its first step here.)
+    assert_eq!(won.loot, LOOT_WAITS[1..], "{won:?}");
+    assert_eq!(won.pirate.as_deref(), Some("wait for player"), "{won:?}");
+    assert_eq!(played.pirate.as_deref(), Some("wait for player"));
     assert!(played.stops.is_empty(), "{:#?}", played.stops);
-    // The board and the hand select down; the reward card's sprites, which
-    // his loot's theatrics wait on (AS.368's), up.
-    assert_eq!(
-        played.running,
-        ["2dSpritesStream_Startup", "CardArt_Macros"],
-        "{:?}",
-        played.running
-    );
+    // The board, the hand select and the reward card's sprites down.
+    assert!(played.running.is_empty(), "{:?}", played.running);
     assert_eq!(
         played.backs, 2,
         "the hero put back after the quit and the win"
     );
-    // After the win he's back but held (openspec AS.481): his pirate's `wait
-    // for loot theatrics` puts every minion under designer control each
-    // tick until the loot's reports are done, AS.368's, so his walk after
-    // a win is AS.520's. After a quit he walks
-    // ([`a_quit_game_leaves_the_hub_as_a_declined_question_does`]).
-    assert!(!played.free, "held by his loot's wait");
+    // After the win's scene he walks (openspec AS.481's hold ends with his
+    // loot's wait).
+    assert!(played.free, "free after his win");
     assert!(!played.held_back, "put back under a scene");
-    assert!(played.moved < 0.5, "walked {:.1}", played.moved);
+    assert!(played.moved > 3.0, "walked {:.1}", played.moved);
     // No behaviour of the board's, the player's own waits aside, outstays
     // the game's own longest (the stone's 3D presentation and the flips).
     let (longest, stay) = played.stays.longest_unpressed().expect("a stay");

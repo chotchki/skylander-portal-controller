@@ -236,6 +236,10 @@ pub struct CardStreams {
     /// A quit asked of a played game ([`CardStreams::ask_quit`]), answered
     /// by the next step's [`quit`].
     quit_asked: bool,
+    /// Whether the TV's hand select answers the hand select's page
+    /// ([`CardStreams::answer_hands_on_screen`]); headless it's answered by
+    /// Play.
+    hand_by_screen: bool,
 }
 
 /// The portal's replacement of the hero by the board (openspec AS.481):
@@ -287,8 +291,16 @@ impl CardStreams {
         Self {
             units: linked.units.clone(),
             played: linked.played,
+            hand_by_screen: linked.hand_by_screen,
             ..Self::default()
         }
+    }
+
+    /// From here on the hand select's page waits for the TV's own hand
+    /// select (openspec AS.555) in place of Play run at once. Changes
+    /// nothing on a run that plays no game: its page never comes up.
+    pub fn answer_hands_on_screen(&mut self) {
+        self.hand_by_screen = true;
     }
 
     /// From here on a yes at a pirate plays the game (openspec AS.366):
@@ -475,6 +487,360 @@ fn page_ready(vm: &Vm, page: Value) -> bool {
     matches!((timer, anim), (Some(t), Some(a)) if t >= a)
 }
 
+/// The hand select's data, the global its menu macros keep the hands in
+/// (openspec AS.555): `recommended hand card set` (stone indices),
+/// `custom hand card set` (each a `card index`) and `collection card set`
+/// (the save's collected stones, each a `card index`).
+pub const HAND_SELECT_INFO: &str = "CardGame_MenuHandSelectInfo";
+/// The stones a hand holds: the custom hand set has five slots and the board deals five.
+pub const HAND_SIZE: usize = 5;
+/// The game's start off a hand (`hand index` 0 the recommended hand, any
+/// other the custom one, saved as the last hand).
+const START_GAME: &str = "CardGame Menu - Start Game";
+/// What the build-hand page's Begin runs after the start: the menus from
+/// the hand select's page down, their shutdowns run.
+const CLOSE_FROM: &str = "Menu - Close All Menus Starting With Page ";
+/// The player flag the build-hand page's Begin sets before its start, and
+/// what the hand select's back-out runs.
+const PLAYER_FLAG: &str = "Save - Get/Set Player Flag";
+const BUILT_A_HAND: i32 = 6;
+const HAND_SELECT_BACK_OUT: &str = "CardGame Menu - Menu Hand Select - Back Out";
+
+/// What the hand select offers, read off its data while its page is up and
+/// its opening has played (openspec AS.555).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandOffer {
+    /// The hand the scripts recommend, by stone index: Play's hand.
+    pub recommended: Vec<u16>,
+    /// The save's collected stones, by index, in the collection's order:
+    /// what a custom hand is built from.
+    pub collection: Vec<u16>,
+    /// The page's tutorial mode (a first game's).
+    pub tutorial: bool,
+}
+
+/// How the hand select is answered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HandChoice {
+    /// Play: the recommended hand, as its button runs it.
+    Recommended,
+    /// A hand of the player's own, stone indices, each once (the build-hand
+    /// page refuses a stone the hand holds).
+    Custom(Vec<u16>),
+}
+
+/// Whether `hand` is a custom hand the build-hand page would take: five
+/// stones, each from `collection`, none twice.
+pub fn hand_takes(hand: &[u16], collection: &[u16]) -> bool {
+    hand.len() == HAND_SIZE
+        && hand.iter().all(|s| collection.contains(s))
+        && hand.iter().enumerate().all(|(i, s)| !hand[..i].contains(s))
+}
+
+fn stone_index(vm: &Vm, v: Value) -> Option<u16> {
+    let v = vm.value(v);
+    let n = match v {
+        Value::Int(_) | Value::Float(_) => v.as_i32(),
+        _ => field(vm, v, "card index").and_then(|c| c.as_i32()),
+    }?;
+    u16::try_from(n).ok()
+}
+
+fn stones_of(vm: &Vm, info: Value, set: &str) -> Vec<u16> {
+    field(vm, info, set)
+        .and_then(|s| vm.set(s).map(<[Value]>::to_vec))
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|v| stone_index(vm, v))
+        .collect()
+}
+
+/// The hand select's offer, while its page is up and ready for a press.
+pub fn hand_offer(vm: &Vm) -> Option<HandOffer> {
+    let (_, page, title) = page_up(vm)?;
+    if title != HAND_SELECT_TITLE || !page_ready(vm, page) {
+        return None;
+    }
+    let info = global(vm, HAND_SELECT_INFO)?;
+    Some(HandOffer {
+        recommended: stones_of(vm, info, "recommended hand card set"),
+        collection: stones_of(vm, info, "collection card set"),
+        tutorial: field(vm, info, "tutorial mode")
+            .and_then(|t| t.as_i32())
+            .is_some_and(|t| t > 0),
+    })
+}
+
+/// The hand select answered with `choice` as its buttons answer it
+/// (openspec AS.555): Play's action for the recommended hand; for a custom
+/// one, its stones written into the custom hand's slots as the build-hand
+/// page writes them, then what that page's Begin runs (the player flag, the
+/// start off the custom hand, the menus closed from the hand select down).
+/// False when no hand select is up and ready, or a custom hand the page
+/// wouldn't take.
+pub fn play_hand(
+    vm: &mut Vm,
+    host: &mut WorldHost<'_, '_>,
+    choice: &HandChoice,
+) -> Result<bool, Halt> {
+    let Some(offer) = hand_offer(vm) else {
+        return Ok(false);
+    };
+    let Some((control, page, _)) = page_up(vm) else {
+        return Ok(false);
+    };
+    let Some(gs) = running(vm, host.world, GAME_SYSTEMS) else {
+        return Ok(false);
+    };
+    let hand = match choice {
+        HandChoice::Recommended => {
+            info!(
+                "the card game's hand select: the recommended hand played, as its Play button plays it"
+            );
+            vm.call_for(
+                gs,
+                HAND_SELECT_PLAY,
+                &[
+                    ("current page info", page),
+                    ("cur menu control data", control),
+                    ("just pressed", Value::Int(1)),
+                ],
+                &[],
+                host,
+            )?;
+            return Ok(true);
+        }
+        HandChoice::Custom(hand) => hand,
+    };
+    if !hand_takes(hand, &offer.collection) {
+        return Ok(false);
+    }
+    let Some(info) = global(vm, HAND_SELECT_INFO) else {
+        return Ok(false);
+    };
+    let slots: Vec<Value> = field(vm, info, "custom hand card set")
+        .and_then(|s| vm.set(s).map(<[Value]>::to_vec))
+        .unwrap_or_default();
+    if slots.len() != HAND_SIZE {
+        return Ok(false);
+    }
+    for (slot, stone) in slots.into_iter().zip(hand) {
+        let slot = vm.value(slot);
+        if !vm.set_field(slot, "card index", Value::Int(i32::from(*stone))) {
+            return Ok(false);
+        }
+    }
+    let title = field(vm, page, "menu def")
+        .and_then(|d| field(vm, d, "title"))
+        .unwrap_or(Value::Null);
+    info!(
+        ?hand,
+        "the card game's hand select: a hand of the player's own played, as the build-hand page's Begin plays it"
+    );
+    vm.call_for(
+        gs,
+        PLAYER_FLAG,
+        &[
+            ("setting id", Value::Int(BUILT_A_HAND)),
+            ("value", Value::Int(1)),
+            ("do save", Value::Int(1)),
+        ],
+        &[],
+        host,
+    )?;
+    vm.call_for(gs, START_GAME, &[("hand index", Value::Int(1))], &[], host)?;
+    vm.call_for(
+        gs,
+        CLOSE_FROM,
+        &[("run shutdown", Value::Int(1)), ("page title", title)],
+        &[],
+        host,
+    )?;
+    Ok(true)
+}
+
+/// The hand select backed out of, as its back button does: its own
+/// back-out, which cleans the card data up, then its page closed with its
+/// shutdowns run. False when no hand select is up.
+pub fn back_out_of_hand_select(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<bool, Halt> {
+    let Some((control, page, title)) = page_up(vm) else {
+        return Ok(false);
+    };
+    if title != HAND_SELECT_TITLE {
+        return Ok(false);
+    }
+    let Some(gs) = running(vm, host.world, GAME_SYSTEMS) else {
+        return Ok(false);
+    };
+    let title = field(vm, page, "menu def")
+        .and_then(|d| field(vm, d, "title"))
+        .unwrap_or(Value::Null);
+    info!("the card game's hand select backed out of, as its back button does");
+    vm.call_for(
+        gs,
+        HAND_SELECT_BACK_OUT,
+        &[("page info", page), ("menu control data", control)],
+        &[],
+        host,
+    )?;
+    vm.call_for(
+        gs,
+        CLOSE_FROM,
+        &[("run shutdown", Value::Int(1)), ("page title", title)],
+        &[],
+        host,
+    )?;
+    Ok(true)
+}
+
+/// The board's manager, by its clone's name.
+const MANAGER: &str = "CardGameManager";
+
+/// The running board manager, if a game's board is up.
+pub fn manager(vm: &Vm, world: &ScriptWorld) -> Option<PlacementId> {
+    let mut found = None;
+    let mut pid: PlacementId = 0;
+    while let Some(h) = vm.handle_of(pid) {
+        if !vm.removed(pid) && world.name(h) == MANAGER {
+            found = Some(pid);
+        }
+        pid += 1;
+    }
+    found
+}
+
+/// Both scores as the board's script holds them (openspec AS.556): the
+/// manager's game data's `remembered player score` and `remembered
+/// opponent score`, which `CardGame - Update Score Header` sets from the
+/// stones each side holds on the board at each of its updates. The
+/// player's first. None with no board up.
+pub fn score(vm: &Vm, world: &ScriptWorld) -> Option<(i32, i32)> {
+    let m = manager(vm, world)?;
+    let data = vm.local(m, "game data ref").map(|v| vm.value(v))?;
+    let n = |name| field(vm, data, name).and_then(|v| v.as_i32());
+    Some((
+        n("remembered player score")?,
+        n("remembered opponent score")?,
+    ))
+}
+
+/// The card loot's reports (the reward card's and the coins'), each by its
+/// update macro, the field its stage sits under and the stage at which it
+/// waits on a player's accept press (openspec AS.368). The reporter's
+/// pre-script removes it once its update sets `completed`; the pirate's
+/// `wait for loot theatrics` holds while it lives.
+const LOOT_REPORTS: [(&str, LootStage, i32); 2] = [
+    (
+        "UI - TR - Reward Card - Update",
+        LootStage::Def("anim info"),
+        2,
+    ),
+    (
+        "UI - TR - Reward - Coins - Update",
+        LootStage::Context("anim data"),
+        9,
+    ),
+];
+
+/// Where a report's stage is kept: under its def, or under each of its
+/// context data.
+#[derive(Debug, Clone, Copy)]
+enum LootStage {
+    Def(&'static str),
+    Context(&'static str),
+}
+
+/// The reporters' script.
+const REPORTER: &str = "UI_TheatricalReporter";
+
+/// The pirate behaviours in which his loot's reports are up.
+const LOOT_WAITS: [&str; 3] = [
+    "wait for loot to be awarded",
+    "wait for 2d sprites to be ready",
+    "wait for loot theatrics",
+];
+
+/// Whether a player's accept went down this step: either pad's bottom face
+/// button (action 1), pressed now and not the step before. The reports ask
+/// `accept button` of `controller 1` and `controller 2`, which the host's
+/// pads don't serve (only `action 1` to `action 4`; filed AS.670), and the
+/// TV's South is both.
+fn accept_pressed(world: &ScriptWorld) -> bool {
+    world
+        .pads
+        .iter()
+        .zip(world.pads_before.iter())
+        .any(|(now, was)| now.actions[0] && !was.actions[0])
+}
+
+/// The stage `report` (a reporter's `tr def ref`) waits a press at, where
+/// that stage sits, if it waits on one now.
+fn loot_report_waiting(vm: &Vm, def: Value) -> Option<Value> {
+    let update = field(vm, def, "update macro")?;
+    let Value::Object(o) = update else {
+        return None;
+    };
+    let name = vm.program().name_of(o)?;
+    let (_, at, waits) = LOOT_REPORTS.iter().find(|(n, _, _)| *n == name)?;
+    let holders: Vec<Value> = match at {
+        LootStage::Def(f) => field(vm, def, f).into_iter().collect(),
+        LootStage::Context(f) => field(vm, def, "context data")
+            .and_then(|s| vm.set(s).map(<[Value]>::to_vec))
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|c| field(vm, vm.value(c), f))
+            .collect(),
+    };
+    holders
+        .into_iter()
+        .find(|h| field(vm, *h, "stage").and_then(|s| s.as_i32()) == Some(*waits))
+}
+
+/// A card loot's report waiting on the accept passed on a player's own
+/// accept press, as the press would pass it (the report's stage moved on
+/// one, its own next stages slide it out and end it); stand-in ledger:
+/// `card-loot-accept`. Only while a pirate's loot is up. How many it passed.
+fn pass_loot_reports(vm: &mut Vm, world: &ScriptWorld) -> usize {
+    if !accept_pressed(world) {
+        return 0;
+    }
+    let pirates_loot = world.people().into_iter().any(|h| {
+        vm.placement_of(h)
+            .and_then(|p| vm.behaviour(p))
+            .is_some_and(|b| LOOT_WAITS.contains(&b))
+    });
+    if !pirates_loot {
+        return 0;
+    }
+    let mut waiting = Vec::new();
+    let mut pid: PlacementId = 0;
+    while let Some(h) = vm.handle_of(pid) {
+        if !vm.removed(pid)
+            && world.name(h) == REPORTER
+            && let Some(def) = vm.local(pid, "tr def ref").map(|v| vm.value(v))
+            && let Some(stage) = loot_report_waiting(vm, def)
+        {
+            waiting.push(stage);
+        }
+        pid += 1;
+    }
+    let mut passed = 0;
+    for stage in waiting {
+        let next = field(vm, stage, "stage")
+            .and_then(|s| s.as_i32())
+            .unwrap_or(0)
+            + 1;
+        if vm.set_field(stage, "stage", Value::Int(next)) {
+            info!(
+                stage = next,
+                "a card loot's report passed on the player's accept"
+            );
+            passed += 1;
+        }
+    }
+    passed
+}
+
 /// A card game particle's removal no earlier than its disable time (the
 /// module docs; stand-in ledger: `card-particles`): `UI - Particle Remover`
 /// sets a particle's remove time from its generators' lifetimes
@@ -593,28 +959,13 @@ pub fn step(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<bool, Halt> {
     let restore = &mut host.world.card_streams.restore;
     *restore = restore.next(now);
     hold_card_particles(vm, host.world);
-    let Some((control, page, title)) = page_up(vm) else {
-        return Ok(false);
-    };
-    if title != HAND_SELECT_TITLE || !page_ready(vm, page) {
+    pass_loot_reports(vm, host.world);
+    // The TV's hand select answers the page itself ([`hand_offer`],
+    // [`play_hand`]); headless the recommended hand is played as Play plays it.
+    if host.world.card_streams.hand_by_screen {
         return Ok(false);
     }
-    let Some(gs) = running(vm, host.world, GAME_SYSTEMS) else {
-        return Ok(false);
-    };
-    info!("the card game's hand select: the recommended hand played, as its Play button plays it");
-    vm.call_for(
-        gs,
-        HAND_SELECT_PLAY,
-        &[
-            ("current page info", page),
-            ("cur menu control data", control),
-            ("just pressed", Value::Int(1)),
-        ],
-        &[],
-        host,
-    )?;
-    Ok(true)
+    play_hand(vm, host, &HandChoice::Recommended)
 }
 
 /// The board's quit's confirm (`CardGame_Setup.ai`'s `Quit - Yes`).
