@@ -896,6 +896,83 @@ fn in_pirates_loot(behaviours: &[Option<&str>]) -> bool {
         .any(|b| b.is_some_and(|b| LOOT_WAITS.contains(&b)))
 }
 
+/// What a pirate's loot puts up while its reports are up (openspec AS.673),
+/// read off each report's definition as its update macro names it: the
+/// reward card's title string and the stone it gives (its name string and
+/// its number off that string's `Card_Name_(NNN)`), the coins' title.
+/// Strings are the interface's objects, their words read at run time.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LootUp {
+    pub card_title: Option<Value>,
+    pub stone: Option<u16>,
+    pub stone_name: Option<Value>,
+    pub coins_title: Option<Value>,
+    /// The coins' report is up.
+    pub coins: bool,
+    /// A report among them waits on the player's accept now.
+    pub waiting: bool,
+}
+
+/// The stone a `Card_Name_(NNN)` string names.
+pub fn stone_of_name(name: &str) -> Option<u16> {
+    name.strip_prefix("Card_Name_(")?
+        .strip_suffix(')')?
+        .parse()
+        .ok()
+}
+
+/// [`LootUp`] while a pirate is in his loot ([`LOOT_WAITS`]) and a report of
+/// its is up; none otherwise.
+pub fn loot_up(vm: &Vm, world: &ScriptWorld) -> Option<LootUp> {
+    let behaviours: Vec<Option<&str>> = world
+        .people()
+        .into_iter()
+        .map(|h| vm.placement_of(h).and_then(|p| vm.behaviour(p)))
+        .collect();
+    if !in_pirates_loot(&behaviours) {
+        return None;
+    }
+    let mut up = LootUp::default();
+    let mut any = false;
+    let mut pid: PlacementId = 0;
+    while let Some(h) = vm.handle_of(pid) {
+        pid += 1;
+        if vm.removed(pid - 1) || world.name(h) != REPORTER {
+            continue;
+        }
+        let Some(def) = vm.local(pid - 1, "tr def ref").map(|v| vm.value(v)) else {
+            continue;
+        };
+        let Some(Value::Object(update)) = field(vm, def, "update macro") else {
+            continue;
+        };
+        let title = field(vm, def, "title ref").filter(|t| *t != Value::Null);
+        up.waiting |= loot_report_waiting(vm, def).is_some();
+        match vm.program().name_of(update) {
+            Some(n) if n == LOOT_REPORTS[0].0 => {
+                any = true;
+                up.card_title = title;
+                let first = field(vm, def, "context data")
+                    .and_then(|s| vm.set(s).and_then(|s| s.first().copied()))
+                    .map(|c| vm.value(c));
+                let name = first.and_then(|c| field(vm, c, "card name ref"));
+                up.stone = match name {
+                    Some(Value::Object(o)) => vm.program().name_of(o).and_then(stone_of_name),
+                    _ => None,
+                };
+                up.stone_name = name;
+            }
+            Some(n) if n == LOOT_REPORTS[1].0 => {
+                any = true;
+                up.coins = true;
+                up.coins_title = title;
+            }
+            _ => {}
+        }
+    }
+    any.then_some(up)
+}
+
 /// A card loot's report waiting on the accept passed on a player's own
 /// accept press, as the press would pass it (the report's stage moved on
 /// one, its own next stages slide it out and end it); stand-in ledger:

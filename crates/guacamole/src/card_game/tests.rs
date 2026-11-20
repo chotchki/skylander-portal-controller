@@ -449,3 +449,13 @@ fn a_loot_report_passes_only_while_a_pirate_is_in_his_loot() {
         );
     }
 }
+
+/// openspec AS.673: the stone a reward card's name string names, off its
+/// `Card_Name_(NNN)`; anything else none.
+#[test]
+fn a_reward_cards_stone_is_read_off_its_name_string() {
+    assert_eq!(stone_of_name("Card_Name_(006)"), Some(6));
+    assert_eq!(stone_of_name("Card_Name_(081)"), Some(81));
+    assert_eq!(stone_of_name("Card_Sprite_006"), None);
+    assert_eq!(stone_of_name("Card_Name_(x)"), None);
+}

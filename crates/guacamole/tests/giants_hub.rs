@@ -1618,6 +1618,10 @@ struct Played {
     /// player's hand at each quit's first pick, by stone (openspec AS.555).
     offers: Vec<guacamole::card_game::HandOffer>,
     hands: Vec<Vec<u16>>,
+    /// Each change of what a pirate's loot puts up (openspec AS.673): the
+    /// stone given, whether its title and name strings read words, whether
+    /// the coins' report is up.
+    loots: Vec<(Option<u16>, bool, bool, bool)>,
     /// At each of the score header's updates, the score as the TV reads it
     /// and the board's stones a side (openspec AS.556).
     scores: Vec<ScoreUpdate>,
@@ -1792,6 +1796,7 @@ fn dreadbeards_games_with(
         run.world.card_streams.answer_hands_on_screen();
     }
     let mut offers = Vec::new();
+    let mut loots: Vec<(Option<u16>, bool, bool, bool)> = Vec::new();
     let mut hands = Vec::new();
     let mut scores = Vec::new();
     let mut frames_off = Vec::new();
@@ -1853,6 +1858,13 @@ fn dreadbeards_games_with(
             talk_button(&mut run, false);
         }
         stops.extend(run.step_play().unwrap());
+        if let Some(l) = guacamole::card_game::loot_up(&run.vm, &run.world) {
+            let words = |v: Option<Value>| v.and_then(|v| run.world.text_of(v)).is_some();
+            let now = (l.stone, words(l.card_title), words(l.stone_name), l.coins);
+            if loots.last() != Some(&now) {
+                loots.push(now);
+            }
+        }
         if let Some(p) = guacamole::prompt::up(&run.vm, &run.world) {
             read += 1;
             if read >= READING {
@@ -2146,6 +2158,7 @@ fn dreadbeards_games_with(
         hands,
         scores,
         frames_off,
+        loots,
     }
 }
 
@@ -2302,6 +2315,18 @@ fn dreadbeards_loot_passes_on_the_scripts_own_accept() {
     assert_eq!(won.loot, LOOT_WAITS[1..], "{won:?}");
     assert_eq!(won.pirate.as_deref(), Some("wait for player"), "{won:?}");
     assert!(played.stops.is_empty(), "{:#?}", played.stops);
+    // What the TV draws of it (openspec AS.673): the stone given and its
+    // title's and name's words. (No coins' report of its own comes up in
+    // Dreadbeard's win here.)
+    println!("the loot as read: {:?}", played.loots);
+    assert!(
+        played
+            .loots
+            .iter()
+            .any(|(stone, title, name, _)| stone.is_some() && *title && *name),
+        "{:?}",
+        played.loots
+    );
     println!(
         "{:.1} s, {} steps, load at end: {}",
         started.elapsed().as_secs_f64(),
