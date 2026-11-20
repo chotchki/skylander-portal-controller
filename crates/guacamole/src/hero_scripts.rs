@@ -1638,13 +1638,10 @@ pub(crate) fn step_scripts(
     // (hero-attacks' Which characters attack, openspec AU.1): a hero not
     // joined yet, or whose join failed or whose script stopped, reads none,
     // so nothing of his file the VM still ticks throws for him.
-    feed_pads(
-        &mut world,
-        input.0.stick,
-        held,
-        joined.is_some() && run.is_some(),
-        walking,
-    );
+    let his = joined.is_some() && run.is_some();
+    feed_pads(&mut world, input.0.stick, held, his, walking);
+    // What the run's log shows of the step: his attacks, as the run reads them.
+    let held = attack_buttons(his, held);
     // The walk in the original's order (openspec AH.59, [`guacamole::frame`]):
     // his minion first, then the awake placements as they woke, the player
     // loop's slices (AH.20) in their placements' places, its stretches past

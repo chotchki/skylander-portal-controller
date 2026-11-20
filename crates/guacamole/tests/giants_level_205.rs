@@ -5219,8 +5219,8 @@ fn fangs_game_lost_ends_in_the_replay() {
 }
 
 /// openspec AS.366: Fangs' game won by a strong player: the board's won
-/// report accepted, the board down, and he goes on to his loot. Nothing
-/// stops.
+/// report accepted, the board down, and he goes on through his loot to his
+/// win scene. Nothing stops.
 #[test]
 #[ignore = "reads the Giants dump"]
 fn fangs_game_won_ends_in_his_loot() {
@@ -5228,7 +5228,9 @@ fn fangs_game_won_ends_in_his_loot() {
     let p = fangs_game(Some(cards::Policy::Strong), FANGS_SEEDS[2], &|_| true);
     let g = &p.games[0];
     assert_eq!(g.2.as_deref(), Some(cards::WON), "{g:?}");
-    assert!(g.3.starts_with("wait for loot"), "{g:?}");
+    // His loot's reports pass on the player's accept (openspec AS.368):
+    // 120 steps on he's past them, in his win scene's wait.
+    assert_eq!(g.3, "wait for igc", "{g:?}");
     println!("load at end: {}", load());
 }
 
