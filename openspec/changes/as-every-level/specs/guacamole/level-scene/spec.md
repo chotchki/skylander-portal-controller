@@ -672,10 +672,6 @@ A joined hero SHALL be drawn nowhere while his tint's alpha is 0 and at that alp
 - **WHEN** his death writes his element's colour and its percent on him and what hangs on him
 - **THEN** each draws covered by that colour by that percent, step by step, and his glow goes while he fades
 
-#### Scenario: An idle Chompy
-- **WHEN** an idle Chompy's script turns it a few degrees and moves it from itself each step
-- **THEN** it runs round where it stands, its run's clip playing, and never stands still facing one way
-
 #### Scenario: Chop Chop's sword
 - **WHEN** Chop Chop swings
 - **THEN** one sword and one shield draw on every frame
@@ -683,6 +679,13 @@ A joined hero SHALL be drawn nowhere while his tint's alpha is 0 and at that alp
 #### Scenario: Stealth Elf's stealth
 - **WHEN** Stealth Elf goes unseen with her second action
 - **THEN** she and her knives are drawn nowhere until her scripts' stealth runs out, and drawn again after
+
+### Requirement: A creature turned and moved from itself runs on
+When a creature's script turns it and moves it from its own place on one step, the TV SHALL run it on along that facing and never end the move; moved from itself with no turn that step, it SHALL stand. An idle Chompy turned 3 degrees a step SHALL run a ring about 3.9 m across round its own spot at its run's speed, a lap every 2 s, never leaving its ground.
+
+#### Scenario: An idle Chompy
+- **WHEN** an idle Chompy's script turns it a few degrees and moves it from itself each step
+- **THEN** it runs round where it stands, its run's clip playing, and never stands still facing one way
 
 ### Requirement: A replace colour mixes on stored values
 A replace colour SHALL be mixed over a part's shaded colour as the original's effect mixes it, on stored values: the shaded colour taken out of linear light to stored, lerped toward the replace colour as stored by its amount, and taken back. At amount 0 the colour SHALL be unchanged and at full it SHALL be the replace colour.
