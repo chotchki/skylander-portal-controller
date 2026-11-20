@@ -1831,7 +1831,12 @@ impl ScriptWorld {
                 let Some(Object::Button(pad, b)) = object else {
                     return Err(HostFault::Nothing);
                 };
-                let held = |p: &crate::script_engine::Pad| served(p, b);
+                // A card game's board stands in for the hero (openspec
+                // AS.670): its manager reads `accept button` off the pad
+                // whose presses already pick, so none is served then.
+                let board = matches!(b, Button::Accept)
+                    && self.card_streams.restore() != crate::card_game::Restore::Idle;
+                let held = |p: &crate::script_engine::Pad| !board && served(p, b);
                 let (was, now) = if pad == u8::MAX {
                     (false, false)
                 } else {
@@ -6594,6 +6599,36 @@ mod tests {
         assert!(served(&pad([true, false, false, false]), Button::Accept));
         assert!(!served(&pad([false; 4]), Button::Accept));
         assert!(served(&pad([false, false, true, false]), Button::Action(3)));
+    }
+
+    /// openspec AS.670: while a card game's board holds the hero's slot
+    /// (`Restore` past idle) no accept is served: the board's manager reads it
+    /// off the pad its picks already come from.
+    #[test]
+    fn no_accept_is_served_while_a_card_games_board_holds_the_hero() {
+        let mut e = bench();
+        let mut w = world();
+        let button = w.objs.value(Object::Button(0, Button::Accept));
+        let read = |w: &mut ScriptWorld, e: &mut Bench| {
+            w.get_member(
+                &at("buttonmeasurement", "pressure state", Some(button), None),
+                Member::PressureState,
+                e,
+            )
+        };
+        let south = Pad {
+            actions: [true, false, false, false],
+            connected: true,
+            ..Pad::default()
+        };
+        w.read_pads([Pad::default(), Pad::default()]);
+        w.read_pads([south, Pad::default()]);
+        assert_eq!(read(&mut w, &mut e), Ok(Value::Int(3)));
+        w.card_streams
+            .set_restore(crate::card_game::Restore::Replaced);
+        assert_eq!(read(&mut w, &mut e), Ok(Value::Int(1)), "the board's");
+        w.card_streams.set_restore(crate::card_game::Restore::Asked);
+        assert_eq!(read(&mut w, &mut e), Ok(Value::Int(1)), "until he's back");
     }
 
     /// openspec AS.661: a hero's static spawn's attach nodes, added at his

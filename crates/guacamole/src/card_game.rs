@@ -345,6 +345,12 @@ impl CardStreams {
         self.restore
     }
 
+    /// The replacement's state set by hand: a unit test's.
+    #[cfg(test)]
+    pub(crate) fn set_restore(&mut self, r: Restore) {
+        self.restore = r;
+    }
+
     /// The board's teardown's ask standing as asked ([`Restore::Asked`]):
     /// how the TV's tests stand for a played game's replacement set and
     /// cleared on the VM (openspec AS.553). Feature-gated as
