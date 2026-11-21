@@ -152,6 +152,15 @@ objc2-game-controller = { version = "0.3.2", default-features = false, features 
     "GCPressedStateInput",
     "GCTypes",
 ] }
+# An unattended test run's app off the Dock and Cmd-Tab (openspec AS.740):
+# the accessory activation policy. The features winit and rfd already turn
+# on, so nothing in the tree rebuilds for it.
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSApplication",
+    "NSResponder",
+    "NSRunningApplication",
+] }
 
 [dev-dependencies]
 # The seam's shared test table, run through the Avian side (physics.rs).

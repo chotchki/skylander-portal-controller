@@ -27,6 +27,7 @@ mod completion_motion;
 mod creatures;
 mod darkness;
 mod defeat;
+mod desk;
 mod dev_entry;
 mod driver;
 mod emitters;
@@ -348,10 +349,12 @@ fn test_known_dump() -> Option<KnownDump> {
 }
 
 /// `GUAC_TEST_POSTED_PADS_ONLY` in the process env (any value), `test-hooks`
-/// builds only: the TV leaves real pads out (gilrs and, on macOS,
-/// GameController), so a pad paired with the Mac can't walk the hero ahead
-/// of `/api/_test/tv/pad`'s (AG.52). The e2e harness sets it; a look build
-/// with a hand on a pad doesn't.
+/// builds only: an unattended test run. The TV leaves real pads out (gilrs
+/// and, on macOS, GameController), so a pad paired with the Mac can't walk
+/// the hero ahead of `/api/_test/tv/pad`'s (AG.52), and it keeps off the
+/// desk (AS.740): its window hidden and never active, the app off the Dock,
+/// the desk's keys and mouse dropped ([`desk::DeskDeaf`]). The e2e harness
+/// and every lane's TV run set it; a look build with a hand on a pad doesn't.
 fn posted_pads_only() -> bool {
     cfg!(feature = "test-hooks") && std::env::var_os("GUAC_TEST_POSTED_PADS_ONLY").is_some()
 }
@@ -362,16 +365,17 @@ fn posted_pads_only() -> bool {
 /// nothing of an 8BitDo there (AG.5); it's still built in, through Bevy's
 /// `ui` collection, only its plugin is left out. Everywhere else gilrs.
 /// [`posted_pads_only`] leaves both out, so only `/api/_test/tv/pad`'s pads
-/// reach the TV.
+/// reach the TV, and adds [`desk::DeskDeaf`] under a window that never shows
+/// (AS.740).
 fn tv_plugins(mode: WindowMode, posted_pads_only: bool) -> PluginGroupBuilder {
     let plugins = DefaultPlugins
         .set(WindowPlugin {
-            primary_window: Some(window(mode)),
+            primary_window: Some(window(mode, posted_pads_only)),
             ..default()
         })
         .disable::<LogPlugin>();
     let plugins = if posted_pads_only {
-        plugins.disable::<GilrsPlugin>()
+        plugins.disable::<GilrsPlugin>().add(desk::DeskDeaf)
     } else {
         native_pads(plugins)
     };
@@ -743,7 +747,33 @@ fn failed_link(message: String) -> ServerLink {
     }
 }
 
-fn window(mode: WindowMode) -> Window {
+/// The TV's window. `unattended` (an unattended test run, AS.740) builds it
+/// hidden and unfocused: bevy_winit then starts the loop without activating
+/// the app over the frontmost one and never makes the window key, and
+/// nothing orders it on screen. The e2e reads the TV over HTTP and the shots
+/// are offscreen, so nothing needs it seen. It's never fullscreen either:
+/// winit's borderless fullscreen on macOS is `toggleFullScreen`, a Space of
+/// its own the desk would be switched to, so the TV mode's window is a
+/// 1920x1080 one (the offscreen shots' default) and lays out at that.
+fn window(mode: WindowMode, unattended: bool) -> Window {
+    let window = shown_window(mode);
+    if !unattended {
+        return window;
+    }
+    let resolution = match mode {
+        WindowMode::Desktop => window.resolution.clone(),
+        WindowMode::Tv => (1920, 1080).into(),
+    };
+    Window {
+        focused: false,
+        visible: false,
+        mode: BevyWindowMode::Windowed,
+        resolution,
+        ..window
+    }
+}
+
+fn shown_window(mode: WindowMode) -> Window {
     let title = "guacamole".to_string();
     match mode {
         WindowMode::Desktop => Window {
@@ -937,6 +967,74 @@ mod tests {
             let real = tv_plugins(mode, false);
             assert_eq!(real.enabled::<GilrsPlugin>(), !cfg!(target_os = "macos"));
             assert!(!real.enabled::<LogPlugin>());
+        }
+    }
+
+    /// AS.740: an unattended run's window is hidden and unfocused, so
+    /// bevy_winit neither activates the app nor makes the window key, and is
+    /// otherwise the shown one; a hand's window (no switch) is Bevy's default,
+    /// focused and shown.
+    #[test]
+    fn an_unattended_window_never_shows_and_never_takes_the_focus() {
+        for mode in [WindowMode::Desktop, WindowMode::Tv] {
+            let hand = window(mode, false);
+            assert!(hand.focused, "{mode:?}");
+            assert!(hand.visible, "{mode:?}");
+            let test = window(mode, true);
+            assert!(!test.focused, "{mode:?}");
+            assert!(!test.visible, "{mode:?}");
+            assert_eq!(test.title, hand.title);
+            // Never fullscreen: winit's is a Space switch on macOS.
+            assert_eq!(test.mode, BevyWindowMode::Windowed, "{mode:?}");
+        }
+        assert_eq!(
+            window(WindowMode::Desktop, true).resolution,
+            window(WindowMode::Desktop, false).resolution
+        );
+        assert!(matches!(
+            window(WindowMode::Tv, false).mode,
+            BevyWindowMode::BorderlessFullscreen(_)
+        ));
+        let tv = window(WindowMode::Tv, true);
+        assert_eq!((tv.width(), tv.height()), (1920.0, 1080.0));
+    }
+
+    /// AS.740: the switch adds [`desk::DeskDeaf`]; a hand's group has none.
+    #[test]
+    fn posted_pads_only_leaves_the_desk_out() {
+        for mode in [WindowMode::Desktop, WindowMode::Tv] {
+            assert!(tv_plugins(mode, true).enabled::<desk::DeskDeaf>());
+            assert!(!tv_plugins(mode, false).contains::<desk::DeskDeaf>());
+        }
+    }
+
+    /// AS.740 through the group `run_tv` adds: its primary window, built
+    /// headless (no winit, no GPU, no audio), is hidden and unfocused
+    /// with the switch and focused and shown without it.
+    #[test]
+    fn the_tvs_group_opens_its_window_by_the_switch() {
+        for posted in [false, true] {
+            let mut app = App::new();
+            tv_plugins(WindowMode::Desktop, posted)
+                .disable::<bevy::winit::WinitPlugin>()
+                // No GPU: the shaders' assets registered, no device made.
+                .set(bevy::render::RenderPlugin {
+                    render_creation: bevy::render::settings::WgpuSettings {
+                        backends: None,
+                        ..default()
+                    }
+                    .into(),
+                    ..default()
+                })
+                .disable::<bevy::audio::AudioPlugin>()
+                .finish(&mut app);
+            let world = app.world_mut();
+            let window = world
+                .query_filtered::<&Window, bevy::prelude::With<bevy::window::PrimaryWindow>>()
+                .single(world)
+                .expect("one primary window");
+            assert_eq!(window.focused, !posted, "posted {posted}");
+            assert_eq!(window.visible, !posted, "posted {posted}");
         }
     }
 
