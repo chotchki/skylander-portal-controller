@@ -313,6 +313,13 @@ Level 208's first fights SHALL run on their own scripts: out of the reveal its f
 - **WHEN** a hero past the snow wall stands among the Chompies, beats them, then fights from Setup_002's trigger
 - **THEN** they hurt him and fall, Setup_002's six fall in its order with Noodles' scene between, its controller ends and the way past the spike gate opens, with nothing stopped
 
+### Requirement: Level 208's first beam puzzle
+Level 208's first ice block SHALL melt by its beam puzzle: once the block's scene ends the start's beam lights the pivot's crystal, each talk-button press at the pivot's switch turns the pivot and the pieces on it 45°, and the pivot's own beam, reaching the block, melts it off the terrace's way west to the river.
+
+#### Scenario: The terrace's ice block
+- **WHEN** a hero on the lower terrace presses △ at the pivot's switch until its beam reaches the ice block
+- **THEN** the block melts and goes, and he walks west to Setup_002's trigger with nothing stopped
+
 ### Requirement: Level 205's way off its start island
 Level 205's crane SHALL lay its boat east from the Giant Pirate Head's stage to the far pier, its hint pan to the wheel at the pier's south end, and the wheel's talk button swing the crane and its mast 90° so the boat lies from the pier's end to Setup_001's yard, a second press swinging them back.
 
