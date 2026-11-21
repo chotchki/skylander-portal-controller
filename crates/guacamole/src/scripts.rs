@@ -337,7 +337,20 @@ pub fn is_trigger(name: &str) -> bool {
 /// prop has no joints to pose, so its nodes are its list's offsets. A hat
 /// box's lid hangs 1.8 m up its `Lid` node, its bow and ribbon on the lid's.
 pub fn origin_nodes(part: &guac_ir::nodes::LevelNodes) -> HashMap<String, Vec<NodePose>> {
-    part.models
+    origin_nodes_of(&part.models)
+}
+
+/// A character archive's static spawns' attach nodes on their own origins
+/// (openspec AS.661, [`guac_ir::spawn::SpawnNodes`]), as [`origin_nodes`]
+/// reads a level's: Sprocket's turret pieces, Crusher's earth crack.
+pub fn spawn_origin_nodes(part: &guac_ir::spawn::SpawnNodes) -> HashMap<String, Vec<NodePose>> {
+    origin_nodes_of(&part.models)
+}
+
+/// Each static model's attach nodes in `models`, by its path: a skinned
+/// one's (any node on a joint) are posed off its clips, not here.
+fn origin_nodes_of(models: &[guac_ir::nodes::AttachNodes]) -> HashMap<String, Vec<NodePose>> {
+    models
         .iter()
         .filter(|m| m.nodes.iter().all(|n| n.joint.is_none()))
         .map(|m| {
@@ -575,6 +588,10 @@ pub struct ScriptWorld {
     pub(crate) skipped_cutscene: Option<Value>,
     /// A hat's outfit registered for this run (`treasure::answer_hat_load`).
     pub(crate) hat_load_answered: bool,
+    /// Whether the TV passes a hat's and a legendary treasure's report for
+    /// the player (stand-in ledger `hats`, `treasure::answer_hats`); off, the
+    /// report waits on the player's own accept (openspec AS.670).
+    pub(crate) hat_reports_passed: bool,
     /// The ship part streams the run links and what's been done with them
     /// (openspec AS.157, [`crate::ship_parts`]).
     pub ship_parts: crate::ship_parts::ShipParts,
@@ -1036,6 +1053,7 @@ impl ScriptWorld {
             streams: Default::default(),
             skipped_cutscene: None,
             hat_load_answered: false,
+            hat_reports_passed: true,
             ship_parts: Default::default(),
             card_streams: Default::default(),
             skip_cutscenes: false,
@@ -1933,6 +1951,21 @@ impl ScriptWorld {
         self.accept = accept;
     }
 
+    /// Whether the TV passes hat and legendary treasure reports for the
+    /// player ([`crate::treasure::answer_hats`]); a test turns it off to see
+    /// the report pass on the player's own accept (openspec AS.670).
+    pub fn pass_hat_reports(&mut self, on: bool) {
+        self.hat_reports_passed = on;
+    }
+
+    /// Whether pad `pad` holds named button `b` as the scripts read it this
+    /// step (openspec AS.670, `script_members::served`).
+    pub fn holds_named(&self, pad: usize, b: crate::script_engine::Button) -> bool {
+        self.pads
+            .get(pad)
+            .is_some_and(|p| crate::script_members::served(p, b))
+    }
+
     /// The first pad's actions and both pads' accepts, this step's and the
     /// step before's, as the run reads them.
     pub fn pads_read(&self) -> ([bool; 4], [bool; 2], [bool; 2]) {
@@ -2124,6 +2157,26 @@ impl ScriptWorld {
     /// them.
     pub fn set_origin_nodes(&mut self, nodes: HashMap<String, Vec<NodePose>>) {
         self.origin_nodes = nodes;
+    }
+
+    /// The attach nodes on the origin of the model at `path`, as
+    /// [`Self::set_origin_nodes`] and [`Self::add_origin_nodes`] left them.
+    pub fn origin_nodes_at(&self, path: &str) -> Option<&[NodePose]> {
+        self.origin_nodes.get(path).map(Vec::as_slice)
+    }
+
+    /// A hero's own static spawns' attach nodes beside the level's, at his
+    /// join (openspec AS.661, [`spawn_origin_nodes`]); a path the level's
+    /// own models hold keeps the level's list. How many lists it added.
+    pub fn add_origin_nodes(&mut self, nodes: &HashMap<String, Vec<NodePose>>) -> usize {
+        let mut added = 0;
+        for (path, list) in nodes {
+            if !self.origin_nodes.contains_key(path) {
+                self.origin_nodes.insert(path.clone(), list.clone());
+                added += 1;
+            }
+        }
+        added
     }
 
     /// `actor`'s attach nodes as last set, in its own frame.

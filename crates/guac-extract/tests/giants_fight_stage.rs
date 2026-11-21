@@ -178,13 +178,15 @@ fn the_fights_parts_extract_whole_and_resume() {
         sc.took.as_secs_f64()
     );
     println!(
-        "  script stage: {} parts read, {} entries, {} scripts, {:?}; {} spawn models ({} refused), {:?}; {:.2} s",
+        "  script stage: {} parts read, {} entries, {} scripts, {:?}; {} spawn models ({} refused), {} spawn node lists ({} refused), {:?}; {:.2} s",
         sc.parts_read,
         sc.entries,
         sc.scripts,
         sc.script_files,
         sc.props,
         sc.refused_props.len(),
+        sc.spawn_node_lists,
+        sc.refused_spawn_nodes.len(),
         sc.spawn_files,
         sc.took.as_secs_f64()
     );
@@ -196,8 +198,9 @@ fn the_fights_parts_extract_whole_and_resume() {
     assert!(done.particles.read && done.particles.failed.is_none());
     assert!(done.intros.is_ok(), "ffmpeg is needed for the whole run");
     // Chapter 1's ten parts since AS.17 read its own emitters (the count
-    // stayed at AG's nine until AU.1's run found it).
-    assert_eq!((p.palettes, lv.parts_read, sc.parts_read), (67, 10, 3));
+    // stayed at AG's nine until AU.1's run found it); the script stage's
+    // four since AS.661's spawn nodes joined the scripts, spawns and rigs.
+    assert_eq!((p.palettes, lv.parts_read, sc.parts_read), (67, 10, 4));
     // The fighter's archive and the three base ones, then AG.27's 66 walkers.
     assert_eq!((sc.entries, sc.walkers), (4 + 66, 66));
     let m = opened.dir.manifest().clone();
@@ -476,6 +479,7 @@ fn the_fights_parts_extract_whole_and_resume() {
         scripts::SCRIPTS,
         scripts::SPAWNS,
         scripts::SPAWN_RIGS,
+        scripts::SPAWN_NODES,
         guac_extract::models::PALETTES,
         guac_extract::particles::PART,
     ] {
@@ -500,7 +504,7 @@ fn the_fights_parts_extract_whole_and_resume() {
         + done.levels.files.written
         + done.scripts.files.written;
     println!(
-        "  resume of the five parts: levels {} read, {} kept; scripts {} read; palettes kept {}; {written} files written; {:.2} s (models {:.2} s, level {:.2} s, scripts {:.2} s); load average {}",
+        "  resume of the six parts: levels {} read, {} kept; scripts {} read; palettes kept {}; {written} files written; {:.2} s (models {:.2} s, level {:.2} s, scripts {:.2} s); load average {}",
         done.levels.parts_read,
         done.levels.parts_kept,
         done.scripts.parts_read,
@@ -512,7 +516,7 @@ fn the_fights_parts_extract_whole_and_resume() {
         load_average()
     );
     assert_eq!(written, 0, "every file was there as recorded");
-    assert_eq!((done.levels.parts_read, done.scripts.parts_read), (2, 3));
+    assert_eq!((done.levels.parts_read, done.scripts.parts_read), (2, 4));
     assert!(done.particles.read && done.particles.files.written == 0);
     drop(again);
     assert_eq!(
@@ -522,7 +526,7 @@ fn the_fights_parts_extract_whole_and_resume() {
     // A resume of a whole extract reads nothing new.
     let mut again = open(&dump, &root, KNOWN_DUMPS, &|_| {}).unwrap();
     let s = stages::script_stage(&mut again.dir, IrFormat::Ron, &|_| {}).unwrap();
-    assert_eq!((s.parts_read, s.parts_kept), (0, 3));
+    assert_eq!((s.parts_read, s.parts_kept), (0, 4));
     println!("  script stage kept whole in {:.3} s", s.took.as_secs_f64());
     // The install format: the three stages again in postcard over the same
     // extract (the model stage writes every model's postcard too), each new
@@ -578,7 +582,9 @@ fn the_fights_parts_extract_whole_and_resume() {
     // Chapter 1's parts but its entry (one file for either format): ten
     // since AS.17's emitters.
     assert_eq!((lp.parts_read, lp.parts_kept), (10, 1));
-    assert_eq!((sp.parts_read, sp.parts_kept), (2, 1));
+    // The script stage's postcard: the spawns, rigs and spawn nodes read in
+    // it, the scripts (one file for either format) kept.
+    assert_eq!((sp.parts_read, sp.parts_kept), (3, 1));
 
     println!(
         "took {:.1} s in all; load average {}",

@@ -729,6 +729,9 @@ pub(crate) struct HeroRun {
     /// What his skinned spawns play (openspec AU.37): given his templates
     /// with his palette, at his join.
     pub(crate) rigs: Option<Arc<guac_ir::spawn::SpawnRigs>>,
+    /// Where what hangs on his static spawns stands (openspec AS.661):
+    /// added to the run's origin nodes at his join.
+    pub(crate) spawn_nodes: Option<SpawnOrigins>,
     /// None when his attach nodes didn't read: every node at his pivot.
     pub(crate) rig: Option<HandRig>,
     pub(crate) join: Join,
@@ -773,6 +776,19 @@ pub(crate) struct HandRig {
     pub(crate) scale: f32,
 }
 
+/// A character's static spawns' attach nodes on their origins, by model
+/// path (openspec AS.661, [`scripts::spawn_origin_nodes`]).
+pub(crate) type SpawnOrigins = Arc<HashMap<String, Vec<guacamole::script_engine::NodePose>>>;
+
+/// What a hero's own archive gives the run past his body at his join: his
+/// skinned spawns' clips (openspec AU.37) and his static spawns' attach
+/// nodes (AS.661).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Spawns {
+    pub(crate) rigs: Option<Arc<guac_ir::spawn::SpawnRigs>>,
+    pub(crate) nodes: Option<SpawnOrigins>,
+}
+
 /// Asks for `hero`'s scripts to join the run, if the part holds his file;
 /// true when they will (he then walks and attacks on them, [`ScriptedHero`]):
 /// a fighter (Eruptor) or a walker (AG.27), whose attack buttons reach his
@@ -782,7 +798,7 @@ pub(crate) fn ask_join(
     hero: Entity,
     walk: &walkers::Walk,
     palette: Option<Arc<Palette>>,
-    rigs: Option<Arc<guac_ir::spawn::SpawnRigs>>,
+    spawns: Spawns,
     rig: Option<HandRig>,
     source: Option<&ScriptSource>,
     slot: SlotIndex,
@@ -807,7 +823,8 @@ pub(crate) fn ask_join(
             load_file: load_file.to_owned(),
             unit,
             palette,
-            rigs,
+            rigs: spawns.rigs,
+            spawn_nodes: spawns.nodes,
             rig,
             join: Join::Asked,
             slot,
@@ -1575,6 +1592,12 @@ pub(crate) fn step_scripts(
         }
         if let Some(rigs) = run.as_deref().and_then(|r| r.rigs.as_ref()) {
             world.set_rigs(files, unit, rigs);
+        }
+        // What his scripts hang on his static spawns stands on their nodes
+        // (openspec AS.661), not at their pivots.
+        if let Some(nodes) = run.as_deref().and_then(|r| r.spawn_nodes.as_ref()) {
+            let added = world.add_origin_nodes(nodes);
+            info!(added, "his static spawns' attach nodes");
         }
         let mut host = WorldHost {
             world: &mut world,
@@ -2640,6 +2663,31 @@ mod tests {
             (south, [true, false], [true, false]),
             "his once joined"
         );
+    }
+
+    /// openspec AS.670: the scripts' `accept button` is served off a pad only
+    /// while its hero is joined (so no unassigned pad's press reaches the
+    /// portal manager's join), never off the second pad, which the TV feeds
+    /// nothing, and the d-pad and the others never.
+    #[test]
+    fn the_scripts_accept_is_served_only_for_a_joined_hero_on_the_first_pad() {
+        use guacamole::script_engine::Button;
+        let mut w = ScriptWorld::new(&Files::default(), &HashMap::new(), [0; 7]);
+        let still = guac_motion::stick::Stick::new(0.0, 0.0);
+        feed_pads(&mut w, still, [true; 4], false, true);
+        assert!(!w.holds_named(0, Button::Accept), "not joined");
+        feed_pads(&mut w, still, [true; 4], true, true);
+        assert!(w.holds_named(0, Button::Accept), "joined");
+        assert!(!w.holds_named(1, Button::Accept), "the second pad");
+        for b in [
+            Button::Cancel,
+            Button::Start,
+            Button::Select,
+            Button::DpadUp,
+            Button::DpadDown,
+        ] {
+            assert!(!w.holds_named(0, b), "{b:?}");
+        }
     }
 
     #[test]

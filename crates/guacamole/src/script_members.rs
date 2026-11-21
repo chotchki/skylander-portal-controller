@@ -554,6 +554,37 @@ impl Member {
     }
 }
 
+/// Whether `pad` holds named button `b` as the scripts read it (openspec
+/// AS.670). The attacks are its actions; `accept button` is its first
+/// action, the pad's bottom face as the original's accept is, held only
+/// while that pad's hero is joined (a pad's actions are empty otherwise), so
+/// no press reaches the portal manager's join of a pad no player holds, and
+/// only a theatrical report reads it ([`ScriptWorld::takes_accept`]).
+/// Every other named button reads released: `cancel button` is the third
+/// action, pressed in every fight, and a script on the hub reads it in
+/// play; start, select and the d-pad belong to the TV's own pause, skip and
+/// menus, and the d-pad is all the hub's cheat, the levels' warps and the
+/// debug scripts read, so none of those is ever served.
+pub(crate) fn served(pad: &crate::script_engine::Pad, b: Button) -> bool {
+    match b {
+        Button::Action(n) => pad
+            .actions
+            .get(usize::from(n).wrapping_sub(1))
+            .copied()
+            .unwrap_or(false),
+        Button::Accept => pad.actions[0],
+        Button::Cancel
+        | Button::Alt
+        | Button::Pause
+        | Button::Start
+        | Button::Select
+        | Button::DpadLeft
+        | Button::DpadRight
+        | Button::DpadUp
+        | Button::DpadDown => false,
+    }
+}
+
 /// `pressure state`'s labels: just released, released, pressed, just
 /// pressed.
 fn pressure(was: bool, now: bool) -> i32 {
@@ -1834,12 +1865,14 @@ impl ScriptWorld {
                 let Some(Object::Button(pad, b)) = object else {
                     return Err(HostFault::Nothing);
                 };
-                let held = |p: &crate::script_engine::Pad| match b {
-                    Button::Action(n) => {
-                        p.actions.get(usize::from(n) - 1).copied().unwrap_or(false)
-                    }
-                    _ => false,
-                };
+                // A card game's board stands in for the hero (openspec
+                // AS.670): its manager reads `accept button` off the pad
+                // whose presses already pick, so none is served then; and
+                // only a theatrical report's read takes it at all.
+                let unserved = matches!(b, Button::Accept)
+                    && (self.card_streams.restore() != crate::card_game::Restore::Idle
+                        || !self.takes_accept(at.placement));
+                let held = |p: &crate::script_engine::Pad| !unserved && served(p, b);
                 let (was, now) = if pad == u8::MAX {
                     (false, false)
                 } else {
@@ -1952,6 +1985,19 @@ impl ScriptWorld {
 
     /// A pad a controller object stands for: 0 and 1 for the two players'
     /// controllers and the physical ones, `u8::MAX` for the inactive one.
+    /// Whether the script `reader` runs takes the pad's `accept button`
+    /// (openspec AS.670, narrowed at its review): a theatrical report alone
+    /// (`UI_TheatricalReporter`: the hat's, legendary treasure's, soul gem's,
+    /// story scroll's, charm's, reward card's and rewards' reports, the card
+    /// loot's). A cutscene's menu (`Macros_UI`) takes the confirm its first
+    /// frame up, before the TV's yes-or-no holds the pads, so a mashed attack
+    /// answered a talk's question with the script's own pick; the menus, the
+    /// pause controller and the portal managers' joins read it too, and the
+    /// TV draws their choices itself or not at all.
+    pub(crate) fn takes_accept(&self, reader: Handle) -> bool {
+        self.name(reader) == crate::card_game::REPORTER
+    }
+
     fn pad_of(&self, v: Option<Value>) -> Option<u8> {
         let h = self.handle(v?)?;
         if let Some(i) = self.controllers.iter().position(|&c| c == h) {
@@ -6668,6 +6714,202 @@ mod tests {
         let posed = Vec3::new(1.0, 0.0, 0.0)
             + Quat::from_rotation_y(30f32.to_radians()) * Vec3::new(0.0, 4.0, 10.0);
         assert!(at.distance(posed) < 1e-4, "{at}");
+    }
+
+    /// The test's reader (`at`'s placement 1) named `name`, as a placement
+    /// of the scripts' own would be.
+    fn reader_named(w: &mut ScriptWorld, name: &str) {
+        const T: Obj = Obj { unit: 64, index: 7 };
+        w.templates
+            .insert(T, crate::scripts::Placed::named(T, name, None, 64));
+        let mut a = Actor::blank();
+        a.obj = Some(T);
+        w.actors.insert(1, a);
+    }
+
+    /// openspec AS.670: the named buttons as a theatrical report reads them
+    /// off pad 0. `accept button` is its first action, pressed (3), held (2),
+    /// let go (0); a pad whose hero isn't joined reads no action, so no
+    /// accept either. Every other named button reads released (1) whatever's
+    /// held, the d-pad the hub's cheat and the levels' warps read among them.
+    #[test]
+    fn the_accept_button_is_the_first_action_and_the_others_read_released() {
+        let mut e = bench();
+        let mut w = world();
+        reader_named(&mut w, crate::card_game::REPORTER);
+        let state = |w: &mut ScriptWorld, e: &mut Bench, b: Button| {
+            let button = w.objs.value(Object::Button(0, b));
+            w.get_member(
+                &at("buttonmeasurement", "pressure state", Some(button), None),
+                Member::PressureState,
+                e,
+            )
+        };
+        let pad = |actions: [bool; 4]| Pad {
+            actions,
+            connected: true,
+            ..Pad::default()
+        };
+        let others = [
+            Button::Cancel,
+            Button::Alt,
+            Button::Pause,
+            Button::Start,
+            Button::Select,
+            Button::DpadLeft,
+            Button::DpadRight,
+            Button::DpadUp,
+            Button::DpadDown,
+        ];
+        let mut seen = Vec::new();
+        for held in [[true; 4], [true; 4], [false; 4], [false; 4]] {
+            w.read_pads([pad(held), Pad::default()]);
+            seen.push(state(&mut w, &mut e, Button::Accept));
+            for b in others {
+                assert_eq!(state(&mut w, &mut e, b), Ok(Value::Int(1)), "{b:?}");
+            }
+        }
+        assert_eq!(
+            seen,
+            [3, 2, 0, 1].map(|v| Ok(Value::Int(v))),
+            "pressed, held, let go, released"
+        );
+        // Only the first action: the second alone is no accept.
+        w.read_pads([pad([false, true, false, false]), Pad::default()]);
+        assert_eq!(state(&mut w, &mut e, Button::Accept), Ok(Value::Int(1)));
+        assert!(served(&pad([true, false, false, false]), Button::Accept));
+        assert!(!served(&pad([false; 4]), Button::Accept));
+        assert!(served(&pad([false, false, true, false]), Button::Action(3)));
+    }
+
+    /// openspec AS.670: while a card game's board holds the hero's slot
+    /// (`Restore` past idle) no accept is served: the board's manager reads it
+    /// off the pad its picks already come from.
+    #[test]
+    fn no_accept_is_served_while_a_card_games_board_holds_the_hero() {
+        let mut e = bench();
+        let mut w = world();
+        reader_named(&mut w, crate::card_game::REPORTER);
+        let button = w.objs.value(Object::Button(0, Button::Accept));
+        let read = |w: &mut ScriptWorld, e: &mut Bench| {
+            w.get_member(
+                &at("buttonmeasurement", "pressure state", Some(button), None),
+                Member::PressureState,
+                e,
+            )
+        };
+        let south = Pad {
+            actions: [true, false, false, false],
+            connected: true,
+            ..Pad::default()
+        };
+        w.read_pads([Pad::default(), Pad::default()]);
+        w.read_pads([south, Pad::default()]);
+        assert_eq!(read(&mut w, &mut e), Ok(Value::Int(3)));
+        w.card_streams
+            .set_restore(crate::card_game::Restore::Replaced);
+        assert_eq!(read(&mut w, &mut e), Ok(Value::Int(1)), "the board's");
+        w.card_streams.set_restore(crate::card_game::Restore::Asked);
+        assert_eq!(read(&mut w, &mut e), Ok(Value::Int(1)), "until he's back");
+    }
+
+    /// openspec AS.670, narrowed at its review: only a theatrical report's
+    /// read takes `accept button`. A cutscene's menu (`Macros_UI`, a talk's
+    /// question), the menus, the pause controller, the portal manager or a
+    /// placement of no name reads it released however it's pressed: a
+    /// mashed attack once answered a talk's question with the script's own
+    /// pick before the TV's yes-or-no held the pads.
+    #[test]
+    fn only_a_theatrical_report_takes_the_accept_button() {
+        let mut e = bench();
+        let south = Pad {
+            actions: [true, false, false, false],
+            connected: true,
+            ..Pad::default()
+        };
+        for (reader, taken) in [
+            (Some(crate::card_game::REPORTER), true),
+            (Some("Macros_UI"), false),
+            (Some("Menus"), false),
+            (Some("PauseController"), false),
+            (Some("PortalManager"), false),
+            (None, false),
+        ] {
+            let mut w = world();
+            if let Some(name) = reader {
+                reader_named(&mut w, name);
+            }
+            w.read_pads([Pad::default(), Pad::default()]);
+            w.read_pads([south, Pad::default()]);
+            let button = w.objs.value(Object::Button(0, Button::Accept));
+            let read = w.get_member(
+                &at("buttonmeasurement", "pressure state", Some(button), None),
+                Member::PressureState,
+                &mut e,
+            );
+            let want = if taken { 3 } else { 1 };
+            assert_eq!(read, Ok(Value::Int(want)), "{reader:?}");
+            // Its attack reads pressed either way.
+            let attack = w.objs.value(Object::Button(0, Button::Action(1)));
+            let read = w.get_member(
+                &at("buttonmeasurement", "pressure state", Some(attack), None),
+                Member::PressureState,
+                &mut e,
+            );
+            assert_eq!(read, Ok(Value::Int(3)), "{reader:?}'s attack");
+        }
+    }
+
+    /// openspec AS.661: a hero's static spawn's attach nodes, added at his
+    /// join beside the level's, put what hangs on it on its node (Sprocket's
+    /// turret top on its bottom), where before it stood at the bottom's
+    /// pivot; a path the level's own models hold keeps the level's list.
+    #[test]
+    fn a_heros_static_spawns_nodes_hang_what_his_scripts_hang_on_them() {
+        const BOTTOM_T: Obj = Obj { unit: 64, index: 3 };
+        const BOTTOM: Handle = 0x6000_0081;
+        const TOP: Handle = 0x6000_0082;
+        let mut e = bench();
+        let mut w = world();
+        let mut template =
+            crate::scripts::Placed::named(BOTTOM_T, "111_Turret_00_Bottom", None, 64);
+        template.model = Some("bottom.mdl".into());
+        w.templates.insert(BOTTOM_T, template);
+        w.set_origin_nodes(HashMap::from([(
+            "shared.mdl".to_owned(),
+            vec![NodePose::at(Vec3::new(0.0, 9.0, 0.0))],
+        )]));
+        let mut bottom = Actor::blank();
+        bottom.template = Some(BOTTOM_T);
+        bottom.position = Vec3::new(2.0, 0.0, 3.0);
+        w.actors.insert(BOTTOM, bottom);
+        let mut top = Actor::blank();
+        top.attach = w.objs.value(Object::Node(BOTTOM, 1));
+        w.actors.insert(TOP, top);
+        // Before his join's nodes, at the bottom's pivot.
+        w.place_hung(&mut e);
+        assert!(w.actors[&TOP].position.distance(Vec3::new(2.0, 0.0, 3.0)) < 1e-4);
+        let his = HashMap::from([
+            (
+                "bottom.mdl".to_owned(),
+                vec![
+                    NodePose::at(Vec3::ZERO),
+                    NodePose::at(Vec3::new(0.0, 1.5, 0.0)),
+                ],
+            ),
+            (
+                "shared.mdl".to_owned(),
+                vec![NodePose::at(Vec3::new(0.0, -9.0, 0.0))],
+            ),
+        ]);
+        assert_eq!(w.add_origin_nodes(&his), 1, "the level's own list kept");
+        assert_eq!(
+            w.origin_nodes_at("shared.mdl").map(|n| n[0].at),
+            Some(Vec3::new(0.0, 9.0, 0.0))
+        );
+        w.place_hung(&mut e);
+        let at = w.actors[&TOP].position;
+        assert!(at.distance(Vec3::new(2.0, 1.5, 3.0)) < 1e-4, "{at}");
     }
 
     /// openspec AS.445: a turret's ball hangs on its body's static node and

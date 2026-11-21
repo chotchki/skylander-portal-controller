@@ -80,9 +80,9 @@ pub const LAYOUT_VERSION: u32 = 4;
 /// progression, AH.22's palettes, script entries and spawn models, AS.53's
 /// screen scripts, AS.364's card game scripts, AS.366's card game stones, AS.483's card game palettes, AS.365's card game art, AH.50's attach nodes, AH.87's emitters, AR.5's sounds,
 /// AT.8's interface, AT.30's models, AU.37's spawn rigs, AS.196's random
-/// networks. A start is current only once every one is, so an extract made
+/// networks, AS.661's spawn nodes. A start is current only once every one is, so an extract made
 /// before one resumes for it alone.
-pub const PARTS: [&str; 17] = [
+pub const PARTS: [&str; 18] = [
     roster::PORTRAITS,
     progression::PART,
     models::PART,
@@ -91,6 +91,7 @@ pub const PARTS: [&str; 17] = [
     scripts::SCRIPTS,
     scripts::SPAWNS,
     scripts::SPAWN_RIGS,
+    scripts::SPAWN_NODES,
     screens::PART,
     screens::CARD_GAME_PART,
     screens::CARD_STONES_PART,

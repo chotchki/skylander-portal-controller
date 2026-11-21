@@ -130,7 +130,7 @@ pub enum StageEnd {
     Models(ModelStage),
     /// The parts of each level the TV reads ([`levels::PLAYED`]).
     Level(LevelStage),
-    Scripts(ScriptStage),
+    Scripts(Box<ScriptStage>),
     Particles(crate::particles::ParticleStage),
     /// Each level's sprites part (AT.8).
     Sprites(LevelStage),
@@ -330,6 +330,10 @@ pub struct ScriptStage {
     /// Spawn rigs read this run, and those refused (openspec AU.37).
     pub rigs: usize,
     pub refused_rigs: Vec<(String, String)>,
+    /// Static spawn models' attach lists read this run, and those refused
+    /// (openspec AS.661).
+    pub spawn_node_lists: usize,
+    pub refused_spawn_nodes: Vec<(String, String)>,
     /// The screens' part (AS.53, [`crate::screens`]), counted apart from
     /// the two above: read this run, or kept; its entries written or kept,
     /// the archives the dump lacks with why, and its files (not in
@@ -415,7 +419,7 @@ pub fn run(
     let levels = levels_stage(dir, ir, names, &levels::PLAYED, &level_event, send)?;
     ended(StageEnd::Level(levels.clone()));
     let scripts = script_stage(dir, ir, send)?;
-    ended(StageEnd::Scripts(scripts.clone()));
+    ended(StageEnd::Scripts(Box::new(scripts.clone())));
     let particles = crate::particles::particle_stage(dir, ir, send)?;
     ended(StageEnd::Particles(particles.clone()));
     // Whole: every one of its played parts in, for every level.
@@ -1047,6 +1051,53 @@ pub fn script_stage(
                     stage.refused_rigs.extend(refused);
                 }
                 dir.record_part(scripts::SPAWN_RIGS, files)?;
+                stage.parts_read += 1;
+            }
+        }
+    }
+    // What hangs on each character's static spawns (openspec AS.661), from
+    // the archives the rigs come from.
+    let irs: Vec<String> = archives.iter().map(|a| ir.spawn_node_path(a)).collect();
+    if dir.part_holds(scripts::SPAWN_NODES, &irs)? {
+        let recorded = dir.manifest().parts[scripts::SPAWN_NODES].clone();
+        count_kept(dir, &recorded, &mut stage.spawn_files);
+        stage.parts_kept += 1;
+    } else {
+        let mut read = Vec::with_capacity(archives.len());
+        let mut failed = None;
+        for (archive, rel) in archives.iter().zip(&irs) {
+            let one = entry(archive).and_then(|bytes| {
+                let igz = guac_formats::igz::Igz::parse(&bytes).map_err(|e| e.to_string())?;
+                let body = scripts::body(&igz, archive);
+                let r = scripts::spawn_nodes(&igz, archive, identity.clone(), body)?;
+                let refused: Vec<(String, String)> = r
+                    .refused
+                    .iter()
+                    .map(|p| (format!("{archive}: {}", p.path), p.reason.clone()))
+                    .collect();
+                let lists = r.models.len();
+                let bytes = ir.encode(&r, dir, rel).map_err(|e| e.to_string())?;
+                Ok((lists, refused, bytes))
+            });
+            match one {
+                Ok(r) => read.push(r),
+                Err(reason) => {
+                    failed = Some((archive.clone(), reason));
+                    break;
+                }
+            }
+        }
+        match failed {
+            Some((archive, reason)) => fail(&mut stage, scripts::SPAWN_NODES, &archive, reason),
+            None => {
+                let mut files = Vec::with_capacity(irs.len());
+                for ((lists, refused, bytes), rel) in read.into_iter().zip(&irs) {
+                    put(dir, rel, &bytes, &mut stage.spawn_files)?;
+                    files.push(rel.clone());
+                    stage.spawn_node_lists += lists;
+                    stage.refused_spawn_nodes.extend(refused);
+                }
+                dir.record_part(scripts::SPAWN_NODES, files)?;
                 stage.parts_read += 1;
             }
         }

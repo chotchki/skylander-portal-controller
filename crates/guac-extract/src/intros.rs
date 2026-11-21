@@ -506,6 +506,20 @@ impl IrFormat {
         )
     }
 
+    /// The static models' attach lists of a character `archive`,
+    /// `spawn_nodes/<stem>.<ron|postcard>` (openspec AS.661).
+    pub fn spawn_node_path(self, archive: &str) -> String {
+        let ext = match self {
+            Self::Ron => "ron",
+            Self::Postcard => "postcard",
+        };
+        format!(
+            "{}/{}.{ext}",
+            crate::scripts::SPAWN_NODE_DIR,
+            crate::scripts::stem(archive)
+        )
+    }
+
     /// The card game's templates' palettes (openspec AS.483,
     /// [`crate::screens::CARD_PALETTES_PART`]),
     /// `card_game/palettes.<ron|postcard>`.

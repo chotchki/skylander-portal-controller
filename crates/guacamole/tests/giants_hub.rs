@@ -232,11 +232,70 @@ fn hub_stage_1s_sky_is_its_controllers_skydome() {
 /// The pads with the talk button (△, the walking pad's fourth action) down
 /// or up, the stick at rest.
 fn talk_button(run: &mut Run, down: bool) {
+    // A kid mashing his first attack through the talk (openspec AS.670's
+    // review): two steps down of every eight, when this thread asks it.
+    let mashed = MASH_ATTACK.get() && run.steps % 8 < 2;
     run.bench.pads[0] = guacamole::script_engine::Pad {
         stick: guac_motion::stick::Stick::new(0.0, 0.0),
-        actions: [false, false, false, down],
+        actions: [mashed, false, false, down],
         connected: true,
     };
+}
+
+thread_local! {
+    /// This test thread's talks mash the first attack ([`talk_button`]).
+    static MASH_ATTACK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// openspec AS.670, narrowed at its review: a talk's question is the TV's
+/// to answer even while a kid mashes his first attack (the pad's bottom
+/// face, the scripts' `accept button`) through it. Served to every script,
+/// the cutscene menu's own read of accept took a mashed press the step its
+/// question came up, before the TV's yes-or-no held the pads: Auric's and
+/// Hatterson's talks ended with their questions never asked of the TV.
+/// Served to the theatrical reports alone, each asks its one question and
+/// takes the TV's answer. A minute or so.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_mashed_attack_leaves_a_talks_question_to_the_tv() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (stage, intro) = STAGES[0];
+    let (mut run, _found) = run_on_level(Mode::Play, stage, setup(&[]));
+    let mut stops = Vec::new();
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap());
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    let intro = run.placement(intro);
+    while !run.vm.removed(intro) {
+        assert!(run.steps < 3600, "the intro's end");
+        stops.extend(run.step_play().unwrap());
+    }
+    for _ in 0..30 {
+        stops.extend(run.step_play().unwrap());
+    }
+    MASH_ATTACK.set(true);
+    for name in ["Auric", "Hatterson"] {
+        let at = run.at(name);
+        let t = talk(
+            &mut run,
+            &mut stops,
+            at + guac_motion::seam::Vec3::new(1.5, 0.5, 1.5),
+            |_| true,
+        );
+        println!("{name}, attack mashed: {t:?}");
+        assert!(t.ended.is_some(), "{name}'s talk ends: {t:?}");
+        assert_eq!(t.asked.len(), 1, "{name}'s question is the TV's: {t:?}");
+    }
+    MASH_ATTACK.set(false);
+    assert!(stops.is_empty(), "{stops:?}");
+    println!(
+        "{:.1} s, {} steps, load at end: {}",
+        started.elapsed().as_secs_f64(),
+        run.steps,
+        load()
+    );
 }
 
 /// A question asked on a talk: its string's name (the dialogue's id; its
@@ -1618,6 +1677,10 @@ struct Played {
     /// player's hand at each quit's first pick, by stone (openspec AS.555).
     offers: Vec<guacamole::card_game::HandOffer>,
     hands: Vec<Vec<u16>>,
+    /// Each change of what a pirate's loot puts up (openspec AS.673): the
+    /// stone given, whether its title and name strings read words, whether
+    /// the coins' report is up.
+    loots: Vec<(Option<u16>, bool, bool, bool)>,
     /// At each of the score header's updates, the score as the TV reads it
     /// and the board's stones a side (openspec AS.556).
     scores: Vec<ScoreUpdate>,
@@ -1693,6 +1756,9 @@ fn dreadbeards_games_with(
     let (stage, intro) = STAGES[1];
     let (mut run, _found) = run_on_level(Mode::Play, stage, setup(&[]));
     run.world.card_streams.play_games();
+    if LOOT_TO_ACCEPT.get() {
+        run.world.card_streams.leave_loot_to_accept();
+    }
     let card_stems: std::collections::HashSet<String> = match card_extract {
         Some(dir) => {
             let (book, stems) = card_book(&run, dir).0;
@@ -1789,6 +1855,7 @@ fn dreadbeards_games_with(
         run.world.card_streams.answer_hands_on_screen();
     }
     let mut offers = Vec::new();
+    let mut loots: Vec<(Option<u16>, bool, bool, bool)> = Vec::new();
     let mut hands = Vec::new();
     let mut scores = Vec::new();
     let mut frames_off = Vec::new();
@@ -1850,6 +1917,13 @@ fn dreadbeards_games_with(
             talk_button(&mut run, false);
         }
         stops.extend(run.step_play().unwrap());
+        if let Some(l) = guacamole::card_game::loot_up(&run.vm, &run.world) {
+            let words = |v: Option<Value>| v.and_then(|v| run.world.text_of(v)).is_some();
+            let now = (l.stone, words(l.card_title), words(l.stone_name), l.coins);
+            if loots.last() != Some(&now) {
+                loots.push(now);
+            }
+        }
         if let Some(p) = guacamole::prompt::up(&run.vm, &run.world) {
             read += 1;
             if read >= READING {
@@ -2143,6 +2217,7 @@ fn dreadbeards_games_with(
         hands,
         scores,
         frames_off,
+        loots,
     }
 }
 
@@ -2259,6 +2334,58 @@ fn dreadbeards_game_quit_lost_and_won_each_end_in_his_own_next_behaviour() {
         played.stays.longest
     );
     assert!(stay <= STAY_CAP, "{longest}: {stay} steps");
+    println!(
+        "{:.1} s, {} steps, load at end: {}",
+        started.elapsed().as_secs_f64(),
+        played.steps,
+        load()
+    );
+}
+
+thread_local! {
+    /// This test thread's games leave the pirate's loot to the scripts' own
+    /// accept (openspec AS.670), the TV's pass off.
+    static LOOT_TO_ACCEPT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// openspec AS.670: Dreadbeard's won game's loot passes on the player's own
+/// presses with the TV's pass (`card-loot-accept`) off: the bottom face is
+/// the scripts' `accept button` while the pad's actions reach the run, so
+/// both reports pass and his win runs on to `wait for player`. (On the TV the
+/// hero isn't joined during his loot, so there the pass still stands.)
+#[test]
+#[ignore = "reads the Giants dump"]
+fn dreadbeards_loot_passes_on_the_scripts_own_accept() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    LOOT_TO_ACCEPT.set(true);
+    let played = dreadbeards_games(
+        &[
+            (Plan::Quit, DREADBEARDS_SEEDS[0]),
+            (Plan::Play(cards::Policy::Naive), DREADBEARDS_SEEDS[1]),
+            (Plan::Play(cards::Policy::Strong), DREADBEARDS_SEEDS[2]),
+        ],
+        40_000,
+    );
+    assert_eq!(played.games.len(), 3, "{:?}", played.games);
+    let won = &played.games[2];
+    println!("game {won:?}");
+    assert_eq!(won.board.as_deref(), Some(cards::WON), "{won:?}");
+    assert_eq!(won.loot, LOOT_WAITS[1..], "{won:?}");
+    assert_eq!(won.pirate.as_deref(), Some("wait for player"), "{won:?}");
+    assert!(played.stops.is_empty(), "{:#?}", played.stops);
+    // What the TV draws of it (openspec AS.673): the stone given and its
+    // title's and name's words. (No coins' report of its own comes up in
+    // Dreadbeard's win here.)
+    println!("the loot as read: {:?}", played.loots);
+    assert!(
+        played
+            .loots
+            .iter()
+            .any(|(stone, title, name, _)| stone.is_some() && *title && *name),
+        "{:?}",
+        played.loots
+    );
     println!(
         "{:.1} s, {} steps, load at end: {}",
         started.elapsed().as_secs_f64(),

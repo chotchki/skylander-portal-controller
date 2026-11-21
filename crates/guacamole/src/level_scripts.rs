@@ -180,6 +180,31 @@ pub fn spawn_rigs(
     Ok(r)
 }
 
+/// What hangs on `load_file`'s static spawns off the extract (openspec
+/// AS.661): each static model's attach list in his archive, read when he's
+/// placed as his rigs are. Why not when the part isn't there or is another
+/// character's.
+pub fn spawn_nodes(
+    dir: &Path,
+    load_file: &str,
+    ir: IrFormat,
+) -> Result<guac_ir::spawn::SpawnNodes, String> {
+    let archive = guac_extract::scripts::character_archive(load_file);
+    let rel = ir.spawn_node_path(&archive);
+    let bytes = std::fs::read(dir.join(&rel)).map_err(|e| format!("{rel}: {e}"))?;
+    let n: guac_ir::spawn::SpawnNodes = match ir {
+        IrFormat::Ron => std::str::from_utf8(&bytes)
+            .map_err(|e| e.to_string())
+            .and_then(|t| guac_ir::from_ron(t).map_err(|e| e.to_string())),
+        IrFormat::Postcard => guac_ir::from_postcard(&bytes).map_err(|e| e.to_string()),
+    }
+    .map_err(|e| format!("{rel}: {e}"))?;
+    if n.archive != archive {
+        return Err(format!("{rel} holds {}'s nodes", n.archive));
+    }
+    Ok(n)
+}
+
 /// Each slot's clip's name as its palette names it, a random network's
 /// first clip's (the one [`guac_ir::palette::Palette::clip_at`] plays),
 /// empty where a slot holds none (openspec AS.461).

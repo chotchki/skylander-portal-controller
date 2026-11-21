@@ -240,6 +240,10 @@ pub struct CardStreams {
     /// ([`CardStreams::answer_hands_on_screen`]); headless it's answered by
     /// Play.
     hand_by_screen: bool,
+    /// Whether a pirate's loot reports are left to the player's own
+    /// `accept button` alone ([`CardStreams::leave_loot_to_accept`]), the
+    /// TV's pass (`card-loot-accept`) off: a test's.
+    loot_unpassed: bool,
 }
 
 /// The portal's replacement of the hero by the board (openspec AS.481):
@@ -303,6 +307,14 @@ impl CardStreams {
         self.hand_by_screen = true;
     }
 
+    /// The pirate's loot reports left to the scripts' own `accept button`
+    /// (openspec AS.670), [`pass_loot_reports`] off: what a test shows a
+    /// press alone passes them by. Behind `card-game-seams`.
+    #[cfg(feature = "card-game-seams")]
+    pub fn leave_loot_to_accept(&mut self) {
+        self.loot_unpassed = true;
+    }
+
     /// From here on a yes at a pirate plays the game (openspec AS.366):
     /// `Card Game - Start Card Game` runs as the original's script, the hand
     /// select and board join as asked and the host answers what they wait on
@@ -331,6 +343,12 @@ impl CardStreams {
     /// Where the board's replacement of the hero stands ([`Restore`]).
     pub fn restore(&self) -> Restore {
         self.restore
+    }
+
+    /// The replacement's state set by hand: a unit test's.
+    #[cfg(test)]
+    pub(crate) fn set_restore(&mut self, r: Restore) {
+        self.restore = r;
     }
 
     /// The board's teardown's ask standing as asked ([`Restore::Asked`]):
@@ -827,7 +845,7 @@ enum LootStage {
 }
 
 /// The reporters' script.
-const REPORTER: &str = "UI_TheatricalReporter";
+pub(crate) const REPORTER: &str = "UI_TheatricalReporter";
 
 /// The pirate behaviours in which his loot's reports are up.
 const LOOT_WAITS: [&str; 3] = [
@@ -884,12 +902,89 @@ fn in_pirates_loot(behaviours: &[Option<&str>]) -> bool {
         .any(|b| b.is_some_and(|b| LOOT_WAITS.contains(&b)))
 }
 
+/// What a pirate's loot puts up while its reports are up (openspec AS.673),
+/// read off each report's definition as its update macro names it: the
+/// reward card's title string and the stone it gives (its name string and
+/// its number off that string's `Card_Name_(NNN)`), the coins' title.
+/// Strings are the interface's objects, their words read at run time.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LootUp {
+    pub card_title: Option<Value>,
+    pub stone: Option<u16>,
+    pub stone_name: Option<Value>,
+    pub coins_title: Option<Value>,
+    /// The coins' report is up.
+    pub coins: bool,
+    /// A report among them waits on the player's accept now.
+    pub waiting: bool,
+}
+
+/// The stone a `Card_Name_(NNN)` string names.
+pub fn stone_of_name(name: &str) -> Option<u16> {
+    name.strip_prefix("Card_Name_(")?
+        .strip_suffix(')')?
+        .parse()
+        .ok()
+}
+
+/// [`LootUp`] while a pirate is in his loot ([`LOOT_WAITS`]) and a report of
+/// its is up; none otherwise.
+pub fn loot_up(vm: &Vm, world: &ScriptWorld) -> Option<LootUp> {
+    let behaviours: Vec<Option<&str>> = world
+        .people()
+        .into_iter()
+        .map(|h| vm.placement_of(h).and_then(|p| vm.behaviour(p)))
+        .collect();
+    if !in_pirates_loot(&behaviours) {
+        return None;
+    }
+    let mut up = LootUp::default();
+    let mut any = false;
+    let mut pid: PlacementId = 0;
+    while let Some(h) = vm.handle_of(pid) {
+        pid += 1;
+        if vm.removed(pid - 1) || world.name(h) != REPORTER {
+            continue;
+        }
+        let Some(def) = vm.local(pid - 1, "tr def ref").map(|v| vm.value(v)) else {
+            continue;
+        };
+        let Some(Value::Object(update)) = field(vm, def, "update macro") else {
+            continue;
+        };
+        let title = field(vm, def, "title ref").filter(|t| *t != Value::Null);
+        up.waiting |= loot_report_waiting(vm, def).is_some();
+        match vm.program().name_of(update) {
+            Some(n) if n == LOOT_REPORTS[0].0 => {
+                any = true;
+                up.card_title = title;
+                let first = field(vm, def, "context data")
+                    .and_then(|s| vm.set(s).and_then(|s| s.first().copied()))
+                    .map(|c| vm.value(c));
+                let name = first.and_then(|c| field(vm, c, "card name ref"));
+                up.stone = match name {
+                    Some(Value::Object(o)) => vm.program().name_of(o).and_then(stone_of_name),
+                    _ => None,
+                };
+                up.stone_name = name;
+            }
+            Some(n) if n == LOOT_REPORTS[1].0 => {
+                any = true;
+                up.coins = true;
+                up.coins_title = title;
+            }
+            _ => {}
+        }
+    }
+    any.then_some(up)
+}
+
 /// A card loot's report waiting on the accept passed on a player's own
 /// accept press, as the press would pass it (the report's stage moved on
 /// one, its own next stages slide it out and end it); stand-in ledger:
 /// `card-loot-accept`. Only while a pirate's loot is up. How many it passed.
 fn pass_loot_reports(vm: &mut Vm, world: &ScriptWorld) -> usize {
-    if !accept_pressed(world) {
+    if world.card_streams.loot_unpassed || !accept_pressed(world) {
         return 0;
     }
     let behaviours: Vec<Option<&str>> = world

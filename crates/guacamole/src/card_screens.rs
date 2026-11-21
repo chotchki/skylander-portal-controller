@@ -227,6 +227,34 @@ pub(crate) struct CardRead {
     pub(crate) pick: Option<card_game::BoardRead>,
     pub(crate) score: Option<(i32, i32)>,
     pub(crate) board: bool,
+    /// A pirate's loot reports up (openspec AS.673), their words read.
+    pub(crate) loot: Option<LootShown>,
+}
+
+/// A pirate's loot as the TV draws it (openspec AS.673): the reward card's
+/// title, the stone given and its name, the coins' title, each the
+/// interface's own words read at run time; none for a string that didn't
+/// read.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct LootShown {
+    pub card_title: Option<String>,
+    pub stone: Option<u16>,
+    pub stone_name: Option<String>,
+    pub coins_title: Option<String>,
+    pub waiting: bool,
+}
+
+impl LootShown {
+    pub(crate) fn of(up: &card_game::LootUp, world: &ScriptWorld) -> Self {
+        let text = |v: Option<guac_script::Value>| v.and_then(|v| world.text_of(v));
+        Self {
+            card_title: text(up.card_title),
+            stone: up.stone,
+            stone_name: text(up.stone_name),
+            coins_title: text(up.coins_title),
+            waiting: up.waiting,
+        }
+    }
 }
 
 /// What the screens ask of the next step.
@@ -326,6 +354,7 @@ fn answer_and_read(
         pick: card_game::board_read(vm, &world),
         score: card_game::score(vm, &world),
         board: card_game::manager(vm, &world).is_some(),
+        loot: card_game::loot_up(vm, &world).map(|l| LootShown::of(&l, &world)),
     };
     if *read != now {
         *read = now;
@@ -509,6 +538,7 @@ fn load_card_art(
 enum Drawn {
     Hand(Vec<u16>, HandFocus, bool),
     Quit(QuitFocus),
+    Loot(LootShown, crate::pad::Labels),
 }
 
 /// A drawn card screen's root, for the shots.
@@ -528,13 +558,21 @@ fn show(
         Option<Res<RenderDevice>>,
     ),
     mut redrawn: MessageWriter<Redrawn>,
+    (pads, gamepads): (
+        Option<Res<LevelPads>>,
+        Query<(&Gamepad, Option<&crate::pad::FacesPrinted>)>,
+    ),
     mut shown: Local<Option<(Drawn, Entity)>>,
     mut score_shown: Local<Option<((i32, i32), Entity)>>,
     mut art: Local<Option<CardArt>>,
 ) {
-    let want = match (&screens.quit, &screens.hand) {
-        (Some(q), _) => Some(Drawn::Quit(*q)),
-        (None, Some(e)) => Some(Drawn::Hand(e.hand.clone(), e.focus, e.can_custom())),
+    let labels = pads.as_deref().map_or(crate::pad::Labels::Position, |p| {
+        crate::button_prompt::walking_labels(p, &gamepads)
+    });
+    let want = match (&screens.quit, &screens.hand, &read.loot) {
+        (Some(q), _, _) => Some(Drawn::Quit(*q)),
+        (None, Some(e), _) => Some(Drawn::Hand(e.hand.clone(), e.focus, e.can_custom())),
+        (None, None, Some(l)) => Some(Drawn::Loot(l.clone(), labels)),
         _ => None,
     };
     let score_want = read.score.filter(|_| read.board);
@@ -561,6 +599,7 @@ fn show(
                     spawn_hand(&mut commands, &pen, art, hand, *focus, *custom)
                 }
                 Drawn::Quit(focus) => spawn_quit(&mut commands, &pen, art, *focus),
+                Drawn::Loot(loot, labels) => spawn_loot(&mut commands, &pen, art, loot, *labels),
             };
             *shown = Some((w, e));
         }
@@ -799,6 +838,96 @@ fn spawn_quit(commands: &mut Commands, pen: &Pen, art: &CardArt, focus: QuitFocu
         .id()
 }
 
+/// The loot's words where a string didn't read (no interface model).
+const LOOT_UNREAD: &str = "You won!";
+
+/// A pirate's loot over the whole picture (openspec AS.673; stand-in
+/// ledger `card-loot`): a backdrop the board's camera left on nothing is
+/// hidden under, the reward card's title, the stone given in its own
+/// picture with its name, the coins' title, and the prompt to go on, the
+/// walking pad's bottom face as every prompt of the TV's draws it.
+fn spawn_loot(
+    commands: &mut Commands,
+    pen: &Pen,
+    art: &CardArt,
+    loot: &LootShown,
+    labels: crate::pad::Labels,
+) -> Entity {
+    let theme = &pen.theme;
+    let a = art.prompt.as_ref();
+    let picture = loot.stone.and_then(|n| {
+        art.hand
+            .as_ref()
+            .and_then(|h| h.pieces.get(stone_sprite(n).as_str()))
+    });
+    commands
+        .spawn((
+            full_screen("loot", CARD_Z),
+            BackgroundColor(Color::srgba(0.01, 0.02, 0.08, 0.97)),
+        ))
+        .with_children(|root| {
+            root.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: px(28),
+                    padding: UiRect::axes(px(72), px(44)),
+                    border: UiRect::all(px(3)),
+                    border_radius: BorderRadius::all(px(32)),
+                    ..default()
+                },
+                BackgroundColor(BOX_FILL),
+                BorderColor::all(theme.gold),
+            ))
+            .with_children(|panel| {
+                let title = loot
+                    .card_title
+                    .as_deref()
+                    .or(loot.coins_title.as_deref())
+                    .unwrap_or(LOOT_UNREAD);
+                label(panel, pen, a, title, 56.0);
+                if let Some(p) = picture {
+                    panel.spawn((
+                        Node {
+                            width: px(p.size.x * UNIT * 2.0),
+                            height: px(p.size.y * UNIT * 2.0),
+                            ..default()
+                        },
+                        // The interface's images run bottom row first
+                        // (openspec AS.581): drawn as stored it's upside down.
+                        ImageNode {
+                            image: p.image.clone(),
+                            flip_y: true,
+                            ..default()
+                        },
+                    ));
+                }
+                if let Some(name) = &loot.stone_name {
+                    label(panel, pen, a, name, LABEL_SIZE);
+                }
+                if let (Some(coins), true) = (&loot.coins_title, loot.card_title.is_some()) {
+                    label(panel, pen, a, coins, LABEL_SIZE);
+                }
+                panel
+                    .spawn(Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: px(16),
+                        ..default()
+                    })
+                    .with_children(|line| {
+                        crate::pause::glyph(
+                            line,
+                            pen,
+                            crate::pad::prompt(labels, crate::pad::Face::South),
+                        );
+                        label(line, pen, a, crate::collected_box::CONTINUE, LABEL_SIZE);
+                    });
+            });
+        })
+        .id()
+}
+
 fn spawn_score(
     commands: &mut Commands,
     pen: &Pen,
@@ -906,6 +1035,8 @@ pub struct CardScreensShot {
     pub pick: Option<card_game::BoardRead>,
     /// The quit confirm up, and its focus.
     pub quit: Option<QuitFocus>,
+    /// A pirate's loot up, as drawn (openspec AS.673).
+    pub loot: Option<LootShown>,
     /// What the screens answered this session, in order.
     pub answered: Vec<String>,
     /// Which screens are drawn now, by name.
@@ -944,6 +1075,7 @@ impl CardShots<'_, '_> {
             board: read.board,
             pick: read.pick.clone(),
             quit: screens.quit,
+            loot: read.loot.clone(),
             answered: screens.answered.clone(),
             drawn: self.roots.iter().map(|r| r.0).collect(),
         };

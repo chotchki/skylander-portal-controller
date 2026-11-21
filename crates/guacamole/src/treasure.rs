@@ -207,11 +207,12 @@ fn pass_report(vm: &mut Vm, id: PlacementId) -> bool {
 /// or treasure is in the collection by then.
 pub fn answer_hats(vm: &mut Vm, world: &ScriptWorld) -> usize {
     let mut answered = 0;
+    let pass = world.hat_reports_passed;
     for id in legendary(vm, world) {
-        answered += usize::from(pass_report(vm, id));
+        answered += usize::from(pass && pass_report(vm, id));
     }
     for id in hat_boxes(vm, world) {
-        answered += usize::from(pass_report(vm, id));
+        answered += usize::from(pass && pass_report(vm, id));
         if showing(vm, id, ASKS_TO_WEAR)
             && local(vm, id, WEAR_IT).and_then(|v| v.as_i32()) == Some(-1)
         {
