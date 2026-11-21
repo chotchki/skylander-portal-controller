@@ -963,6 +963,27 @@ fn level_208s_way_down_to_setup_002s_trigger_by_the_stick() {
         !on.ended && held.x > block.x,
         "held east of the block: {held}"
     );
+    // The Chompies' freeze crystals came off him with the freeze (openspec
+    // AS.432): made in the fight, each by the terrace off his node at alpha
+    // 0 (drawn as nothing) or gone. Its going waits on its scale falling
+    // under 60 percent, which nothing run here lowers.
+    let prisons: Vec<(bool, Option<String>)> = run
+        .world
+        .clones()
+        .into_iter()
+        .filter(|h| run.world.name(*h) == "Chompy_Ice_Prison")
+        .map(|h| {
+            let a = run.world.actor(h);
+            let off = a.is_none_or(|a| {
+                a.removed || (a.attach == guac_script::Value::Null && a.tint & 0xFF == 0)
+            });
+            let b = run.vm.placement_of(h).and_then(|i| run.vm.behaviour(i));
+            (off, b.map(str::to_owned))
+        })
+        .collect();
+    println!("freeze crystals made {}: {prisons:?}", prisons.len());
+    assert!(!prisons.is_empty(), "the Chompies froze him");
+    assert!(prisons.iter().all(|(off, _)| *off), "a crystal left on him");
     // The beam puzzle: the talk button at the pivot's switch until the
     // block melts and is gone (openspec AS.431).
     let melt = turn_the_beam(&mut run, &mut stops, 6000);

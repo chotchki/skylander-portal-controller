@@ -4626,6 +4626,8 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
         placements.extend(crate::level_208::exit(name).map(str::to_owned));
         // Level 208's way down to Setup_002's trigger (openspec AS.406).
         placements.extend(crate::level_208::down(name).map(str::to_owned));
+        // The Ice Chompy's freeze crystal on 208 (openspec AS.432).
+        placements.extend(crate::level_208::freeze(name).map(str::to_owned));
         // Level 208's first beam puzzle (openspec AS.431).
         placements.extend(crate::level_208::beam(name).map(str::to_owned));
     }

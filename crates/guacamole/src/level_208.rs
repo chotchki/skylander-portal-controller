@@ -71,6 +71,19 @@ pub const REVEAL_FOES: [&str; 5] = [
     "Enemy_Chompy_Ice(40)",
 ];
 
+/// The Ice Chompy's freeze crystal (openspec AS.432), listed and never
+/// walked: the freeze hangs a `Chompy_Ice_Prison` clone on its victim, and
+/// its own script takes it off him once he's no longer frozen (off his
+/// node, faded out, a burst, gone). Unlisted it ran nothing, so the crystal
+/// stayed hung on the hero long after the Chompies were gone.
+pub const FREEZE: [&str; 1] = ["Chompy_Ice_Prison"];
+
+/// [`FREEZE`] on 208 alone.
+pub fn freeze(level: &str) -> impl Iterator<Item = &'static str> {
+    let on = level == LEVEL;
+    FREEZE.iter().copied().filter(move |_| on)
+}
+
 /// [`EXIT`] and [`REVEAL_FOES`] on 208 alone: another level's `brick`
 /// templates are its own.
 pub fn exit(level: &str) -> impl Iterator<Item = &'static str> {
@@ -208,6 +221,26 @@ mod tests {
                 );
             }
             assert_eq!(down(other).count(), 0);
+        }
+    }
+
+    /// openspec AS.432: the freeze crystal's template is on 208's listing
+    /// and on no other level's.
+    #[test]
+    fn level_208s_freeze_crystal_is_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        assert_eq!(freeze(LEVEL).collect::<Vec<_>>(), FREEZE);
+        for other in ["level_202", "level_205_piratecards"] {
+            let off = level_config(Mode::Play, &files, 5, other);
+            for name in FREEZE {
+                assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+                assert!(
+                    !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
+                    "{name} on {other}"
+                );
+            }
+            assert_eq!(freeze(other).count(), 0);
         }
     }
 
