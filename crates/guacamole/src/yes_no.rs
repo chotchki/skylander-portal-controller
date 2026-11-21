@@ -31,7 +31,7 @@ use guacamole::scripts::{ScriptClone, ScriptRuntime, ScriptWorld, WorldHost};
 use serde::Serialize;
 use tracing::{info, warn};
 
-use crate::completion::{Art, FONT_ARCHIVE, bitmap_text, load_art_of};
+use crate::completion::{Art, FONT_ARCHIVE, bitmap_text, load_art_of, upright_image};
 use crate::hero_scripts::ScriptSource;
 use crate::input::{FocusId, TvInput};
 use crate::pause::ShownAt;
@@ -348,7 +348,8 @@ fn art_button(
             align_items: AlignItems::Center,
             ..default()
         },
-        ImageNode::new(if focused {
+        // The disc's button art, upright (openspec AS.581).
+        upright_image(if focused {
             on.image.clone()
         } else {
             off.image.clone()
@@ -625,7 +626,8 @@ mod tests {
     }
 
     /// openspec AU.29: the modal on the disc's art puts the focus where the
-    /// original's prompt starts, each button on its backdrop for it.
+    /// original's prompt starts, each button on its backdrop for it, upright
+    /// (openspec AS.581).
     #[test]
     fn the_discs_modal_starts_where_the_originals_prompt_does() {
         for yes_first in [true, false] {
@@ -661,6 +663,10 @@ mod tests {
             assert_eq!(of(PROMPT_NO).2, !yes_first);
             assert_eq!(of(PROMPT_YES).1, on(if yes_first { 1 } else { 3 }));
             assert_eq!(of(PROMPT_NO).1, on(if yes_first { 4 } else { 2 }));
+            // Each button's art upright (openspec AS.581): the disc's
+            // interface images run bottom row first.
+            let flipped: Vec<bool> = q.iter(app.world()).map(|(_, i, _)| i.flip_y).collect();
+            assert_eq!(flipped, [true, true], "both buttons upright");
         }
     }
 

@@ -40,7 +40,7 @@ use guacamole::scripts::{ScriptClone, ScriptRuntime, ScriptWorld, WorldHost};
 use serde::Serialize;
 use tracing::{info, warn};
 
-use crate::completion::{Art, FONT_ARCHIVE, bitmap_text, load_art_of};
+use crate::completion::{Art, FONT_ARCHIVE, bitmap_text, load_art_of, upright_image};
 use crate::hero_scripts::ScriptSource;
 use crate::input::TvInput;
 use crate::pad::LevelPads;
@@ -699,18 +699,7 @@ fn spawn_hand(
                                     // Stored upside down, as the stones'
                                     // faces are (openspec AS.554).
                                     Some(p) => {
-                                        s.spawn((
-                                            Node {
-                                                width: px(p.size.x * UNIT),
-                                                height: px(p.size.y * UNIT),
-                                                ..default()
-                                            },
-                                            ImageNode {
-                                                image: p.image.clone(),
-                                                flip_y: true,
-                                                ..default()
-                                            },
-                                        ));
+                                        s.spawn(stone_picture(p, 1.0));
                                     }
                                     None => {
                                         s.spawn(pen.text(
@@ -887,20 +876,7 @@ fn spawn_loot(
                     .unwrap_or(LOOT_UNREAD);
                 label(panel, pen, a, title, 56.0);
                 if let Some(p) = picture {
-                    panel.spawn((
-                        Node {
-                            width: px(p.size.x * UNIT * 2.0),
-                            height: px(p.size.y * UNIT * 2.0),
-                            ..default()
-                        },
-                        // The interface's images run bottom row first
-                        // (openspec AS.581): drawn as stored it's upside down.
-                        ImageNode {
-                            image: p.image.clone(),
-                            flip_y: true,
-                            ..default()
-                        },
-                    ));
+                    panel.spawn(stone_picture(p, 2.0));
                 }
                 if let Some(name) = &loot.stone_name {
                     label(panel, pen, a, name, LABEL_SIZE);
@@ -1081,6 +1057,20 @@ impl CardShots<'_, '_> {
         };
         (shot != CardScreensShot::default()).then_some(shot)
     }
+}
+
+/// A stone's hand-select picture at `scale` times its template's size, the
+/// right way up (openspec AS.581: the interface's images run bottom row
+/// first): the hand select's slots and the loot panel's stone.
+fn stone_picture(p: &crate::completion::Piece, scale: f32) -> (Node, ImageNode) {
+    (
+        Node {
+            width: px(p.size.x * UNIT * scale),
+            height: px(p.size.y * UNIT * scale),
+            ..default()
+        },
+        upright_image(p.image.clone()),
+    )
 }
 
 #[cfg(test)]

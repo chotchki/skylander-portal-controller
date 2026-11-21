@@ -104,3 +104,20 @@ fn the_quit_confirm_comes_with_start_over_a_board_on_no() {
     assert_eq!(quit_shown(Some(QuitFocus::No), false, true), None);
     assert_eq!(quit_shown(None, false, true), None);
 }
+
+/// openspec AS.581: a stone's picture, in the hand select's slots and on the
+/// loot panel, draws its interface image the right way up (the interface's
+/// images run bottom row first), at its template's size times the scale.
+#[test]
+fn a_stones_picture_draws_upright_at_its_size() {
+    let p = crate::completion::Piece {
+        image: Handle::default(),
+        size: Vec2::new(40.0, 50.0),
+    };
+    for scale in [1.0, 2.0] {
+        let (node, image) = stone_picture(&p, scale);
+        assert!(image.flip_y, "upright at {scale}");
+        assert_eq!(node.width, px(40.0 * UNIT * scale));
+        assert_eq!(node.height, px(50.0 * UNIT * scale));
+    }
+}
