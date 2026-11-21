@@ -605,7 +605,12 @@ pub fn segment(
         }
         Kind::Lightning(l) => {
             let n = state.points.len();
-            let scale_u = l.scale_uv_percent / 100.0;
+            // Its texture's length runs along v and its cross-section along
+            // u (the disc's bolt textures stand 128 wide by 256 or 512 tall,
+            // the wide beam ones even along v): v along the strip, scaled
+            // and scrolled, u across it (AS.700's review; laid along u, the
+            // reflect beam drew its cross-section seven times, as dashes).
+            let scale_v = l.scale_uv_percent / 100.0;
             let scroll = l.scroll_uv_percent / 100.0 * state.clock;
             let width = state.width.unwrap_or(l.width).max(0.0) * frame.scale;
             // A lightning's 0xFF is full strength, as a ribbon's.
@@ -633,11 +638,11 @@ pub fn segment(
                 let side = along.cross(view.eye - middle).normalize_or_zero();
                 let (fa, wa) = half(i);
                 let (fb, wb) = half(i + 1);
-                let (ua, ub) = (fa * scale_u + scroll, fb * scale_u + scroll);
+                let (va, vb) = (fa * scale_v + scroll, fb * scale_v + scroll);
                 let (a, b) = (a - origin, b - origin);
                 quads.push(
                     [a - side * wa, b - side * wb, b + side * wb, a + side * wa],
-                    [[ua, 0.0], [ub, 0.0], [ub, 1.0], [ua, 1.0]],
+                    [[0.0, va], [0.0, vb], [1.0, vb], [1.0, va]],
                     colour,
                     view.eye - middle,
                 );
@@ -705,13 +710,13 @@ pub fn material(emitter: &str, k: usize, g: &Generator) -> Option<model::Materia
 }
 
 /// A generator's sampler as it draws: a lightning repeats its texture along
-/// its length (openspec AS.700: level 208's beam scales it 700 % along and
-/// scrolls it 300 % a second, which a clamped edge would draw as nothing;
+/// its length, its v (openspec AS.700: level 208's beam scales it 700 % along
+/// and scrolls it 300 % a second, which a clamped edge would draw as nothing;
 /// our reading, stand-in ledger `lightning`), any other as stored.
 fn along(g: &Generator, sampler: guac_ir::model::Sampler) -> guac_ir::model::Sampler {
     match g.kind {
         Kind::Lightning(_) => guac_ir::model::Sampler {
-            wrap_u: guac_ir::model::Wrap::Repeat,
+            wrap_v: guac_ir::model::Wrap::Repeat,
             ..sampler
         },
         _ => sampler,

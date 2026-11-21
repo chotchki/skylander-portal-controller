@@ -420,6 +420,20 @@ fn a_ribbon_follows_its_emitter_tapering_to_its_tail() {
     };
     let seg = segment(&s, &g, STILL, view, Vec3::ZERO, 0).unwrap();
     assert_eq!(seg.positions.len(), 4 * 4);
+    // Its texture's v runs along it and its u across (AS.700's review: the
+    // disc's bolt textures stand tall): the first piece's two corners at its
+    // start read v 0, the two at its end a quarter (100 % over 4 pieces),
+    // and each end's two corners u 0 and 1.
+    let uvs = &seg.uvs[0];
+    let mut ends: Vec<(bool, [f32; 2])> = (0..4)
+        .map(|k| (Vec3::from_array(seg.positions[k]).length() < 0.3, uvs[k]))
+        .collect();
+    ends.sort_by(|a, b| b.0.cmp(&a.0).then(a.1[0].total_cmp(&b.1[0])));
+    assert_eq!(
+        ends.iter().map(|e| e.1).collect::<Vec<_>>(),
+        [[0.0, 0.0], [1.0, 0.0], [0.0, 0.25], [1.0, 0.25]],
+        "{ends:?}"
+    );
     // The head half a width either side, the tail a point; its colour
     // halved for the shader's doubling, its alpha as stored.
     let mut head: Vec<f32> = seg.positions[1..3].iter().map(|p| p[1]).collect();
@@ -455,7 +469,7 @@ fn a_lightnings_texture_repeats_along_it() {
         let m = material("e", 0, &generator(kind)).unwrap();
         (m.textures[0].sampler.wrap_u, m.textures[0].sampler.wrap_v)
     };
-    assert_eq!(wraps(Kind::Lightning(bolt)), (Wrap::Repeat, Wrap::Clamp));
+    assert_eq!(wraps(Kind::Lightning(bolt)), (Wrap::Clamp, Wrap::Repeat));
     assert_eq!(wraps(Kind::Sprite(stream())), (Wrap::Clamp, Wrap::Clamp));
 }
 
@@ -503,6 +517,20 @@ fn a_lightning_runs_from_its_generator_to_its_target() {
     };
     let seg = segment(&s, &g, STILL, view, Vec3::ZERO, 0).unwrap();
     assert_eq!(seg.positions.len(), 4 * 4);
+    // Its texture's v runs along it and its u across (AS.700's review: the
+    // disc's bolt textures stand tall): the first piece's two corners at its
+    // start read v 0, the two at its end a quarter (100 % over 4 pieces),
+    // and each end's two corners u 0 and 1.
+    let uvs = &seg.uvs[0];
+    let mut ends: Vec<(bool, [f32; 2])> = (0..4)
+        .map(|k| (Vec3::from_array(seg.positions[k]).length() < 0.3, uvs[k]))
+        .collect();
+    ends.sort_by(|a, b| b.0.cmp(&a.0).then(a.1[0].total_cmp(&b.1[0])));
+    assert_eq!(
+        ends.iter().map(|e| e.1).collect::<Vec<_>>(),
+        [[0.0, 0.0], [1.0, 0.0], [0.0, 0.25], [1.0, 0.25]],
+        "{ends:?}"
+    );
     // Its own width, then the scripts'; its colour halved for the shader's
     // doubling, its alpha as stored.
     let across = |seg: &guac_ir::model::Segment| {

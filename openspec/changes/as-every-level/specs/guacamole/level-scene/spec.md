@@ -735,4 +735,4 @@ A level's own emitter whose generator is a lightning SHALL be drawn as a strip f
 
 #### Scenario: The first beam puzzle's two beams
 - **WHEN** level 208's first reflect start is powered and the pivot's target is lit
-- **THEN** a beam runs from the start to the pivot and one from the pivot along its facing, each turn of the switch moving the second, until it reaches the ice block
+- **THEN** a beam runs from the start to the pivot and one from the pivot along its facing, each turn of the switch moving the second, until it reaches the ice block (headless as the block first melts: 10.4 m and 11.0 m, both 1.1 m wide)
