@@ -8,7 +8,8 @@
 //! and gestures are dropped at the frame's start, so the posted pads, the
 //! posted keys (`flags`' capture key, written in `PreUpdate`) and the test
 //! routes are the only way in. It draws at most 60 frames a second, so it
-//! takes no more of the GPU than a shown TV does. A build without
+//! takes no more of the GPU than a shown TV does, and keeps out of App Nap,
+//! which would stretch that pace. A build without
 //! `test-hooks`, or one without the switch, never adds it.
 
 use std::time::{Duration, Instant};
@@ -114,6 +115,23 @@ fn off_the_dock(_main_thread: bevy::ecs::system::NonSendMarker) {
     } else {
         warn!("off the Dock: AppKit refused the accessory policy");
     }
+    awake();
+}
+
+/// Out of App Nap for the process's life: a hidden app nobody's in front of
+/// is what macOS naps, its timers stretched, and AS.740's paced run drew 43
+/// frames a second for [`hold_to_the_pace`]'s 60 (load 16.9). User-initiated
+/// and latency-critical, idle sleep still allowed.
+#[cfg(target_os = "macos")]
+fn awake() {
+    use objc2_foundation::{NSActivityOptions, NSProcessInfo, NSString};
+    let options = NSActivityOptions::UserInitiatedAllowingIdleSystemSleep
+        | NSActivityOptions::LatencyCritical;
+    let reason = NSString::from_str("an unattended guacamole test run");
+    let activity = NSProcessInfo::processInfo().beginActivityWithOptions_reason(options, &reason);
+    // Held until the process ends, which ends it.
+    std::mem::forget(activity);
+    info!("an unattended run: out of App Nap");
 }
 
 #[cfg(test)]
