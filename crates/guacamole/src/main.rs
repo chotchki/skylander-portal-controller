@@ -1178,7 +1178,7 @@ mod tests {
                 }
             }
         }
-        let want: [(TypeId, Frame, &str); 18] = [
+        let want: [(TypeId, Frame, &str); 19] = [
             (
                 mirror::count_pad_steps.system_type_id(),
                 Frame::Pads,
@@ -1254,6 +1254,11 @@ mod tests {
                 creatures::place_creatures.system_type_id(),
                 Frame::Hands,
                 "the drawn creatures' places",
+            ),
+            (
+                hero_scripts::place_hung_clones.system_type_id(),
+                Frame::Hands,
+                "the hung clones' places, this step's",
             ),
             (
                 hero::step_cameras.system_type_id(),

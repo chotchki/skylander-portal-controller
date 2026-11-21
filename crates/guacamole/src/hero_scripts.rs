@@ -2303,6 +2303,37 @@ pub(crate) fn draw_clones(
     }
 }
 
+/// Each drawn clone that hangs on something put at its actor's place again
+/// at the end of the step's hands (openspec AS.664): [`draw_clones`] places
+/// it in [`Frame::Actors`], before this step's nodes are posed
+/// ([`pose_hands`], `creatures::pose_creature_nodes`), so a clone hung on a
+/// node stood where the node was a step before while what it hangs on stood
+/// where this step left it, and a card's face, 0.06 off its stone, sank into
+/// its stone as the stone turned. Run after them, it takes this step's.
+pub(crate) fn place_hung_clones(
+    world: Option<Res<ScriptWorld>>,
+    mut clones: Query<(Entity, &CloneDrawn, &mut Transform), With<ScriptClone>>,
+) {
+    let Some(world) = world else {
+        return;
+    };
+    for (entity, drawn, mut t) in &mut clones {
+        if !drawn.draws {
+            continue;
+        }
+        let Some(actor) = world.actor(entity.to_bits()) else {
+            continue;
+        };
+        if actor.attach == Value::Null {
+            continue;
+        }
+        let place = clone_transform(actor);
+        if *t != place {
+            *t = place;
+        }
+    }
+}
+
 /// The card game archives joined to the run whose models the level hasn't
 /// been asked for (openspec AS.531): a stream or a stone's deck or asset
 /// joins as a script asks for it ([`guacamole::card_game::join_asked`]),
@@ -3897,6 +3928,48 @@ mod tests {
             .push((board, 4));
         app.world_mut().run_system_once(draw_clones).unwrap();
         assert!(app.world().resource::<Level>().card_asked(board));
+    }
+
+    /// openspec AS.664: a drawn clone hung on something is put at its
+    /// actor's place by the hands' pass, this step's; one hanging on nothing
+    /// and one drawing nothing are left as they are.
+    #[test]
+    fn a_hung_clone_takes_this_steps_place() {
+        use bevy::ecs::system::RunSystemOnce;
+        let tmp = tempfile::tempdir().unwrap();
+        write_attack(tmp.path());
+        let files = level_scripts::load(tmp.path(), LEVEL).unwrap().placements;
+        let mut app = App::new();
+        let hung = app.world_mut().spawn(ScriptClone(Value::Null)).id();
+        let loose = app.world_mut().spawn(ScriptClone(Value::Null)).id();
+        let mut handles = headless_handles(&files);
+        handles.insert(files.placed[0].obj, hung.to_bits());
+        handles.insert(files.placed[1].obj, loose.to_bits());
+        let owner = handles[&files.placed[2].obj];
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        assert!(world.hang(hung.to_bits(), owner, 0));
+        let drawn = CloneDrawn {
+            draws: true,
+            attack: false,
+        };
+        let stale = Transform::from_xyz(9.0, 9.0, 9.0);
+        app.world_mut().entity_mut(hung).insert((drawn, stale));
+        app.world_mut().entity_mut(loose).insert((drawn, stale));
+        let want = clone_transform(world.actor(hung.to_bits()).unwrap());
+        assert_ne!(want, stale);
+        app.insert_resource(world);
+        app.world_mut().run_system_once(place_hung_clones).unwrap();
+        assert_eq!(*app.world().get::<Transform>(hung).unwrap(), want);
+        assert_eq!(*app.world().get::<Transform>(loose).unwrap(), stale);
+        app.world_mut().entity_mut(hung).insert((
+            CloneDrawn {
+                draws: false,
+                attack: false,
+            },
+            stale,
+        ));
+        app.world_mut().run_system_once(place_hung_clones).unwrap();
+        assert_eq!(*app.world().get::<Transform>(hung).unwrap(), stale);
     }
 
     /// AG.60: a clone the scripts make before the level's loaded (the

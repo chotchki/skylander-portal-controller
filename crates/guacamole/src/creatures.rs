@@ -202,7 +202,12 @@ impl Plugin for CreaturesPlugin {
             .init_resource::<DrawnCreatures>()
             .add_systems(
                 FixedUpdate,
-                (pose_creature_nodes, place_bodies, place_creatures)
+                (
+                    pose_creature_nodes,
+                    place_bodies,
+                    place_creatures,
+                    crate::hero_scripts::place_hung_clones,
+                )
                     .chain()
                     .in_set(Frame::Hands)
                     .after(crate::hero_scripts::pose_hands),
