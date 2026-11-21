@@ -749,17 +749,25 @@ fn failed_link(message: String) -> ServerLink {
 /// hidden and unfocused: bevy_winit then starts the loop without activating
 /// the app over the frontmost one and never makes the window key, and
 /// nothing orders it on screen. The e2e reads the TV over HTTP and the shots
-/// are offscreen, so nothing needs it seen.
+/// are offscreen, so nothing needs it seen. It's never fullscreen either:
+/// winit's borderless fullscreen on macOS is `toggleFullScreen`, a Space of
+/// its own the desk would be switched to, so the TV mode's window is a
+/// 1920x1080 one (the offscreen shots' default) and lays out at that.
 fn window(mode: WindowMode, unattended: bool) -> Window {
     let window = shown_window(mode);
-    if unattended {
-        Window {
-            focused: false,
-            visible: false,
-            ..window
-        }
-    } else {
-        window
+    if !unattended {
+        return window;
+    }
+    let resolution = match mode {
+        WindowMode::Desktop => window.resolution.clone(),
+        WindowMode::Tv => (1920, 1080).into(),
+    };
+    Window {
+        focused: false,
+        visible: false,
+        mode: BevyWindowMode::Windowed,
+        resolution,
+        ..window
     }
 }
 
@@ -974,9 +982,19 @@ mod tests {
             assert!(!test.focused, "{mode:?}");
             assert!(!test.visible, "{mode:?}");
             assert_eq!(test.title, hand.title);
-            assert_eq!(test.mode, hand.mode);
-            assert_eq!(test.resolution, hand.resolution);
+            // Never fullscreen: winit's is a Space switch on macOS.
+            assert_eq!(test.mode, BevyWindowMode::Windowed, "{mode:?}");
         }
+        assert_eq!(
+            window(WindowMode::Desktop, true).resolution,
+            window(WindowMode::Desktop, false).resolution
+        );
+        assert!(matches!(
+            window(WindowMode::Tv, false).mode,
+            BevyWindowMode::BorderlessFullscreen(_)
+        ));
+        let tv = window(WindowMode::Tv, true);
+        assert_eq!((tv.width(), tv.height()), (1920.0, 1080.0));
     }
 
     /// AS.740: the switch adds [`desk::DeskDeaf`]; a hand's group has none.

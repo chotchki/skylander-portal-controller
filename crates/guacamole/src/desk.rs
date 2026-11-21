@@ -78,7 +78,9 @@ fn off_the_dock(_main_thread: bevy::ecs::system::NonSendMarker) {
         return;
     };
     let app = NSApplication::sharedApplication(mtm);
-    if !app.setActivationPolicy(NSApplicationActivationPolicy::Accessory) {
+    if app.setActivationPolicy(NSApplicationActivationPolicy::Accessory) {
+        info!("an unattended run: the app is off the Dock");
+    } else {
         warn!("off the Dock: AppKit refused the accessory policy");
     }
 }
