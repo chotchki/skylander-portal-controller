@@ -412,12 +412,16 @@ pub(crate) struct CreatureSpawner<'w, 's> {
 }
 
 /// The clones whose template's model the level draws skinned (openspec
-/// AG.150, AS.63: `holds` says whether the level holds a creature model at
-/// a path), but a template `props::UNDRAWN_SPAWNS` names, the creatures the
+/// AG.150, AS.63: `holds` says whether the level draws a clone of a
+/// template, by its name and its model's path, as a creature,
+/// [`crate::level::Level::holds_clone`]), but a template `props::UNDRAWN_SPAWNS` names, the creatures the
 /// engine walks left to [`ScriptWorld::creatures`], and one hanging on an
 /// actor taken off (AS.186, [`ScriptWorld::hangs_on_nothing`]): drawn as a
 /// creature is.
-pub(crate) fn skinned_clones(world: &ScriptWorld, holds: impl Fn(&str) -> bool) -> Vec<Handle> {
+pub(crate) fn skinned_clones(
+    world: &ScriptWorld,
+    holds: impl Fn(&str, &str) -> bool,
+) -> Vec<Handle> {
     world
         .clones()
         .into_iter()
@@ -427,7 +431,7 @@ pub(crate) fn skinned_clones(world: &ScriptWorld, holds: impl Fn(&str) -> bool) 
                 a.walker.is_none()
                     && a.template.and_then(|t| world.template(t)).is_some_and(|p| {
                         !guacamole::props::UNDRAWN_SPAWNS.contains(&p.name.as_str())
-                            && p.model.as_deref().is_some_and(&holds)
+                            && p.model.as_deref().is_some_and(|m| holds(&p.name, m))
                     })
             })
         })
@@ -442,7 +446,7 @@ pub(crate) fn skinned_clones(world: &ScriptWorld, holds: impl Fn(&str) -> bool) 
 pub(crate) fn wanted(
     world: &ScriptWorld,
     runs: impl Fn(Handle) -> bool,
-    holds: impl Fn(&str) -> bool,
+    holds: impl Fn(&str, &str) -> bool,
 ) -> Vec<(Handle, String)> {
     let clones = skinned_clones(world, holds);
     world
@@ -489,7 +493,7 @@ fn draw_creatures(
     let wanted = wanted(
         &world,
         |h| vm.placement_of(h).is_some() && !inert.contains(&h),
-        |path| level.creature(path).is_some(),
+        |name, path| level.holds_clone(name, path),
     );
     // Let go of what's no longer wanted.
     let gone: Vec<Handle> = drawn
@@ -1583,7 +1587,7 @@ mod tests {
     fn skinned_of(app: &App, name: &str) -> Vec<Handle> {
         let level = app.world().resource::<Level>();
         let world = app.world().resource::<ScriptWorld>();
-        skinned_clones(world, |p| level.creature(p).is_some())
+        skinned_clones(world, |n, p| level.holds_clone(n, p))
             .into_iter()
             .filter(|&h| world.name(h) == name)
             .collect()
@@ -1699,16 +1703,19 @@ mod tests {
         let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
         let (c, b) = (handles[&chain], handles[&boat]);
         assert!(
-            wanted(&world, |_| false, |_| true).is_empty(),
+            wanted(&world, |_| false, |_, _| true).is_empty(),
             "nothing on it"
         );
         assert!(world.hang(b, c, 0));
         assert_eq!(
-            wanted(&world, |_| false, |_| true),
+            wanted(&world, |_| false, |_, _| true),
             [(c, "C:/m/TitanChain.mdl".to_owned())]
         );
         assert!(world.take_off(chain));
-        assert!(wanted(&world, |_| false, |_| true).is_empty(), "taken off");
+        assert!(
+            wanted(&world, |_| false, |_, _| true).is_empty(),
+            "taken off"
+        );
     }
 
     /// openspec AS.180: a person is reported posed by the clips the TV
