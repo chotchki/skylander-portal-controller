@@ -1089,6 +1089,13 @@ impl Plugin for HeroScriptsPlugin {
             );
         #[cfg(all(feature = "test-hooks", feature = "played-card-games"))]
         app.add_systems(Update, ask_card_quit.run_if(resource_exists::<ScriptWorld>));
+        #[cfg(all(feature = "test-hooks", feature = "played-card-games"))]
+        app.add_systems(
+            Update,
+            ask_card_starters
+                .run_if(resource_exists::<ScriptWorld>)
+                .run_if(resource_exists::<ScriptRuntime>),
+        );
     }
 }
 
@@ -1249,6 +1256,54 @@ fn ask_card_quit(mut world: ResMut<ScriptWorld>) {
     if CARD_QUIT.swap(false, std::sync::atomic::Ordering::SeqCst) {
         info!("a card game's quit asked over the test hook");
         world.card_streams.ask_quit();
+    }
+}
+
+/// The starter stones asked over `POST /api/_test/tv/card_starters`
+/// (openspec AS.675): a lane's build with `test-hooks` and
+/// `played-card-games` alone, never a landed one.
+#[cfg(all(feature = "test-hooks", feature = "played-card-games"))]
+static CARD_STARTERS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `POST /api/_test/tv/card_starters`: 202, the starter stones collected
+/// into the run's save at the next step through the scripts' own collection
+/// write ([`guacamole::card_game::give_starter_stones`]). Stones only: no
+/// game is counted won.
+#[cfg(all(feature = "test-hooks", feature = "played-card-games"))]
+pub(crate) fn card_starter_routes<S: Clone + Send + Sync + 'static>() -> axum::Router<S> {
+    axum::Router::new().route(
+        "/api/_test/tv/card_starters",
+        axum::routing::post(|| async {
+            CARD_STARTERS.store(true, std::sync::atomic::Ordering::SeqCst);
+            axum::http::StatusCode::ACCEPTED
+        }),
+    )
+}
+
+/// The starter stones [`card_starter_routes`] asked, collected.
+#[cfg(all(feature = "test-hooks", feature = "played-card-games"))]
+fn ask_card_starters(
+    mut commands: Commands,
+    mut runtime: ResMut<ScriptRuntime>,
+    mut world: ResMut<ScriptWorld>,
+) {
+    if !CARD_STARTERS.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let ScriptRuntime { vm, generator, .. } = &mut *runtime;
+    let mut spawn =
+        |template: Value| -> Handle { commands.spawn(ScriptClone(template)).id().to_bits() };
+    let mut engine = guacamole::script_engine::NoEngine;
+    let mut host = WorldHost {
+        world: &mut world,
+        engine: &mut engine,
+        generator,
+        spawn: &mut spawn,
+    };
+    match guacamole::card_game::give_starter_stones(vm, &mut host) {
+        Ok(true) => info!("the starter stones given over the test hook"),
+        Ok(false) => warn!("the starter stones asked with no game systems running"),
+        Err(h) => warn!(%h, "the starter stones' write stopped"),
     }
 }
 

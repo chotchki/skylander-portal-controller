@@ -4942,13 +4942,17 @@ fn fangs_first_game_on_a_fresh_save_is_the_tutorial_and_its_win_collects_stones(
     // Six stones, all by the win: none collected as the board started (the
     // tutorial grants none), and the save the scripts ask right after the
     // win hands the store the same six (the as-cards-play review).
-    const STARTERS: [usize; 6] = [0, 12, 15, 29, 46, 53];
+    // The stones the TV's starter route gives (openspec AS.675) are these.
+    let starters: Vec<usize> = guacamole::card_game::STARTER_STONES
+        .iter()
+        .map(|&s| usize::from(s))
+        .collect();
     assert_eq!(
         p.stones_at_board.as_deref(),
         Some(&[][..]),
         "none at the board's start"
     );
-    assert_eq!(after, STARTERS, "the starter stones");
+    assert_eq!(after, starters, "the starter stones");
     let stored = p
         .writes
         .iter()
@@ -4960,7 +4964,7 @@ fn fangs_first_game_on_a_fresh_save_is_the_tutorial_and_its_win_collects_stones(
         });
     assert_eq!(
         stored.as_deref(),
-        Some(&STARTERS[..]),
+        Some(&starters[..]),
         "the store's row after the win"
     );
     println!(
