@@ -130,7 +130,7 @@ pub enum StageEnd {
     Models(ModelStage),
     /// The parts of each level the TV reads ([`levels::PLAYED`]).
     Level(LevelStage),
-    Scripts(ScriptStage),
+    Scripts(Box<ScriptStage>),
     Particles(crate::particles::ParticleStage),
     /// Each level's sprites part (AT.8).
     Sprites(LevelStage),
@@ -419,7 +419,7 @@ pub fn run(
     let levels = levels_stage(dir, ir, names, &levels::PLAYED, &level_event, send)?;
     ended(StageEnd::Level(levels.clone()));
     let scripts = script_stage(dir, ir, send)?;
-    ended(StageEnd::Scripts(scripts.clone()));
+    ended(StageEnd::Scripts(Box::new(scripts.clone())));
     let particles = crate::particles::particle_stage(dir, ir, send)?;
     ended(StageEnd::Particles(particles.clone()));
     // Whole: every one of its played parts in, for every level.
