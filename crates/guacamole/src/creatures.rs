@@ -1619,10 +1619,19 @@ mod tests {
                 .run_system_once(|s: CreatureShots| s.shot())
                 .unwrap()
                 .expect("the run's made");
-            let s = out.spawned.into_iter().find(|s| s.handle == h).expect("listed");
+            let s = out
+                .spawned
+                .into_iter()
+                .find(|s| s.handle == h)
+                .expect("listed");
             (s.drawn, s.parts, s.alpha, s.scale)
         };
-        let scale = app.world().resource::<ScriptWorld>().actor(h).unwrap().scale;
+        let scale = app
+            .world()
+            .resource::<ScriptWorld>()
+            .actor(h)
+            .unwrap()
+            .scale;
         assert_eq!(read(&mut app), (true, true, 255, scale));
         fn world(app: &mut App) -> Mut<'_, ScriptWorld> {
             app.world_mut().resource_mut::<ScriptWorld>()
