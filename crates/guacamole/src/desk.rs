@@ -5,14 +5,10 @@
 //! active (`main.rs`'s `window`), [`DeskDeaf`] takes it out of the Dock and
 //! the app switcher, the setup screen's folder picker never opens (an AppKit
 //! panel that would activate the app), and the desk's keyboard, mouse, touch
-//! and gestures are dropped at the frame's start, so the posted pads, the
-//! posted keys (`flags`' capture key, written in `PreUpdate`) and the test
-//! routes are the only way in. It draws at most 60 frames a second, so it
-//! takes no more of the GPU than a shown TV does, and keeps out of App Nap,
-//! which would stretch that pace. A build without
-//! `test-hooks`, or one without the switch, never adds it.
-
-use std::time::{Duration, Instant};
+//! and gestures are dropped at the frame's start, so the posted pads, the posted keys
+//! (`flags`' capture key, written in `PreUpdate`) and the test routes are the
+//! only way in. A build without `test-hooks`, or one without the switch,
+//! never adds it.
 
 use bevy::ecs::message::{MessageUpdateSystems, Messages};
 use bevy::input::gestures::{DoubleTapGesture, PanGesture, PinchGesture, RotationGesture};
@@ -41,7 +37,6 @@ impl Plugin for DeskDeaf {
                 is_touch_enabled: false,
                 is_mouse_enabled: false,
             })
-            .add_systems(Last, hold_to_the_pace)
             .add_systems(
                 First,
                 drop_the_desks_input
@@ -51,26 +46,6 @@ impl Plugin for DeskDeaf {
         #[cfg(target_os = "macos")]
         app.add_systems(Startup, off_the_dock);
     }
-}
-
-/// The shortest frame an unattended TV draws: a 60th of a second, the pace
-/// a shown TV keeps occluded (`main.rs`'s `OCCLUDED_WAIT`, AG.55). Hidden,
-/// nothing paces its presents and Bevy's own wakeups keep the reactive mode
-/// awake, so it drew 412 frames a second on the setup screen (AS.740's first
-/// run), GPU taken from whatever the Mac's user is playing.
-pub(crate) const UNATTENDED_FRAME: Duration = Duration::from_nanos(16_666_667);
-
-/// How long a frame that took `took` since the last one's end rests.
-fn rest(took: Duration) -> Duration {
-    UNATTENDED_FRAME.saturating_sub(took)
-}
-
-/// Sleeps out the rest of [`UNATTENDED_FRAME`] at each frame's end.
-fn hold_to_the_pace(mut last: Local<Option<Instant>>) {
-    if let Some(at) = *last {
-        std::thread::sleep(rest(at.elapsed()));
-    }
-    *last = Some(Instant::now());
 }
 
 /// Clears one message type's queue, if the app has it.
@@ -115,27 +90,12 @@ fn off_the_dock(_main_thread: bevy::ecs::system::NonSendMarker) {
     } else {
         warn!("off the Dock: AppKit refused the accessory policy");
     }
-    awake();
-}
-
-/// Out of App Nap for the process's life: a hidden app nobody's in front of
-/// is what macOS naps, its timers stretched, and AS.740's paced run drew 43
-/// frames a second for [`hold_to_the_pace`]'s 60 (load 16.9). User-initiated
-/// and latency-critical, idle sleep still allowed.
-#[cfg(target_os = "macos")]
-fn awake() {
-    use objc2_foundation::{NSActivityOptions, NSProcessInfo, NSString};
-    let options = NSActivityOptions::UserInitiatedAllowingIdleSystemSleep
-        | NSActivityOptions::LatencyCritical;
-    let reason = NSString::from_str("an unattended guacamole test run");
-    let activity = NSProcessInfo::processInfo().beginActivityWithOptions_reason(options, &reason);
-    // Held until the process ends, which ends it.
-    std::mem::forget(activity);
-    info!("an unattended run: out of App Nap");
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use bevy::input::ButtonState;
     use bevy::input::InputSystems;
     use bevy::input::gamepad::GamepadButton;
@@ -245,43 +205,6 @@ mod tests {
                     .pressed(MouseButton::Left)
                     || !deaf
             );
-        }
-    }
-
-    /// A frame rests what's left of a 60th of a second, none past it.
-    #[test]
-    fn a_frame_rests_out_its_sixtieth() {
-        assert_eq!(rest(Duration::ZERO), UNATTENDED_FRAME);
-        assert_eq!(
-            rest(Duration::from_millis(10)),
-            UNATTENDED_FRAME - Duration::from_millis(10)
-        );
-        assert_eq!(rest(Duration::from_millis(40)), Duration::ZERO);
-        assert!(UNATTENDED_FRAME >= Duration::from_secs_f64(1.0 / 60.5));
-        assert!(UNATTENDED_FRAME <= Duration::from_secs_f64(1.0 / 59.5));
-    }
-
-    /// Five frames of an app with [`DeskDeaf`] take at least four 60ths of a
-    /// second; without it the same empty frames take a fraction of that.
-    #[test]
-    fn an_unattended_app_draws_at_most_sixty_a_second() {
-        for deaf in [false, true] {
-            let mut app = App::new();
-            app.add_plugins(MinimalPlugins);
-            if deaf {
-                app.add_plugins(DeskDeaf);
-            }
-            app.update();
-            let start = Instant::now();
-            for _ in 0..5 {
-                app.update();
-            }
-            let took = start.elapsed();
-            if deaf {
-                assert!(took >= UNATTENDED_FRAME * 4, "{took:?}");
-            } else {
-                assert!(took < UNATTENDED_FRAME * 4, "{took:?}");
-            }
         }
     }
 
