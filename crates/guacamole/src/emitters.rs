@@ -1227,6 +1227,90 @@ mod tests {
         assert_eq!(s.emitter.object, 21);
     }
 
+    /// openspec AS.700: a clone of the level's own lightning draws nothing
+    /// until its scripts set it an end; then one beam from its generator to
+    /// that end, its quads laid, as `/api/_test/tv` reads it.
+    #[test]
+    fn a_lightning_clone_draws_to_the_end_its_scripts_set() {
+        let mut own = placed_emitter("Beam", 21, Vec3::ZERO, 5, 0.0, 0.0);
+        own.emitter.generators.truncate(1);
+        own.emitter.generators[0].kind =
+            guac_ir::particle::Kind::Lightning(guac_ir::particle::Lightning {
+                taper: 0,
+                segments: 4,
+                scroll_uv_percent: 0.0,
+                scale_uv_percent: 100.0,
+                width: 0.5,
+                colour: [170, 32, 255, 255],
+                chaos_percent: 0.0,
+                chaos_constrained: true,
+                freeze: false,
+            });
+        let (mut app, _, placed, tmp) = loaded_placing(trail(), vec![own]);
+        let unit = app
+            .world()
+            .resource::<ScriptSource>()
+            .level_unit()
+            .expect("the level's unit");
+        let template = Obj { unit, index: 21 };
+        let linked = level_scripts::load(tmp.path(), LEVEL).unwrap();
+        let mut files = linked.placements.clone();
+        files.placed.push(Placed::named(template, "Beam", None, 5));
+        files.emitters.insert(template, "Beam".into());
+        install(
+            app.world_mut(),
+            Arc::new(linked.program.clone()),
+            &files,
+            &linked.order,
+        );
+        let clone = app
+            .world_mut()
+            .query::<(Entity, &ScriptPlacement)>()
+            .iter(app.world())
+            .find(|(_, p)| p.0 == template)
+            .map(|(e, _)| e)
+            .unwrap();
+        let at = Vec3::from_array(START);
+        app.world_mut().entity_mut(clone).insert((
+            ScriptClone(Value::Null),
+            Transform::from_translation(at),
+            GlobalTransform::from_translation(at),
+        ));
+        for _ in 0..5 {
+            app.update();
+        }
+        let r = report(&app);
+        assert_eq!(r.systems, 1, "{r:?}");
+        assert!(r.beams.is_empty(), "no end set, no beam: {:?}", r.beams);
+        // Its end: another placement, wherever it stands.
+        let end_entity = app
+            .world_mut()
+            .query::<(Entity, &ScriptPlacement)>()
+            .iter(app.world())
+            .find(|(_, p)| p.0 == placed[0].obj)
+            .map(|(e, _)| e)
+            .expect("the end's placement");
+        let end = Value::Entity(end_entity.to_bits());
+        let end_at = app
+            .world()
+            .resource::<ScriptWorld>()
+            .actor(end_entity.to_bits())
+            .expect("the end")
+            .position;
+        app.world_mut()
+            .resource_mut::<ScriptWorld>()
+            .set_beam(clone.to_bits(), end, Some(3.0));
+        for _ in 0..3 {
+            app.update();
+        }
+        let r = report(&app);
+        assert_eq!(r.beams.len(), 1, "{r:?}");
+        let b = &r.beams[0];
+        assert_eq!(b.to, end_at.to_array());
+        assert!((b.width.unwrap() - 0.9144).abs() < 1e-4, "{b:?}");
+        assert_eq!(b.quads, 4, "{b:?}");
+    }
+
     /// AS.17's review: a clone of another file's emitter draws off the
     /// extract-wide part by its name even where the level's file holds an
     /// emitter at the same object: an object is looked up in the level's

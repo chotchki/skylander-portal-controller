@@ -2297,6 +2297,15 @@ impl ScriptWorld {
         self.actors.get(&h)
     }
 
+    /// `h`'s beam set as a script's writes of `lightningfields.target` and
+    /// `segmentgenerator.segment width` leave it (openspec AS.700): a test's,
+    /// where no script sets one.
+    pub fn set_beam(&mut self, h: Handle, target: Value, width_feet: Option<f32>) {
+        let b = self.beams.entry(h).or_default();
+        b.target = target;
+        b.width_feet = width_feet;
+    }
+
     /// `h`'s tint set as a script's write of `placement.tint` leaves it (RGBA,
     /// red in the high byte): a test's, where no script fades one. False when
     /// the scripts reach no actor there.

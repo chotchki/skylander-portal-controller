@@ -416,12 +416,12 @@ fn origin_nodes(source: &ScriptSource) -> HashMap<String, Vec<guacamole::script_
 }
 
 /// The level's lightning emitters off its particles part (openspec AS.700,
-/// `guacamole::lightning::templates`), linked as the level's unit (the third
-/// the placements run in); none where the part doesn't read.
-fn lightning_templates(
+/// `guacamole::lightning::templates`), linked as the level's unit; none where
+/// the part doesn't read.
+pub(crate) fn lightning_templates(
     source: &ScriptSource,
 ) -> HashMap<guac_script::Obj, guacamole::lightning::Template> {
-    let (Some((dir, ir)), Some(&unit)) = (source.extract(), source.order.get(2)) else {
+    let (Some((dir, ir)), Some(unit)) = (source.extract(), source.level_unit()) else {
         return HashMap::new();
     };
     let path = dir.join(guac_extract::levels::part_path(
