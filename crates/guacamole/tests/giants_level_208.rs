@@ -1026,6 +1026,19 @@ fn level_208s_way_down_to_setup_002s_trigger_by_the_stick() {
     );
     assert!(melt.melted.is_some(), "the block melted: {:?}", melt.log);
     assert!((1..=8).contains(&melt.presses), "{} presses", melt.presses);
+    // The pivot's crystal hangs on its model's last node, over the pivot,
+    // not at it (AS.431: a set of 32 put `last` past the model's list).
+    let pivot = run.at(PIVOT);
+    let crystal = run
+        .world
+        .clones()
+        .into_iter()
+        .filter(|h| run.world.name(*h) == "Reflect_Crystal")
+        .filter_map(|h| run.world.actor(h).filter(|a| !a.removed))
+        .map(|a| a.position.distance(pivot))
+        .fold(f32::INFINITY, f32::min);
+    println!("the pivot's crystal {crystal:.2} m off it");
+    assert!((1.0..4.0).contains(&crystal), "{crystal} m off the pivot");
     // On west to Setup_002's trigger.
     let trigger = run.at(SETUP_002_TRIGGER);
     let down = fight_to(
