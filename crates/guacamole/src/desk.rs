@@ -3,8 +3,9 @@
 //! sits at (the e2e, a lane's or a review's TV driver, a landing's token
 //! check) on a Mac someone may be using. Its window opens hidden and never
 //! active (`main.rs`'s `window`), [`DeskDeaf`] takes it out of the Dock and
-//! the app switcher, and the desk's keyboard, mouse, touch and gestures are
-//! dropped at the frame's start, so the posted pads, the posted keys
+//! the app switcher, the setup screen's folder picker never opens (an AppKit
+//! panel that would activate the app), and the desk's keyboard, mouse, touch
+//! and gestures are dropped at the frame's start, so the posted pads, the posted keys
 //! (`flags`' capture key, written in `PreUpdate`) and the test routes are the
 //! only way in. A build without `test-hooks`, or one without the switch,
 //! never adds it.
@@ -24,18 +25,24 @@ use bevy::window::{CursorEntered, CursorLeft, CursorMoved, Ime};
 /// dropped in `First`, before picking and `InputSystems` read them.
 pub(crate) struct DeskDeaf;
 
+/// This run is unattended: what would open a window of AppKit's own (the
+/// setup screen's folder picker) doesn't.
+#[derive(Resource)]
+pub(crate) struct Unattended;
+
 impl Plugin for DeskDeaf {
     fn build(&self, app: &mut App) {
-        app.insert_resource(PointerInputSettings {
-            is_touch_enabled: false,
-            is_mouse_enabled: false,
-        })
-        .add_systems(
-            First,
-            drop_the_desks_input
-                .after(MessageUpdateSystems)
-                .before(PickingSystems::Input),
-        );
+        app.insert_resource(Unattended)
+            .insert_resource(PointerInputSettings {
+                is_touch_enabled: false,
+                is_mouse_enabled: false,
+            })
+            .add_systems(
+                First,
+                drop_the_desks_input
+                    .after(MessageUpdateSystems)
+                    .before(PickingSystems::Input),
+            );
         #[cfg(target_os = "macos")]
         app.add_systems(Startup, off_the_dock);
     }
@@ -238,6 +245,35 @@ mod tests {
                 .resource::<ButtonInput<KeyCode>>()
                 .just_pressed(KeyCode::KeyF)
         );
+    }
+
+    /// The setup screen opens its folder picker by itself after a second and
+    /// on its button (`tv/choice_tests.rs`); unattended, neither asks for it.
+    #[test]
+    fn an_unattended_setup_never_asks_for_the_folder_picker() {
+        use crate::picker::Picking;
+        use crate::test_support::tv::button;
+        use bevy::input::gamepad::GamepadButton;
+        let setup = SetupView {
+            needs_setup: true,
+            ..Default::default()
+        };
+        for deaf in [false, true] {
+            let mut app = tv_on(TvScreen::Setup, Duration::ZERO, setup.clone());
+            if deaf {
+                app.add_plugins(DeskDeaf);
+            }
+            app.world_mut()
+                .resource_mut::<crate::tv_state::Current>()
+                .since = std::time::Instant::now() - Duration::from_secs(5);
+            app.update();
+            let auto = app.world_mut().resource_mut::<Picking>().take_wanted();
+            assert_eq!(auto, !deaf, "by itself, deaf {deaf}");
+            let pad = pad(&mut app);
+            button(&mut app, pad, GamepadButton::South, 1.0);
+            let pressed = app.world_mut().resource_mut::<Picking>().take_wanted();
+            assert_eq!(pressed, !deaf, "on its button, deaf {deaf}");
+        }
     }
 
     /// On the server error screen Esc, Enter on its focused Close and a click
