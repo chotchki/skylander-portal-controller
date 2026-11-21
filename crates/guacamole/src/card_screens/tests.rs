@@ -121,3 +121,21 @@ fn a_stones_picture_draws_upright_at_its_size() {
         assert_eq!(node.height, px(50.0 * UNIT * scale));
     }
 }
+
+/// openspec AS.581: the buttons' disc art and the score boxes' caps draw
+/// upright, the right cap mirrored across as well.
+#[test]
+fn the_buttons_and_score_caps_draw_upright() {
+    let p = crate::completion::Piece {
+        image: Handle::default(),
+        size: Vec2::new(120.0, 30.0),
+    };
+    let (node, image) = button_art(&p);
+    assert!(image.flip_y, "a button upright");
+    assert_eq!(node.width, px(120.0 * UNIT));
+    for mirrored in [false, true] {
+        let (_, cap) = score_cap(&p, 88.0, Color::WHITE, mirrored);
+        assert!(cap.flip_y, "a cap upright");
+        assert_eq!(cap.flip_x, mirrored);
+    }
+}
