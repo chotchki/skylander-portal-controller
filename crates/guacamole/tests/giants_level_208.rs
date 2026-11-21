@@ -122,6 +122,9 @@ fn level_208s_intro_plays_to_its_end_and_hands_him_over() {
     }
     let at = run.hero().pivot;
     println!("scenes {scenes:?}, cast {cast:?}, hung {hung} steps, over at {ended:?}: {at}");
+    let pod = pod_at(&run).expect("the landing pod");
+    println!("the landing pod played out at {pod}");
+    assert!(pod.distance(POD_LANDED) < 0.5, "the pod landed: {pod}");
     assert_eq!(scenes, (0..5).collect::<Vec<_>>());
     assert!(ended.is_some(), "it ends");
     for who in [
@@ -194,6 +197,13 @@ fn level_208s_intro_skipped_hands_him_over_and_he_walks() {
         })
         .collect();
     println!("the pod's parts after the skip {parts:?}, the eye {eye}");
+    // openspec AS.707: the skip lands the intro's rig on its clip's end (its
+    // animator camera shot's `time remaining` written 0), the pod hung on its
+    // node with it: where the intro played out leaves it, not in the air
+    // where the skip found it.
+    let pod = pod_at(&run).expect("the landing pod");
+    println!("the landing pod skipped at {pod}");
+    assert!(pod.distance(POD_LANDED) < 0.5, "the pod landed: {pod}");
     assert!(!parts.is_empty(), "the pod's parts");
     for (name, p) in &parts {
         assert!(p.distance(eye) > 5.0, "{name} at the camera's eye: {p}");
@@ -201,6 +211,21 @@ fn level_208s_intro_skipped_hands_him_over_and_he_walks() {
     walks_on(&mut run, &mut stops);
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
+}
+
+/// Where the intro played to its end leaves its landing pod (openspec
+/// AS.707): landed by the plaza, its rig's last clip at its end.
+const POD_LANDED: Vec3 = Vec3::new(-18.402, 9.359, 1.941);
+
+/// Where the intro's landing pod stands, its clone in play (openspec AS.707).
+fn pod_at(run: &Run) -> Option<Vec3> {
+    run.world
+        .clones()
+        .into_iter()
+        .filter(|h| run.world.name(*h) == "208_Intro_Landing_Pod")
+        .filter_map(|h| run.world.actor(h).filter(|a| !a.removed))
+        .map(|a| a.position)
+        .next()
 }
 
 /// Setup_002's controller's place, past the plaza's exit (openspec AS.344).

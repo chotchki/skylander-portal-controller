@@ -2457,7 +2457,8 @@ impl ScriptWorld {
             Member::SeqRate
             | Member::SeqLooping
             | Member::SeqPlaybackMode
-            | Member::SeqPercentRemaining => {
+            | Member::SeqPercentRemaining
+            | Member::SeqTimeRemaining => {
                 let Some(Object::Sequence(i)) = object else {
                     return Err(HostFault::Nothing);
                 };
@@ -2470,6 +2471,13 @@ impl ScriptWorld {
                     Member::SeqLooping => s.looping = v.as_i32().ok_or(HostFault::Nothing)? != 0,
                     Member::SeqPlaybackMode => {
                         s.ping_pong = v.as_i32().ok_or(HostFault::Nothing)? == 1;
+                    }
+                    // What's left of it, seconds at its rate (openspec AS.707: a skipped
+                    // cutscene's animator camera shot writes 0, its rig to
+                    // its clip's end, and the landing pod on its node with it).
+                    Member::SeqTimeRemaining => {
+                        let left = float(v)? * (s.rate * 0.01).max(0.0);
+                        s.time = (s.length - left).clamp(0.0, s.length);
                     }
                     _ => s.time = s.length * (1.0 - float(v)? * 0.01),
                 }
@@ -11457,6 +11465,40 @@ mod animation_tests {
             Ok(Value::Float(0.0)),
             "ended"
         );
+    }
+
+    /// AS.707: a sequence's `time remaining` written sets how much of it is
+    /// left, in seconds at its rate: a skipped cutscene's animator camera
+    /// shot writes 0, its rig's clip to its end.
+    #[test]
+    fn a_sequences_time_remaining_written_sets_what_is_left() {
+        let (mut w, mut e) = (world(), pit());
+        let clips = palette(&mut w);
+        w.set_palette(TEMPLATE, vec![1.0, 0.5, 0.0, 10.0]);
+        let Answer::Run {
+            result: Some(seq), ..
+        } = w.play_on(clips[3], C1)
+        else {
+            panic!("a copy");
+        };
+        let at = Access {
+            placement: C1,
+            receiver: Some(seq),
+            member: MemberId::named("sequence", "time remaining"),
+            other_point: None,
+            via: None,
+            op: None,
+        };
+        w.set(&at, Value::Float(4.0), &mut e).unwrap();
+        assert_eq!(w.get(&at, &mut e), Ok(Value::Float(4.0)));
+        assert_eq!(w.sequences.last().unwrap().time, 6.0);
+        // At half speed, 4 s left is 2 s of the clip.
+        w.sequences.last_mut().unwrap().rate = 50.0;
+        w.set(&at, Value::Float(4.0), &mut e).unwrap();
+        assert_eq!(w.sequences.last().unwrap().time, 8.0);
+        w.set(&at, Value::Float(0.0), &mut e).unwrap();
+        assert_eq!(w.sequences.last().unwrap().time, 10.0);
+        assert_eq!(w.get(&at, &mut e), Ok(Value::Float(0.0)));
     }
 
     /// Slot 0 a base clip, 1 partial, 2 additive (and partial: additive
