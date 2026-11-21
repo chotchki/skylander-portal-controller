@@ -2289,8 +2289,9 @@ every level on the disc without a first run writing them:
   DXT5 with X in alpha, it has to refuse by its texture's format, since its shader would read it in DXT5's layout,
   AS.13); the atmosphere's definition is
   the one script whose STARTUP adds zones, whatever it's called, a level with none (55 of them) setting
-  none up; two literals under an operator compute as the VM computes them. 203 (a switch in its
-  definition's STARTUP) and PvP arena 4 (one zone copying another's lights) wait on AS.23 and AS.22.
+  none up; two literals under an operator compute as the VM computes them; a literal switch in the
+  definition's STARTUP is the zone it starts in (AS.23: 203's). PvP arena 4 (one zone copying another's
+  lights) waits on AS.22.
 - A cinematic (`fmv` and a number, 11 on Giants) converts the first time it's asked for
   (`transcode::transcode_movie`) on the intros' target into `video/fmv/` and `audio/fmv/`, recorded beside
   the intros. Its voice comes off its Bink header (`guac_formats::bink`): the ten with 13 tracks carry 12
