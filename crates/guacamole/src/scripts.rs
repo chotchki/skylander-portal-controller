@@ -531,11 +531,11 @@ pub struct ScriptWorld {
     /// The points references to actors keep, by the actor and the
     /// reference's cell (openspec AG.28).
     pub(crate) kept_via: HashMap<(Handle, u32), Vec3>,
-    /// The remembered points a script has put somewhere itself since its
-    /// reference was set (a displace, a distance or heading write), by the
-    /// actor and the reference's cell (`None` for the actor's own): no
-    /// longer where the reference was set, so the `lifted-reference` rule
-    /// leaves them be (openspec AS.431).
+    /// The remembered points their own actor's script has displaced since
+    /// the reference was set, by the actor and the reference's cell (`None`
+    /// for the actor's own): no longer where the reference was set, so the
+    /// `lifted-reference` rule leaves them be (openspec AS.431: a beam
+    /// emitter's ray end).
     pub(crate) put_points: std::collections::HashSet<(Handle, Option<u32>)>,
     /// The waypoints scripts made ([`Object::Waypoint`]), each where it was
     /// last put, none until it's put somewhere.

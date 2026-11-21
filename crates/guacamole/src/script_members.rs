@@ -2438,9 +2438,6 @@ impl ScriptWorld {
                     _ => b + direction(heading_of(d), x) * d.length(),
                 };
                 self.set_point(at.placement, r, to, engine)?;
-                if m != Member::VerticalOffset {
-                    self.put_remembered(r);
-                }
             }
             Member::NormalizedAngle => self.normalized = normalized(float(v)?),
             // The second layer's (openspec AS.364), kept apart.
@@ -3669,7 +3666,12 @@ impl ScriptWorld {
         } * (len * METRES_PER_FOOT);
         let to = if mode == 1 { d } else { at + d };
         self.set_point(by, target, to, engine)?;
-        self.put_remembered(target);
+        // Its own point put by the actor itself (openspec AS.431: a beam
+        // emitter's ray end); another's displacing it (the camera's follow
+        // moves its target's points each step) leaves the lift on.
+        if self.remembered_key(target).is_some_and(|(a, _)| a == by) {
+            self.put_remembered(target);
+        }
         Ok(())
     }
 }
@@ -5698,6 +5700,13 @@ mod tests {
         // Set to him again: the point is where he stands, and lifted.
         w.referenced(CELL, Value::Entity(BALL), &mut e);
         w.actors.get_mut(&BALL).unwrap().position = Vec3::new(-6.0, 2.0, 9.0);
+        let p = level(&mut w, &mut e);
+        assert!((p - Vec3::new(-6.0, 2.0, 9.0)).length() < 1e-4, "{p:?}");
+        // Displaced by another actor (the camera's follow moving its target's
+        // points): still where he stands once lifted.
+        const MOVER: Handle = 0x7779;
+        w.actors.insert(MOVER, ball(Vec3::ZERO, 0.0));
+        w.displace(MOVER, end, 0, 100.0, 90.0, 0.0, &mut e).unwrap();
         let p = level(&mut w, &mut e);
         assert!((p - Vec3::new(-6.0, 2.0, 9.0)).length() < 1e-4, "{p:?}");
     }
