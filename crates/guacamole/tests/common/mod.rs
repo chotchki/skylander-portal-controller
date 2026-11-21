@@ -1248,6 +1248,12 @@ pub struct Setup {
     /// stands at the world's origin with what rides it (AS.284), and level
     /// 208's riders are let go under its plaza.
     pub posed_rigs: bool,
+    /// Where each static prop's attach nodes stand, off the level's nodes
+    /// part, as the TV's install sets them (`hero_scripts::origin_nodes`):
+    /// without it what a prop hangs on its nodes hangs at its pivot (level
+    /// 208's beam pivot's emitter, whose ray then meets the ground; openspec
+    /// AS.431).
+    pub static_nodes: bool,
     /// A creature staged by name as the TV's stage stages one (openspec
     /// AS.680, `guacamole::staging`): listed and walked, nothing else set.
     pub stage: Option<&'static str>,
@@ -1616,6 +1622,12 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     }
     world.set_levels(Arc::new(on_disc.into_iter().collect()));
     world.set_level(level);
+    if setup.static_nodes {
+        let part = levels::nodes(&igzs[LEVEL as usize], level, identity())
+            .expect("the level's nodes")
+            .ir;
+        world.set_origin_nodes(guacamole::scripts::origin_nodes(&part));
+    }
     let template = match &walker {
         Some(w) => w.template.expect("his template"),
         None => {

@@ -34,6 +34,7 @@ fn setup() -> Setup {
         props: true,
         sounds: true,
         posed_rigs: true,
+        static_nodes: true,
         ..Setup::default()
     }
 }
@@ -842,18 +843,21 @@ fn gone_actor(run: &Run, name: &str) -> bool {
 /// block's switch (openspec AS.406).
 const TERRACE: Vec3 = Vec3::new(3.6, 6.7, -65.0);
 
-/// openspec AS.406: level 208 from the intro's hand-over down to the lower
-/// terrace by the stick and the attack alone: out of the plaza and through
-/// the reveal's five Chompies as AS.344's and AS.345's tests go, then to
-/// the AI in the yard, which waits on the five gone and a player within
-/// 30 ft of it, plays its pan and takes its hint's blocker off the yard's
-/// east side; then east and down to the terrace. Before the hint the
-/// yard's ground doesn't reach the terrace. On toward Setup_002's trigger
-/// the first ice block holds him on the terrace (its beam puzzle is
-/// AS.431's). Nothing stops.
+/// openspec AS.406, AS.431: level 208 from the intro's hand-over down to the
+/// lower terrace and on to Setup_002's trigger by the stick, the attack and
+/// the talk button alone: out of the plaza and through the reveal's five
+/// Chompies as AS.344's and AS.345's tests go, then to the AI in the yard,
+/// which waits on the five gone and a player within 30 ft of it, plays its
+/// pan and takes its hint's blocker off the yard's east side; then east and
+/// down to the terrace. Before the hint the yard's ground doesn't reach the
+/// terrace. On toward the trigger the first ice block holds him on the
+/// terrace until its beam puzzle melts it: the talk button at the pivot's
+/// switch turns the pivot until the start's beam, through its crystal,
+/// reaches the block; then the stick takes him to the trigger. Nothing
+/// stops.
 #[test]
 #[ignore = "reads the Giants dump"]
-fn level_208s_way_down_to_the_terrace_by_the_stick() {
+fn level_208s_way_down_to_setup_002s_trigger_by_the_stick() {
     println!("load at start: {}", load());
     let mut stops = Vec::new();
     let mut run = joined_208(&mut stops);
@@ -959,6 +963,140 @@ fn level_208s_way_down_to_the_terrace_by_the_stick() {
         !on.ended && held.x > block.x,
         "held east of the block: {held}"
     );
+    // The beam puzzle: the talk button at the pivot's switch until the
+    // block melts and is gone (openspec AS.431).
+    let melt = turn_the_beam(&mut run, &mut stops, 6000);
+    for (step, n, b) in &melt.log {
+        println!("  {step} {n} {b}");
+    }
+    println!(
+        "the beam: {} presses at the switch {:?}, the block powered at {:?}, gone at {:?}, scenes {:?}",
+        melt.presses, melt.switch, melt.powered, melt.melted, melt.scenes
+    );
+    // The block's scene played on his way to it (its pan; nothing powers
+    // the start before it ends) and took itself off.
+    println!("scenes on the way to the block {:?}", on.scenes);
+    assert!(
+        removed(&run, "IGC_FirstIceBlock"),
+        "its scene played out: {:?}",
+        melt.log
+    );
+    assert!(melt.melted.is_some(), "the block melted: {:?}", melt.log);
+    assert!((1..=8).contains(&melt.presses), "{} presses", melt.presses);
+    // On west to Setup_002's trigger.
+    let trigger = run.at(SETUP_002_TRIGGER);
+    let down = fight_to(
+        &mut run,
+        &mut stops,
+        &[],
+        &[SETUP_002_CONTROLLER],
+        trigger,
+        3000,
+        &|run: &Run| flat(run.hero().pivot, trigger) < 2.0,
+    );
+    let trail: Vec<String> = down
+        .trail
+        .iter()
+        .map(|p| format!("{:.2},{:.2},{:.2}", p.x, p.y, p.z))
+        .collect();
+    println!("TRAIL-TRIGGER {}", trail.join(";"));
+    println!(
+        "to the trigger {} at step {}, at {} ({:.2} m off)",
+        down.ended,
+        run.steps,
+        run.hero().pivot,
+        flat(run.hero().pivot, trigger)
+    );
+    assert!(down.ended, "at Setup_002's trigger: {}", run.hero().pivot);
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
+}
+
+/// The first beam puzzle's pivot (openspec AS.431).
+const PIVOT: &str = "Reflect_Pivot_Round(1)";
+
+/// What turning the beam came to ([`turn_the_beam`]).
+#[derive(Debug, Default)]
+struct Beam {
+    /// Watched placements' behaviours as they changed.
+    log: Vec<(u32, String, String)>,
+    /// Each cutscene and its first step.
+    scenes: Vec<(u32, String)>,
+    /// Talk presses at the switch.
+    presses: u32,
+    /// Where the switch stood, once made.
+    switch: Option<Vec3>,
+    /// The step the block was first powered (melting).
+    powered: Option<u32>,
+    /// The step the block was off.
+    melted: Option<u32>,
+}
+
+/// To the pivot's switch (a clone at its first waypoint) across the
+/// flood's cells, then the talk button there every 2 s as a kid turns it,
+/// until the beam reaches the ice block; then still while it melts, until
+/// it's off or `cap` steps. Cutscenes wait out with the stick let go.
+fn turn_the_beam(run: &mut Run, stops: &mut Vec<String>, cap: u32) -> Beam {
+    let flat = |a: Vec3, b: Vec3| Vec3::new(a.x - b.x, 0.0, a.z - b.z).length();
+    let watch = ["Reflect_Start(1)", PIVOT, ICE_BLOCK, "IGC_FirstIceBlock"];
+    let mut beam = Beam::default();
+    let mut last: HashMap<&str, String> = HashMap::new();
+    let (mut route, mut routed, start, mut at_switch) = (Vec::new(), 0u32, run.steps, None);
+    while run.steps < start + cap {
+        for n in watch {
+            let b = behaviour(run, n);
+            if last.get(n) != Some(&b) {
+                beam.log.push((run.steps, n.to_owned(), b.clone()));
+                last.insert(n, b);
+            }
+        }
+        if gone_actor(run, ICE_BLOCK) {
+            beam.melted = Some(run.steps);
+            break;
+        }
+        if beam.powered.is_none() && behaviour(run, ICE_BLOCK) == "melt" {
+            beam.powered = Some(run.steps);
+        }
+        if let Some(cs) = cutscene_name(run) {
+            if beam.scenes.last().is_none_or(|(_, n)| *n != cs) {
+                beam.scenes.push((run.steps, cs));
+            }
+            still(run, stops, [false; 4]);
+            continue;
+        }
+        if guacamole::anchors::scene_holds(&run.vm) || beam.powered.is_some() {
+            still(run, stops, [false; 4]);
+            continue;
+        }
+        let switch = run
+            .world
+            .clones()
+            .into_iter()
+            .filter(|h| run.world.name(*h).starts_with("Reflect_Switchbase"))
+            .find_map(|h| run.world.actor(h).filter(|a| !a.removed))
+            .map(|a| a.position);
+        beam.switch = beam.switch.or(switch);
+        let goal = switch.unwrap_or_else(|| run.at(PIVOT));
+        let me = run.hero().pivot;
+        if switch.is_some() && flat(me, goal) < 3.0 {
+            let since = *at_switch.get_or_insert(run.steps);
+            let press = (run.steps - since).is_multiple_of(120);
+            beam.presses += u32::from(press);
+            still(run, stops, [false, false, false, press]);
+            continue;
+        }
+        if routed + 90 <= run.steps || route.is_empty() {
+            route = way_to(run, me, goal);
+            routed = run.steps;
+        }
+        let aim = route
+            .iter()
+            .find(|c| flat(me, **c) > 1.5)
+            .copied()
+            .unwrap_or(goal);
+        run.bench.view = (aim.x - me.x).atan2(aim.z - me.z).to_degrees();
+        run.bench.hold_view = true;
+        step(run, stops, Stick::new(0.0, 1.0), [false; 4]);
+    }
+    beam
 }
