@@ -175,6 +175,28 @@ fn level_208s_intro_skipped_hands_him_over_and_he_walks() {
     let at = run.hero().pivot;
     assert!(at.distance(HAND_OVER) < 0.1, "set down at its place: {at}");
     assert!(intro_off(&run), "the intro off");
+    // openspec AS.702: the landing pod's parts ride the pod where the skip
+    // left it, not the camera's eye (on the TV its base stood over the
+    // camera as a dark shell). Headless the rule is never reached (the
+    // intro's rig reads posed or held), so this reads the same with it
+    // undone: `a_rigs_node_unposed_reads_as_its_last` pins the rule, this
+    // the outcome.
+    let eye = run.world.viewport().eye;
+    let parts: Vec<(String, Vec3)> = run
+        .world
+        .clones()
+        .into_iter()
+        .filter(|h| run.world.name(*h).starts_with("LP_"))
+        .filter_map(|h| {
+            let a = run.world.actor(h)?;
+            (!a.removed).then(|| (run.world.name(h).to_owned(), a.position))
+        })
+        .collect();
+    println!("the pod's parts after the skip {parts:?}, the eye {eye}");
+    assert!(!parts.is_empty(), "the pod's parts");
+    for (name, p) in &parts {
+        assert!(p.distance(eye) > 5.0, "{name} at the camera's eye: {p}");
+    }
     walks_on(&mut run, &mut stops);
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());

@@ -768,11 +768,23 @@ impl ScriptWorld {
             && !a.removed
             && let Some(Object::Node(owner, i)) = self.object(Some(a.attach))
             && owner != h
+            && !self.stays_put(h, owner)
             && let Some((p, turn)) = self.node_frame(owner, i, engine, depth - 1)
         {
             return Some(p + turn * a.hung);
         }
         Some(a.position)
+    }
+
+    /// Whether `h`, hung on a node of `owner`, stays where it stands rather
+    /// than reading the node: an unposed rig's with no last shot to read,
+    /// where [`ScriptWorld::place_hung_actors`] leaves all but a shot's
+    /// follower put (openspec AS.702: level 208's intro skipped, its pod
+    /// stood where it was left while its node read the view's eye, so the
+    /// base, plank, propeller and wheel the pod hangs on itself stood over
+    /// the camera).
+    fn stays_put(&self, h: Handle, owner: Handle) -> bool {
+        self.rig_held.is_empty() && self.rig_unposed(owner) && !self.follower(h)
     }
 
     /// Node `i` of actor `owner` and the frame what hangs from it is offset
@@ -4136,9 +4148,7 @@ impl ScriptWorld {
             // The first shot's rig, unposed, has no last place to read: what
             // hangs on it and draws stays where it stands until it's posed,
             // where the shot's cam actor, a model of none, goes to the view.
-            if self.rig_held.is_empty()
-                && matches!(self.object(Some(node)), Some(Object::Node(owner, _)) if self.rig_unposed(owner))
-                && !self.follower(h)
+            if matches!(self.object(Some(node)), Some(Object::Node(owner, _)) if self.stays_put(h, owner))
             {
                 continue;
             }
@@ -5997,6 +6007,21 @@ mod tests {
         w.place_hung_actors(&mut e);
         assert_eq!(w.actors[&HUNG].position, Vec3::new(8.0, 8.0, 8.0));
         assert_eq!(w.actors[&CAM_ACTOR].position, w.view.eye);
+        // openspec AS.702: what stays put reads where it stands, and what
+        // hangs on its own nodes rides it there, not the view's eye (level
+        // 208's pod parts over the camera after its intro's skip).
+        assert_eq!(w.position(HUNG, &mut e), Some(Vec3::new(8.0, 8.0, 8.0)));
+        const PART: Handle = 0x6000_0037;
+        w.set_nodes(HUNG, vec![NodePose::at(Vec3::new(0.0, 2.0, 0.0))]);
+        let mut part = Actor::blank();
+        part.attach = w.objs.value(Object::Node(HUNG, 0));
+        w.actors.insert(PART, part);
+        assert_eq!(w.node(HUNG, 0, &mut e), Some(Vec3::new(8.0, 10.0, 8.0)));
+        w.place_hung_actors(&mut e);
+        assert_eq!(w.actors[&PART].position, Vec3::new(8.0, 10.0, 8.0));
+        assert_eq!(w.actors[&HUNG].position, Vec3::new(8.0, 8.0, 8.0));
+        w.nodes.remove(&HUNG);
+        w.actors.remove(&PART);
         // A shot posed: the next, unposed, reads it.
         let turned = Quat::from_rotation_y(90f32.to_radians());
         let at = Vec3::new(30.0, 40.0, 50.0);

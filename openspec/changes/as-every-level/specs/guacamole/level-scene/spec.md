@@ -390,6 +390,10 @@ A camera's rig SHALL hold the pose its last clip reached once none plays, what h
 - **WHEN** the pod's last shot has played and the scene lets the player go
 - **THEN** he is let go where the pod stands on the dock, with no jump onto his path
 
+#### Scenario: A skipped intro's pod keeps its parts
+- **WHEN** an intro is skipped with no rig left posed and its pod stays where it stood
+- **THEN** the pod's base, plank, propeller and wheel ride it there, never the camera's eye (levels 205 and 208, AS.702)
+
 #### Scenario: A cut between two shots
 - **WHEN** a shot's new rig is made and isn't drawn yet
 - **THEN** the view and what hangs on the rig stay where the last rig left them until it's posed, and no frame stands at the rig's origin
