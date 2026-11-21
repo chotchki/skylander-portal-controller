@@ -560,8 +560,8 @@ const SPROCKET: Character = Character {
 /// Sprocket's turret fades in (openspec AS.690): her piece macro clones
 /// each piece at alpha 0 and hands its `placement.tint` alpha by reference
 /// to her own slide macro, which writes it up to 255 each step. Each of the
-/// four pieces is drawn (its alpha over 0) within a second of its spawn and
-/// reaches 255; before AS.690 the reference held a number of its own and
+/// four pieces is drawn (its alpha over 0) and reaches 255 within a second
+/// of its spawn; before AS.690 the reference held a number of its own and
 /// every piece stayed at alpha 0 to its expiry.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
@@ -597,6 +597,10 @@ fn sprockets_turret_fades_in_through_her_slide() {
             drawn - spawned < 30,
             "{piece} drawn within a second: {seen:?}"
         );
-        assert!(whole.is_some(), "{piece} reaches 255: {seen:?}");
+        let whole = whole.unwrap_or_else(|| panic!("{piece} reaches 255: {seen:?}"));
+        assert!(
+            whole - spawned < 60,
+            "{piece} whole within a second of its spawn: {seen:?}"
+        );
     }
 }

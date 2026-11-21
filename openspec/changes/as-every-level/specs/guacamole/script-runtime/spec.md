@@ -75,8 +75,8 @@ A packed screen position the disc holds, a literal or a file's screen global, SH
 - **THEN** his first roll lands near 2 draws in 101, 19 of 770 measured, its call's 1 rolled as `random 100` with both ends
 
 ### Requirement: A reference to a part of an engine member's packed value reaches the member
-A reference bound to one part of a packed colour or screen position that the engine holds (a clone's tint alpha handed to a slide macro) SHALL name that part of the member: a write through it SHALL change that part of the engine's value and keep the rest, and a read through it SHALL read the engine's value anew.
+A reference bound to one part of a packed colour or screen position that the engine holds (a clone's tint alpha handed to a slide macro) SHALL name that part of the member: a write through it SHALL change that part of the engine's value and keep the rest, and a read through it SHALL read the engine's value anew. On the disc only a clone's tint alpha is handed so (16 places, Sprocket's and Oil Blazer's scripts); her turret's pieces draw 1-2 steps after their spawn and are whole after 5-11.
 
 #### Scenario: Sprocket's turret fades in
 - **WHEN** Sprocket builds her turret, each piece cloned at alpha 0 and its alpha handed by reference to her slide macro
-- **THEN** each piece's tint alpha rises to 255 within a second of its spawn and the pieces are drawn
+- **THEN** each piece's tint alpha rises to 255 within a second of its spawn (5-11 steps measured) and the pieces are drawn

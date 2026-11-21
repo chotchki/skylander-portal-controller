@@ -2298,6 +2298,8 @@ fn loop_value_reads_its_count_once_truncated_and_counts_from_0() {
 struct World {
     cells: std::collections::HashMap<(Option<u64>, MemberId), Value>,
     absent: Vec<MemberId>,
+    /// Members it reads and refuses a write of, as unmodelled.
+    read_only: Vec<MemberId>,
     seen: Vec<String>,
 }
 
@@ -2328,6 +2330,9 @@ impl Host for World {
     fn set(&mut self, at: &Access, value: Value) -> Result<(), HostFault> {
         if self.absent.contains(&at.member) {
             return Err(HostFault::Nothing);
+        }
+        if self.read_only.contains(&at.member) {
+            return Err(HostFault::Unmodelled);
         }
         self.seen.push(format!("set {:x} {value:?}", at.placement));
         self.cells.insert(Self::key(at), value);
@@ -2679,4 +2684,159 @@ fn a_host_members_packed_part_by_reference_is_written_through_to_the_host() {
         world.seen
     );
     assert_eq!(cell(&vm, "got"), Some(Value::Int(200)), "read back");
+}
+
+/// `Fade(value in)`: `value in := 200; got := value in`, called with `value
+/// in` a reference to `my.placement.tint`'s `part` (a `colormeasurement` or
+/// `screenmeasurement` member), as Sprocket's slide macro is.
+fn fade_through(part: (&'static str, &'static str)) -> Arc<Program> {
+    let callee = std::cell::Cell::new(None);
+    program(|w| {
+        frame(
+            w,
+            |_| {},
+            |_| {},
+            |w| {
+                let (at, d) = w.open(Class::DefineMacro, "Fade");
+                let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
+                let value = reference_parameter(w, "value in", d);
+                let none = w.reference(&[El::Member("abstractscriptgroup", "null")], None);
+                w.refer(value, 0x30, none);
+                w.push(value);
+                let enter = w.flow(Class::FlowMacro);
+                w.push(enter);
+                w.close(iface);
+                let v = w.int(200);
+                w.set(
+                    &[
+                        El::Local(value),
+                        El::Member("abstractscriptgroup", "valuedereferencer"),
+                    ],
+                    v,
+                );
+                let back = w.rhs(INT, &[El::Local(value)]);
+                w.set(&[El::Member("test", "got")], back);
+                w.end_block(at);
+                callee.set(Some(d));
+            },
+            |_| {},
+            |w| {
+                let d = callee.get().unwrap();
+                let bh = w.behaviour("idle");
+                let np = w.group(&[El::Local(d)], None);
+                let (call, o) = w.open(Class::UseMacro, "use macro");
+                w.refer(o, 0x1C, np);
+                let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
+                let value = reference_parameter(w, "value in", d);
+                let arg = w.reference(
+                    &[
+                        El::Member("optoplevelbehavior", "my"),
+                        El::Member("placement", "tint"),
+                        El::Member(part.0, part.1),
+                    ],
+                    None,
+                );
+                w.refer(value, 0x30, arg);
+                w.push(value);
+                let enter = w.flow(Class::FlowMacro);
+                w.push(enter);
+                w.close(iface);
+                w.end_block(call);
+                w.end_block(bh);
+            },
+        );
+    })
+}
+
+/// [`fade_through`] run once on `world`, its tint a host colour; the tick's
+/// result and `got`.
+fn fade_once(
+    part: (&'static str, &'static str),
+    mode: Mode,
+    world: &mut World,
+) -> (Result<Option<Halt>, Halt>, Option<Value>) {
+    let mut c = config(mode, &["got"]);
+    c.members
+        .host("placement", "tint", MemberSpec::new(Kind::Color, 0.0, 0.0));
+    let mut vm = Vm::new(fade_through(part), c);
+    let id = vm.add(HANDLE, "Turret", 0);
+    let r = vm.tick(id, world);
+    let got = cell(&vm, "got");
+    (r, got)
+}
+
+#[test]
+fn a_packed_part_by_reference_of_a_clone_gone_drops_its_write_and_reads_0() {
+    // AS.690's edges: the clone a reference names is gone when the macro
+    // writes through it (the host answers its tint with nothing). The bind
+    // reads nothing, so it binds as a live clone's would; the write drops,
+    // the read back reads 0 (a right side through nothing, crate docs,
+    // Checks and flows) and the tick runs on.
+    let tint = MemberId::named("placement", "tint");
+    let mut world = World {
+        absent: vec![tint],
+        ..World::default()
+    };
+    let (r, got) = fade_once(("colormeasurement", "alpha"), Mode::Strict, &mut world);
+    assert!(matches!(r, Ok(None)), "the tick runs on: {r:?}");
+    assert_eq!(
+        world.cells.get(&(Some(HANDLE), tint)),
+        None,
+        "nothing written"
+    );
+    assert_eq!(
+        got,
+        Some(Value::Int(0)),
+        "read back as 0, a right side through nothing"
+    );
+}
+
+#[test]
+fn a_packed_part_by_reference_of_a_member_the_host_wont_write_stops_as_a_direct_write_does() {
+    // A host that reads the tint and refuses its write (unmodelled): the
+    // write through the reference stops the placement as the same write
+    // made straight to `my.placement.tint.alpha` does, a stop, not a panic.
+    let tint = MemberId::named("placement", "tint");
+    let mut world = World {
+        read_only: vec![tint],
+        ..World::default()
+    };
+    world
+        .cells
+        .insert((Some(HANDLE), tint), Value::Color(0x8040_2000));
+    let (r, _) = fade_once(("colormeasurement", "alpha"), Mode::Play, &mut world);
+    let halt = r.expect("play mode turns the fault into a stop");
+    assert!(
+        halt.is_some_and(|h| matches!(h.reason, Reason::UnmodelledMember(_))),
+        "an unmodelled member's stop"
+    );
+    assert_eq!(
+        world.cells.get(&(Some(HANDLE), tint)),
+        Some(&Value::Color(0x8040_2000)),
+        "the host's colour untouched"
+    );
+}
+
+#[test]
+fn a_packed_part_by_reference_the_hosts_value_doesnt_hold_drops_its_write() {
+    // A part the value doesn't have: a screen position's `x` asked of the
+    // host's colour. The write drops with the colour kept, the read back
+    // reads 0 (a right side through nothing), the tick runs on.
+    let tint = MemberId::named("placement", "tint");
+    let mut world = World::default();
+    world
+        .cells
+        .insert((Some(HANDLE), tint), Value::Color(0x8040_2000));
+    let (r, got) = fade_once(("screenmeasurement", "x"), Mode::Strict, &mut world);
+    assert!(matches!(r, Ok(None)), "the tick runs on: {r:?}");
+    assert_eq!(
+        world.cells.get(&(Some(HANDLE), tint)),
+        Some(&Value::Color(0x8040_2000)),
+        "the colour kept"
+    );
+    assert_eq!(
+        got,
+        Some(Value::Int(0)),
+        "read back as 0, a right side through nothing"
+    );
 }
