@@ -392,7 +392,7 @@ fn switch_level(to: i32, time: f32, forced: Forced, stranger: bool) -> Vec<u8> {
             };
             let to_zone = w.reference(&[El::Member("abstractscriptgroup", "null")], None);
             let mut args = vec![
-                (switch_params::TO_ZONE, to),
+                ("to zone ID", to),
                 (switch_params::TRANSITION, time),
                 (switch_params::MODIFY_TRIGGERS, modify),
                 (switch_params::FORCE_FROM, from),

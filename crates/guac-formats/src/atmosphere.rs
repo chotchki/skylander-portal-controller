@@ -81,7 +81,8 @@ pub const OTHER_MACROS: [&str; 4] = [
 /// starts in ([`OTHER_MACROS`]' second; openspec AS.23).
 pub const SWITCH_ZONE: &str = OTHER_MACROS[1];
 
-/// The switch macro's parameters, as the disc names them.
+/// The switch macro's parameters, lowercased (the reader matches the
+/// disc's names whatever their case).
 pub mod switch_params {
     pub const TO_ZONE: &str = "to zone id";
     pub const TRANSITION: &str = "transition time";
@@ -587,7 +588,11 @@ impl<'a> Reader<'_, 'a> {
                 Some(Class::FlowMacro) => {}
                 Some(Class::MacroParameter) => {
                     let param = OpMacroParameter::read(self.igz, self.ops[q])?;
-                    match param.var.name.unwrap_or("") {
+                    // By name whatever its case: the disc spells the add
+                    // macro's `zone ID`, and its switch call isn't read in
+                    // the spelling its definition's stub reads.
+                    let name = param.var.name.unwrap_or("").to_ascii_lowercase();
+                    match name.as_str() {
                         switch_params::TO_ZONE => {
                             let l = self.literal(param.rhs, "_RHS")?;
                             if l.class != "IntMeasurement" {
