@@ -35,8 +35,18 @@
 //! another op's block, an argument that isn't a literal of its parameter's
 //! class, a parameter the macro doesn't have or one the reader needs that a
 //! call leaves out, "use lights from zone" or "use fog from zone" naming a
-//! zone (copying one), and in STARTUP the macros that remove, switch or set
-//! up zones by other ways. Colours are packed words, low byte red: AG.13
+//! zone (copying one), and in STARTUP the macros that remove or set up zones
+//! by other ways.
+//!
+//! A switch in the definition's STARTUP (openspec AS.23: level 203's, after
+//! its four zone calls) is read as the zone it starts in. The macro, with no
+//! transition time, sets up the zone of the id it names at once; with one, it
+//! starts a slide there from the zone set up. Either way the level comes to
+//! rest in that zone, so the reader takes it as the start, when the id is a
+//! literal of a zone already added and the call forces neither a zone to
+//! slide from nor one to set up in place of the id's (each a reference that
+//! must be null). Whether the switch also rewrites the zone triggers is the
+//! VM's to run; the reader keeps no triggers. Colours are packed words, low byte red: AG.13
 //! read the fog's against the live viewport. Replaying the macro by hand is
 //! the narrow rewrite AE.2's toy table makes, on its terms: AJ's VM runs the
 //! definition itself and must leave the same zone set up.
@@ -67,6 +77,20 @@ pub const OTHER_MACROS: [&str; 4] = [
     "Game - Setup Atmospherics",
     "Game - Setup Atmospherics From Zone ID",
 ];
+/// The switch macro, read in the definition's STARTUP as the zone it
+/// starts in ([`OTHER_MACROS`]' second; openspec AS.23).
+pub const SWITCH_ZONE: &str = OTHER_MACROS[1];
+
+/// The switch macro's parameters, as the disc names them.
+pub mod switch_params {
+    pub const TO_ZONE: &str = "to zone id";
+    pub const TRANSITION: &str = "transition time";
+    pub const MODIFY_TRIGGERS: &str = "modify zone triggers";
+    pub const FORCE_FROM: &str = "force from zone";
+    pub const FORCE_TO: &str = "force to zone";
+    pub const RETURN_TRIGGER: &str = "return trigger data";
+}
+
 /// The zone the add macro sets up as it adds it.
 pub const SET_UP: i32 = 0;
 /// `system.hardware platform` on a PS3.
@@ -510,6 +534,7 @@ impl<'a> Reader<'_, 'a> {
                         .ok_or_else(|| unsupported("a call without its block", p))?;
                     match self.macro_name(p)? {
                         Some(ADD_ZONE) => self.zone(p, last, out)?,
+                        Some(SWITCH_ZONE) => self.switch(p, last, out)?,
                         Some(n) if OTHER_MACROS.contains(&n) => {
                             return Err(unsupported("an atmosphere macro in STARTUP", p));
                         }
@@ -528,6 +553,70 @@ impl<'a> Reader<'_, 'a> {
                 },
             }
         }
+        Ok(())
+    }
+
+    /// Whether the operand `r` is a reference naming nothing
+    /// (`abstractscriptgroup.null`).
+    fn null_reference(&self, r: ObjectRef<'_>) -> Result<bool, FormatError> {
+        let ObjectRef::Object(o) = r else {
+            return Ok(false);
+        };
+        if !is_a(self.type_of(o), Stack::TYPE) {
+            return Ok(false);
+        }
+        let path = Stack::read(self.igz, o)?.path;
+        Ok(matches!(path[..], [ObjectRef::Import(m)] if m.id.is("abstractscriptgroup", "null")))
+    }
+
+    /// The switch call at `p`, whose block ends at `last` (openspec AS.23):
+    /// the zone of the literal id it names, already added, is the one the
+    /// level starts in; a forced zone, a parameter the macro doesn't have or
+    /// an id no zone has is refused.
+    fn switch(&self, p: usize, last: usize, out: &mut Atmosphere<'a>) -> Result<(), FormatError> {
+        let iface = p + 1;
+        if iface > last || self.class(iface) != Some(Class::MacroInterface) {
+            return Err(refuse("INTERFACE", ErrorKind::Missing));
+        }
+        let iface_end = self
+            .block_end(iface, last)?
+            .ok_or_else(|| refuse("INTERFACE", ErrorKind::Missing))?;
+        let mut to = None;
+        for q in iface + 1..=iface_end {
+            match self.class(q) {
+                Some(Class::FlowMacro) => {}
+                Some(Class::MacroParameter) => {
+                    let param = OpMacroParameter::read(self.igz, self.ops[q])?;
+                    match param.var.name.unwrap_or("") {
+                        switch_params::TO_ZONE => {
+                            let l = self.literal(param.rhs, "_RHS")?;
+                            if l.class != "IntMeasurement" {
+                                return Err(unsupported(switch_params::TO_ZONE, q));
+                            }
+                            to = Some(l.bits);
+                        }
+                        switch_params::FORCE_FROM | switch_params::FORCE_TO => {
+                            if !self.null_reference(param.rhs)? {
+                                return Err(unsupported("a forced zone", q));
+                            }
+                        }
+                        switch_params::TRANSITION
+                        | switch_params::MODIFY_TRIGGERS
+                        | switch_params::RETURN_TRIGGER => {}
+                        _ => return Err(unsupported("_varName", q)),
+                    }
+                }
+                _ => return Err(unsupported("INTERFACE", q)),
+            }
+        }
+        self.none_in(iface_end + 1, last)?;
+        let to = to.ok_or_else(|| refuse(switch_params::TO_ZONE, ErrorKind::Missing))?;
+        let at = out
+            .zones
+            .iter()
+            .position(|z| z.id == to)
+            .ok_or_else(|| refuse(switch_params::TO_ZONE, ErrorKind::Missing))?;
+        out.start = Some(at);
         Ok(())
     }
 
