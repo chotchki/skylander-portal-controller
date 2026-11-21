@@ -103,7 +103,7 @@ impl Plugin for CloneTintsPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             PostUpdate,
-            tint_clones
+            (tint_clones, wash_placed)
                 .run_if(resource_exists::<ScriptWorld>)
                 .in_set(TintSystems),
         );
@@ -151,6 +151,74 @@ fn tint_parts(
         };
         for &part in children {
             wash_part(part, tint, wash, &mut commands, &mut parts, &mut materials);
+        }
+    }
+}
+
+/// Each drawn placement's own replace colour onto its parts (openspec
+/// AS.631: a barrel, a pot or a crate flashing as it's hit, the FireBlaster),
+/// as a creature's is laid ([`wash_part`]); its tint stays the neutral one
+/// the props' path draws with. A part never washed stays on its model's
+/// shared material; one washed goes back to neutral on its copy once the
+/// percent's back at 0.
+#[allow(clippy::too_many_arguments)]
+fn wash_placed(
+    mut commands: Commands,
+    level: Option<Res<crate::level::Level>>,
+    world: Res<ScriptWorld>,
+    runtime: Option<Res<guacamole::scripts::ScriptRuntime>>,
+    source: Option<Res<crate::hero_scripts::ScriptSource>>,
+    children: Query<&Children>,
+    mut parts: Query<(&mut MeshMaterial3d<CharacterMaterial>, Option<&TintedPart>)>,
+    mut materials: ResMut<Assets<CharacterMaterial>>,
+) {
+    let (Some(level), Some(runtime), Some(unit)) = (
+        level,
+        runtime,
+        source
+            .as_deref()
+            .and_then(crate::hero_scripts::ScriptSource::level_unit),
+    ) else {
+        return;
+    };
+    lay_placed(
+        &level.prop_draws(),
+        |object| {
+            world
+                .handles()
+                .get(&guac_script::Obj {
+                    unit,
+                    index: object,
+                })
+                .copied()
+        },
+        |h| guacamole::props::actor_wash(&runtime.vm, h),
+        &children,
+        &mut commands,
+        &mut parts,
+        &mut materials,
+    );
+}
+
+/// [`wash_placed`]'s lay: each draw's parts washed by its placement's own
+/// replace colour, the placement found by its object (`actor_of`) and its
+/// wash read off it (`wash_of`); a draw with no actor is left as it is.
+fn lay_placed(
+    draws: &[(u32, Entity)],
+    actor_of: impl Fn(u32) -> Option<guac_script::Handle>,
+    wash_of: impl Fn(guac_script::Handle) -> Option<[f32; 4]>,
+    children: &Query<&Children>,
+    commands: &mut Commands,
+    parts: &mut Query<(&mut MeshMaterial3d<CharacterMaterial>, Option<&TintedPart>)>,
+    materials: &mut Assets<CharacterMaterial>,
+) {
+    for &(object, draw) in draws {
+        let Some(h) = actor_of(object) else {
+            continue;
+        };
+        let wash = wash_of(h);
+        for &part in children.get(draw).map(|c| &**c).unwrap_or_default() {
+            wash_part(part, NEUTRAL, wash, commands, parts, materials);
         }
     }
 }
@@ -225,6 +293,83 @@ mod tests {
             ..CharacterTextures::default()
         };
         CharacterMaterial::new(key, &ir, &guac_ir::shading::Scene::new(), 0.0, textures).unwrap()
+    }
+
+    /// openspec AS.631: a placement's own replace colour reaches its drawn
+    /// parts, on a copy of their shared material, and goes back to neutral
+    /// once its percent's at 0; a draw with no actor, or one never washed,
+    /// stays on the shared material.
+    #[test]
+    fn a_placements_wash_reaches_its_drawn_parts() {
+        use std::sync::{Arc, Mutex};
+        let mut app = App::new();
+        app.init_resource::<Assets<CharacterMaterial>>();
+        let shared = app
+            .world_mut()
+            .resource_mut::<Assets<CharacterMaterial>>()
+            .add(lava());
+        let spawn = |app: &mut App| {
+            let draw = app.world_mut().spawn_empty().id();
+            let part = app
+                .world_mut()
+                .spawn((MeshMaterial3d(shared.clone()), ChildOf(draw)))
+                .id();
+            (draw, part)
+        };
+        let (barrel, part) = spawn(&mut app);
+        let (unscripted, other) = spawn(&mut app);
+        let wash: Arc<Mutex<Option<[f32; 4]>>> = Arc::new(Mutex::new(Some([1.0, 0.0, 0.0, 0.75])));
+        let w = wash.clone();
+        let draws = vec![(7, barrel), (8, unscripted)];
+        app.add_systems(
+            Update,
+            move |mut commands: Commands,
+                  children: Query<&Children>,
+                  mut parts: Query<(
+                &mut MeshMaterial3d<CharacterMaterial>,
+                Option<&TintedPart>,
+            )>,
+                  mut materials: ResMut<Assets<CharacterMaterial>>| {
+                let now = *w.lock().unwrap();
+                lay_placed(
+                    &draws,
+                    |o| (o == 7).then_some(0x77),
+                    |h| now.filter(|_| h == 0x77),
+                    &children,
+                    &mut commands,
+                    &mut parts,
+                    &mut materials,
+                );
+            },
+        );
+        let drawn = |app: &App, e: Entity| {
+            let h = &app
+                .world()
+                .get::<MeshMaterial3d<CharacterMaterial>>(e)
+                .unwrap()
+                .0;
+            app.world()
+                .resource::<Assets<CharacterMaterial>>()
+                .get(h)
+                .unwrap()
+                .uniform
+                .replace
+        };
+        app.update();
+        assert!(app.world().get::<TintedPart>(part).is_some(), "on a copy");
+        assert_eq!(drawn(&app, part), Vec4::new(1.0, 0.0, 0.0, 0.75));
+        assert!(
+            app.world().get::<TintedPart>(other).is_none(),
+            "no actor, untouched"
+        );
+        assert_eq!(drawn(&app, other), lava().uniform.replace);
+        *wash.lock().unwrap() = None;
+        app.update();
+        assert_eq!(
+            drawn(&app, part),
+            lava().uniform.replace,
+            "back to the shared one's"
+        );
     }
 
     /// AG.24: the level-up's ring, a warp, keeps its states (its

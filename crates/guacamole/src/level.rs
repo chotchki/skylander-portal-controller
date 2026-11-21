@@ -1643,6 +1643,9 @@ pub(crate) struct Loaded {
     materials: Vec<Handle<CharacterMaterial>>,
     /// The materials with scroll tracks, by index.
     scrolling: Vec<(usize, Vec<Scroll>)>,
+    /// The materials with a tint track, by index, each with its first
+    /// (openspec AS.451).
+    tinting: Vec<(usize, guac_ir::model::MaterialTrack)>,
     lights: LevelLights,
     pub(crate) keys: Vec<WarmKey>,
     /// The fog the level's buffer is lit with.
@@ -1782,6 +1785,12 @@ pub(crate) struct Level {
 }
 
 impl Level {
+    /// The level the TV holds, loading or loaded, by its archive's name.
+    #[cfg(feature = "test-hooks")]
+    pub(crate) fn name(&self) -> Option<&str> {
+        self.source.as_ref().map(|s| s.level.as_str())
+    }
+
     pub(crate) fn new(gpu: bool) -> Self {
         Self {
             gpu,
@@ -2169,6 +2178,7 @@ impl Plugin for LevelPlugin {
                     step_level,
                     show_level,
                     scroll_level,
+                    tint_level,
                     receive_sounds,
                     sounds_again,
                     read_zone,
@@ -2769,6 +2779,9 @@ fn figure_materials(
         if !m.scrolls.is_empty() {
             loaded.scrolling.push((at, m.scrolls.clone()));
         }
+        if let Some(t) = tint_track(&m.tracks) {
+            loaded.tinting.push((at, t));
+        }
     }
     for (path, parts) in &read.models {
         let parts = parts
@@ -3209,10 +3222,18 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
     let mut scene_lights = SceneLights::dark();
     scene_lights.set_scene(&world_scene(&built.lights, &fog));
     set_sky_fog(&mut scene_lights, &sky_fog);
+    let tinting = built
+        .drawn
+        .materials
+        .iter()
+        .enumerate()
+        .filter_map(|(i, m)| Some((i, tint_track(&m.tracks)?)))
+        .collect();
     Loaded {
         root,
         materials,
         scrolling,
+        tinting,
         lights: built.lights,
         keys: built.keys.iter().map(|(k, _)| *k).collect(),
         lit_fog: fog,
@@ -3798,6 +3819,50 @@ fn scroll_level(
     }
 }
 
+/// A material's first tint track, the one [`tint_level`] plays.
+fn tint_track(tracks: &[guac_ir::model::MaterialTrack]) -> Option<guac_ir::model::MaterialTrack> {
+    tracks
+        .iter()
+        .find(|t| matches!(t, guac_ir::model::MaterialTrack::Tint { .. }))
+        .cloned()
+}
+
+/// The material tint `track` puts on its part once it has run `seconds`,
+/// as the uniform takes it (stored values over 255, 128 neutral).
+fn played_tint(track: &guac_ir::model::MaterialTrack, seconds: f64) -> Option<Vec4> {
+    track.tint_at(seconds).map(|c| Vec4::from_array(c) / 255.0)
+}
+
+/// Parts with a tint track move their material tint through its keys from
+/// the moment the level shows (openspec AS.451, `guac_ir::tint_track`: style
+/// 0 loops, 1 goes out and back), on the clock the scrolls run on; under
+/// reduced motion each holds its first key.
+fn tint_level(
+    level: Res<Level>,
+    time: Res<Time>,
+    reduced: Res<ReducedMotion>,
+    mut materials: ResMut<Assets<CharacterMaterial>>,
+) {
+    let Stage::Shown(loaded) = &level.stage else {
+        return;
+    };
+    let seconds = match (reduced.0, loaded.shown_at) {
+        (false, Some(at)) => time.elapsed().saturating_sub(at).as_secs_f64(),
+        _ => 0.0,
+    };
+    for (i, track) in &loaded.tinting {
+        let Some(tint) = played_tint(track, seconds) else {
+            continue;
+        };
+        // Read first: a write marks the material for upload again.
+        if let Some(mut m) = materials.get_mut(&loaded.materials[*i])
+            && m.uniform.material_tint != tint
+        {
+            m.uniform.material_tint = tint;
+        }
+    }
+}
+
 /// Every camera with its target, and the level's: whether a UI draws over
 /// the level, for the overlay's and the alert's parts of `/api/_test/tv`
 /// (openspec AQ.8).
@@ -3826,6 +3891,38 @@ impl OverLevel<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// openspec AS.451: a level material's tint track reaches its uniform
+    /// played, its first tint track picked: the stove's fire goes dark red
+    /// to pale yellow in five frames and back over its 60 (style 1).
+    #[test]
+    fn a_tint_track_plays_on_its_materials_uniform() {
+        use guac_ir::model::MaterialTrack;
+        let fire = MaterialTrack::Tint {
+            style: 1,
+            rate: 1.0,
+            frames: vec![0, 5, 60],
+            colors: vec![[114, 42, 42, 255], [230, 219, 131, 255], [125, 97, 64, 255]],
+        };
+        let flip = MaterialTrack::FlipBook {
+            layer: 0,
+            style: 0,
+            rows: 2,
+            columns: 2,
+            rate: 1.0,
+            cells: Vec::new(),
+        };
+        assert_eq!(
+            tint_track(&[flip.clone(), fire.clone()]),
+            Some(fire.clone())
+        );
+        assert_eq!(tint_track(&[flip]), None);
+        let at = |frame: f64| played_tint(&fire, frame / 60.0).unwrap();
+        assert_eq!(at(0.0), Vec4::new(114.0, 42.0, 42.0, 255.0) / 255.0);
+        assert_eq!(at(5.0), Vec4::new(230.0, 219.0, 131.0, 255.0) / 255.0);
+        assert_eq!(at(115.0), at(5.0), "back through frame 5 on the way home");
+        assert!(at(2.0).x > at(0.0).x && at(2.0).x < at(5.0).x);
+    }
     use crate::test_support::level::{
         LEVEL, START, atmosphere, lights, multi2, segment, write_level, write_props, zone,
     };
@@ -6725,6 +6822,52 @@ mod tests {
             u[0].abs_diff_eq(Vec4::new(1.0, 0.0, 0.5, 0.0), 1e-6),
             "{u:?}"
         );
+    }
+
+    /// openspec AS.451: a level material's tint track plays on the shown
+    /// level: the sky's uniform tint moves off its first key as time runs,
+    /// and holds it under reduced motion.
+    #[test]
+    fn a_shown_levels_tint_track_moves_its_material_tint() {
+        for reduced in [false, true] {
+            let tmp = tempfile::tempdir().unwrap();
+            let source = write_level(tmp.path(), &lights());
+            let path = tmp.path().join(source.ir.level_path(LEVEL, SCENE));
+            let mut scene: guac_ir::level::Scene =
+                guac_ir::from_ron(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let LevelMaterial::Multi2(sky) = &mut scene.scenes[0].materials[2] else {
+                panic!("the sky");
+            };
+            sky.tracks = vec![guac_ir::model::MaterialTrack::Tint {
+                style: 0,
+                rate: 1.0,
+                frames: vec![0, 6, 12],
+                colors: vec![[0, 0, 0, 255], [255, 255, 255, 255], [0, 0, 0, 255]],
+            }];
+            std::fs::write(&path, guac_ir::to_ron(&scene).unwrap()).unwrap();
+            let mut app = level_app(tmp.path(), source, false);
+            app.insert_resource(LevelView(true))
+                .insert_resource(ReducedMotion(reduced));
+            app.world_mut().spawn(TvCamera);
+            until(&mut app, &["shown"], |_| {});
+            let sky = app.world().resource::<Level>().loaded().unwrap().materials[1].clone();
+            let tint = |app: &App| {
+                app.world()
+                    .resource::<Assets<CharacterMaterial>>()
+                    .get(&sky)
+                    .unwrap()
+                    .uniform
+                    .material_tint
+            };
+            let mut seen = Vec::new();
+            for _ in 0..6 {
+                std::thread::sleep(std::time::Duration::from_millis(23));
+                app.update();
+                seen.push(tint(&app).x);
+            }
+            let moved = seen.iter().any(|x| *x > 0.05);
+            assert_eq!(moved, !reduced, "reduced {reduced}: {seen:?}");
+        }
     }
 
     /// AG.22: a gloss map is a weight, so the level loads it through a

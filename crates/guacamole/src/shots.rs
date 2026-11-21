@@ -82,7 +82,10 @@ pub struct Shots;
 impl Plugin for Shots {
     fn build(&self, app: &mut App) {
         let shot_dir = std::env::var_os("GUAC_SHOT_DIR");
-        app.insert_resource(ReducedMotion::for_shots(shot_dir.as_deref()));
+        app.insert_resource(ReducedMotion::for_shots(
+            shot_dir.as_deref(),
+            std::env::var_os("GUAC_SHOT_MOTION").is_some(),
+        ));
         let Some(dir) = shot_dir.map(PathBuf::from) else {
             return;
         };

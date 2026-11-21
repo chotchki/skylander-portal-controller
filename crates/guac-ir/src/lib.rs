@@ -30,6 +30,7 @@ pub mod scroll;
 pub mod shading;
 pub mod sound;
 pub mod spawn;
+pub mod tint_track;
 
 pub use characters::{Character, CharacterArchive, CharacterTable, Intro, IntroSource, VoiceTrack};
 pub use clip::Clip;

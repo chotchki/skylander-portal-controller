@@ -491,6 +491,12 @@ fn install_from(world: &mut World, source: &ScriptSource) {
         guacamole::card_game::with_streams(config, &source.files, &source.card_streams.unit_list());
     #[allow(unused_mut)]
     let mut config = scripts::with_walkers(config, &source.walkers);
+    // A staged creature and its trigger listed (openspec AS.680, test-hooks
+    // builds only).
+    #[cfg(feature = "test-hooks")]
+    let stage = world.get_resource::<crate::stage::Stage>().cloned();
+    #[cfg(feature = "test-hooks")]
+    crate::stage::listed(stage.as_ref(), source.level(), &mut config);
     // The interface's members on the model, when the run holds one (AT.9).
     if source.interface.is_some() {
         config = guacamole::interface_host::with_interface(config);
@@ -559,6 +565,8 @@ fn install_from(world: &mut World, source: &ScriptSource) {
         let (walked, templates) = script_world.walk_encounter(level, e);
         info!(level = %source.level(), walked, templates, "the level's encounter walks");
     }
+    #[cfg(feature = "test-hooks")]
+    crate::stage::walked(stage.as_ref(), source.level(), level, &mut script_world);
     for p in source
         .files
         .placed

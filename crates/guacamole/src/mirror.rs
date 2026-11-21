@@ -302,7 +302,7 @@ impl CameraBody {
 /// follow itself steps on, untouched, and takes over once the pin's off.
 /// The dev view's camera too (openspec AS.13), which nothing moves, so a
 /// level shown without a hero is shot from where an oracle frame stood.
-fn pin_camera(
+pub(crate) fn pin_camera(
     mirror: Res<TvMirror>,
     mut cameras: Query<
         (&mut Transform, &mut Projection),

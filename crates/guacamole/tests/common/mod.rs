@@ -1248,6 +1248,9 @@ pub struct Setup {
     /// stands at the world's origin with what rides it (AS.284), and level
     /// 208's riders are let go under its plaza.
     pub posed_rigs: bool,
+    /// A creature staged by name as the TV's stage stages one (openspec
+    /// AS.680, `guacamole::staging`): listed and walked, nothing else set.
+    pub stage: Option<&'static str>,
     /// A character linked beside Eruptor (openspec AS.371), as the TV links
     /// every walker's file at the level's load: his file after the level
     /// and its streams, his scripts listed as a walker's, for
@@ -1542,6 +1545,9 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
         scripts.extend(setup.scripts.iter().map(|s| (*s).to_owned()));
         placements.extend(setup.placements.iter().map(|s| (*s).to_owned()));
     }
+    if let Some(name) = setup.stage {
+        guacamole::staging::list(&mut config, &[name]);
+    }
     let walker = setup.character.map(|c| {
         scripts::walker_scripts(&program, &files, &[(c.load_file.to_owned(), ERUPTOR)])
             .pop()
@@ -1701,6 +1707,9 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
     }
     for e in scripts::encounters(level) {
         world.walk_encounter(LEVEL, e);
+    }
+    if let Some(name) = setup.stage {
+        guacamole::staging::walk(&mut world, LEVEL, name).expect("the staged creature");
     }
     let (meshes, start) = level_bodies(&igzs[LEVEL as usize], level);
     let parry = ParryWorld::new(&meshes).expect("the level's collision");
