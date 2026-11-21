@@ -346,7 +346,10 @@ and hers, and no `slot_changed` at all. Every guacamole the
 harness spawns plays its intros muted (`GUAC_MUTE=1`) and takes only the
 pads `/api/_test/tv/pad` posts (`GUAC_TEST_POSTED_PADS_ONLY=1`, AG.52): the
 TV leaves out gilrs and GameController's pads (AG.53), so a pad paired with
-the Mac never connects and can't walk the hero first.
+the Mac never connects and can't walk the hero first. The same switch keeps
+the TV off the desk (AS.740): its window opens hidden and never active, the
+app has no Dock tile, and the Mac's keyboard and mouse reach nothing, so a
+run never takes the keyboard from whoever is using the Mac.
 
 Product-only tests skip with `SKIPPED under E2E_APP=guacamole,
 product-only: <why>` instead of failing:

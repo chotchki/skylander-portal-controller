@@ -109,14 +109,25 @@ pub fn should_open(
 
 /// [`should_open`] each frame. A button press is spent either way, so one
 /// made while the sheet is up doesn't open another after it.
+/// An unattended test run ([`crate::desk::Unattended`], AS.740) never opens
+/// it: the sheet is AppKit's own panel, which would activate the app over
+/// whoever is using the Mac. Its Setup shows the button and waits.
 fn want_picker(
     current: Option<Res<Current>>,
     mut asked: ResMut<FolderAsked>,
     mut picking: ResMut<Picking>,
+    unattended: Option<Res<crate::desk::Unattended>>,
 ) {
     let pressed = asked.0;
     if pressed {
         asked.0 = false;
+    }
+    if unattended.is_some() {
+        if pressed || !picking.auto_opened {
+            info!("an unattended run opens no folder picker");
+            picking.auto_opened = true;
+        }
+        return;
     }
     let Some(current) = current else {
         return;
