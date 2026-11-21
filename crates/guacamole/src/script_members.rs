@@ -718,6 +718,24 @@ impl ScriptWorld {
         if let Some(at) = self.position(h, engine) {
             self.kept_via.insert((h, cell), at);
         }
+        self.put_points.remove(&(h, Some(cell)));
+    }
+
+    /// The remembered point `v` names, as [`ScriptWorld::put_points`] keys
+    /// it; `None` for anything else.
+    fn remembered_key(&self, v: Value) -> Option<(Handle, Option<u32>)> {
+        match self.handle(v).and_then(|h| self.objs.get(h)) {
+            Some(Object::Remembered(a)) => Some((a, None)),
+            Some(Object::RememberedVia(a, c)) => Some((a, Some(c))),
+            _ => None,
+        }
+    }
+
+    /// A script put the remembered point `v` names somewhere itself.
+    fn put_remembered(&mut self, v: Value) {
+        if let Some(k) = self.remembered_key(v) {
+            self.put_points.insert(k);
+        }
     }
 
     /// The actor (or hero) a receiver names: `None` for a host object.
@@ -750,11 +768,23 @@ impl ScriptWorld {
             && !a.removed
             && let Some(Object::Node(owner, i)) = self.object(Some(a.attach))
             && owner != h
+            && !self.stays_put(h, owner)
             && let Some((p, turn)) = self.node_frame(owner, i, engine, depth - 1)
         {
             return Some(p + turn * a.hung);
         }
         Some(a.position)
+    }
+
+    /// Whether `h`, hung on a node of `owner`, stays where it stands rather
+    /// than reading the node: an unposed rig's with no last shot to read,
+    /// where [`ScriptWorld::place_hung_actors`] leaves all but a shot's
+    /// follower put (openspec AS.702: level 208's intro skipped, its pod
+    /// stood where it was left while its node read the view's eye, so the
+    /// base, plank, propeller and wheel the pod hangs on itself stood over
+    /// the camera).
+    fn stays_put(&self, h: Handle, owner: Handle) -> bool {
+        self.rig_held.is_empty() && self.rig_unposed(owner) && !self.follower(h)
     }
 
     /// Node `i` of actor `owner` and the frame what hangs from it is offset
@@ -969,6 +999,21 @@ impl ScriptWorld {
             euler([a.angles.tilt, a.angles.facing, a.angles.roll])
         };
         Some(a.carried.unwrap_or(Quat::IDENTITY) * own)
+    }
+
+    /// How many attach nodes `h`'s set holds: a model nothing poses holds
+    /// its list's (openspec AS.431: a beam pivot hangs its crystal on its
+    /// set's last, its model's third node), any other [`NODES`].
+    fn node_count(&self, h: Handle) -> u32 {
+        if self.nodes.contains_key(&h) || self.rig_unposed(h) {
+            return NODES;
+        }
+        self.actors
+            .get(&h)
+            .and_then(|a| a.template.or(a.obj))
+            .and_then(|placed| self.templates.get(&placed)?.model.as_deref())
+            .and_then(|model| self.origin_nodes.get(model))
+            .map_or(NODES, |list| list.len().min(NODES as usize) as u32)
     }
 
     /// Attach node `i` of a model nothing poses, off its list at the actor's
@@ -2405,12 +2450,18 @@ impl ScriptWorld {
                 // every level, 214's third island's enemies notice him and
                 // its fight goes on other steps (stand-in ledger
                 // `lifted-reference`).
+                // Not one a script has put somewhere itself since (openspec
+                // AS.431): a beam emitter's ray end, put 1000 ft ahead of
+                // it, has its height set over it each step.
                 let a = match m {
                     Member::VerticalOffset
                         if self.level() == Some(crate::level_208::LEVEL)
                             && self
                                 .reference_of(r)
-                                .is_some_and(|k| self.actor_of(Some(o)) == Some(k)) =>
+                                .is_some_and(|k| self.actor_of(Some(o)) == Some(k))
+                            && !self
+                                .remembered_key(r)
+                                .is_some_and(|k| self.put_points.contains(&k)) =>
                     {
                         b
                     }
@@ -2498,7 +2549,7 @@ impl ScriptWorld {
         Ok(match m {
             Member::AttachNodes => {
                 let h = self.actor_of(recv).ok_or(HostFault::Nothing)?;
-                (0..NODES)
+                (0..self.node_count(h))
                     .map(|i| self.objs.value(Object::Node(h, i)))
                     .collect()
             }
@@ -3583,18 +3634,27 @@ impl ScriptWorld {
                 .and_then(|(_, v)| *v)
         };
         let word = |n: &str| call.words.iter().find(|(k, _)| *k == n).map(|(_, w)| *w);
-        let from = named("_fromLHS").ok_or(HostFault::Nothing)?;
-        let from = self.point(from, engine).ok_or(HostFault::Nothing)?;
+        let from_value = named("_fromLHS").ok_or(HostFault::Nothing)?;
+        let from = self.point(from_value, engine).ok_or(HostFault::Nothing)?;
+        let looker = self.handle(from_value);
         let facing = named("_RHSfacing").and_then(|v| v.as_f32()).unwrap_or(0.0);
         let width = named("_RHSfov").and_then(|v| v.as_f32()).unwrap_or(0.0);
         let limit = named("_RHS").unwrap_or(Value::Int(0));
         let code = word("_relOperator").unwrap_or(0);
-        let targets = match call.sets.iter().find(|(n, _)| *n == "_LHS") {
-            Some((_, e)) => e.clone(),
-            None => named("_LHS").into_iter().collect(),
+        // A set's member that is the cone's own actor is never in it
+        // (openspec AS.431: a beam emitter puts itself into the set it
+        // looks through and takes the first found, so the original can't
+        // hold it there, or no beam would ever reach a crystal); a single
+        // target named is measured as below.
+        let (targets, from_set) = match call.sets.iter().find(|(n, _)| *n == "_LHS") {
+            Some((_, e)) => (e.clone(), true),
+            None => (named("_LHS").into_iter().collect(), false),
         };
         let mut found = Vec::new();
         for t in targets {
+            if from_set && looker.is_some() && self.handle(t) == looker {
+                continue;
+            }
             let Some(p) = self.point(t, engine) else {
                 continue;
             };
@@ -3663,7 +3723,14 @@ impl ScriptWorld {
             direction(head, pitch)
         } * (len * METRES_PER_FOOT);
         let to = if mode == 1 { d } else { at + d };
-        self.set_point(by, target, to, engine)
+        self.set_point(by, target, to, engine)?;
+        // Its own point put by the actor itself (openspec AS.431: a beam
+        // emitter's ray end); another's displacing it (the camera's follow
+        // moves its target's points each step) leaves the lift on.
+        if self.remembered_key(target).is_some_and(|(a, _)| a == by) {
+            self.put_remembered(target);
+        }
+        Ok(())
     }
 }
 
@@ -4081,9 +4148,7 @@ impl ScriptWorld {
             // The first shot's rig, unposed, has no last place to read: what
             // hangs on it and draws stays where it stands until it's posed,
             // where the shot's cam actor, a model of none, goes to the view.
-            if self.rig_held.is_empty()
-                && matches!(self.object(Some(node)), Some(Object::Node(owner, _)) if self.rig_unposed(owner))
-                && !self.follower(h)
+            if matches!(self.object(Some(node)), Some(Object::Node(owner, _)) if self.stays_put(h, owner))
             {
                 continue;
             }
@@ -5646,6 +5711,104 @@ mod tests {
         assert!((p.y - (0.5 + 3.0 * METRES_PER_FOOT)).abs() < 1e-5, "{p:?}");
     }
 
+    /// openspec AS.431: a reference's point a script has put somewhere
+    /// itself (a beam emitter's ray end, displaced 1000 ft along its facing
+    /// at its start) keeps its place across the ground when its height is
+    /// set over its own actor on level 208, where the `lifted-reference`
+    /// rule would take it onto him; set to him again, the rule holds.
+    #[test]
+    fn a_reference_point_a_script_put_keeps_its_place_under_the_lift() {
+        const CELL: u32 = 12;
+        let mut e = bench();
+        let mut w = world();
+        w.set_level(crate::level_208::LEVEL);
+        let here = Vec3::new(3.0, 1.0, 4.0);
+        w.actors.insert(BALL, ball(here, 0.0));
+        w.referenced(CELL, Value::Entity(BALL), &mut e);
+        let mut a = at(
+            "placementreference",
+            "remembered",
+            Some(Value::Entity(BALL)),
+            None,
+        );
+        a.via = Some(CELL);
+        let end = w.get_member(&a, Member::Remembered, &mut e).unwrap();
+        w.displace(BALL, end, 0, 100.0, 90.0, 0.0, &mut e).unwrap();
+        let ahead = here + Vec3::new(100.0 * METRES_PER_FOOT, 0.0, 0.0);
+        assert!((w.point(end, &mut e).unwrap() - ahead).length() < 1e-4);
+        let level = |w: &mut ScriptWorld, e: &mut Bench| {
+            w.set_member(
+                &at(
+                    "positionmeasurement",
+                    "vertical offset",
+                    Some(end),
+                    Some(Value::Entity(BALL)),
+                ),
+                Member::VerticalOffset,
+                Value::Float(0.0),
+                e,
+            )
+            .unwrap();
+            w.point(end, e).unwrap()
+        };
+        let p = level(&mut w, &mut e);
+        assert!((p - ahead).length() < 1e-4, "kept ahead: {p:?}");
+        // Set to him again: the point is where he stands, and lifted.
+        w.referenced(CELL, Value::Entity(BALL), &mut e);
+        w.actors.get_mut(&BALL).unwrap().position = Vec3::new(-6.0, 2.0, 9.0);
+        let p = level(&mut w, &mut e);
+        assert!((p - Vec3::new(-6.0, 2.0, 9.0)).length() < 1e-4, "{p:?}");
+        // Displaced by another actor (the camera's follow moving its target's
+        // points): still where he stands once lifted.
+        const MOVER: Handle = 0x7779;
+        w.actors.insert(MOVER, ball(Vec3::ZERO, 0.0));
+        w.displace(MOVER, end, 0, 100.0, 90.0, 0.0, &mut e).unwrap();
+        let p = level(&mut w, &mut e);
+        assert!((p - Vec3::new(-6.0, 2.0, 9.0)).length() < 1e-4, "{p:?}");
+    }
+
+    /// openspec AS.431: a static model's attach nodes set holds its list's
+    /// nodes, so its last is the model's last (a beam pivot hangs its
+    /// crystal there); an actor whose model has no list holds all of them.
+    #[test]
+    fn a_static_models_attach_nodes_hold_its_list() {
+        const PIVOT_T: Obj = Obj { unit: 9, index: 9 };
+        const PIVOT: Handle = 0x6000_0081;
+        const BARE: Handle = 0x6000_0082;
+        let mut e = bench();
+        let mut w = world();
+        let mut template = crate::scripts::Placed::named(PIVOT_T, "Reflect_Pivot_Round", None, 5);
+        template.model = Some("pivot.mdl".into());
+        w.templates.insert(PIVOT_T, template);
+        w.set_origin_nodes(HashMap::from([(
+            "pivot.mdl".to_owned(),
+            vec![
+                NodePose::at(Vec3::new(0.0, 2.1, 0.0)),
+                NodePose::at(Vec3::new(0.0, 2.0, 2.0)),
+                NodePose::at(Vec3::new(0.0, 2.07, -0.15)),
+            ],
+        )]));
+        let mut pivot = Actor::blank();
+        pivot.template = Some(PIVOT_T);
+        w.actors.insert(PIVOT, pivot);
+        w.actors.insert(BARE, Actor::blank());
+        let set = |w: &mut ScriptWorld, e: &mut Bench, h: Handle| {
+            w.elements_of(
+                &at("actorinfo", "attach nodes", Some(Value::Entity(h)), None),
+                Member::AttachNodes,
+                e,
+            )
+            .unwrap()
+        };
+        let nodes = set(&mut w, &mut e, PIVOT);
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(
+            w.object(nodes.last().copied()),
+            Some(Object::Node(PIVOT, 2))
+        );
+        assert_eq!(set(&mut w, &mut e, BARE).len(), NODES as usize);
+    }
+
     /// `system.absolute zero` is the world's origin as a point: what a
     /// hero's death measures from (AH.20).
     #[test]
@@ -5844,6 +6007,21 @@ mod tests {
         w.place_hung_actors(&mut e);
         assert_eq!(w.actors[&HUNG].position, Vec3::new(8.0, 8.0, 8.0));
         assert_eq!(w.actors[&CAM_ACTOR].position, w.view.eye);
+        // openspec AS.702: what stays put reads where it stands, and what
+        // hangs on its own nodes rides it there, not the view's eye (level
+        // 208's pod parts over the camera after its intro's skip).
+        assert_eq!(w.position(HUNG, &mut e), Some(Vec3::new(8.0, 8.0, 8.0)));
+        const PART: Handle = 0x6000_0037;
+        w.set_nodes(HUNG, vec![NodePose::at(Vec3::new(0.0, 2.0, 0.0))]);
+        let mut part = Actor::blank();
+        part.attach = w.objs.value(Object::Node(HUNG, 0));
+        w.actors.insert(PART, part);
+        assert_eq!(w.node(HUNG, 0, &mut e), Some(Vec3::new(8.0, 10.0, 8.0)));
+        w.place_hung_actors(&mut e);
+        assert_eq!(w.actors[&PART].position, Vec3::new(8.0, 10.0, 8.0));
+        assert_eq!(w.actors[&HUNG].position, Vec3::new(8.0, 8.0, 8.0));
+        w.nodes.remove(&HUNG);
+        w.actors.remove(&PART);
         // A shot posed: the next, unposed, reads it.
         let turned = Quat::from_rotation_y(90f32.to_radians());
         let at = Vec3::new(30.0, 40.0, 50.0);
@@ -9528,6 +9706,37 @@ mod fight_tests {
         assert_eq!(
             ask(&mut w, &mut e, &call(189.0, C2)),
             Answer::Found(Vec::new())
+        );
+    }
+
+    /// openspec AS.431: a check through a set leaves the cone's own actor
+    /// out (a beam emitter puts itself into the set it looks through and
+    /// takes the first found); named alone it's in, as AS.345 has it.
+    #[test]
+    fn check_fov_leaves_its_own_actor_out_of_a_set() {
+        let mut e = pit();
+        let mut w = world();
+        w.actors.insert(C1, chompy(Vec3::ZERO, 0.0));
+        w.actors.insert(C2, chompy(Vec3::new(0.0, 0.0, 13.0), 0.0));
+        let call = |targets: Vec<Value>| {
+            op(
+                Class::CheckFov,
+                C1,
+                vec![
+                    ("_RHSfacing", Some(Value::Float(0.0))),
+                    ("_RHSfov", Some(Value::Int(6))),
+                    ("_fromLHS", Some(Value::Entity(C1))),
+                    ("_LHS", Some(Value::Null)),
+                    ("_RHS", Some(Value::Int(0))),
+                ],
+                vec![("_LHS", targets)],
+            )
+        };
+        let mut words = call(vec![Value::Entity(C1), Value::Entity(C2)]);
+        words.words = vec![("_dir", 0), ("_relOperator", 2)];
+        assert_eq!(
+            ask(&mut w, &mut e, &words),
+            Answer::Found(vec![Value::Entity(C2)])
         );
     }
 

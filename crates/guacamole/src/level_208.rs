@@ -71,6 +71,19 @@ pub const REVEAL_FOES: [&str; 5] = [
     "Enemy_Chompy_Ice(40)",
 ];
 
+/// The Ice Chompy's freeze crystal (openspec AS.432), listed and never
+/// walked: the freeze hangs a `Chompy_Ice_Prison` clone on its victim, and
+/// its own script takes it off him once he's no longer frozen (off his
+/// node, faded out, a burst, gone). Unlisted it ran nothing, so the crystal
+/// stayed hung on the hero long after the Chompies were gone.
+pub const FREEZE: [&str; 1] = ["Chompy_Ice_Prison"];
+
+/// [`FREEZE`] on 208 alone.
+pub fn freeze(level: &str) -> impl Iterator<Item = &'static str> {
+    let on = level == LEVEL;
+    FREEZE.iter().copied().filter(move |_| on)
+}
+
 /// [`EXIT`] and [`REVEAL_FOES`] on 208 alone: another level's `brick`
 /// templates are its own.
 pub fn exit(level: &str) -> impl Iterator<Item = &'static str> {
@@ -94,6 +107,39 @@ pub const DOWN: [&str; 1] = ["IGC_AI_Intro"];
 pub fn down(level: &str) -> impl Iterator<Item = &'static str> {
     let on = level == LEVEL;
     DOWN.iter().copied().filter(move |_| on)
+}
+
+/// The first beam puzzle, the terrace's way west to the river (openspec
+/// AS.431), by name; the clones' templates listed so their scripts run:
+/// - **The first ice block's scene** (`IGC_FirstIceBlock`,
+///   `208_FirstIceBlockIGC.ai`). It holds the start's beam off while it
+///   pans to the block and the AI speaks, then lets it on.
+/// - **The start** (`Reflect_Start(1)`, `Reflect_Start.ai`) hangs an
+///   emitter on itself, facing the pivot.
+/// - **The pivot** (`Reflect_Pivot_Round(1)`, `Reflect_Round.ai`) makes its
+///   switch (a `Reflect_Switchbase_ICE` clone at its first waypoint) and
+///   hangs a target, an emitter and a crystal on its three nodes. Each press
+///   of the talk button at the switch turns it 45°. Its target lit, it
+///   powers its own emitter along its facing.
+/// - **An emitter** (`Reflect_Emitter.ai`) casts its ray along its facing and
+///   powers the first crystal or ice block in its 6° cone within reach. The
+///   pivot's at its fourth facing (264°) reaches the ice block
+///   (`Melting_Ice_blocks_reflect_1`, `Ice_Cube.ai`), which melts while it's
+///   powered and takes itself off.
+pub const BEAM: [&str; 7] = [
+    "IGC_FirstIceBlock",
+    "Reflect_Start(1)",
+    "Reflect_Pivot_Round(1)",
+    "Melting_Ice_blocks_reflect_1",
+    "Reflect_Switchbase_ICE",
+    "Reflect_Target",
+    "Reflect_Emitter",
+];
+
+/// [`BEAM`] on 208 alone: the other levels' reflect puzzles are their own.
+pub fn beam(level: &str) -> impl Iterator<Item = &'static str> {
+    let on = level == LEVEL;
+    BEAM.iter().copied().filter(move |_| on)
 }
 
 /// What fights on level 208 (openspec AS.345), walked as creatures: the
@@ -175,6 +221,46 @@ mod tests {
                 );
             }
             assert_eq!(down(other).count(), 0);
+        }
+    }
+
+    /// openspec AS.432: the freeze crystal's template is on 208's listing
+    /// and on no other level's.
+    #[test]
+    fn level_208s_freeze_crystal_is_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        assert_eq!(freeze(LEVEL).collect::<Vec<_>>(), FREEZE);
+        for other in ["level_202", "level_205_piratecards"] {
+            let off = level_config(Mode::Play, &files, 5, other);
+            for name in FREEZE {
+                assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+                assert!(
+                    !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
+                    "{name} on {other}"
+                );
+            }
+            assert_eq!(freeze(other).count(), 0);
+        }
+    }
+
+    /// openspec AS.431: the first beam puzzle's placements and clone
+    /// templates are on 208's listing and on no other level's.
+    #[test]
+    fn level_208s_beam_puzzle_is_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        assert_eq!(beam(LEVEL).collect::<Vec<_>>(), BEAM);
+        for other in ["level_202", "level_205_piratecards"] {
+            let off = level_config(Mode::Play, &files, 5, other);
+            for name in BEAM {
+                assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+                assert!(
+                    !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
+                    "{name} on {other}"
+                );
+            }
+            assert_eq!(beam(other).count(), 0);
         }
     }
 

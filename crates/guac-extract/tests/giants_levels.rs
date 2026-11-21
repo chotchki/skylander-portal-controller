@@ -168,12 +168,10 @@ fn one_line(s: &str) -> String {
 }
 
 /// The parts the disc's levels still don't read, each a box of its own in
-/// openspec AS: chapter 203's definition switches zones in its STARTUP
-/// (AS.23) and PvP arena 4's copies one zone's lights into another (AS.22).
-const KNOWN: [(&str, &str); 2] = [
-    ("level_203_the_machine", levels::ATMOSPHERE),
-    ("pvp_level_004_ancientsewer", levels::ATMOSPHERE),
-];
+/// openspec AS: PvP arena 4's copies one zone's lights into another (AS.22).
+/// Chapter 203's, whose definition switches zones in its STARTUP, reads
+/// since AS.23.
+const KNOWN: [(&str, &str); 1] = [("pvp_level_004_ancientsewer", levels::ATMOSPHERE)];
 
 #[test]
 #[ignore = "reads the Giants dump at GUAC_GIANTS_DUMP"]

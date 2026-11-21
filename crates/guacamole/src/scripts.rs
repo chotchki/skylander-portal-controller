@@ -544,6 +544,12 @@ pub struct ScriptWorld {
     /// The points references to actors keep, by the actor and the
     /// reference's cell (openspec AG.28).
     pub(crate) kept_via: HashMap<(Handle, u32), Vec3>,
+    /// The remembered points their own actor's script has displaced since
+    /// the reference was set, by the actor and the reference's cell (`None`
+    /// for the actor's own): no longer where the reference was set, so the
+    /// `lifted-reference` rule leaves them be (openspec AS.431: a beam
+    /// emitter's ray end).
+    pub(crate) put_points: std::collections::HashSet<(Handle, Option<u32>)>,
     /// The waypoints scripts made ([`Object::Waypoint`]), each where it was
     /// last put, none until it's put somewhere.
     pub(crate) waypoints_made: Vec<Option<Vec3>>,
@@ -1031,6 +1037,7 @@ impl ScriptWorld {
             ray: Ray::default(),
             kept_points: HashMap::new(),
             kept_via: HashMap::new(),
+            put_points: std::collections::HashSet::new(),
             waypoints_made: Vec::new(),
             scripted: Vec::new(),
             revived: Vec::new(),
@@ -4672,6 +4679,10 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
         placements.extend(crate::level_208::exit(name).map(str::to_owned));
         // Level 208's way down to Setup_002's trigger (openspec AS.406).
         placements.extend(crate::level_208::down(name).map(str::to_owned));
+        // The Ice Chompy's freeze crystal on 208 (openspec AS.432).
+        placements.extend(crate::level_208::freeze(name).map(str::to_owned));
+        // Level 208's first beam puzzle (openspec AS.431).
+        placements.extend(crate::level_208::beam(name).map(str::to_owned));
     }
     // Level 201's own scripts, by their path under its folder (openspec
     // AU.53).

@@ -227,17 +227,17 @@ fn a_zone_it_cant_place_is_refused() {
         "an atmosphere macro inside a block"
     );
 
-    // A switch in the STARTUP that adds the zones.
+    // A zone removed in the STARTUP that adds the zones.
     let mut b = IgzBuilder::new();
     let mut w = Writer::new(&mut b);
     let add = w.op(Class::DefineMacro, ADD_ZONE);
-    let switch = w.op(Class::DefineMacro, OTHER_MACROS[1]);
+    let remove = w.op(Class::DefineMacro, OTHER_MACROS[0]);
     w.script(
         SCRIPT,
         |w| {
             write_call(w, add, &ZoneCall::sample(0, 1));
             let zero = w.int(0);
-            w.call(switch, &[("to zone ID", zero)]);
+            w.call(remove, &[("zone ID", zero)]);
         },
         |_| {},
         |_| {},
@@ -360,4 +360,83 @@ fn no_zones_is_no_zones() {
     Writer::new(&mut b);
     let bytes = b.build();
     assert!(read(&bytes).unwrap().zones.is_empty());
+}
+
+/// How a switch call writes its forced zones in [`switch_level`].
+#[derive(Clone, Copy)]
+enum Forced {
+    Neither,
+    From,
+}
+
+/// A definition adding zones 0 and 3, then switching to `to` with a
+/// transition of `time` s, its forced zones as `forced` says, and a
+/// parameter the macro doesn't have when `stranger`.
+fn switch_level(to: i32, time: f32, forced: Forced, stranger: bool) -> Vec<u8> {
+    let mut b = IgzBuilder::new();
+    let mut w = Writer::new(&mut b);
+    let add = w.op(Class::DefineMacro, ADD_ZONE);
+    let switch = w.op(Class::DefineMacro, SWITCH_ZONE);
+    w.script(
+        SCRIPT,
+        |w| {
+            write_call(w, add, &ZoneCall::sample(0, 1));
+            write_call(w, add, &ZoneCall::sample(3, 2));
+            let to = w.int(to);
+            let time = w.float(time);
+            let modify = w.int(0);
+            let null = w.reference(&[El::Member("abstractscriptgroup", "null")], None);
+            let from = match forced {
+                Forced::Neither => w.reference(&[El::Member("abstractscriptgroup", "null")], None),
+                Forced::From => w.reference(&[El::Member("system", "player 1")], None),
+            };
+            let to_zone = w.reference(&[El::Member("abstractscriptgroup", "null")], None);
+            let mut args = vec![
+                ("to zone ID", to),
+                (switch_params::TRANSITION, time),
+                (switch_params::MODIFY_TRIGGERS, modify),
+                (switch_params::FORCE_FROM, from),
+                (switch_params::FORCE_TO, to_zone),
+                (switch_params::RETURN_TRIGGER, null),
+            ];
+            if stranger {
+                let one = w.int(1);
+                args.push(("blend mode", one));
+            }
+            w.call(switch, &args);
+        },
+        |_| {},
+        |_| {},
+    );
+    b.build()
+}
+
+/// openspec AS.23: a switch in the definition's STARTUP (level 203's, after
+/// its zone calls) is the zone the level starts in, with no transition or
+/// with one; a forced zone, a parameter the macro doesn't have or an id no
+/// zone has is refused.
+#[test]
+fn a_switch_in_the_definitions_startup_is_the_zone_it_starts_in() {
+    for time in [0.0, 1.5] {
+        let bytes = switch_level(3, time, Forced::Neither, false);
+        let a = read(&bytes).unwrap();
+        assert_eq!(a.zones.len(), 2);
+        assert_eq!(a.start_zone().map(|z| z.id), Some(3), "{time}");
+        assert_eq!(
+            got(a.start_zone().unwrap()),
+            expected(&ZoneCall::sample(3, 2))
+        );
+    }
+    let bytes = switch_level(0, 0.0, Forced::Neither, false);
+    assert_eq!(read(&bytes).unwrap().start_zone().map(|z| z.id), Some(0));
+    let bytes = switch_level(7, 0.0, Forced::Neither, false);
+    let e = read(&bytes).unwrap_err();
+    assert_eq!(
+        (e.field, e.kind),
+        (switch_params::TO_ZONE, ErrorKind::Missing)
+    );
+    let bytes = switch_level(3, 0.0, Forced::From, false);
+    assert_eq!(read(&bytes).unwrap_err().field, "a forced zone");
+    let bytes = switch_level(3, 0.0, Forced::Neither, true);
+    assert_eq!(read(&bytes).unwrap_err().field, "_varName");
 }
