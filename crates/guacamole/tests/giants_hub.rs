@@ -232,11 +232,70 @@ fn hub_stage_1s_sky_is_its_controllers_skydome() {
 /// The pads with the talk button (△, the walking pad's fourth action) down
 /// or up, the stick at rest.
 fn talk_button(run: &mut Run, down: bool) {
+    // A kid mashing his first attack through the talk (openspec AS.670's
+    // review): two steps down of every eight, when this thread asks it.
+    let mashed = MASH_ATTACK.get() && run.steps % 8 < 2;
     run.bench.pads[0] = guacamole::script_engine::Pad {
         stick: guac_motion::stick::Stick::new(0.0, 0.0),
-        actions: [false, false, false, down],
+        actions: [mashed, false, false, down],
         connected: true,
     };
+}
+
+thread_local! {
+    /// This test thread's talks mash the first attack ([`talk_button`]).
+    static MASH_ATTACK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// openspec AS.670, narrowed at its review: a talk's question is the TV's
+/// to answer even while a kid mashes his first attack (the pad's bottom
+/// face, the scripts' `accept button`) through it. Served to every script,
+/// the cutscene menu's own read of accept took a mashed press the step its
+/// question came up, before the TV's yes-or-no held the pads: Auric's and
+/// Hatterson's talks ended with their questions never asked of the TV.
+/// Served to the theatrical reports alone, each asks its one question and
+/// takes the TV's answer. A minute or so.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_mashed_attack_leaves_a_talks_question_to_the_tv() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let (stage, intro) = STAGES[0];
+    let (mut run, _found) = run_on_level(Mode::Play, stage, setup(&[]));
+    let mut stops = Vec::new();
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap());
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    let intro = run.placement(intro);
+    while !run.vm.removed(intro) {
+        assert!(run.steps < 3600, "the intro's end");
+        stops.extend(run.step_play().unwrap());
+    }
+    for _ in 0..30 {
+        stops.extend(run.step_play().unwrap());
+    }
+    MASH_ATTACK.set(true);
+    for name in ["Auric", "Hatterson"] {
+        let at = run.at(name);
+        let t = talk(
+            &mut run,
+            &mut stops,
+            at + guac_motion::seam::Vec3::new(1.5, 0.5, 1.5),
+            |_| true,
+        );
+        println!("{name}, attack mashed: {t:?}");
+        assert!(t.ended.is_some(), "{name}'s talk ends: {t:?}");
+        assert_eq!(t.asked.len(), 1, "{name}'s question is the TV's: {t:?}");
+    }
+    MASH_ATTACK.set(false);
+    assert!(stops.is_empty(), "{stops:?}");
+    println!(
+        "{:.1} s, {} steps, load at end: {}",
+        started.elapsed().as_secs_f64(),
+        run.steps,
+        load()
+    );
 }
 
 /// A question asked on a talk: its string's name (the dialogue's id; its

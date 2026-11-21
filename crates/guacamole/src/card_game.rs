@@ -845,7 +845,7 @@ enum LootStage {
 }
 
 /// The reporters' script.
-const REPORTER: &str = "UI_TheatricalReporter";
+pub(crate) const REPORTER: &str = "UI_TheatricalReporter";
 
 /// The pirate behaviours in which his loot's reports are up.
 const LOOT_WAITS: [&str; 3] = [
