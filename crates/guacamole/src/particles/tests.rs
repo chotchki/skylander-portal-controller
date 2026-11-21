@@ -435,6 +435,30 @@ fn a_ribbon_follows_its_emitter_tapering_to_its_tail() {
     assert!(!s.live());
 }
 
+/// openspec AS.700: a lightning's material repeats its texture along its
+/// length, the scale and scroll it carries needing it; a sprite's and a
+/// ribbon's keep the sampler as stored.
+#[test]
+fn a_lightnings_texture_repeats_along_it() {
+    let bolt = Lightning {
+        taper: 0,
+        segments: 1,
+        scroll_uv_percent: 300.0,
+        scale_uv_percent: 700.0,
+        width: 1.1,
+        colour: [170, 32, 255, 255],
+        chaos_percent: 5.0,
+        chaos_constrained: true,
+        freeze: false,
+    };
+    let wraps = |kind: Kind| {
+        let m = material("e", 0, &generator(kind)).unwrap();
+        (m.textures[0].sampler.wrap_u, m.textures[0].sampler.wrap_v)
+    };
+    assert_eq!(wraps(Kind::Lightning(bolt)), (Wrap::Repeat, Wrap::Clamp));
+    assert_eq!(wraps(Kind::Sprite(stream())), (Wrap::Clamp, Wrap::Clamp));
+}
+
 /// openspec AS.700: a lightning lays its pieces from its generator to the
 /// target its clone's scripts set, its middle points strayed within its
 /// chaos and drawn anew each frame (held where it freezes), the width the

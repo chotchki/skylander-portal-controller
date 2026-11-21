@@ -675,7 +675,7 @@ pub fn material(emitter: &str, k: usize, g: &Generator) -> Option<model::Materia
             role: TextureRole::Layer1ColorMap,
             texture: t.texture.clone(),
             image: t.image.clone(),
-            sampler: t.sampler,
+            sampler: along(g, t.sampler),
         }],
         params: Params {
             // Below zero: the texture's own alpha.
@@ -702,6 +702,20 @@ pub fn material(emitter: &str, k: usize, g: &Generator) -> Option<model::Materia
         scrolls: Vec::new(),
         tracks: Vec::new(),
     })
+}
+
+/// A generator's sampler as it draws: a lightning repeats its texture along
+/// its length (openspec AS.700: level 208's beam scales it 700 % along and
+/// scrolls it 300 % a second, which a clamped edge would draw as nothing;
+/// our reading, stand-in ledger `lightning`), any other as stored.
+fn along(g: &Generator, sampler: guac_ir::model::Sampler) -> guac_ir::model::Sampler {
+    match g.kind {
+        Kind::Lightning(_) => guac_ir::model::Sampler {
+            wrap_u: guac_ir::model::Wrap::Repeat,
+            ..sampler
+        },
+        _ => sampler,
+    }
 }
 
 /// One triangle with the shape every particle segment has (one UV set,
