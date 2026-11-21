@@ -80,6 +80,15 @@ const SURFACE_SHIFT: u8 = 2;
 /// What a member answers, by what it reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Member {
+    /// A level's lightning emitter's generators and their lightning, its
+    /// width, tint and target (openspec AS.700, [`crate::lightning`]), and
+    /// what else a generator holds, which answers nothing.
+    Generators,
+    GeneratorLightning,
+    LightningWidth,
+    LightningTint,
+    LightningTarget,
+    GeneratorUnanswered,
     // AH.16's: the console and the game, placements' numbers, the pads and
     // the portal.
     Platform,
@@ -310,6 +319,18 @@ impl Member {
         add("system", "game achievement", Member::Achievement);
         add("system", "save state", Member::SaveState);
         add("placement", "deactivation buffer", Member::Buffer);
+        add("particleinfo", "generators", Member::Generators);
+        add("generatorinfo", "lightning", Member::GeneratorLightning);
+        add("segmentgenerator", "segment width", Member::LightningWidth);
+        add(
+            crate::lightning::TINT.0,
+            crate::lightning::TINT.1,
+            Member::LightningTint,
+        );
+        add("lightningfields", "target", Member::LightningTarget);
+        for (ns, name, _) in crate::lightning::UNANSWERED {
+            add(ns, name, Member::GeneratorUnanswered);
+        }
         add("abstractplacement", "id", Member::Id);
         add("spritematrixmeasurement", "id", Member::Id);
         add("actorinfo", "waypoints", Member::Waypoints);
@@ -1558,6 +1579,39 @@ impl ScriptWorld {
                 let h = actor.ok_or(HostFault::Nothing)?;
                 self.actors.get(&h).ok_or(HostFault::Nothing)?.attach
             }
+            // A level's lightning (openspec AS.700): its generator and that
+            // generator's lightning read as the emitter itself.
+            Member::GeneratorLightning => {
+                let r = recv.ok_or(HostFault::Nothing)?;
+                self.lightning_of(r).ok_or(HostFault::Nothing)?;
+                r
+            }
+            Member::LightningWidth => {
+                let r = recv.ok_or(HostFault::Nothing)?;
+                let (_, t) = self.lightning_of(r).ok_or(HostFault::Nothing)?;
+                let set = self
+                    .handle(r)
+                    .and_then(|h| self.beams.get(&h))
+                    .and_then(|b| b.width_feet);
+                Value::Float(set.unwrap_or_else(|| t.width_feet()))
+            }
+            Member::LightningTint => {
+                let r = recv.ok_or(HostFault::Nothing)?;
+                let (_, t) = self.lightning_of(r).ok_or(HostFault::Nothing)?;
+                let set = self
+                    .handle(r)
+                    .and_then(|h| self.beams.get(&h))
+                    .and_then(|b| b.tint);
+                Value::Color(set.unwrap_or_else(|| u32::from_be_bytes(t.tint)))
+            }
+            Member::LightningTarget => {
+                let r = recv.ok_or(HostFault::Nothing)?;
+                self.lightning_of(r).ok_or(HostFault::Nothing)?;
+                self.handle(r)
+                    .and_then(|h| self.beams.get(&h))
+                    .map_or(Value::Null, |b| b.target)
+            }
+            Member::Generators | Member::GeneratorUnanswered => return Err(HostFault::Nothing),
             // A node's root is the actor it's on (openspec AS.47: a scene's
             // actor attached to the camera rig's node reads the rig by it);
             // an actor named as a node is its own; nothing, nothing.
@@ -2304,6 +2358,25 @@ impl ScriptWorld {
                     .ok_or(HostFault::Nothing)?
                     .controller = v;
             }
+            // What a script writes of a lightning clone's beam (openspec
+            // AS.700); a template's own values stay as its file has them.
+            Member::LightningWidth | Member::LightningTint | Member::LightningTarget => {
+                let r = recv.ok_or(HostFault::Nothing)?;
+                self.lightning_of(r).ok_or(HostFault::Nothing)?;
+                let h = actor.ok_or(HostFault::Nothing)?;
+                let beam = self.beams.entry(h).or_default();
+                match m {
+                    Member::LightningWidth => beam.width_feet = Some(float(v)?),
+                    Member::LightningTint => match v {
+                        Value::Color(c) => beam.tint = Some(c),
+                        _ => return Err(HostFault::Nothing),
+                    },
+                    _ => beam.target = v,
+                }
+            }
+            Member::Generators | Member::GeneratorLightning | Member::GeneratorUnanswered => {
+                return Err(HostFault::Nothing);
+            }
             Member::AttachNode => {
                 let h = actor.ok_or(HostFault::Nothing)?;
                 // An actor's own ground isn't something it hangs from (where
@@ -2547,6 +2620,13 @@ impl ScriptWorld {
     ) -> Result<Vec<Value>, HostFault> {
         let recv = at.receiver;
         Ok(match m {
+            // A level's lightning emitter's one generator, read as itself
+            // (openspec AS.700); any other emitter's, or anything's, none.
+            Member::Generators => {
+                let r = recv.ok_or(HostFault::Nothing)?;
+                self.lightning_of(r).ok_or(HostFault::Nothing)?;
+                vec![r]
+            }
             Member::AttachNodes => {
                 let h = self.actor_of(recv).ok_or(HostFault::Nothing)?;
                 (0..self.node_count(h))

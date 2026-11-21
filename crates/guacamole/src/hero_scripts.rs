@@ -415,6 +415,29 @@ fn origin_nodes(source: &ScriptSource) -> HashMap<String, Vec<guacamole::script_
     }
 }
 
+/// The level's lightning emitters off its particles part (openspec AS.700,
+/// `guacamole::lightning::templates`), linked as the level's unit (the third
+/// the placements run in); none where the part doesn't read.
+fn lightning_templates(
+    source: &ScriptSource,
+) -> HashMap<guac_script::Obj, guacamole::lightning::Template> {
+    let (Some((dir, ir)), Some(&unit)) = (source.extract(), source.order.get(2)) else {
+        return HashMap::new();
+    };
+    let path = dir.join(guac_extract::levels::part_path(
+        *ir,
+        source.level(),
+        guac_extract::levels::PARTICLES,
+    ));
+    match crate::turntable::read_ir::<guac_ir::particle::LevelEmitters>(*ir, &path) {
+        Ok(part) => guacamole::lightning::templates(unit, &part),
+        Err(why) => {
+            warn!(reason = %why, "the level's particles didn't read: no lightning draws");
+            HashMap::new()
+        }
+    }
+}
+
 pub(crate) fn install(world: &mut World, part: Part) {
     let source = ScriptSource {
         program: part.program,
@@ -544,6 +567,8 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     }
     // Where a static prop's attach nodes stand (the au-chests review).
     script_world.set_origin_nodes(origin_nodes(source));
+    // The level's lightning emitters (openspec AS.700).
+    script_world.set_lightning(lightning_templates(source));
     // What a script's request is held against (openspec AS.15), and whose
     // own people its placements are (AS.176).
     script_world.set_levels(source.levels.clone());

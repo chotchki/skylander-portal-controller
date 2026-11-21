@@ -590,6 +590,7 @@ pub fn walk_layouts(bytes: &[u8]) -> Result<(), FormatError> {
         let _ = GeneratorInfoList::read(&file, i);
         let _ = GeneratorInfo::read(&file, i);
         let _ = RibbonGenerator::read(&file, i);
+        let _ = LightningGenerator::read(&file, i);
         let _ = GenerationFields::read(&file, i);
         let _ = MovementFields::read(&file, i);
         let _ = AppearanceFields::read(&file, i);

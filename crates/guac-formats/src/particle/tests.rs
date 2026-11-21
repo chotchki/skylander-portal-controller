@@ -29,13 +29,11 @@ fn an_emitter_reads_its_generators_in_list_order_and_keeps_the_rest_unread() {
     let kinds: Vec<usize> = e.generators.iter().map(Generator::index).collect();
     assert_eq!(
         kinds,
-        [s.sprites[0], s.sprites[1], s.ribbon].map(|l| index(&igz, l))
+        [s.sprites[0], s.sprites[1], s.ribbon, s.lightning].map(|l| index(&igz, l))
     );
-    assert_eq!(
-        e.unread,
-        vec![(index(&igz, s.lightning), "LightningGenerator")]
-    );
+    assert_eq!(e.unread, vec![(index(&igz, s.segment), "SegmentGenerator")]);
     assert!(matches!(e.generators[2], Generator::Ribbon(_)));
+    assert!(matches!(e.generators[3], Generator::Lightning(_)));
 }
 
 #[test]
@@ -175,6 +173,32 @@ fn a_ribbon_reads_its_segment_and_ribbon_fields() {
     assert_eq!(i.tint_color, [0xFF, 0x66, 0x00, 0xFF]);
     assert_eq!(i.end_color, [0xFF, 0x9D, 0x00, 0x2D]);
     assert_eq!(i.segment_granularity, 100.0);
+}
+
+/// openspec AS.700: a lightning strip's segment fields and its own.
+#[test]
+fn a_lightning_reads_its_segment_and_lightning_fields() {
+    let s = sample();
+    let igz = Igz::parse(&s.bytes).unwrap();
+    let e = emitter(&igz, index(&igz, s.emitter)).unwrap();
+    let Generator::Lightning(l) = &e.generators[3] else {
+        panic!("{:?}", e.generators[3]);
+    };
+    let i = l.info;
+    assert_eq!(i.vfx.name, Some("bolt"));
+    assert_eq!(i.vfx.blend_mode(), Some(BlendMode::Add));
+    assert_eq!((i.taper(), i.segment_count()), (Taper::Both, 12));
+    assert_eq!(
+        (i.scroll_uv_percent, i.scale_uv_percent, i.segment_width),
+        (50.0, 200.0, 0.6096)
+    );
+    assert_eq!(i.tint_color, [0x40, 0xC0, 0xFF, 0xFF]);
+    assert_eq!(i.chaos_percent, 15.0);
+    assert_eq!((i.chaos_constrained, i.freeze_animation), (true, false));
+    assert_eq!(
+        l.texture.unwrap().path,
+        Some("Particles/textures/spark.png")
+    );
 }
 
 #[test]

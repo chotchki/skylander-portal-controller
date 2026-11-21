@@ -1254,6 +1254,11 @@ pub struct Setup {
     /// 208's beam pivot's emitter, whose ray then meets the ground; openspec
     /// AS.431).
     pub static_nodes: bool,
+    /// The level's lightning emitters off its particles part, as the TV's
+    /// install sets them (`hero_scripts::lightning_templates`, openspec
+    /// AS.700): without it a reflect beam's end and width written through
+    /// `particleinfo.generators` reach nothing, as before.
+    pub lightning: bool,
     /// A creature staged by name as the TV's stage stages one (openspec
     /// AS.680, `guacamole::staging`): listed and walked, nothing else set.
     pub stage: Option<&'static str>,
@@ -1627,6 +1632,11 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
             .expect("the level's nodes")
             .ir;
         world.set_origin_nodes(guacamole::scripts::origin_nodes(&part));
+    }
+    if setup.lightning {
+        let part =
+            guac_extract::particles::level_emitters(&igzs[LEVEL as usize], level, identity()).ir;
+        world.set_lightning(guacamole::lightning::templates(LEVEL, &part));
     }
     let template = match &walker {
         Some(w) => w.template.expect("his template"),

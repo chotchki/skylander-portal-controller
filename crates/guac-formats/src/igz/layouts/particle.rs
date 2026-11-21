@@ -518,6 +518,71 @@ impl<'a> Layout<'a> for RibbonGenerator<'a> {
     }
 }
 
+/// `LightningGenerator`: size 0x68, through `LightningFields` and
+/// `SegmentGenerator` (openspec AS.700): a jagged strip from its emitter to
+/// a target, which the scripts set on a clone (`lightningfields.target`);
+/// the file's attach node is the template's own.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LightningGenerator<'a> {
+    pub vfx: VfxGenerator<'a>,
+    /// Storage for the taper, version and segment count bitfields.
+    pub segment_properties: u32,
+    pub scroll_uv_percent: f32,
+    pub scale_uv_percent: f32,
+    /// Metres.
+    pub segment_width: f32,
+    pub tint_color: Rgba8,
+    /// How far its middle points stray off the straight line, percent of
+    /// its length.
+    pub chaos_percent: f32,
+    pub chaos_constrained: bool,
+    pub freeze_animation: bool,
+    pub attach_node: ObjectRef<'a>,
+    pub attach_node_owner: ObjectRef<'a>,
+}
+
+impl LightningGenerator<'_> {
+    pub const SEGMENT_PROPERTIES: u32 = 0x44;
+    pub const SCROLL_UV_PERCENT: u32 = 0x48;
+    pub const SCALE_UV_PERCENT: u32 = 0x4C;
+    pub const SEGMENT_WIDTH: u32 = 0x50;
+    pub const TINT_COLOR: u32 = 0x54;
+    pub const CHAOS_PERCENT: u32 = 0x58;
+    pub const CHAOS_CONSTRAINED: u32 = 0x5C;
+    pub const FREEZE_ANIMATION: u32 = 0x5D;
+    pub const ATTACH_NODE: u32 = 0x60;
+    pub const ATTACH_NODE_OWNER: u32 = 0x64;
+
+    pub fn taper(&self) -> Taper {
+        Taper::of(self.segment_properties)
+    }
+
+    /// `_segmentCount`: bits 3-18.
+    pub fn segment_count(&self) -> u32 {
+        (self.segment_properties >> 3) & 0xFFFF
+    }
+}
+
+impl<'a> Layout<'a> for LightningGenerator<'a> {
+    const TYPE: &'static str = "LightningGenerator";
+
+    fn fields(v: &mut View<'_, 'a>) -> Result<Self, FormatError> {
+        Ok(Self {
+            vfx: VfxGenerator::fields(v)?,
+            segment_properties: v.u32(Self::SEGMENT_PROPERTIES, "_properties")?,
+            scroll_uv_percent: v.f32(Self::SCROLL_UV_PERCENT, "_scrollUVPercent")?,
+            scale_uv_percent: v.f32(Self::SCALE_UV_PERCENT, "_scaleUVPercent")?,
+            segment_width: v.f32(Self::SEGMENT_WIDTH, "_segmentWidth")?,
+            tint_color: v.u32(Self::TINT_COLOR, "_tintColor")?.to_be_bytes(),
+            chaos_percent: v.f32(Self::CHAOS_PERCENT, "_chaosPercent")?,
+            chaos_constrained: v.bool(Self::CHAOS_CONSTRAINED, "_chaosConstrained")?,
+            freeze_animation: v.bool(Self::FREEZE_ANIMATION, "_freezeAnimation")?,
+            attach_node: v.object_ref(Self::ATTACH_NODE, "_attachNode")?,
+            attach_node_owner: v.object_ref(Self::ATTACH_NODE_OWNER, "_attachNodeOwner")?,
+        })
+    }
+}
+
 /// `GeneratorInfoList`: an emitter's generators in list order, each kept by
 /// its object (a null slot as `None`); their kinds are the reader's to
 /// tell apart.

@@ -131,6 +131,21 @@ pub(crate) struct ParticleReport {
     /// stands and where its clone's actor is, metres (openspec AS.626: a
     /// system that doesn't follow its clone shows here).
     pub places: Vec<SystemPlace>,
+    /// Each lightning drawn now (openspec AS.700: level 208's reflect
+    /// beams): its emitter, its generator's place and the end its clone's
+    /// scripts set, metres, its width where they set one, and how many
+    /// quads it laid.
+    pub beams: Vec<BeamDrawn>,
+}
+
+/// One lightning as `/api/_test/tv` reports it (openspec AS.700).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub(crate) struct BeamDrawn {
+    pub name: String,
+    pub from: [f32; 3],
+    pub to: [f32; 3],
+    pub width: Option<f32>,
+    pub quads: usize,
 }
 
 /// One clone's system as `/api/_test/tv` reports where it is.
@@ -474,12 +489,22 @@ pub(crate) fn step_systems(
                 system.on = placed.stands.get(i).copied().unwrap_or(false);
             }
         }
+        // A lightning's end and width, as its clone's scripts set them
+        // (openspec AS.700).
+        let beam = match system.source {
+            Source::Clone(clone) => world.as_deref().and_then(|w| w.beam_end(clone.to_bits())),
+            Source::Placed(_) => None,
+        };
         for (k, (state, g)) in system
             .generators
             .iter_mut()
             .zip(&system.emitter.generators)
             .enumerate()
         {
+            if matches!(g.kind, guac_ir::particle::Kind::Lightning(_)) {
+                state.target = beam.map(|(end, _)| Vec3::from_array(end));
+                state.width = beam.and_then(|(_, w)| w);
+            }
             let was_off_for = state.off_for;
             state.step(g, system.place, system.on, dt, &mut rng.0);
             // Where the one-life bound stops a stream that would have gone
@@ -578,6 +603,18 @@ pub(crate) fn step_systems(
                 .map(|seg| faded(seg, alpha));
             let shown = match laid.as_ref().map(static_mesh) {
                 Some(Ok(m)) => {
+                    if let (guac_ir::particle::Kind::Lightning(_), Some((end, width))) =
+                        (&g.kind, beam)
+                        && now.beams.len() < 16
+                    {
+                        now.beams.push(BeamDrawn {
+                            name: system.name.clone(),
+                            from: system.place.of(g).at.to_array(),
+                            to: end,
+                            width,
+                            quads: m.count_vertices() / 4,
+                        });
+                    }
                     quads += m.count_vertices() / 4;
                     let _ = meshes.insert(handle.id(), m);
                     true

@@ -35,6 +35,7 @@ fn setup() -> Setup {
         sounds: true,
         posed_rigs: true,
         static_nodes: true,
+        lightning: true,
         ..Setup::default()
     }
 }
@@ -1025,6 +1026,31 @@ fn level_208s_way_down_to_setup_002s_trigger_by_the_stick() {
         melt.log
     );
     assert!(melt.melted.is_some(), "the block melted: {:?}", melt.log);
+    // Both beams drawn as the block melts (openspec AS.700): the start's to
+    // the pivot and the pivot's to the block, each with the width its
+    // scripts gave it, the template's.
+    println!("the beams as the block melts {:?}", melt.beams);
+    let block_at = run.at(ICE_BLOCK);
+    let pivot_at = run.at(PIVOT);
+    assert_eq!(melt.beams.len(), 2, "{:?}", melt.beams);
+    let to_block = melt
+        .beams
+        .iter()
+        .filter(|(_, end, _)| flat(*end, block_at) < 3.0)
+        .count();
+    let to_pivot = melt
+        .beams
+        .iter()
+        .filter(|(_, end, _)| flat(*end, pivot_at) < 3.0)
+        .count();
+    assert_eq!((to_block, to_pivot), (1, 1), "{:?}", melt.beams);
+    assert!(
+        melt.beams
+            .iter()
+            .all(|(from, end, w)| from.distance(*end) > 3.0 && w.is_some_and(|w| w > 0.0)),
+        "{:?}",
+        melt.beams
+    );
     assert!((1..=8).contains(&melt.presses), "{} presses", melt.presses);
     // The pivot's crystal hangs on its model's last node, over the pivot,
     // not at it (AS.431: a set of 32 put `last` past the model's list).
@@ -1086,6 +1112,25 @@ struct Beam {
     powered: Option<u32>,
     /// The step the block was off.
     melted: Option<u32>,
+    /// Each reflect beam's clone, its end and its width (metres) as its
+    /// scripts set them at the step the block was first powered (openspec
+    /// AS.700).
+    beams: Vec<(Vec3, Vec3, Option<f32>)>,
+}
+
+/// Every reflect beam in play whose scripts set it an end: where its clone
+/// stands, where its end does and its width in metres (openspec AS.700).
+fn beams(run: &Run) -> Vec<(Vec3, Vec3, Option<f32>)> {
+    run.world
+        .clones()
+        .into_iter()
+        .filter(|h| run.world.emitter_of(*h) == Some("Reflect_Beam"))
+        .filter_map(|h| {
+            let a = run.world.actor(h).filter(|a| !a.removed)?;
+            let (end, width) = run.world.beam_end(h)?;
+            Some((a.position, Vec3::from_array(end), width))
+        })
+        .collect()
 }
 
 /// To the pivot's switch (a clone at its first waypoint) across the
@@ -1112,6 +1157,7 @@ fn turn_the_beam(run: &mut Run, stops: &mut Vec<String>, cap: u32) -> Beam {
         }
         if beam.powered.is_none() && behaviour(run, ICE_BLOCK) == "melt" {
             beam.powered = Some(run.steps);
+            beam.beams = beams(run);
         }
         if let Some(cs) = cutscene_name(run) {
             if beam.scenes.last().is_none_or(|(_, n)| *n != cs) {

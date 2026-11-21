@@ -64,6 +64,7 @@ fn kinds(e: &Emitters, name: &str) -> Vec<&'static str> {
         .map(|g| match g.kind {
             Kind::Sprite(_) => "sprite",
             Kind::Ribbon(_) => "ribbon",
+            Kind::Lightning(_) => "lightning",
         })
         .collect()
 }
@@ -228,6 +229,7 @@ struct Count {
     scripts: usize,
     sprites: usize,
     ribbons: usize,
+    lightnings: usize,
     unread: usize,
     untextured: usize,
     knockout: usize,
@@ -254,6 +256,7 @@ impl Count {
                 match g.kind {
                     Kind::Sprite(_) => c.sprites += 1,
                     Kind::Ribbon(_) => c.ribbons += 1,
+                    Kind::Lightning(_) => c.lightnings += 1,
                 }
                 c.untextured += usize::from(g.texture.is_none());
                 c.knockout += usize::from(g.blend == Blend::Knockout);
@@ -270,6 +273,7 @@ impl Count {
         self.scripts += o.scripts;
         self.sprites += o.sprites;
         self.ribbons += o.ribbons;
+        self.lightnings += o.lightnings;
         self.unread += o.unread;
         self.untextured += o.untextured;
         self.knockout += o.knockout;
@@ -341,14 +345,14 @@ fn every_levels_own_emitters_read_and_land_with_the_level() {
     // files, 15,383 placed emitters, every one reading; 12,986 templates,
     // 2,343 ranged and 54 without a range, 29 of those with a buffer,
     // waiting on their scripts; 36,368 sprite generators, 1,056 ribbons,
-    // 558 lightning generators kept by name.
+    // 558 lightning generators, kept by name until AS.700 read them.
     assert_eq!(names.len(), 143);
     assert_eq!((total.emitters, total.refused), (15_383, 0));
     assert_eq!(total.templates, 12_986);
     assert_eq!((total.standing, total.scripts), (2_343 + 25, 29));
     assert_eq!(
-        (total.sprites, total.ribbons, total.unread),
-        (36_368, 1_056, 558)
+        (total.sprites, total.ribbons, total.lightnings, total.unread),
+        (36_368, 1_056, 558, 0)
     );
     let count = |name: &str| table[name].clone();
     let ch1 = count("level_213_tutotial");

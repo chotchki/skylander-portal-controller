@@ -55,7 +55,8 @@ pub use ops::{
 };
 pub use particle::{
     AppearanceFields, BlendMode, GenerationFields, GeneratorInfo, GeneratorInfoList,
-    MovementFields, RibbonGenerator, SpawnVolume, Taper, VelocityDirection, VfxGenerator,
+    LightningGenerator, MovementFields, RibbonGenerator, SpawnVolume, Taper, VelocityDirection,
+    VfxGenerator,
 };
 pub use placement::{
     ActorInfo, ActorParameters, ActorWaypoint, ActorWaypointList, BoneAttachInfo,
@@ -198,6 +199,9 @@ pub const TYPES: &[TypeDef] = &[
     def("SegmentGenerator", "AbstractVFXGenerator", 0x58),
     def("RibbonFields", "SegmentGenerator", 0x60),
     def("RibbonGenerator", "RibbonFields", 0x60),
+    // A lightning strip (openspec AS.700): the reflect beams' generator.
+    def("LightningFields", "SegmentGenerator", 0x68),
+    def("LightningGenerator", "LightningFields", 0x68),
     def("GeneratorGenerationFields", "tfbScriptObject", 0x34),
     def("GeneratorMovementFields", "tfbScriptObject", 0x4C),
     def("GeneratorAppearanceFields", "tfbScriptObject", 0x9C),

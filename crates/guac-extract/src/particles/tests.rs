@@ -24,13 +24,16 @@ fn every_emitter_lands_with_its_generators_and_each_texture_once() {
     let names: Vec<&str> = r.ir.emitters.iter().map(|e| e.name.as_str()).collect();
     assert_eq!(names, ["Trail", "Quiet"]);
     let trail = &r.ir.emitters[0];
-    assert_eq!(trail.unread, ["LightningGenerator"]);
+    // A spawn archive's lightning stays unread, after the kinds the reader
+    // doesn't read (openspec AS.700: the part reads as it did).
+    assert_eq!(trail.unread, ["SegmentGenerator", "LightningGenerator"]);
     let kinds: Vec<&str> = trail
         .generators
         .iter()
         .map(|g| match g.kind {
             Kind::Sprite(_) => "sprite",
             Kind::Ribbon(_) => "ribbon",
+            Kind::Lightning(_) => "lightning",
         })
         .collect();
     assert_eq!(kinds, ["sprite", "sprite", "ribbon"]);
@@ -80,7 +83,9 @@ fn every_emitter_lands_with_its_generators_and_each_texture_once() {
             kept += 1;
         }
     }
-    assert_eq!(kept, 3, "the trail's three textured generators");
+    // The reader reads the lightning too (openspec AS.700), its texture the
+    // sparks'.
+    assert_eq!(kept, 4, "the trail's four textured generators");
 }
 
 #[test]

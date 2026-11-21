@@ -8,15 +8,15 @@
 //!
 //! On the disc (AH.87's read of `character/009_eruptor.bld`): 26 emitters,
 //! every generator a `GeneratorInfo` or a `RibbonGenerator`, every one
-//! textured. A generator of another kind is kept by its object and type in
-//! [`Emitter::unread`], so a level whose emitters hold lightning still
-//! reads.
+//! textured. A `LightningGenerator` reads too (openspec AS.700: level 208's
+//! reflect beams). A generator of another kind is kept by its object and
+//! type in [`Emitter::unread`], so an emitter holding one still reads.
 
 use crate::igz::Igz;
 use crate::igz::layouts::{
     AlphaTextureUnitIdAttr, AnimatableTextureDataInfo, AppearanceFields, GenerationFields,
-    GeneratorInfo, GeneratorInfoList, Layout, MovementFields, ObjectRef, ParticleInfo,
-    RibbonGenerator, TextureAttr2, is_a,
+    GeneratorInfo, GeneratorInfoList, Layout, LightningGenerator, MovementFields, ObjectRef,
+    ParticleInfo, RibbonGenerator, TextureAttr2, is_a,
 };
 use crate::{ErrorKind, FormatError};
 
@@ -52,6 +52,7 @@ pub enum Generator<'a> {
     /// ribbon's size, and either is large beside a box.
     Sprite(Box<Sprite<'a>>),
     Ribbon(Box<Ribbon<'a>>),
+    Lightning(Box<Lightning<'a>>),
 }
 
 impl<'a> Generator<'a> {
@@ -59,6 +60,7 @@ impl<'a> Generator<'a> {
         match self {
             Generator::Sprite(s) => s.index,
             Generator::Ribbon(r) => r.index,
+            Generator::Lightning(l) => l.index,
         }
     }
 
@@ -66,6 +68,7 @@ impl<'a> Generator<'a> {
         match self {
             Generator::Sprite(s) => s.texture.as_ref(),
             Generator::Ribbon(r) => r.texture.as_ref(),
+            Generator::Lightning(l) => l.texture.as_ref(),
         }
     }
 }
@@ -87,6 +90,15 @@ pub struct Sprite<'a> {
 pub struct Ribbon<'a> {
     pub index: usize,
     pub info: RibbonGenerator<'a>,
+    pub texture: Option<Texture<'a>>,
+}
+
+/// A lightning strip (openspec AS.700): from its emitter to a target the
+/// scripts set, its middle points straying.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Lightning<'a> {
+    pub index: usize,
+    pub info: LightningGenerator<'a>,
     pub texture: Option<Texture<'a>>,
 }
 
@@ -185,6 +197,15 @@ pub fn emitter<'a>(igz: &Igz<'a>, index: usize) -> Result<Emitter<'a>, FormatErr
                 info,
                 texture,
             })));
+        } else if is_a(ty, LightningGenerator::TYPE) {
+            let info = LightningGenerator::read(igz, g)?;
+            let texture = info.vfx.texture_data.map(|d| texture(igz, d)).transpose()?;
+            out.generators
+                .push(Generator::Lightning(Box::new(Lightning {
+                    index: g,
+                    info,
+                    texture,
+                })));
         } else {
             out.unread.push((g, ty));
         }

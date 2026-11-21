@@ -1,7 +1,7 @@
 //! Synthetic emitters for tests and fuzz seeds (`test-fixtures`): one with
 //! two sprite generators and a ribbon (the shape of the disc's ball trail),
-//! two of them sharing a texture, plus a lightning generator the reader
-//! keeps unread; one with no generator list. Every field holds a value of
+//! two of them sharing a texture, a lightning strip (openspec AS.700) and a
+//! bare segment generator the reader keeps unread; one with no generator list. Every field holds a value of
 //! its own, written at the offsets AH.87's layouts give as literals, so a
 //! wrong reader constant shows.
 
@@ -25,8 +25,10 @@ pub struct Sample {
     pub records: [[Location; 3]; 2],
     /// A `RibbonGenerator` drawing "smoke" too.
     pub ribbon: Location,
-    /// A `LightningGenerator`, past the reader's kinds.
+    /// A `LightningGenerator` (openspec AS.700), last in the list.
     pub lightning: Location,
+    /// A bare `SegmentGenerator`, past the reader's kinds.
+    pub segment: Location,
     /// The two `AnimatableTextureDataInfo`s and their images.
     pub textures: [Location; 2],
     pub images: [Location; 2],
@@ -106,6 +108,7 @@ pub fn sample() -> Sample {
     });
     let ribbon = b.object(0, "RibbonGenerator", 0x60);
     let lightning = b.object(0, "LightningGenerator", 0x68);
+    let segment = b.object(0, "SegmentGenerator", 0x58);
     let blocks = b.section(0x10);
     let smoke = texture(&mut b, blocks, "Particles/textures/smoke.png", 0x11);
     let spark = texture(&mut b, blocks, "Particles/textures/spark.png", 0x22);
@@ -133,9 +136,10 @@ pub fn sample() -> Sample {
         blocks,
         &[
             Some(sprites[0]),
-            Some(lightning),
+            Some(segment),
             Some(sprites[1]),
             Some(ribbon),
+            Some(lightning),
         ],
     );
 
@@ -218,6 +222,15 @@ pub fn sample() -> Sample {
     );
     floats(&mut b, ribbon, 0x5C, &[100.0]);
 
+    // The lightning (openspec AS.700): added, taper both, 12 segments; its
+    // scroll, scale and width, its tint, its chaos, constrained, not frozen.
+    vfx(&mut b, lightning, "bolt", 0x02, 0.0, spark.0);
+    b.put_u32(at(lightning, 0x44), (12 << 3) | 3);
+    floats(&mut b, lightning, 0x48, &[50.0, 200.0, 0.6096]);
+    b.put_bytes(at(lightning, 0x54), &[0x40, 0xC0, 0xFF, 0xFF]);
+    floats(&mut b, lightning, 0x58, &[15.0]);
+    b.put_bytes(at(lightning, 0x5C), &[1, 0]);
+
     Sample {
         bytes: b.build(),
         emitter,
@@ -227,6 +240,7 @@ pub fn sample() -> Sample {
         records,
         ribbon,
         lightning,
+        segment,
         textures: [smoke.0, spark.0],
         images: [smoke.1, spark.1],
     }
