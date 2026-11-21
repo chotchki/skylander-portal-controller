@@ -2585,3 +2585,98 @@ fn a_specializations_parameter_reads_its_frame_while_it_calls_on() {
         "passed to its base"
     );
 }
+
+/// A reference parameter named `name` binding into `def`, at no position.
+fn reference_parameter(w: &mut Writer<'_>, name: &str, def: Location) -> Location {
+    let o = w.op(Class::MacroParameter, "parameter");
+    w.text(o, 0x1C, name);
+    w.class_word(o, 0x20, "ScriptReference");
+    w.word(o, 0x28, u32::MAX);
+    w.refer(o, 0x38, def);
+    o
+}
+
+#[test]
+fn a_host_members_packed_part_by_reference_is_written_through_to_the_host() {
+    // Variables, structures and sets (openspec AS.690): Sprocket's
+    // `111 - Slide Value` takes a clone's `placement.tint` alpha by
+    // reference and writes each slider value through `valuedereferencer`,
+    // which is how her turret fades in. The reference names the host's
+    // member's part: a write through it lands in the host's colour (the
+    // other bytes kept) and a read through it reads the host's anew.
+    let callee = std::cell::Cell::new(None);
+    let p = program(|w| {
+        frame(
+            w,
+            |_| {},
+            |_| {},
+            |w| {
+                // Fade(value in): value in := 200; got := value in.
+                let (at, d) = w.open(Class::DefineMacro, "Fade");
+                let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
+                let value = reference_parameter(w, "value in", d);
+                let none = w.reference(&[El::Member("abstractscriptgroup", "null")], None);
+                w.refer(value, 0x30, none);
+                w.push(value);
+                let enter = w.flow(Class::FlowMacro);
+                w.push(enter);
+                w.close(iface);
+                let v = w.int(200);
+                w.set(
+                    &[
+                        El::Local(value),
+                        El::Member("abstractscriptgroup", "valuedereferencer"),
+                    ],
+                    v,
+                );
+                let back = w.rhs(INT, &[El::Local(value)]);
+                w.set(&[El::Member("test", "got")], back);
+                w.end_block(at);
+                callee.set(Some(d));
+            },
+            |_| {},
+            |w| {
+                let d = callee.get().unwrap();
+                let bh = w.behaviour("idle");
+                let np = w.group(&[El::Local(d)], None);
+                let (call, o) = w.open(Class::UseMacro, "use macro");
+                w.refer(o, 0x1C, np);
+                let (iface, _) = w.open(Class::MacroInterface, "INTERFACE");
+                let value = reference_parameter(w, "value in", d);
+                let arg = w.reference(
+                    &[
+                        El::Member("optoplevelbehavior", "my"),
+                        El::Member("placement", "tint"),
+                        El::Member("colormeasurement", "alpha"),
+                    ],
+                    None,
+                );
+                w.refer(value, 0x30, arg);
+                w.push(value);
+                let enter = w.flow(Class::FlowMacro);
+                w.push(enter);
+                w.close(iface);
+                w.end_block(call);
+                w.end_block(bh);
+            },
+        );
+    });
+    let mut c = config(Mode::Strict, &["got"]);
+    c.members
+        .host("placement", "tint", MemberSpec::new(Kind::Color, 0.0, 0.0));
+    let mut vm = Vm::new(p, c);
+    let id = vm.add(HANDLE, "Turret", 0);
+    let tint = MemberId::named("placement", "tint");
+    let mut world = World::default();
+    world
+        .cells
+        .insert((Some(HANDLE), tint), Value::Color(0x8040_2000));
+    vm.tick(id, &mut world).unwrap_or_else(|h| panic!("{h}"));
+    assert_eq!(
+        world.cells.get(&(Some(HANDLE), tint)),
+        Some(&Value::Color(0x8040_20C8)),
+        "the alpha written into the host's tint, the colour kept: {:?}",
+        world.seen
+    );
+    assert_eq!(cell(&vm, "got"), Some(Value::Int(200)), "read back");
+}

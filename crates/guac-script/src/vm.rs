@@ -4656,7 +4656,16 @@ impl Vm {
         // reference, reads over 0).
         let bindable = match spot {
             Spot::Count(_) => true,
-            Spot::Packed { base, .. } => !matches!(base, Base::Member { cell: None, .. }),
+            // A host member's packed part (a clone's `placement.tint`'s
+            // alpha handed to a slide macro, openspec AS.690) is a place as
+            // the host's own number is: read and written through the host.
+            Spot::Packed {
+                base: Base::Member {
+                    cell: None, member, ..
+                },
+                ..
+            } => self.config.members.get(member).is_some(),
+            Spot::Packed { .. } => true,
             Spot::Member { member, .. } => self.config.members.get(member).is_some_and(|(s, _)| {
                 matches!(s.kind, Kind::Int | Kind::Float | Kind::Color | Kind::Screen)
             }),
@@ -5146,10 +5155,17 @@ impl Vm {
         }
     }
 
-    /// [`Vm::deref`], a bound host member read through the host.
+    /// [`Vm::deref`], a bound host member, or a packed part of one, read
+    /// through the host.
     fn deref_with(&mut self, v: Value, host: &mut dyn Host) -> Result<Value, Fault> {
         if let Value::Bound(b) = v
-            && let Some(&spot @ Spot::Member { cell: None, .. }) = self.bound.get(b as usize)
+            && let Some(
+                &spot @ (Spot::Member { cell: None, .. }
+                | Spot::Packed {
+                    base: Base::Member { cell: None, .. },
+                    ..
+                }),
+            ) = self.bound.get(b as usize)
         {
             let v = self.read(spot, host)?;
             return Ok(self.deref(v));

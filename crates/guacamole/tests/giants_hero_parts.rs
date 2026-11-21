@@ -550,3 +550,53 @@ fn every_fresh_part_is_one_his_scripts_hang() {
     );
     assert!(checked >= 5);
 }
+
+const SPROCKET: Character = Character {
+    archive: "character/111_turretmaster.bld",
+    load_file: "111_TurretMaster",
+    toy: 111,
+};
+
+/// Sprocket's turret fades in (openspec AS.690): her piece macro clones
+/// each piece at alpha 0 and hands its `placement.tint` alpha by reference
+/// to her own slide macro, which writes it up to 255 each step. Each of the
+/// four pieces is drawn (its alpha over 0) within a second of its spawn and
+/// reaches 255; before AS.690 the reference held a number of its own and
+/// every piece stayed at alpha 0 to its expiry.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn sprockets_turret_fades_in_through_her_slide() {
+    let mut run = joined_on_201(SPROCKET);
+    // Per piece: the step it was first seen, the first step its alpha read
+    // over 0, the first it read 255.
+    let mut seen: BTreeMap<String, (u32, Option<u32>, Option<u32>)> = BTreeMap::new();
+    for k in 0..400u32 {
+        play(&mut run, [false, k < 200, false, false]);
+        for c in run.world.clones() {
+            let name = run.world.name(c);
+            if !name.contains("Turret_00") || run.world.removed(c) {
+                continue;
+            }
+            let alpha = run.world.actor(c).unwrap().tint & 0xFF;
+            let e = seen.entry(name).or_insert((k, None, None));
+            if alpha > 0 && e.1.is_none() {
+                e.1 = Some(k);
+            }
+            if alpha == 0xFF && e.2.is_none() {
+                e.2 = Some(k);
+            }
+        }
+    }
+    println!("pieces (spawned, drawn, whole): {seen:?}");
+    for piece in ["Bottom", "Top", "Body", "Seat"] {
+        let (spawned, drawn, whole) = *seen
+            .get(&format!("111_Turret_00_{piece}"))
+            .unwrap_or_else(|| panic!("her turret's {piece} spawned: {seen:?}"));
+        let drawn = drawn.unwrap_or_else(|| panic!("{piece} drawn: {seen:?}"));
+        assert!(
+            drawn - spawned < 30,
+            "{piece} drawn within a second: {seen:?}"
+        );
+        assert!(whole.is_some(), "{piece} reaches 255: {seen:?}");
+    }
+}
