@@ -322,6 +322,10 @@ mod tests {
             }
             assert_eq!(river(other).count() + beam_2(other).count(), 0);
         }
+        // The river's wall and the push block's crystal by their own names.
+        for name in ["Wall_Spawner_Template(9)", "Snow_Push_Block_Art_Crystal"] {
+            assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+        }
         // 208's other walls and sets stay off until a kid's way reaches
         // them.
         for name in ["Wall_Spawner_Template(6)", "Reflect_Start(3)"] {
