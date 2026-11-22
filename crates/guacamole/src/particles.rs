@@ -564,7 +564,11 @@ pub fn segment(
         }
         Kind::Ribbon(r) => {
             let n = state.points.len();
-            let scale_u = r.scale_uv_percent / 100.0;
+            // v along it, scaled and scrolled, u across, as a lightning's
+            // (openspec AS.720): the disc's ribbon textures hold their
+            // cross-section along u (clear or dark at u's edges) and are even
+            // or fade to one end along v.
+            let scale_v = r.scale_uv_percent / 100.0;
             let scroll = r.scroll_uv_percent / 100.0 * state.clock;
             let place = |i: usize| {
                 let f = i as f32 / (n - 1).max(1) as f32;
@@ -593,11 +597,11 @@ pub fn segment(
                 let side = along.cross(view.eye - middle).normalize_or_zero();
                 let (fa, wa, ca) = place(i);
                 let (fb, wb, _) = place(i + 1);
-                let (ua, ub) = (fa * scale_u + scroll, fb * scale_u + scroll);
+                let (va, vb) = (fa * scale_v + scroll, fb * scale_v + scroll);
                 let (a, b) = (a - origin, b - origin);
                 quads.push(
                     [b - side * wb, a - side * wa, a + side * wa, b + side * wb],
-                    [[ub, 1.0], [ua, 1.0], [ua, 0.0], [ub, 0.0]],
+                    [[1.0, vb], [1.0, va], [0.0, va], [0.0, vb]],
                     ca,
                     view.eye - middle,
                 );
@@ -709,13 +713,14 @@ pub fn material(emitter: &str, k: usize, g: &Generator) -> Option<model::Materia
     })
 }
 
-/// A generator's sampler as it draws: a lightning repeats its texture along
-/// its length, its v (openspec AS.700: level 208's beam scales it 700 % along
-/// and scrolls it 300 % a second, which a clamped edge would draw as nothing;
-/// our reading, stand-in ledger `lightning`), any other as stored.
+/// A generator's sampler as it draws: a lightning or a ribbon repeats its
+/// texture along its length, its v (openspec AS.700: level 208's beam scales
+/// it 700 % along and scrolls it 300 % a second, which a clamped edge would
+/// draw as nothing; a ribbon's scale and scroll the same, AS.720; our
+/// reading, stand-in ledger `lightning`), a sprite's as stored.
 fn along(g: &Generator, sampler: guac_ir::model::Sampler) -> guac_ir::model::Sampler {
     match g.kind {
-        Kind::Lightning(_) => guac_ir::model::Sampler {
+        Kind::Lightning(_) | Kind::Ribbon(_) => guac_ir::model::Sampler {
             wrap_v: guac_ir::model::Wrap::Repeat,
             ..sampler
         },

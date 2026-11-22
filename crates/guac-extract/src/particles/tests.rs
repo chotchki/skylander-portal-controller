@@ -24,9 +24,9 @@ fn every_emitter_lands_with_its_generators_and_each_texture_once() {
     let names: Vec<&str> = r.ir.emitters.iter().map(|e| e.name.as_str()).collect();
     assert_eq!(names, ["Trail", "Quiet"]);
     let trail = &r.ir.emitters[0];
-    // A spawn archive's lightning stays unread, after the kinds the reader
-    // doesn't read (openspec AS.700: the part reads as it did).
-    assert_eq!(trail.unread, ["SegmentGenerator", "LightningGenerator"]);
+    // A spawn archive's lightning is kept (openspec AS.714), only the kinds
+    // the reader doesn't read listed unread.
+    assert_eq!(trail.unread, ["SegmentGenerator"]);
     let kinds: Vec<&str> = trail
         .generators
         .iter()
@@ -36,11 +36,14 @@ fn every_emitter_lands_with_its_generators_and_each_texture_once() {
             Kind::Lightning(_) => "lightning",
         })
         .collect();
-    assert_eq!(kinds, ["sprite", "sprite", "ribbon"]);
+    assert_eq!(kinds, ["sprite", "sprite", "ribbon", "lightning"]);
     let blends: Vec<Blend> = trail.generators.iter().map(|g| g.blend).collect();
-    assert_eq!(blends, [Blend::Add, Blend::Blend, Blend::Blend]);
+    assert_eq!(blends[..3], [Blend::Add, Blend::Blend, Blend::Blend]);
     assert_eq!(
-        trail.generators.iter().map(|g| g.bloom).collect::<Vec<_>>(),
+        trail.generators[..3]
+            .iter()
+            .map(|g| g.bloom)
+            .collect::<Vec<_>>(),
         [0.0, 5.0, 0.0]
     );
     // Two images, the smoke shared by a sprite and the ribbon: two files.
@@ -220,11 +223,11 @@ fn a_texture_of_no_whole_blocks_is_stored_decoded() {
 fn each_archives_file_is_named_by_its_stem_in_either_format() {
     assert_eq!(
         path(IrFormat::Ron, "character/009_eruptor.bld"),
-        "particles/009_eruptor.ron"
+        "particles/009_eruptor.v2.ron"
     );
     assert_eq!(
         path(IrFormat::Postcard, "permanent/global.bld"),
-        "particles/global.postcard"
+        "particles/global.v2.postcard"
     );
     assert_eq!(archives(), scripts::spawn_archives());
     let walkers = vec!["016_Spyro".to_owned()];
@@ -249,8 +252,8 @@ fn the_part_wants_every_listed_walkers_emitters() {
     m.parts.insert(
         PART.into(),
         vec![
-            "particles/global.ron".into(),
-            "particles/009_eruptor.ron".into(),
+            "particles/global.v2.ron".into(),
+            "particles/009_eruptor.v2.ron".into(),
         ],
     );
     m.parts.insert(
@@ -267,10 +270,16 @@ fn the_part_wants_every_listed_walkers_emitters() {
         .unwrap()
         .push(scripts::script_path("character/112_titanlife.bld"));
     assert!(!complete(&m), "his emitters missing");
+    // Read before his lightning was kept (openspec AS.714): read again.
     m.parts
         .get_mut(PART)
         .unwrap()
         .push("particles/112_titanlife.postcard".into());
+    assert!(!complete(&m), "his emitters read by the last rule");
+    m.parts
+        .get_mut(PART)
+        .unwrap()
+        .push("particles/112_titanlife.v2.postcard".into());
     assert!(complete(&m));
 }
 

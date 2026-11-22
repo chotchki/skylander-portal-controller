@@ -249,8 +249,10 @@ fn behaviour(run: &Run, name: &str) -> String {
     }
 }
 
-/// The wall's bricks still standing (clones of `brick` and `brick2`): how
-/// many, and the farthest of each template's from the wall's place.
+/// The wall's bricks still standing (clones of `brick` and `brick2` within
+/// 30 m of its place: the river's wall past Setup_002, 50 m off, lays its
+/// own, openspec AS.346): how many, and the farthest of each template's
+/// from the wall's place.
 fn bricks(run: &Run, wall: Vec3) -> (usize, [f32; 2]) {
     let mut n = 0;
     let mut far = [0.0f32; 2];
@@ -259,7 +261,11 @@ fn bricks(run: &Run, wall: Vec3) -> (usize, [f32; 2]) {
         let Some(k) = ["brick", "brick2"].iter().position(|t| *t == name) else {
             continue;
         };
-        if let Some(a) = run.world.actor(h).filter(|a| !a.removed) {
+        if let Some(a) = run
+            .world
+            .actor(h)
+            .filter(|a| !a.removed && a.position.distance(wall) < 30.0)
+        {
             n += 1;
             far[k] = far[k].max(a.position.distance(wall));
         }
@@ -901,11 +907,15 @@ const TERRACE: Vec3 = Vec3::new(3.6, 6.7, -65.0);
 /// terrace. On toward the trigger the first ice block holds him on the
 /// terrace until its beam puzzle melts it: the talk button at the pivot's
 /// switch turns the pivot until the start's beam, through its crystal,
-/// reaches the block; then the stick takes him to the trigger. Nothing
-/// stops.
+/// reaches the block; then the stick takes him to the trigger. On from there
+/// (openspec AS.401, AS.346, AS.701): Setup_002's six beaten by the stick and
+/// the attack, its spike gate lowered, the brick wall across the river past
+/// it beaten, the push block pushed west along its track to its end and the
+/// second pivot turned until its beam lights the block's crystal, whose own
+/// beam reaches the second ice block. Nothing stops.
 #[test]
 #[ignore = "reads the Giants dump"]
-fn level_208s_way_down_to_setup_002s_trigger_by_the_stick() {
+fn level_208s_way_by_the_stick_to_the_second_beam() {
     println!("load at start: {}", load());
     let mut stops = Vec::new();
     let mut run = joined_208(&mut stops);
@@ -1034,7 +1044,7 @@ fn level_208s_way_down_to_setup_002s_trigger_by_the_stick() {
     assert!(prisons.iter().all(|(off, _)| *off), "a crystal left on him");
     // The beam puzzle: the talk button at the pivot's switch until the
     // block melts and is gone (openspec AS.431).
-    let melt = turn_the_beam(&mut run, &mut stops, 6000);
+    let mut melt = turn_the_beam(&mut run, &mut stops, 6000);
     for (step, n, b) in &melt.log {
         println!("  {step} {n} {b}");
     }
@@ -1057,6 +1067,10 @@ fn level_208s_way_down_to_setup_002s_trigger_by_the_stick() {
     println!("the beams as the block melts {:?}", melt.beams);
     let block_at = run.at(ICE_BLOCK);
     let pivot_at = run.at(PIVOT);
+    // The second set's own two shine already, west past the river (openspec
+    // AS.701): its start wakes powered.
+    melt.beams
+        .retain(|(from, _, _)| flat(*from, pivot_at) < 20.0);
     assert_eq!(melt.beams.len(), 2, "{:?}", melt.beams);
     let to_block = melt
         .beams
@@ -1115,8 +1129,190 @@ fn level_208s_way_down_to_setup_002s_trigger_by_the_stick() {
         flat(run.hero().pivot, trigger)
     );
     assert!(down.ended, "at Setup_002's trigger: {}", run.hero().pivot);
+    // Setup_002 on its trigger (openspec AS.401): its six beaten by the
+    // stick and the attack, the controller off, the spike gate lowered.
+    let hp = run.health();
+    let river = fight_to(
+        &mut run,
+        &mut stops,
+        &SETUP_002_FOES,
+        &SETUP_002_WATCH,
+        trigger,
+        12000,
+        &|run: &Run| removed(run, SETUP_002_CONTROLLER),
+    );
+    println!(
+        "setup 2 {} at step {}, health {hp:?} -> {:?}, lowest {:?}, gate {}",
+        river.ended,
+        run.steps,
+        run.health(),
+        river.health,
+        behaviour(&run, GATE)
+    );
+    assert!(river.ended, "Setup_002 beaten: {:?}", river.log);
+    assert_eq!(behaviour(&run, GATE), "lower spikes");
+    // West past the gate to the river wall, which holds him until it's
+    // beaten (openspec AS.346).
+    let past_gate = Vec3::new(-31.0, 4.6, -43.8);
+    let gate = fight_to(
+        &mut run,
+        &mut stops,
+        &[],
+        &[],
+        past_gate,
+        3000,
+        &|run: &Run| flat(run.hero().pivot, past_gate) < 2.0,
+    );
+    assert!(gate.ended, "past the gate: {}", run.hero().pivot);
+    let wall_at = run.at(RIVER_WALL);
+    let past_wall = Vec3::new(-42.6, 3.3, -49.2);
+    let wall = fight_to(
+        &mut run,
+        &mut stops,
+        &[RIVER_WALL],
+        &[RIVER_WALL],
+        past_wall,
+        3000,
+        &|run: &Run| flat(run.hero().pivot, past_wall) < 2.0,
+    );
+    for (step, n, b) in &wall.log {
+        println!("  {step} {n} {b}");
+    }
+    println!(
+        "past the river wall {} at step {} at {}, bricks laid {}",
+        wall.ended,
+        run.steps,
+        run.hero().pivot,
+        wall.log.iter().any(|(_, _, b)| b == "main loop")
+    );
+    assert!(wall.ended, "past the river wall: {:?}", wall.log);
+    assert!(removed(&run, RIVER_WALL), "the wall beaten");
+    assert!(run.hero().pivot.x < wall_at.x - 4.0, "{}", run.hero().pivot);
+    // The second beam puzzle (openspec AS.701's set 2): the push block
+    // pushed west by the stick to its track's end, the pivot's switch, the
+    // talk button until the pivot's beam lights the block's crystal.
+    let second = second_beam(&mut run, &mut stops);
+    println!("the second beam: {second:?}");
+    let block_at = second.block.expect("the push block");
+    assert!(
+        flat(block_at, PUSH_END) < 0.5,
+        "pushed to its track's end: {block_at}"
+    );
+    let relay = second.relay.expect("the crystal's beam");
+    let ice = run.at(ICE_BLOCK_2);
+    assert!(
+        relay.1.x < relay.0.x - 4.0 && flat(relay.1, ice) < 5.0,
+        "the crystal's beam west at the second ice block: {relay:?}"
+    );
+    // Not melted (openspec AS.755): its cone misses the block's pivot by
+    // 0.09 deg.
+    println!("the second ice block {}", behaviour(&run, ICE_BLOCK_2));
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
+}
+
+/// Setup_002's spike gate by the spinners (openspec AS.401).
+const GATE: &str = "Spike_Gate_Metal_Template(1)";
+
+/// The brick wall across the river past Setup_002's gate (openspec AS.346).
+const RIVER_WALL: &str = "Wall_Spawner_Template(9)";
+
+/// The second beam puzzle's push block, pivot and ice block (openspec
+/// AS.701's set 2).
+const PUSH_BLOCK: &str = "Push_Block_Template(1)";
+const PIVOT_2: &str = "Reflect_Pivot_Round(2)";
+const ICE_BLOCK_2: &str = "Melting_Ice_blocks_reflect_2";
+
+/// Where the push block's track ends: its last waypoint (-49.38, -61.20)
+/// as its script snaps the track to its facing.
+const PUSH_END: Vec3 = Vec3::new(-49.46, 3.34, -61.17);
+
+/// What the second beam puzzle came to ([`second_beam`]).
+#[derive(Debug, Default)]
+struct SecondBeam {
+    /// Where the push block stood after the pushes.
+    block: Option<Vec3>,
+    /// Pushes that moved it.
+    moves: u32,
+    /// Talk presses at the pivot's switch.
+    presses: u32,
+    /// The pivot's beam's end once it lit the crystal.
+    lit: Option<Vec3>,
+    /// The crystal's own beam, from and to.
+    relay: Option<(Vec3, Vec3)>,
+}
+
+/// The second beam puzzle as a kid works it: to the push block's east side,
+/// the stick held west until it stops moving (its track's end), then to the
+/// pivot's switch and the talk button every 2 s until a beam starts at the
+/// block's crystal, at most eight presses.
+fn second_beam(run: &mut Run, stops: &mut Vec<String>) -> SecondBeam {
+    let flat = |a: Vec3, b: Vec3| Vec3::new(a.x - b.x, 0.0, a.z - b.z).length();
+    let mut out = SecondBeam::default();
+    let block = run.at(PUSH_BLOCK);
+    let behind = Vec3::new(block.x + 3.0, block.y, block.z);
+    let to = fight_to(run, stops, &[], &[], behind, 2000, &|run: &Run| {
+        flat(run.hero().pivot, behind) < 1.0
+    });
+    assert!(to.ended, "behind the push block: {}", run.hero().pivot);
+    let (mut last, mut still_for) = (behaviour(run, PUSH_BLOCK), 0u32);
+    for _ in 0..900 {
+        let me = run.hero().pivot;
+        let aim = Vec3::new(me.x - 10.0, me.y, run.at(PUSH_BLOCK).z);
+        run.bench.view = (aim.x - me.x).atan2(aim.z - me.z).to_degrees();
+        run.bench.hold_view = true;
+        step(run, stops, Stick::new(0.0, 1.0), [false; 4]);
+        let b = behaviour(run, PUSH_BLOCK);
+        if b != last {
+            out.moves += u32::from(b == "2. moving");
+            still_for = 0;
+            last = b;
+        } else {
+            still_for += 1;
+        }
+        if out.moves > 0 && still_for > 240 {
+            break;
+        }
+    }
+    out.block = Some(run.at(PUSH_BLOCK));
+    let pivot = run.at(PIVOT_2);
+    let switch = run
+        .world
+        .clones()
+        .into_iter()
+        .filter(|h| run.world.name(*h).starts_with("Reflect_Switchbase"))
+        .filter_map(|h| {
+            run.world
+                .actor(h)
+                .filter(|a| !a.removed)
+                .map(|a| a.position)
+        })
+        .find(|p| flat(*p, pivot) < 10.0)
+        .expect("the second pivot's switch");
+    let to = fight_to(run, stops, &[], &[], switch, 3000, &|run: &Run| {
+        flat(run.hero().pivot, switch) < 2.5
+    });
+    assert!(to.ended, "at the second switch: {}", run.hero().pivot);
+    let block = out.block.unwrap();
+    while out.presses < 8 {
+        out.presses += 1;
+        for k in 0..120 {
+            still(run, stops, [false, false, false, k == 0]);
+        }
+        let beams = beams(run);
+        out.lit = beams
+            .iter()
+            .map(|(_, end, _)| *end)
+            .find(|end| flat(*end, block) < 1.0);
+        out.relay = beams
+            .iter()
+            .find(|(from, _, _)| flat(*from, block) < 3.0)
+            .map(|(from, end, _)| (*from, *end));
+        if out.lit.is_some() && out.relay.is_some() {
+            break;
+        }
+    }
+    out
 }
 
 /// The first beam puzzle's pivot (openspec AS.431).
@@ -1146,13 +1342,14 @@ struct Beam {
 /// Every reflect beam in play whose scripts set it an end: where its clone
 /// stands, where its end does and its width in metres (openspec AS.700).
 fn beams(run: &Run) -> Vec<(Vec3, Vec3, Option<f32>)> {
+    let mut held = guacamole::script_engine::HeroesOnly(run.bench.heroes.clone());
     run.world
         .clones()
         .into_iter()
         .filter(|h| run.world.emitter_of(*h) == Some("Reflect_Beam"))
         .filter_map(|h| {
             let a = run.world.actor(h).filter(|a| !a.removed)?;
-            let (end, width) = run.world.beam_end(h)?;
+            let (end, width) = run.world.beam_end(h, &mut held)?;
             Some((a.position, Vec3::from_array(end), width))
         })
         .collect()

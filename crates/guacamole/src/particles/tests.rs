@@ -428,6 +428,15 @@ fn a_ribbon_follows_its_emitter_tapering_to_its_tail() {
     let tail = &seg.positions[seg.positions.len() - 4];
     assert!(tail[1].abs() < 1e-5);
     assert_eq!(seg.colors.as_ref().unwrap()[1], [128, 51, 0, 255]);
+    // Its texture's v along it head to tail, u across (openspec AS.720):
+    // the first quad's head corners at v 0, its tail's at a quarter, u 0 and
+    // 1 across.
+    let uv = &seg.uvs[0][..4];
+    assert_eq!(uv[1][1], 0.0, "{uv:?}");
+    assert_eq!(uv[0][1], 0.25, "{uv:?}");
+    let mut across: Vec<f32> = uv.iter().map(|t| t[0]).collect();
+    across.sort_by(f32::total_cmp);
+    assert_eq!(across, [0.0, 0.0, 1.0, 1.0], "{uv:?}");
     // Taken off, its places age out and it's gone.
     for _ in 0..20 {
         s.step(&g, STILL, false, 1.0 / 60.0, &mut rng);
@@ -435,9 +444,9 @@ fn a_ribbon_follows_its_emitter_tapering_to_its_tail() {
     assert!(!s.live());
 }
 
-/// openspec AS.700: a lightning's material repeats its texture along its
-/// length, the scale and scroll it carries needing it; a sprite's and a
-/// ribbon's keep the sampler as stored.
+/// openspec AS.700, AS.720: a lightning's and a ribbon's material repeats
+/// its texture along its length, the scale and scroll they carry needing
+/// it; a sprite's keeps the sampler as stored.
 #[test]
 fn a_lightnings_texture_repeats_along_it() {
     let bolt = Lightning {
@@ -457,6 +466,17 @@ fn a_lightnings_texture_repeats_along_it() {
     };
     assert_eq!(wraps(Kind::Lightning(bolt)), (Wrap::Clamp, Wrap::Repeat));
     assert_eq!(wraps(Kind::Sprite(stream())), (Wrap::Clamp, Wrap::Clamp));
+    let ribbon = Ribbon {
+        taper: 0,
+        segments: 4,
+        scroll_uv_percent: 50.0,
+        scale_uv_percent: 200.0,
+        width: 1.0,
+        head_colour: [255; 4],
+        tail_colour: [255; 4],
+        granularity: 100.0,
+    };
+    assert_eq!(wraps(Kind::Ribbon(ribbon)), (Wrap::Clamp, Wrap::Repeat));
 }
 
 /// openspec AS.700: a lightning lays its pieces from its generator to the

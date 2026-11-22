@@ -109,6 +109,62 @@ pub(crate) struct WatchShot {
     /// (removed) at x,y,z` (openspec AS.224), the seated hero at his
     /// pivot (the as-ship-parts review).
     pub minions: Vec<String>,
+    /// The joined hero's own state this frame (openspec AS.408); none until
+    /// he's joined.
+    pub hero: Option<HeroWatch>,
+}
+
+/// The joined hero as the watch reads him (openspec AS.408): what his
+/// scripts are in beside what his controller did, so a stop shows whether
+/// his scripts held him (a freeze) or he pushed and the seam held him.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct HeroWatch {
+    /// His placement's behaviour, lowercased.
+    pub behaviour: Option<String>,
+    /// His walk across the ground as his controller asked it this frame,
+    /// m/s, and what the move made of it against what it met, m/s.
+    pub walk: f32,
+    pub solved: f32,
+    /// The edge probe holding his controller off.
+    pub held_off: bool,
+    /// Every awake actor but him within [`NEAR`] of his pivot across the
+    /// ground, nearest first, as `name at d m`: what may pin him.
+    pub near: Vec<String>,
+}
+
+/// How near an actor stands to the hero for [`HeroWatch::near`], metres.
+const NEAR: f32 = 2.5;
+
+/// [`HeroWatch`] for the hero joined as `h`, whose controller is `hero`.
+pub(crate) fn hero_watch(
+    vm: &Vm,
+    world: &ScriptWorld,
+    h: Option<Handle>,
+    hero: &guac_motion::hero::Hero,
+) -> HeroWatch {
+    let across = |v: Vec3| v.x.hypot(v.z);
+    let mut near: Vec<(f32, String)> = world
+        .actors()
+        .filter(|(o, a)| Some(*o) != h && a.active && !a.removed)
+        .filter_map(|(o, a)| {
+            let d = across(a.position - hero.pivot);
+            (d <= NEAR).then(|| (d, world.name(o).to_owned()))
+        })
+        .collect();
+    near.sort_by(|a, b| a.0.total_cmp(&b.0));
+    HeroWatch {
+        behaviour: h
+            .and_then(|h| vm.placement_of(h))
+            .and_then(|id| vm.behaviour(id))
+            .map(str::to_ascii_lowercase),
+        walk: across(hero.walk.velocity),
+        solved: across(hero.solved),
+        held_off: hero.held_off,
+        near: near
+            .into_iter()
+            .map(|(d, n)| format!("{n} at {d:.2} m"))
+            .collect(),
+    }
 }
 
 /// Each name in `names` off `vm` and `world`, the level's file linked as
@@ -191,6 +247,7 @@ pub(crate) fn read(
         equivalence: anchors::equivalence(vm, world, level, hero, figure),
         cutscene_state,
         minions,
+        hero: None,
     }
 }
 
@@ -252,7 +309,9 @@ impl WatchShots<'_, '_> {
                 .as_ref()
                 .map(|e| (e.progress.xp, e.progress.gold))
         });
-        Some(read(&rt.vm, world, level, &names, hero, seated, figure))
+        let mut shot = read(&rt.vm, world, level, &names, hero, seated, figure);
+        shot.hero = joined.map(|(_, b)| hero_watch(&rt.vm, world, seated, &b.hero));
+        Some(shot)
     }
 }
 
@@ -399,6 +458,9 @@ mod tests {
         let (at, f) = s.equivalence.hero.expect("his pose");
         assert_eq!(at, pivot.to_array());
         assert!((f - facing.rem_euclid(360.0)).abs() < 1e-4);
+        // His own read, his scripts' behaviour among it (openspec AS.408).
+        let me = s.hero.as_ref().expect("his own read");
+        assert!(me.behaviour.is_some(), "{me:?}");
         let e = app.world().resource::<Earning>().slots[0]
             .as_ref()
             .map(|e| (e.progress.xp, e.progress.gold));
@@ -434,6 +496,71 @@ mod tests {
         assert!(other.ends_with(&at(own)), "{other}");
         let none = describe(vm, world, Value::Entity(h), None);
         assert!(none.ends_with(&at(own)), "{none}");
+    }
+
+    /// openspec AS.408: the joined hero's own read: his behaviour as his
+    /// scripts hold it, his asked and solved walks across the ground, and
+    /// the awake actors within 2.5 m of him nearest first, him and anyone
+    /// farther or asleep left out.
+    #[test]
+    fn the_heros_watch_reads_his_scripts_his_walk_and_whos_by_him() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _) = fight_app(tmp.path(), None);
+        for _ in 0..30 {
+            app.update();
+        }
+        let (_, creature) = placement_named(&app, FIGHT_CREATURE);
+        let w = app.world_mut();
+        let mut q = w.query::<&HeroBody>();
+        let mut hero = q.single(w).unwrap().hero.clone();
+        let w = app.world();
+        let (vm, world) = (
+            &w.resource::<ScriptRuntime>().vm,
+            w.resource::<ScriptWorld>(),
+        );
+        let c = world.actor(creature).unwrap().position;
+        hero.pivot = c + Vec3::new(1.2, 0.0, 1.6);
+        hero.walk.velocity = Vec3::new(3.0, -9.0, 4.0);
+        hero.solved = Vec3::new(0.0, 2.0, 0.5);
+        hero.held_off = true;
+        let watch = hero_watch(vm, world, None, &hero);
+        assert_eq!((watch.walk, watch.solved), (5.0, 0.5));
+        assert!(watch.held_off);
+        assert_eq!(watch.behaviour, None, "no placement named");
+        assert_eq!(
+            watch.near.first().map(String::as_str),
+            Some(format!("{} at 2.00 m", world.name(creature)).as_str()),
+            "{:?}",
+            watch.near
+        );
+        // Himself left out, and his placement's behaviour read.
+        let as_him = hero_watch(vm, world, Some(creature), &hero);
+        assert!(
+            as_him
+                .near
+                .iter()
+                .all(|n| !n.starts_with(&world.name(creature))),
+            "{:?}",
+            as_him.near
+        );
+        assert_eq!(
+            as_him.behaviour.as_deref(),
+            vm.placement_of(creature)
+                .and_then(|id| vm.behaviour(id))
+                .map(str::to_ascii_lowercase)
+                .as_deref()
+        );
+        assert!(as_him.behaviour.is_some());
+        // Past 2.5 m nobody.
+        hero.pivot = c + Vec3::new(2.0, 0.0, 1.6);
+        let far = hero_watch(vm, world, None, &hero);
+        assert!(
+            far.near
+                .iter()
+                .all(|n| !n.starts_with(&world.name(creature))),
+            "{:?}",
+            far.near
+        );
     }
 
     /// Once a placement is taken off it reads `gone`.

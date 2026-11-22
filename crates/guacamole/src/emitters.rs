@@ -434,8 +434,17 @@ pub(crate) fn step_systems(
     mut drawn: Query<(&mut Visibility, &GlobalTransform), Without<ParticleSystem>>,
     transforms: Query<&GlobalTransform, (With<ScriptClone>, Without<ParticleSystem>)>,
     cameras: Query<(&Camera, &GlobalTransform), (With<LevelOutput>, Without<ParticleSystem>)>,
+    heroes: Query<(Entity, &HeroBody)>,
 ) {
     let dt = time.delta_secs();
+    // The heroes as their controllers hold them this frame, for a beam that
+    // ends on one or on his node (his script actor keeps where he joined).
+    let mut held = guacamole::script_engine::HeroesOnly(
+        heroes
+            .iter()
+            .map(|(e, b)| (e.to_bits(), b.hero.clone()))
+            .collect(),
+    );
     let view = view_of(cameras.iter());
     let (level_emitters, refused, unread) = match (level.placed_emitters(), level.placed_refused())
     {
@@ -492,7 +501,9 @@ pub(crate) fn step_systems(
         // A lightning's end and width, as its clone's scripts set them
         // (openspec AS.700).
         let beam = match system.source {
-            Source::Clone(clone) => world.as_deref().and_then(|w| w.beam_end(clone.to_bits())),
+            Source::Clone(clone) => world
+                .as_deref()
+                .and_then(|w| w.beam_end(clone.to_bits(), &mut held)),
             Source::Placed(_) => None,
         };
         for (k, (state, g)) in system

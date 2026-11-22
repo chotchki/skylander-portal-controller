@@ -744,6 +744,13 @@ A level's own emitter whose generator is a lightning SHALL be drawn as a strip f
 - **WHEN** level 208's first reflect start is powered and the pivot's target is lit
 - **THEN** a beam runs from the start to the pivot and one from the pivot along its facing, each turn of the switch moving the second, until it reaches the ice block (headless as the block first melts: 10.4 m and 11.0 m, both 1.1 m wide)
 
+### Requirement: A hero's lightning draws to its target
+A spawn archive's emitter whose generator is a lightning (a hero's attack, the level-up's) SHALL draw as a level's does, to the end its clone's scripts set, an actor or an actor's attach node, where that actor stands as it's drawn that frame (a hero where his controller holds him); with none set it SHALL draw nothing.
+
+#### Scenario: Lightning Rod's thrown bolt
+- **WHEN** Lightning Rod throws his bolt
+- **THEN** a lightning runs along the projectile from node to node as it flies, and a streak from where it left his hand to the projectile
+
 ### Requirement: A turn a script writes on a node-hung piece holds
 What hangs on a node SHALL draw each axis a script wrote, by an absolute or a relative facing, tilt or roll, as written, and the rest as the node turns: Sprocket's turret top turns with the stick on the TV (343, then 285 after the stick right and 99 after left, where it read 0 throughout), level 214's turret hatch holds its 90 degree turn where it took its node's 351, and a turret's ball keeps the aim its script writes each step.
 

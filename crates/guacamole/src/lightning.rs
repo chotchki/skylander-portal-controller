@@ -10,9 +10,10 @@
 //! generator reads as the emitter itself (the reflect beams' templates hold
 //! one each), its `lightning` the same, and the generator's other members
 //! (its records, its ribbon) answer nothing as every path through
-//! `generators` did before. A spawn archive's lightning (the level-up's)
-//! stays unanswered, as the extract keeps it unread. Stand-in ledger:
-//! `lightning`.
+//! `generators` did before. A spawn archive's lightning (a hero's bolt, the
+//! level-up's) answers the same, found by its emitter's name (openspec
+//! AS.714, [`spawn_templates`]), and a beam may end on an actor's attach
+//! node as well as on an actor. Stand-in ledger: `lightning`.
 
 use std::collections::HashMap;
 
@@ -81,6 +82,31 @@ pub fn templates(unit: u16, part: &LevelEmitters) -> HashMap<Obj, Template> {
         .collect()
 }
 
+/// Every spawn archive emitter in `emitters` whose generators hold a
+/// lightning, by name, with its first lightning's values (openspec
+/// AS.714): a hero's bolt and the level-up's, found by the name a clone of
+/// one runs under.
+pub fn spawn_templates<'a>(
+    emitters: impl IntoIterator<Item = &'a guac_ir::particle::Emitter>,
+) -> HashMap<String, Template> {
+    emitters
+        .into_iter()
+        .filter_map(|e| {
+            let l = e.generators.iter().find_map(|g| match &g.kind {
+                GeneratorKind::Lightning(l) => Some(l),
+                _ => None,
+            })?;
+            Some((
+                e.name.clone(),
+                Template {
+                    width: l.width,
+                    tint: l.colour,
+                },
+            ))
+        })
+        .collect()
+}
+
 /// The members the host answers for a lightning (the module docs), each
 /// as the live member table registers it.
 pub const MEMBERS: [(&str, &str, Kind, f32, f32); 4] = [
@@ -139,4 +165,61 @@ pub struct Drawn {
     pub clone: Handle,
     pub end: [f32; 3],
     pub width: Option<f32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use guac_ir::particle::{Blend, Emitter, Generator, Lightning};
+
+    use super::*;
+
+    /// openspec AS.714: every emitter holding a lightning, by name, with its
+    /// first lightning's width and colour; one with none left out.
+    #[test]
+    fn a_spawn_archives_lightning_emitters_are_found_by_name() {
+        let lightning = |width| Generator {
+            blend: Blend::Add,
+            overlay_layer: 0,
+            bloom: 0.0,
+            offset: guac_ir::model::Transform {
+                translation: [0.0; 3],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                scale: [1.0; 3],
+            },
+            start_delay: 0.0,
+            texture: None,
+            kind: GeneratorKind::Lightning(Lightning {
+                taper: 0,
+                segments: 4,
+                scroll_uv_percent: 0.0,
+                scale_uv_percent: 100.0,
+                width,
+                colour: [1, 2, 3, 4],
+                chaos_percent: 30.0,
+                chaos_constrained: false,
+                freeze: false,
+            }),
+        };
+        let bolt = Emitter {
+            name: "Bolt".into(),
+            object: 4,
+            generators: vec![lightning(1.4), lightning(9.0)],
+            unread: Vec::new(),
+        };
+        let none = Emitter {
+            name: "Smoke".into(),
+            object: 5,
+            generators: Vec::new(),
+            unread: Vec::new(),
+        };
+        let found = spawn_templates([&bolt, &none]);
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            found["Bolt"],
+            Template {
+                width: 1.4,
+                tint: [1, 2, 3, 4]
+            }
+        );
+    }
 }

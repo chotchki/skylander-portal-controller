@@ -129,8 +129,8 @@ fn every_emitter_the_spawn_archives_place_extracts_and_resumes() {
             textures.insert(t.texture.clone());
         }
     }
-    // global.bld's lightning (the level-up's and the tether's) is kept by
-    // name, not drawn.
+    // global.bld's three lightning generators (the level-up's and the
+    // tether's) are read with the rest since openspec AS.714: none unread.
     let unread: Vec<(&str, usize)> = global
         .emitters
         .iter()
@@ -141,8 +141,8 @@ fn every_emitter_the_spawn_archives_place_extracts_and_resumes() {
         "  {generators} generators, {} textures; unread {unread:?}",
         textures.len()
     );
-    assert_eq!(generators, 168 + 84);
-    assert_eq!(unread.len(), 2);
+    assert_eq!(generators, 168 + 3 + 84);
+    assert!(unread.is_empty(), "{unread:?}");
     // Every generator textured (AH.244): the level-up's arrow, 109 x 128 in
     // DXT blocks (no whole 4 x 4 across), which no GPU takes, is stored
     // decoded, an RGBA8 KTX2 at its own size.
