@@ -142,6 +142,45 @@ pub fn beam(level: &str) -> impl Iterator<Item = &'static str> {
     BEAM.iter().copied().filter(move |_| on)
 }
 
+/// The way on west from Setup_002's spike gate (openspec AS.346): the
+/// brick wall across the river past it (`Wall_Spawner_Template(9)`,
+/// `Brick_Wall_Spawner`, the exit's [`EXIT`] wall's family). Unlisted its
+/// box stands solid and lays no bricks, an invisible wall no attack beats;
+/// listed it lays its bricks once a player comes in range and a few hits
+/// blow them apart and take its box off, as the plaza's.
+pub const RIVER: [&str; 1] = ["Wall_Spawner_Template(9)"];
+
+/// [`RIVER`] on 208 alone.
+pub fn river(level: &str) -> impl Iterator<Item = &'static str> {
+    let on = level == LEVEL;
+    RIVER.iter().copied().filter(move |_| on)
+}
+
+/// The second beam puzzle (openspec AS.701's set 2), past the river wall,
+/// listed by name as [`BEAM`] lists the first (the reflect scripts are
+/// shared, and listed by path they'd wake every set on every level that
+/// places one, read or not):
+/// - **The start** (`Reflect_Start(2)`) powers at once and beams to the
+///   pivot (`Reflect_Pivot_Round(2)`), whose switch turns it 45° a press.
+/// - **The push block's crystal** (`Snow_Push_Block_Art_Crystal`,
+///   `Reflect_Square.ai`): the art `Push_Block_Template(1)` (on the generic
+///   listing) spawns on itself, hanging a target, an emitter and a crystal
+///   on its three nodes. Pushed twice west to its track's end it stands in
+///   the pivot's beam at its second facing, and its emitter beams west at
+///   the ice block (`Melting_Ice_blocks_reflect_2`).
+pub const BEAM_2: [&str; 4] = [
+    "Reflect_Start(2)",
+    "Reflect_Pivot_Round(2)",
+    "Melting_Ice_blocks_reflect_2",
+    "Snow_Push_Block_Art_Crystal",
+];
+
+/// [`BEAM_2`] on 208 alone.
+pub fn beam_2(level: &str) -> impl Iterator<Item = &'static str> {
+    let on = level == LEVEL;
+    BEAM_2.iter().copied().filter(move |_| on)
+}
+
 /// What fights on level 208 (openspec AS.345), walked as creatures: the
 /// reveal's five Ice Chompies, then Setup_002's controller, its six foes
 /// (`Setup_002_Enemies`) and Noodles' scene at its first gate.
@@ -261,6 +300,32 @@ mod tests {
                 );
             }
             assert_eq!(beam(other).count(), 0);
+        }
+    }
+
+    /// openspec AS.346, AS.701: the river wall and the second beam puzzle
+    /// are on 208's listing and on no other level's.
+    #[test]
+    fn level_208s_river_wall_and_second_beam_are_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        assert_eq!(river(LEVEL).collect::<Vec<_>>(), RIVER);
+        assert_eq!(beam_2(LEVEL).collect::<Vec<_>>(), BEAM_2);
+        for other in ["level_202", "level_205_piratecards"] {
+            let off = level_config(Mode::Play, &files, 5, other);
+            for name in RIVER.iter().chain(&BEAM_2) {
+                assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+                assert!(
+                    !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
+                    "{name} on {other}"
+                );
+            }
+            assert_eq!(river(other).count() + beam_2(other).count(), 0);
+        }
+        // 208's other walls and sets stay off until a kid's way reaches
+        // them.
+        for name in ["Wall_Spawner_Template(6)", "Reflect_Start(3)"] {
+            assert!(!on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
         }
     }
 
