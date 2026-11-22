@@ -1342,13 +1342,14 @@ struct Beam {
 /// Every reflect beam in play whose scripts set it an end: where its clone
 /// stands, where its end does and its width in metres (openspec AS.700).
 fn beams(run: &Run) -> Vec<(Vec3, Vec3, Option<f32>)> {
+    let mut held = guacamole::script_engine::HeroesOnly(run.bench.heroes.clone());
     run.world
         .clones()
         .into_iter()
         .filter(|h| run.world.emitter_of(*h) == Some("Reflect_Beam"))
         .filter_map(|h| {
             let a = run.world.actor(h).filter(|a| !a.removed)?;
-            let (end, width) = run.world.beam_end(h)?;
+            let (end, width) = run.world.beam_end(h, &mut held)?;
             Some((a.position, Vec3::from_array(end), width))
         })
         .collect()
