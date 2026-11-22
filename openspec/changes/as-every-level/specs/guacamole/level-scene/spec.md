@@ -401,6 +401,10 @@ A camera's rig SHALL hold the pose its last clip reached once none plays, what h
 - **WHEN** an intro is skipped with no rig left posed and its pod stays where it stood
 - **THEN** the pod's base, plank, propeller and wheel ride it there, never the camera's eye (levels 205 and 208, AS.702)
 
+#### Scenario: A skipped intro lands its pod
+- **WHEN** an intro whose pod hangs on its animator camera rig is skipped
+- **THEN** the rig holds its last clip's end and the pod stands where the intro played to its end leaves it, not in the air where the skip found it (level 208, AS.707)
+
 #### Scenario: A cut between two shots
 - **WHEN** a shot's new rig is made and isn't drawn yet
 - **THEN** the view and what hangs on the rig stay where the last rig left them until it's posed, and no frame stands at the rig's origin
@@ -732,3 +736,10 @@ A drawn placement SHALL take its own replace colour by its percent on its parts,
 #### Scenario: A placement washed then clear
 - **WHEN** a placement's scripts write red at 75 percent, then 0
 - **THEN** its parts draw washed red at 75, then as their model's own
+
+### Requirement: A level's lightning draws to its target
+A level's own emitter whose generator is a lightning SHALL be drawn as a strip from its generator to the target its clone's scripts set (`lightningfields.target`), at the width they set or else its file's, its texture repeating along it; with no target set it SHALL draw nothing. Level 208's reflect beams are these.
+
+#### Scenario: The first beam puzzle's two beams
+- **WHEN** level 208's first reflect start is powered and the pivot's target is lit
+- **THEN** a beam runs from the start to the pivot and one from the pivot along its facing, each turn of the switch moving the second, until it reaches the ice block (headless as the block first melts: 10.4 m and 11.0 m, both 1.1 m wide)

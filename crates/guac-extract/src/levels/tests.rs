@@ -600,6 +600,27 @@ fn every_level_part_is_named_and_complete_wants_them_all() {
             .insert(NODES.to_owned(), vec![part_path(ir, LEVELS[0], NODES)]);
         assert!(complete(&m));
     }
+    // AS.700: the particles named for their rule, v2 since a level's
+    // lightning is kept; a file under the old name is a part to read again.
+    assert_eq!(
+        part_path(crate::intros::IrFormat::Ron, LEVELS[0], PARTICLES),
+        "levels/level_213_tutotial/particles.v2.ron"
+    );
+    for ir in [
+        crate::intros::IrFormat::Ron,
+        crate::intros::IrFormat::Postcard,
+    ] {
+        m.levels.get_mut(LEVELS[0]).unwrap().parts.insert(
+            PARTICLES.to_owned(),
+            vec![ir.level_path(LEVELS[0], PARTICLES)],
+        );
+        assert!(!complete(&m), "the particles under v1's name");
+        m.levels.get_mut(LEVELS[0]).unwrap().parts.insert(
+            PARTICLES.to_owned(),
+            vec![part_path(ir, LEVELS[0], PARTICLES)],
+        );
+        assert!(complete(&m));
+    }
     assert_eq!(
         archive_path(Path::new("/u"), LEVELS[0]),
         Path::new("/u/level/level_213_tutotial.bld")

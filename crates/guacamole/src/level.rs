@@ -563,9 +563,14 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
     // materials after the spawn emitters', keyed in the same scene. A part
     // that doesn't read (an extract that hasn't read it yet included) draws
     // none of them; the level goes on.
+    // Its file named for its rule (openspec AS.700: `particles.v2`).
     let placed_part = match read_ir::<guac_ir::particle::LevelEmitters>(
         source.ir,
-        &part(guac_extract::levels::PARTICLES),
+        &source.dir.join(guac_extract::levels::part_path(
+            source.ir,
+            &source.level,
+            guac_extract::levels::PARTICLES,
+        )),
     )
     .and_then(|p| {
         if p.identity != source.identity || p.level != source.level {

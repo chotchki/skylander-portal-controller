@@ -23,7 +23,7 @@ use guac_formats::igz::layouts::{BlendMode, SpawnVolume, VelocityDirection};
 use guac_formats::particle::{self, Generator};
 use guac_ir::DumpIdentity;
 use guac_ir::particle::{
-    Blend, Direction, Emitter, Emitters, Keyed, Kind, Ribbon, Sprite, Texture, Volume,
+    Blend, Direction, Emitter, Emitters, Keyed, Kind, Lightning, Ribbon, Sprite, Texture, Volume,
 };
 
 use crate::intros::IrFormat;
@@ -132,7 +132,7 @@ pub fn level_emitters(
                 return Err(format!("it rides {what}, which isn't drawn yet"));
             }
             Ok(guac_ir::particle::Placed {
-                emitter: emitter(igz, &e, &mut own)?,
+                emitter: level_emitter(igz, &e, &mut own)?,
                 position: at.init_matrix.position,
                 rotation: at.init_matrix.rotation,
                 scale: p.scale,
@@ -163,14 +163,41 @@ fn name_of(igz: &Igz<'_>, index: usize) -> String {
         .map_or_else(|| format!("#{index}"), str::to_owned)
 }
 
-/// One emitter as the IR keeps it, its textures into `textures`.
+/// One emitter as the IR keeps it, its textures into `textures`: a spawn
+/// archive's, whose lightning stays unread by type as before openspec
+/// AS.700, so the extract-wide part reads as it did ([`level_emitter`]
+/// keeps a level's).
 pub fn emitter(
     igz: &Igz<'_>,
     e: &particle::Emitter<'_>,
     textures: &mut Textures,
 ) -> std::result::Result<Emitter, String> {
+    emitter_with(igz, e, textures, false)
+}
+
+/// [`emitter`] for a level's own emitter (openspec AS.700): its lightning
+/// kept ([`Kind::Lightning`]), level 208's reflect beams.
+pub fn level_emitter(
+    igz: &Igz<'_>,
+    e: &particle::Emitter<'_>,
+    textures: &mut Textures,
+) -> std::result::Result<Emitter, String> {
+    emitter_with(igz, e, textures, true)
+}
+
+fn emitter_with(
+    igz: &Igz<'_>,
+    e: &particle::Emitter<'_>,
+    textures: &mut Textures,
+    lightning: bool,
+) -> std::result::Result<Emitter, String> {
     let mut generators = Vec::with_capacity(e.generators.len());
+    let mut unread: Vec<String> = e.unread.iter().map(|(_, t)| (*t).to_owned()).collect();
     for g in &e.generators {
+        if !lightning && matches!(g, Generator::Lightning(_)) {
+            unread.push("LightningGenerator".to_owned());
+            continue;
+        }
         // An image of no whole blocks (the level-up's arrow, 109 x 128) is
         // stored decoded ([`Textures::path`], openspec AH.244).
         let texture = match g.texture() {
@@ -184,6 +211,7 @@ pub fn emitter(
         let vfx = match g {
             Generator::Sprite(s) => &s.info.vfx,
             Generator::Ribbon(r) => &r.info.vfx,
+            Generator::Lightning(l) => &l.info.vfx,
         };
         let blend = match vfx.blend_mode() {
             Some(BlendMode::Knockout) => Blend::Knockout,
@@ -200,6 +228,7 @@ pub fn emitter(
         let kind = match g {
             Generator::Sprite(s) => Kind::Sprite(sprite(s)),
             Generator::Ribbon(r) => Kind::Ribbon(ribbon(r)),
+            Generator::Lightning(l) => Kind::Lightning(lightning_of(l)),
         };
         generators.push(guac_ir::particle::Generator {
             blend,
@@ -215,7 +244,7 @@ pub fn emitter(
         name: e.name.to_owned(),
         object: e.index as u32,
         generators,
-        unread: e.unread.iter().map(|(_, t)| (*t).to_owned()).collect(),
+        unread,
     })
 }
 
@@ -289,6 +318,21 @@ fn ribbon(r: &particle::Ribbon<'_>) -> Ribbon {
         head_colour: i.tint_color,
         tail_colour: i.end_color,
         granularity: i.segment_granularity,
+    }
+}
+
+fn lightning_of(l: &particle::Lightning<'_>) -> Lightning {
+    let i = &l.info;
+    Lightning {
+        taper: i.segment_properties as u8 & 3,
+        segments: i.segment_count() as u16,
+        scroll_uv_percent: i.scroll_uv_percent,
+        scale_uv_percent: i.scale_uv_percent,
+        width: i.segment_width,
+        colour: i.tint_color,
+        chaos_percent: i.chaos_percent,
+        chaos_constrained: i.chaos_constrained,
+        freeze: i.freeze_animation,
     }
 }
 

@@ -457,6 +457,11 @@ pub struct ScriptWorld {
     pub(crate) light_templates: HashMap<Obj, Light>,
     /// Every emitter's name (openspec AH.87).
     pub(crate) emitters: HashMap<Obj, String>,
+    /// The level's lightning emitters (openspec AS.700, [`crate::lightning`]):
+    /// what `particleinfo.generators` answers for, and what each clone's
+    /// scripts wrote of its beam.
+    pub(crate) lightning: HashMap<Obj, crate::lightning::Template>,
+    pub(crate) beams: HashMap<Handle, crate::lightning::Beam>,
     /// Every waypoint's place, metres.
     pub(crate) points: HashMap<Obj, Vec3>,
     /// The file waypoints' turns: as their files hold them (openspec
@@ -1002,6 +1007,8 @@ impl ScriptWorld {
             origin_nodes: HashMap::new(),
             light_templates: files.lights.clone(),
             emitters: files.emitters.clone(),
+            lightning: HashMap::new(),
+            beams: HashMap::new(),
             points: files.points.clone(),
             point_turns: files.turns.clone(),
             controllers: [objects[0], objects[1]],
@@ -2159,6 +2166,41 @@ impl ScriptWorld {
         self.origin_nodes = nodes;
     }
 
+    /// The level's lightning emitters (openspec AS.700,
+    /// [`crate::lightning::templates`]): unset, `particleinfo.generators`
+    /// answers nothing anywhere.
+    pub fn set_lightning(&mut self, templates: HashMap<Obj, crate::lightning::Template>) {
+        self.lightning = templates;
+    }
+
+    /// The lightning template `v` is or is a clone of, where the level's
+    /// file holds one ([`Self::set_lightning`]).
+    pub(crate) fn lightning_of(&self, v: Value) -> Option<(Obj, crate::lightning::Template)> {
+        let t = match v {
+            Value::Object(o) => o,
+            v => {
+                let a = self.actors.get(&self.handle(v)?)?;
+                a.template.or(a.obj)?
+            }
+        };
+        self.lightning.get(&t).map(|l| (t, *l))
+    }
+
+    /// Each lightning clone in play whose scripts set it an end, with where
+    /// that end stands and its width in metres where they set one (openspec
+    /// AS.700): what the TV draws its beam to.
+    pub fn beam_end(&self, h: Handle) -> Option<([f32; 3], Option<f32>)> {
+        let b = self.beams.get(&h)?;
+        let end = self.actors.get(&self.handle(b.target)?)?;
+        if end.removed {
+            return None;
+        }
+        let width = b
+            .width_feet
+            .map(|w| w * crate::script_engine::METRES_PER_FOOT);
+        Some((end.position.to_array(), width))
+    }
+
     /// The attach nodes on the origin of the model at `path`, as
     /// [`Self::set_origin_nodes`] and [`Self::add_origin_nodes`] left them.
     pub fn origin_nodes_at(&self, path: &str) -> Option<&[NodePose]> {
@@ -2253,6 +2295,15 @@ impl ScriptWorld {
     /// The actor under `h`, if the scripts reach one.
     pub fn actor(&self, h: Handle) -> Option<&Actor> {
         self.actors.get(&h)
+    }
+
+    /// `h`'s beam set as a script's writes of `lightningfields.target` and
+    /// `segmentgenerator.segment width` leave it (openspec AS.700): a test's,
+    /// where no script sets one.
+    pub fn set_beam(&mut self, h: Handle, target: Value, width_feet: Option<f32>) {
+        let b = self.beams.entry(h).or_default();
+        b.target = target;
+        b.width_feet = width_feet;
     }
 
     /// `h`'s tint set as a script's write of `placement.tint` leaves it (RGBA,
@@ -3119,6 +3170,9 @@ pub fn hero_config(mode: Mode) -> Config {
     c.anew_on_wake = anew_on_wake();
     members::register(&mut c.members, INIT_CHAIN);
     members::register(&mut c.members, members::HERO);
+    // A level's lightning on the host, over the hero table's cell for the
+    // generators (openspec AS.700).
+    crate::lightning::register(&mut c.members);
     // A slider's own members (AH.19): his attacks' and the HUD's slides.
     members::register(&mut c.members, members::COMBAT);
     // A clip's playback mode on the host (openspec AU.53: a life mage's
@@ -6582,6 +6636,110 @@ mod tests {
         assert_eq!(world.emitter_placement(901), None, "a clone of an actor");
         assert_eq!(world.emitter_placement(handles[&GRUNT]), None);
         assert_eq!(world.emitter_placement(902), None, "no actor");
+    }
+
+    /// openspec AS.700: a level's lightning emitter answers its generators
+    /// as itself, its width (the template's, in feet, until a script writes
+    /// one) and the target a script sets, which the TV reads as the beam's
+    /// end; another emitter, or a world told of no lightning, answers
+    /// nothing through its generators, as every path did before.
+    #[test]
+    fn a_levels_lightning_answers_its_generator_width_and_target() {
+        const BEAM: Obj = Obj { unit: 4, index: 12 };
+        const SMOKE: Obj = Obj { unit: 4, index: 13 };
+        let files = Files {
+            placed: vec![Placed::named(GRUNT, "Grunt", None, RUNNING)],
+            emitters: HashMap::from([
+                (BEAM, "Reflect_Beam".to_owned()),
+                (SMOKE, "Smoke".to_owned()),
+            ]),
+            ..Files::default()
+        };
+        let handles = headless_handles(&files);
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        for (h, t) in [(900, BEAM), (901, SMOKE)] {
+            world.actors.insert(
+                h,
+                Actor {
+                    template: Some(t),
+                    ..Actor::blank()
+                },
+            );
+        }
+        let gens = |r| at("particleinfo", "generators", Some(r));
+        let width = |r| at("segmentgenerator", "segment width", Some(r));
+        let target = |r| at("lightningfields", "target", Some(r));
+        // Told of none: nothing anywhere.
+        let beam = Value::Entity(900);
+        assert_eq!(
+            world.elements(&gens(beam), &mut NoEngine),
+            Err(HostFault::Nothing)
+        );
+        world.set_lightning(HashMap::from([(
+            BEAM,
+            crate::lightning::Template {
+                width: 0.3048,
+                tint: [1, 2, 3, 4],
+            },
+        )]));
+        for r in [beam, Value::Object(BEAM)] {
+            assert_eq!(world.elements(&gens(r), &mut NoEngine), Ok(vec![r]));
+            assert_eq!(
+                world.get(&at("generatorinfo", "lightning", Some(r)), &mut NoEngine),
+                Ok(r)
+            );
+            assert_eq!(world.get(&width(r), &mut NoEngine), Ok(Value::Float(1.0)));
+        }
+        for r in [
+            Value::Entity(901),
+            Value::Object(SMOKE),
+            Value::Entity(handles[&GRUNT]),
+        ] {
+            assert_eq!(
+                world.elements(&gens(r), &mut NoEngine),
+                Err(HostFault::Nothing)
+            );
+            assert_eq!(world.get(&width(r), &mut NoEngine), Err(HostFault::Nothing));
+        }
+        // Another of a generator's members answers nothing, its lightning's
+        // too.
+        assert_eq!(
+            world.get(
+                &at("generatorinfo", "appearance", Some(beam)),
+                &mut NoEngine
+            ),
+            Err(HostFault::Nothing)
+        );
+        // No end until a script sets one; then the clone's own, where its end
+        // stands.
+        assert_eq!(world.beam_end(900), None);
+        world.actors.get_mut(&handles[&GRUNT]).unwrap().position = Vec3::new(1.0, 2.0, 3.0);
+        let end = Value::Entity(handles[&GRUNT]);
+        world.set(&target(beam), end, &mut NoEngine).unwrap();
+        world
+            .set(&width(beam), Value::Float(3.0), &mut NoEngine)
+            .unwrap();
+        assert_eq!(world.get(&target(beam), &mut NoEngine), Ok(end));
+        assert_eq!(
+            world.get(&width(beam), &mut NoEngine),
+            Ok(Value::Float(3.0))
+        );
+        let (at_end, w) = world.beam_end(900).expect("its end");
+        assert_eq!(at_end, [1.0, 2.0, 3.0]);
+        assert!((w.unwrap() - 0.9144).abs() < 1e-5, "{w:?}");
+        // The template keeps its file's width; another emitter takes no write.
+        assert_eq!(
+            world.get(&width(Value::Object(BEAM)), &mut NoEngine),
+            Ok(Value::Float(1.0))
+        );
+        assert_eq!(
+            world.set(&target(Value::Entity(901)), end, &mut NoEngine),
+            Err(HostFault::Nothing)
+        );
+        assert_eq!(world.beam_end(901), None);
+        // Its end taken off, no beam.
+        world.actors.get_mut(&handles[&GRUNT]).unwrap().removed = true;
+        assert_eq!(world.beam_end(900), None);
     }
 
     /// The emitters a file places are read by name beside its actors.

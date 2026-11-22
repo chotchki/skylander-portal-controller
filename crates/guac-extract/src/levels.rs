@@ -263,6 +263,13 @@ pub const PALETTES_FIRST_RUN: u32 = 6;
 /// v1 reads its nodes again, and nothing else, on its next ask.
 pub const NODES_RULE: u32 = 2;
 
+/// The particles part's rule, which its file's name carries,
+/// `particles.v2.<ron|postcard>` (openspec AS.700: a level's lightning
+/// generators kept, level 208's reflect beams, where v1 listed them unread),
+/// so a level extracted under v1 reads its particles again, and nothing
+/// else, on its next ask.
+pub const PARTICLES_RULE: u32 = 2;
+
 /// Where the cinematics' camera rigs' models sit: an animator camera's
 /// `anim owner` places one (openspec AS.78).
 const CAMERA_MODELS: &str = "/models/cameras/";
@@ -292,6 +299,7 @@ pub fn part_path(ir: crate::intros::IrFormat, level: &str, part: &str) -> String
         }
         PALETTES => ir.level_path(level, &format!("{PALETTES}.v{PALETTES_FIRST_RUN}")),
         NODES => ir.level_path(level, &format!("{NODES}.v{NODES_RULE}")),
+        PARTICLES => ir.level_path(level, &format!("{PARTICLES}.v{PARTICLES_RULE}")),
         _ => ir.level_path(level, part),
     }
 }
@@ -323,10 +331,11 @@ pub fn complete(m: &Manifest) -> bool {
 /// `palettes.<ext>` before its rule's `palettes.v2`, AS.78 `palettes.v2`
 /// before `palettes.v3`, AS.180 a level's `v3` before `v4` and chapter 1's
 /// `v4` before `v5`, AS.442 a level's `v4` before `v5` and chapter 1's `v5`
-/// before `v6`), and the nodes (AS.562, `nodes` before `nodes.v2`). Any other
-/// part is held once it's recorded.
+/// before `v6`), the nodes (AS.562, `nodes` before `nodes.v2`) and the
+/// particles (AS.700, `particles` before `particles.v2`). Any other part is
+/// held once it's recorded.
 fn holds_current(level: &str, part: &str, files: &[String]) -> bool {
-    if part != PALETTES && part != NODES {
+    if part != PALETTES && part != NODES && part != PARTICLES {
         return true;
     }
     [

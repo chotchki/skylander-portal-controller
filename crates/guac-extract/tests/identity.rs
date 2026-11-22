@@ -676,10 +676,12 @@ fn a_run_leaves_the_dump_exactly_as_it_was() {
 fn record_levels(dir: &mut guac_extract::IdentityDir) {
     for level in guac_extract::levels::LEVELS {
         for part in guac_extract::levels::PARTS {
-            // The palettes and the nodes under their rule's name (openspec
-            // AS.52, AS.562).
+            // The palettes, the nodes and the particles under their rule's
+            // name (openspec AS.52, AS.562, AS.700).
             let files = match part {
-                guac_extract::levels::PALETTES | guac_extract::levels::NODES => {
+                guac_extract::levels::PALETTES
+                | guac_extract::levels::NODES
+                | guac_extract::levels::PARTICLES => {
                     vec![guac_extract::levels::part_path(
                         guac_extract::intros::IrFormat::Ron,
                         level,

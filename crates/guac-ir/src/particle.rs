@@ -67,7 +67,8 @@ pub struct Emitter {
     /// Its placement's object in the archive's file.
     pub object: u32,
     pub generators: Vec<Generator>,
-    /// Generators of a kind not kept (lightning), by type.
+    /// Generators of a kind not kept, by type: a spawn archive's lightning
+    /// (a level's own is kept, openspec AS.700).
     pub unread: Vec<String>,
 }
 
@@ -100,6 +101,8 @@ pub struct Generator {
 pub enum Kind {
     Sprite(Sprite),
     Ribbon(Ribbon),
+    /// Last, so a file written before it reads as it did (openspec AS.700).
+    Lightning(Lightning),
 }
 
 /// The texture a generator draws.
@@ -185,6 +188,26 @@ pub struct Ribbon {
     pub head_colour: [u8; 4],
     pub tail_colour: [u8; 4],
     pub granularity: f32,
+}
+
+/// A lightning strip (openspec AS.700): from its emitter to the target the
+/// scripts set on its clone, in `segments` pieces whose middle points stray
+/// off the straight line by up to `chaos_percent` of its length.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Lightning {
+    /// 0 none, 1 the end, 2 the start, 3 both.
+    pub taper: u8,
+    pub segments: u16,
+    pub scroll_uv_percent: f32,
+    pub scale_uv_percent: f32,
+    /// Metres.
+    pub width: f32,
+    /// Its colour's four codes (0xFF full strength, as a ribbon's).
+    pub colour: [u8; 4],
+    pub chaos_percent: f32,
+    pub chaos_constrained: bool,
+    /// Its straying drawn once and held, not drawn anew each frame.
+    pub freeze: bool,
 }
 
 #[cfg(test)]
@@ -285,8 +308,28 @@ mod tests {
                             granularity: 100.0,
                         }),
                     },
+                    // AS.700: a level's lightning strip.
+                    Generator {
+                        blend: Blend::Add,
+                        overlay_layer: 0,
+                        bloom: 0.0,
+                        offset,
+                        start_delay: 0.0,
+                        texture: None,
+                        kind: Kind::Lightning(Lightning {
+                            taper: 3,
+                            segments: 12,
+                            scroll_uv_percent: 50.0,
+                            scale_uv_percent: 200.0,
+                            width: 0.6,
+                            colour: [64, 192, 255, 255],
+                            chaos_percent: 15.0,
+                            chaos_constrained: true,
+                            freeze: false,
+                        }),
+                    },
                 ],
-                unread: vec!["LightningGenerator".into()],
+                unread: vec!["SegmentGenerator".into()],
             }],
             refused: vec![("Bent".into(), "why".into())],
         };
@@ -295,6 +338,17 @@ mod tests {
             from_postcard::<Emitters>(&to_postcard(&e).unwrap()).unwrap(),
             e
         );
+        // AS.700: the lightning came last, so a sprite and a ribbon keep the
+        // tags a file written before it holds.
+        for g in &e.emitters[0].generators {
+            let tag = postcard::to_stdvec(&g.kind).unwrap()[0];
+            let want = match g.kind {
+                Kind::Sprite(_) => 0,
+                Kind::Ribbon(_) => 1,
+                Kind::Lightning(_) => 2,
+            };
+            assert_eq!(tag, want, "{:?}", g.kind);
+        }
         // AS.17: a level's own, each with its placement.
         let level = LevelEmitters {
             identity: e.identity.clone(),

@@ -71,7 +71,9 @@ use serde::{Deserialize, Serialize};
 /// interface ([`interface`]). AT.27's strings with their settings change the
 /// interface's shape, which [`interface::RECORD`] versions in its files'
 /// names, so v6 holds and an extract reads the interface's two parts again
-/// alone.
+/// alone. AS.700's lightning ([`particle::Kind::Lightning`], appended last)
+/// is versioned the same way, in the level particles part's file name
+/// (`particles.v2`), so v6 holds and a level reads that part again alone.
 pub const IR_VERSION: u32 = 6;
 
 #[derive(Debug, thiserror::Error)]

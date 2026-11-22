@@ -356,7 +356,13 @@ fn test_known_dump() -> Option<KnownDump> {
 /// the desk's keys and mouse dropped ([`desk::DeskDeaf`]). The e2e harness
 /// and every lane's TV run set it; a look build with a hand on a pad doesn't.
 fn posted_pads_only() -> bool {
-    cfg!(feature = "test-hooks") && std::env::var_os("GUAC_TEST_POSTED_PADS_ONLY").is_some()
+    switch_holds(std::env::var_os("GUAC_TEST_POSTED_PADS_ONLY").is_some())
+}
+
+/// Whether the switch, set or not in the env, holds in this build: only a
+/// `test-hooks` one hears it, so a hand's build never hides its window.
+fn switch_holds(set: bool) -> bool {
+    cfg!(feature = "test-hooks") && set
 }
 
 /// Bevy's plugins for the TV: no log plugin (`logging::init` owns the global
@@ -997,6 +1003,15 @@ mod tests {
         ));
         let tv = window(WindowMode::Tv, true);
         assert_eq!((tv.width(), tv.height()), (1920.0, 1080.0));
+    }
+
+    /// AS.740's review: the switch set holds only in a `test-hooks` build,
+    /// so a hand's build (no `test-hooks`) with the env key set still shows
+    /// its window and hears the desk; unset, it never holds.
+    #[test]
+    fn only_a_test_hooks_build_hears_the_switch() {
+        assert_eq!(switch_holds(true), cfg!(feature = "test-hooks"));
+        assert!(!switch_holds(false));
     }
 
     /// AS.740: the switch adds [`desk::DeskDeaf`]; a hand's group has none.

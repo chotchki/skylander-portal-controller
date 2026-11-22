@@ -435,6 +435,116 @@ fn a_ribbon_follows_its_emitter_tapering_to_its_tail() {
     assert!(!s.live());
 }
 
+/// openspec AS.700: a lightning's material repeats its texture along its
+/// length, the scale and scroll it carries needing it; a sprite's and a
+/// ribbon's keep the sampler as stored.
+#[test]
+fn a_lightnings_texture_repeats_along_it() {
+    let bolt = Lightning {
+        taper: 0,
+        segments: 1,
+        scroll_uv_percent: 300.0,
+        scale_uv_percent: 700.0,
+        width: 1.1,
+        colour: [170, 32, 255, 255],
+        chaos_percent: 5.0,
+        chaos_constrained: true,
+        freeze: false,
+    };
+    let wraps = |kind: Kind| {
+        let m = material("e", 0, &generator(kind)).unwrap();
+        (m.textures[0].sampler.wrap_u, m.textures[0].sampler.wrap_v)
+    };
+    assert_eq!(wraps(Kind::Lightning(bolt)), (Wrap::Clamp, Wrap::Repeat));
+    assert_eq!(wraps(Kind::Sprite(stream())), (Wrap::Clamp, Wrap::Clamp));
+}
+
+/// openspec AS.700: a lightning lays its pieces from its generator to the
+/// target its clone's scripts set, its middle points strayed within its
+/// chaos and drawn anew each frame (held where it freezes), the width the
+/// scripts set or else its own; no target, or off, it draws nothing.
+#[test]
+fn a_lightning_runs_from_its_generator_to_its_target() {
+    let bolt = Lightning {
+        taper: 0,
+        segments: 4,
+        scroll_uv_percent: 0.0,
+        scale_uv_percent: 100.0,
+        width: 0.5,
+        colour: [255, 128, 64, 255],
+        chaos_percent: 20.0,
+        chaos_constrained: false,
+        freeze: false,
+    };
+    let g = generator(Kind::Lightning(bolt));
+    let mut s = GeneratorState::default();
+    let mut rng = Cosmetic::new(7);
+    s.step(&g, STILL, true, 1.0 / 60.0, &mut rng);
+    assert!(s.points.is_empty() && !s.live(), "no target, nothing");
+    let to = Vec3::new(8.0, 0.0, 0.0);
+    s.target = Some(to);
+    s.step(&g, STILL, true, 1.0 / 60.0, &mut rng);
+    assert_eq!(s.points.len(), 5);
+    assert_eq!((s.points[0].at, s.points[4].at), (Vec3::ZERO, to));
+    // Each middle point within a fifth of a two-metre piece of the line.
+    for (k, p) in s.points.iter().enumerate().take(4).skip(1) {
+        let on_line = Vec3::new(2.0 * k as f32, 0.0, 0.0);
+        let off = p.at.distance(on_line);
+        assert!(off <= 0.4 + 1e-5, "point {k} {off} m off");
+    }
+    let first: Vec<Vec3> = s.points.iter().map(|p| p.at).collect();
+    s.step(&g, STILL, true, 1.0 / 60.0, &mut rng);
+    let second: Vec<Vec3> = s.points.iter().map(|p| p.at).collect();
+    assert_ne!(first, second, "drawn anew each frame");
+    let view = View {
+        right: Vec3::X,
+        up: Vec3::Y,
+        eye: Vec3::new(4.0, 0.0, 10.0),
+    };
+    let seg = segment(&s, &g, STILL, view, Vec3::ZERO, 0).unwrap();
+    assert_eq!(seg.positions.len(), 4 * 4);
+    // Its texture's v runs along it and its u across (AS.700's review: the
+    // disc's bolt textures stand tall): the first piece's two corners at its
+    // start read v 0, the two at its end a quarter (100 % over 4 pieces),
+    // and each end's two corners u 0 and 1.
+    let uvs = &seg.uvs[0];
+    let mut ends: Vec<(bool, [f32; 2])> = (0..4)
+        .map(|k| (Vec3::from_array(seg.positions[k]).length() < 0.3, uvs[k]))
+        .collect();
+    ends.sort_by(|a, b| b.0.cmp(&a.0).then(a.1[0].total_cmp(&b.1[0])));
+    assert_eq!(
+        ends.iter().map(|e| e.1).collect::<Vec<_>>(),
+        [[0.0, 0.0], [1.0, 0.0], [0.0, 0.25], [1.0, 0.25]],
+        "{ends:?}"
+    );
+    // Its own width, then the scripts'; its colour halved for the shader's
+    // doubling, its alpha as stored.
+    let across = |seg: &guac_ir::model::Segment| {
+        Vec3::from_array(seg.positions[0]).distance(Vec3::from_array(seg.positions[3]))
+    };
+    assert!((across(&seg) - 0.5).abs() < 1e-4, "{}", across(&seg));
+    assert_eq!(seg.colors.as_ref().unwrap()[0], [128, 64, 32, 255]);
+    s.width = Some(1.5);
+    let seg = segment(&s, &g, STILL, view, Vec3::ZERO, 0).unwrap();
+    assert!((across(&seg) - 1.5).abs() < 1e-4, "{}", across(&seg));
+    // Frozen, it holds what it drew while its ends hold.
+    let frozen = generator(Kind::Lightning(Lightning {
+        freeze: true,
+        ..bolt
+    }));
+    let mut f = GeneratorState {
+        target: Some(to),
+        ..GeneratorState::default()
+    };
+    f.step(&frozen, STILL, true, 1.0 / 60.0, &mut rng);
+    let held: Vec<Vec3> = f.points.iter().map(|p| p.at).collect();
+    f.step(&frozen, STILL, true, 1.0 / 60.0, &mut rng);
+    assert_eq!(held, f.points.iter().map(|p| p.at).collect::<Vec<_>>());
+    // Off, gone at once.
+    s.step(&g, STILL, false, 1.0 / 60.0, &mut rng);
+    assert!(!s.live());
+}
+
 #[test]
 fn the_particles_draw_their_own_numbers_and_never_the_sessions() {
     let mut session = guac_script::Generator::seeded(5150);

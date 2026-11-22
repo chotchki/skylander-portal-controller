@@ -603,7 +603,11 @@ pub(crate) fn write_level_particles(
         refused,
     };
     std::fs::write(
-        dir.join(ir.level_path(LEVEL, guac_extract::levels::PARTICLES)),
+        dir.join(guac_extract::levels::part_path(
+            ir,
+            LEVEL,
+            guac_extract::levels::PARTICLES,
+        )),
         guac_ir::to_ron(&part).unwrap(),
     )
     .unwrap();

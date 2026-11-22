@@ -19,7 +19,12 @@
 //! as once, which a clone taken off a step after it comes can't tell
 //! apart). A ribbon lays a strip along
 //! where its emitter has been, its last `segments` places, tapered and
-//! coloured from head to tail.
+//! coloured from head to tail. A lightning (openspec AS.700) lays one from
+//! its generator to the target the scripts set on its clone
+//! ([`GeneratorState::target`]), in `segments` pieces whose middle points
+//! stray off the line, drawn anew each frame (held once drawn where it
+//! freezes) by up to its chaos percent of a piece's length (our reading:
+//! stand-in ledger `lightning`); with no target it draws nothing.
 //!
 //! The emitter's clone the scripts take off stops it, and what it made
 //! lives out its life: the throw's flash is taken off a step after it
@@ -50,8 +55,8 @@
 use bevy::math::{Quat, Vec3};
 use guac_ir::model::{self, Glow, Mask, Params, RenderStates, Segment, TextureRole, TextureSlot};
 use guac_ir::particle::{
-    Blend, Direction, Emitters, Generator, Keyed, Kind, LevelEmitters, Placed, Ribbon, Sprite,
-    Volume,
+    Blend, Direction, Emitters, Generator, Keyed, Kind, LevelEmitters, Lightning, Placed, Ribbon,
+    Sprite, Volume,
 };
 
 use crate::character::key::bit;
@@ -151,6 +156,11 @@ pub struct GeneratorState {
     pub since_point: f32,
     /// Seconds since its emitter stopped (0 while it's on).
     pub off_for: f32,
+    /// A lightning's end this frame, metres, and its width (metres) where
+    /// the scripts set one: what its clone's scripts wrote (openspec
+    /// AS.700), handed in before each step.
+    pub target: Option<Vec3>,
+    pub width: Option<f32>,
 }
 
 /// The middle key's place in a life, `None` where it has none.
@@ -266,6 +276,48 @@ impl GeneratorState {
         match &g.kind {
             Kind::Sprite(s) => self.step_sprite(s, at, on, dt, g.start_delay, rng),
             Kind::Ribbon(r) => self.step_ribbon(r, at, on, dt, g.start_delay),
+            Kind::Lightning(l) => self.step_lightning(l, at, on, g.start_delay, rng),
+        }
+    }
+
+    /// A lightning's points from its generator to its target, its middle
+    /// ones strayed (the module docs); none while it's off, before its
+    /// delay or with no target.
+    fn step_lightning(
+        &mut self,
+        l: &Lightning,
+        at: Frame,
+        on: bool,
+        delay: f32,
+        rng: &mut Cosmetic,
+    ) {
+        let Some(to) = self.target.filter(|_| on && self.clock >= delay) else {
+            self.points.clear();
+            return;
+        };
+        let from = at.at;
+        let n = usize::from(l.segments.max(1));
+        let line = to - from;
+        let reach = line.length() / n as f32 * l.chaos_percent.max(0.0) / 100.0;
+        let held = l.freeze
+            && self.points.len() == n + 1
+            && self.points[0].at.distance(from) < 1e-4
+            && self.points[n].at.distance(to) < 1e-4;
+        if held {
+            return;
+        }
+        let axis = line.normalize_or_zero();
+        let side = perpendicular(axis);
+        let other = axis.cross(side);
+        self.points.clear();
+        for i in 0..=n {
+            let f = i as f32 / n as f32;
+            let mut p = from + line * f;
+            if i > 0 && i < n && reach > 0.0 {
+                let phi = rng.unit() * std::f32::consts::TAU;
+                p += (side * phi.cos() + other * phi.sin()) * reach * rng.unit();
+            }
+            self.points.push(Point { at: p, age: 0.0 });
         }
     }
 
@@ -551,6 +603,51 @@ pub fn segment(
                 );
             }
         }
+        Kind::Lightning(l) => {
+            let n = state.points.len();
+            // Its texture's length runs along v and its cross-section along
+            // u (the disc's bolt textures stand 128 wide by 256 or 512 tall,
+            // the wide beam ones even along v): v along the strip, scaled
+            // and scrolled, u across it (AS.700's review; laid along u, the
+            // reflect beam drew its cross-section seven times, as dashes).
+            let scale_v = l.scale_uv_percent / 100.0;
+            let scroll = l.scroll_uv_percent / 100.0 * state.clock;
+            let width = state.width.unwrap_or(l.width).max(0.0) * frame.scale;
+            // A lightning's 0xFF is full strength, as a ribbon's.
+            let colour = codes(std::array::from_fn(|c| {
+                let v = f32::from(l.colour[c]);
+                if c < 3 { v / 2.0 } else { v }
+            }));
+            let half = |i: usize| {
+                let f = i as f32 / (n - 1).max(1) as f32;
+                let taper = match l.taper {
+                    1 => 1.0 - f,
+                    2 => f,
+                    3 => 1.0 - (2.0 * f - 1.0).abs(),
+                    _ => 1.0,
+                };
+                (f, taper * width * 0.5)
+            };
+            for i in 0..n.saturating_sub(1) {
+                let (a, b) = (state.points[i].at, state.points[i + 1].at);
+                let along = (b - a).normalize_or_zero();
+                if along == Vec3::ZERO {
+                    continue;
+                }
+                let middle = (a + b) * 0.5;
+                let side = along.cross(view.eye - middle).normalize_or_zero();
+                let (fa, wa) = half(i);
+                let (fb, wb) = half(i + 1);
+                let (va, vb) = (fa * scale_v + scroll, fb * scale_v + scroll);
+                let (a, b) = (a - origin, b - origin);
+                quads.push(
+                    [a - side * wa, b - side * wb, b + side * wb, a + side * wa],
+                    [[0.0, va], [0.0, vb], [1.0, vb], [1.0, va]],
+                    colour,
+                    view.eye - middle,
+                );
+            }
+        }
     }
     quads.segment(material)
 }
@@ -583,7 +680,7 @@ pub fn material(emitter: &str, k: usize, g: &Generator) -> Option<model::Materia
             role: TextureRole::Layer1ColorMap,
             texture: t.texture.clone(),
             image: t.image.clone(),
-            sampler: t.sampler,
+            sampler: along(g, t.sampler),
         }],
         params: Params {
             // Below zero: the texture's own alpha.
@@ -610,6 +707,20 @@ pub fn material(emitter: &str, k: usize, g: &Generator) -> Option<model::Materia
         scrolls: Vec::new(),
         tracks: Vec::new(),
     })
+}
+
+/// A generator's sampler as it draws: a lightning repeats its texture along
+/// its length, its v (openspec AS.700: level 208's beam scales it 700 % along
+/// and scrolls it 300 % a second, which a clamped edge would draw as nothing;
+/// our reading, stand-in ledger `lightning`), any other as stored.
+fn along(g: &Generator, sampler: guac_ir::model::Sampler) -> guac_ir::model::Sampler {
+    match g.kind {
+        Kind::Lightning(_) => guac_ir::model::Sampler {
+            wrap_v: guac_ir::model::Wrap::Repeat,
+            ..sampler
+        },
+        _ => sampler,
+    }
 }
 
 /// One triangle with the shape every particle segment has (one UV set,
