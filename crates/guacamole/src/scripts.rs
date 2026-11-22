@@ -2202,13 +2202,18 @@ impl ScriptWorld {
     /// Each lightning clone in play whose scripts set it an end, with where
     /// that end stands and its width in metres where they set one (openspec
     /// AS.700): what the TV draws its beam to.
-    pub fn beam_end(&self, h: Handle) -> Option<([f32; 3], Option<f32>)> {
+    pub fn beam_end(
+        &self,
+        h: Handle,
+        engine: &mut dyn crate::script_engine::Engine,
+    ) -> Option<([f32; 3], Option<f32>)> {
         let b = self.beams.get(&h)?;
         let width = b
             .width_feet
             .map(|w| w * crate::script_engine::METRES_PER_FOOT);
-        // An actor's attach node (openspec AS.714), while its actor stands.
-        if let Some(p) = self.node_point(b.target) {
+        // An actor's attach node (openspec AS.714), while its actor stands:
+        // a hero's where his controller holds him, as `engine` answers.
+        if let Some(p) = self.node_point(b.target, engine) {
             let owner = self.node_owner(b.target)?;
             return self
                 .actors
@@ -2216,11 +2221,13 @@ impl ScriptWorld {
                 .filter(|a| !a.removed)
                 .map(|_| (p.to_array(), width));
         }
-        let end = self.actors.get(&self.handle(b.target)?)?;
+        let target = self.handle(b.target)?;
+        let end = self.actors.get(&target)?;
         if end.removed {
             return None;
         }
-        Some((end.position.to_array(), width))
+        let at = engine.hero(target).map_or(end.position, |hero| hero.pivot);
+        Some((at.to_array(), width))
     }
 
     /// The attach nodes on the origin of the model at `path`, as
@@ -6738,7 +6745,7 @@ mod tests {
         );
         // No end until a script sets one; then the clone's own, where its end
         // stands.
-        assert_eq!(world.beam_end(900), None);
+        assert_eq!(world.beam_end(900, &mut NoEngine), None);
         world.actors.get_mut(&handles[&GRUNT]).unwrap().position = Vec3::new(1.0, 2.0, 3.0);
         let end = Value::Entity(handles[&GRUNT]);
         world.set(&target(beam), end, &mut NoEngine).unwrap();
@@ -6750,7 +6757,7 @@ mod tests {
             world.get(&width(beam), &mut NoEngine),
             Ok(Value::Float(3.0))
         );
-        let (at_end, w) = world.beam_end(900).expect("its end");
+        let (at_end, w) = world.beam_end(900, &mut NoEngine).expect("its end");
         assert_eq!(at_end, [1.0, 2.0, 3.0]);
         assert!((w.unwrap() - 0.9144).abs() < 1e-5, "{w:?}");
         // The template keeps its file's width; another emitter takes no write.
@@ -6762,10 +6769,10 @@ mod tests {
             world.set(&target(Value::Entity(901)), end, &mut NoEngine),
             Err(HostFault::Nothing)
         );
-        assert_eq!(world.beam_end(901), None);
+        assert_eq!(world.beam_end(901, &mut NoEngine), None);
         // Its end taken off, no beam.
         world.actors.get_mut(&handles[&GRUNT]).unwrap().removed = true;
-        assert_eq!(world.beam_end(900), None);
+        assert_eq!(world.beam_end(900, &mut NoEngine), None);
     }
 
     /// openspec AS.714: a spawn archive's lightning emitter, told by name,
@@ -6828,10 +6835,36 @@ mod tests {
         world.actors.get_mut(&grunt).unwrap().position = Vec3::new(4.0, 5.0, 6.0);
         let node = world.objs.value(Object::Node(grunt, 0));
         world.set(&target(bolt), node, &mut NoEngine).unwrap();
-        let (end, _) = world.beam_end(900).expect("its end");
+        let (end, _) = world.beam_end(900, &mut NoEngine).expect("its end");
         assert_eq!(end, [4.0, 5.0, 6.0]);
+        // A hero's node where his controller holds him, not where his
+        // script actor was left (the as-208-crossing review: Flameslinger's
+        // bowstring stretched back to where he joined as he walked); a beam
+        // on the hero himself the same.
+        let walked = Vec3::new(14.0, 5.0, -3.0);
+        let mut held = crate::script_engine::HeroesOnly(HashMap::from([(
+            grunt,
+            Hero::new(
+                guac_motion::tuning::eruptor_solid(),
+                guac_motion::tuning::Tuning::ERUPTOR,
+                walked,
+                0.0,
+            ),
+        )]));
+        let (end, _) = world.beam_end(900, &mut held).expect("its end");
+        assert_eq!(end, walked.to_array(), "his node as he stands now");
+        world
+            .set(&target(bolt), Value::Entity(grunt), &mut NoEngine)
+            .unwrap();
+        let (end, _) = world.beam_end(900, &mut held).expect("its end");
+        assert_eq!(end, walked.to_array(), "him as he stands now");
+        world.set(&target(bolt), node, &mut NoEngine).unwrap();
         world.actors.get_mut(&grunt).unwrap().removed = true;
-        assert_eq!(world.beam_end(900), None, "its node's actor gone");
+        assert_eq!(
+            world.beam_end(900, &mut NoEngine),
+            None,
+            "its node's actor gone"
+        );
     }
 
     /// The emitters a file places are read by name beside its actors.

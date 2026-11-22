@@ -745,7 +745,7 @@ A level's own emitter whose generator is a lightning SHALL be drawn as a strip f
 - **THEN** a beam runs from the start to the pivot and one from the pivot along its facing, each turn of the switch moving the second, until it reaches the ice block (headless as the block first melts: 10.4 m and 11.0 m, both 1.1 m wide)
 
 ### Requirement: A hero's lightning draws to its target
-A spawn archive's emitter whose generator is a lightning (a hero's attack, the level-up's) SHALL draw as a level's does, to the end its clone's scripts set, an actor or an actor's attach node; with none set it SHALL draw nothing.
+A spawn archive's emitter whose generator is a lightning (a hero's attack, the level-up's) SHALL draw as a level's does, to the end its clone's scripts set, an actor or an actor's attach node, where that actor stands as it's drawn that frame (a hero where his controller holds him); with none set it SHALL draw nothing.
 
 #### Scenario: Lightning Rod's thrown bolt
 - **WHEN** Lightning Rod throws his bolt

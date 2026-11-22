@@ -802,6 +802,31 @@ pub trait Engine {
 /// pad (AH.16's runs, which reach none of them).
 pub struct NoEngine;
 
+/// An engine that answers for the heroes alone, each as his controller
+/// holds him this frame (no solid, no view, no pad): what a draw outside the
+/// scripts' step reads a hero's place and nodes by, since his actor in the
+/// script world keeps the place he joined at (the as-208-crossing review:
+/// Flameslinger's bowstring ended where he joined).
+pub struct HeroesOnly(pub HashMap<Handle, Hero>);
+
+impl Engine for HeroesOnly {
+    fn hero(&mut self, h: Handle) -> Option<&mut Hero> {
+        self.0.get_mut(&h)
+    }
+    fn heroes(&self) -> Vec<Handle> {
+        self.0.keys().copied().collect()
+    }
+    fn seam(&self) -> &dyn PhysicsSeam {
+        &NoSeam
+    }
+    fn view_heading(&self) -> f32 {
+        0.0
+    }
+    fn pad(&self, _: usize) -> Pad {
+        Pad::default()
+    }
+}
+
 struct NoSeam;
 
 impl PhysicsSeam for NoSeam {
