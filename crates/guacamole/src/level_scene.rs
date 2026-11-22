@@ -223,7 +223,7 @@ pub const INTRO_PATH: &str = "p1 WP's";
 /// rule, on a level whose intro the TV runs ([`crate::scripts::INTROS`]) and
 /// a path of two points or more. Level 214's holds one point, 4.3 m off
 /// where its intro hands him over on the ship's deck; the levels whose
-/// intros aren't listed yet (200, 203, 204, 207, 215) keep their start
+/// intros aren't listed yet (200, 204, 207, 215) keep their start
 /// until theirs are (AS.143). The level's number alone stands before it:
 /// level 210's `210_Boss_Intro_P1_WP` walks him into its boss's arena, not
 /// the level's start.
@@ -2777,6 +2777,35 @@ mod tests {
         // The cast's places win over the path (level 205's shape).
         p.actors.push(placement("208_Intro_Player_Pos_WP", Some(1)));
         assert_eq!(start_point(&p), Ok(Vec3::new(7.0, 8.0, 9.0)));
+    }
+
+    /// openspec AS.703: level 203's start is where its intro walks the
+    /// first player in to, `203_Intro_P1_WP`'s last waypoint by the start
+    /// area's Molekin, not the first waypoint of `_init` (its first
+    /// `InitializeLevel.ai` placement, a later stretch's walkway 125 m on),
+    /// once its intro is on the TV's listing.
+    #[test]
+    fn level_203s_start_is_read_off_its_intros_walk_in() {
+        let mut marker = placement("_init", Some(0));
+        marker.script = Some("C:/tfb/InitializeLevel.ai".into());
+        marker.position = [-166.8, 17.1, -221.1];
+        let p = Placements {
+            identity: identity(),
+            level: "level_203_the_machine".into(),
+            actors: vec![marker, placement("203_Intro_P1_WP", Some(1))],
+            waypoints: vec![
+                vec![
+                    waypoint([-32.2, -7.2, -258.8]),
+                    waypoint([29.6, 11.3, -407.3]),
+                ],
+                vec![
+                    waypoint([-168.3, 19.5, -240.9]),
+                    waypoint([-168.3, 18.6, -227.6]),
+                    waypoint([-165.2, 17.1, -225.2]),
+                ],
+            ],
+        };
+        assert_eq!(start_point(&p), Ok(Vec3::new(-165.2, 17.1, -225.2)));
     }
 
     /// AS.13: a level without chapter 1's start placement starts at its

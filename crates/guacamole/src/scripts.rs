@@ -3423,12 +3423,17 @@ pub const THIRD_ISLAND: Encounter = Encounter {
 /// beside Flynn and Cali, walks him in along its path, plays the mechanic's
 /// scenes with them and sets the cast down at their places as it ends or is
 /// skipped, taking its own Flynn, Cali and mechanic off
-/// ([`crate::level_scene::INTRO_CAST_PLACES`]).
-pub const INTROS: [(&str, &str); 8] = [
+/// ([`crate::level_scene::INTRO_CAST_PLACES`]). Level 203's (openspec
+/// AS.703) lands him by pod at the start area and walks him in along
+/// `203_Intro_P1_WP` ([`crate::level_scene::INTRO_P1_PATH`]); on a restart
+/// at the boss (`Level Restart Point` 1) it spawns `_init_Boss` instead and
+/// plays nothing.
+pub const INTROS: [(&str, &str); 9] = [
     ("level_214_tutotial_2", "214_Intro_IGC"),
     ("level_201", "_Level_201_Intro_CS"),
     ("level_205_piratecards", "205_Intro_IGC"),
     ("level_208_ice", "208_Intro_IGC"),
+    ("level_203_the_machine", "203_Intro_IGC"),
     ("level_hub_2_stage_1", "CS_Intro_Controller"),
     ("level_hub_2_stage_2", "CS_Hub_Intro_Stage2"),
     ("level_hub_2_stage_3", "CS_Hub_Intro_Stage3"),
@@ -7680,6 +7685,16 @@ mod tests {
         let files = Files::default();
         let l208 = level_config(Mode::Play, &files, 4, "level_208_ice");
         assert!(l208.whitelist.lists("208_Intro_IGC", "C:/x/Any.ai"));
+    }
+
+    /// openspec AS.703: level 203's intro is on the TV's listing, held for
+    /// the hero as 208's is.
+    #[test]
+    fn level_203s_intro_is_run() {
+        assert_eq!(intro("level_203_the_machine"), Some("203_Intro_IGC"));
+        let files = Files::default();
+        let l203 = level_config(Mode::Play, &files, 4, "level_203_the_machine");
+        assert!(l203.whitelist.lists("203_Intro_IGC", "C:/x/Any.ai"));
     }
 
     /// openspec AS.96: the interiors' scripts on every level's listing,
