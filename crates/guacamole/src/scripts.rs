@@ -461,6 +461,7 @@ pub struct ScriptWorld {
     /// what `particleinfo.generators` answers for, and what each clone's
     /// scripts wrote of its beam.
     pub(crate) lightning: HashMap<Obj, crate::lightning::Template>,
+    pub(crate) lightning_named: HashMap<String, crate::lightning::Template>,
     pub(crate) beams: HashMap<Handle, crate::lightning::Beam>,
     /// Every waypoint's place, metres.
     pub(crate) points: HashMap<Obj, Vec3>,
@@ -1008,6 +1009,7 @@ impl ScriptWorld {
             light_templates: files.lights.clone(),
             emitters: files.emitters.clone(),
             lightning: HashMap::new(),
+            lightning_named: HashMap::new(),
             beams: HashMap::new(),
             points: files.points.clone(),
             point_turns: files.turns.clone(),
@@ -2183,7 +2185,18 @@ impl ScriptWorld {
                 a.template.or(a.obj)?
             }
         };
-        self.lightning.get(&t).map(|l| (t, *l))
+        // A spawn archive's, by its emitter's name (openspec AS.714).
+        self.lightning
+            .get(&t)
+            .or_else(|| self.lightning_named.get(self.emitters.get(&t)?))
+            .map(|l| (t, *l))
+    }
+
+    /// The spawn archives' lightning emitters by name (openspec AS.714,
+    /// [`crate::lightning::spawn_templates`]): a hero's bolt and the
+    /// level-up's, beside the level's own ([`Self::set_lightning`]).
+    pub fn set_spawn_lightning(&mut self, templates: HashMap<String, crate::lightning::Template>) {
+        self.lightning_named = templates;
     }
 
     /// Each lightning clone in play whose scripts set it an end, with where
@@ -2191,13 +2204,22 @@ impl ScriptWorld {
     /// AS.700): what the TV draws its beam to.
     pub fn beam_end(&self, h: Handle) -> Option<([f32; 3], Option<f32>)> {
         let b = self.beams.get(&h)?;
+        let width = b
+            .width_feet
+            .map(|w| w * crate::script_engine::METRES_PER_FOOT);
+        // An actor's attach node (openspec AS.714), while its actor stands.
+        if let Some(p) = self.node_point(b.target) {
+            let owner = self.node_owner(b.target)?;
+            return self
+                .actors
+                .get(&owner)
+                .filter(|a| !a.removed)
+                .map(|_| (p.to_array(), width));
+        }
         let end = self.actors.get(&self.handle(b.target)?)?;
         if end.removed {
             return None;
         }
-        let width = b
-            .width_feet
-            .map(|w| w * crate::script_engine::METRES_PER_FOOT);
         Some((end.position.to_array(), width))
     }
 
@@ -6725,6 +6747,72 @@ mod tests {
         // Its end taken off, no beam.
         world.actors.get_mut(&handles[&GRUNT]).unwrap().removed = true;
         assert_eq!(world.beam_end(900), None);
+    }
+
+    /// openspec AS.714: a spawn archive's lightning emitter, told by name,
+    /// answers its generators on a clone of it as a level's does, and a
+    /// beam whose scripts set its end on an actor's attach node ends where
+    /// that node stands, until its actor goes; a name told of no lightning
+    /// answers nothing.
+    #[test]
+    fn a_spawn_archives_lightning_answers_by_name_and_ends_on_a_node() {
+        const BOLT: Obj = Obj {
+            unit: 3,
+            index: 490,
+        };
+        const SPARK: Obj = Obj {
+            unit: 3,
+            index: 491,
+        };
+        let files = Files {
+            placed: vec![Placed::named(GRUNT, "Grunt", None, RUNNING)],
+            emitters: HashMap::from([
+                (BOLT, "003_Lightning_Projectile_Bolt".to_owned()),
+                (SPARK, "003_Spark".to_owned()),
+            ]),
+            ..Files::default()
+        };
+        let handles = headless_handles(&files);
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        for (h, t) in [(900, BOLT), (901, SPARK)] {
+            world.actors.insert(
+                h,
+                Actor {
+                    template: Some(t),
+                    ..Actor::blank()
+                },
+            );
+        }
+        let gens = |r| at("particleinfo", "generators", Some(r));
+        let target = |r| at("lightningfields", "target", Some(r));
+        let bolt = Value::Entity(900);
+        assert_eq!(
+            world.elements(&gens(bolt), &mut NoEngine),
+            Err(HostFault::Nothing),
+            "told of none"
+        );
+        world.set_spawn_lightning(HashMap::from([(
+            "003_Lightning_Projectile_Bolt".to_owned(),
+            crate::lightning::Template {
+                width: 1.4,
+                tint: [255; 4],
+            },
+        )]));
+        assert_eq!(world.elements(&gens(bolt), &mut NoEngine), Ok(vec![bolt]));
+        assert_eq!(
+            world.elements(&gens(Value::Entity(901)), &mut NoEngine),
+            Err(HostFault::Nothing)
+        );
+        // Its end on the grunt's node 0, which a model nothing poses holds
+        // at his pivot.
+        let grunt = handles[&GRUNT];
+        world.actors.get_mut(&grunt).unwrap().position = Vec3::new(4.0, 5.0, 6.0);
+        let node = world.objs.value(Object::Node(grunt, 0));
+        world.set(&target(bolt), node, &mut NoEngine).unwrap();
+        let (end, _) = world.beam_end(900).expect("its end");
+        assert_eq!(end, [4.0, 5.0, 6.0]);
+        world.actors.get_mut(&grunt).unwrap().removed = true;
+        assert_eq!(world.beam_end(900), None, "its node's actor gone");
     }
 
     /// The emitters a file places are read by name beside its actors.

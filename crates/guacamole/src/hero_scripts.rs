@@ -1679,6 +1679,14 @@ pub(crate) fn step_scripts(
             let added = world.add_origin_nodes(nodes);
             info!(added, "his static spawns' attach nodes");
         }
+        // The spawn archives' lightning, his among them once his emitters
+        // are read (openspec AS.714): his bolt's and the level-up's ends.
+        if let Some((emitters, _)) = level.emitters() {
+            let named =
+                guacamole::lightning::spawn_templates(emitters.values().map(|d| &*d.emitter));
+            info!(lightning = named.len(), "the spawn archives' lightning");
+            world.set_spawn_lightning(named);
+        }
         let mut host = WorldHost {
             world: &mut world,
             engine: &mut engine,

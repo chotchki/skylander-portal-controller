@@ -37,13 +37,18 @@ pub const PART: &str = "particles";
 /// The folder each archive's file sits in.
 pub const DIR: &str = "particles";
 
-/// `particles/<stem>.<ron|postcard>`.
+/// The rule each archive's file is read by, in its name: 2 since its
+/// lightning is kept (openspec AS.714), so a file read before (named
+/// without it) is read again.
+pub const RULE: u32 = 2;
+
+/// `particles/<stem>.v<RULE>.<ron|postcard>`.
 pub fn path(ir: IrFormat, archive: &str) -> String {
     let ext = match ir {
         IrFormat::Ron => "ron",
         IrFormat::Postcard => "postcard",
     };
-    format!("{DIR}/{}.{ext}", scripts::stem(archive))
+    format!("{DIR}/{}.v{RULE}.{ext}", scripts::stem(archive))
 }
 
 /// The archives the part reads with no walker's: the spawn models'.
@@ -60,7 +65,12 @@ pub fn archives_with(walkers: &[String]) -> Vec<String> {
 /// lists (openspec AU.1): an extract made before resumes for it alone.
 pub fn complete(m: &crate::extract::Manifest) -> bool {
     match (m.parts.get(scripts::SCRIPTS), m.parts.get(PART)) {
-        (Some(s), Some(p)) => scripts::holds_every_walker(s, p, DIR),
+        (Some(s), Some(p)) => scripts::walker_stems(s).iter().all(|stem| {
+            ["ron", "postcard"].iter().any(|ext| {
+                p.iter()
+                    .any(|f| *f == format!("{DIR}/{stem}.v{RULE}.{ext}"))
+            })
+        }),
         (None, Some(_)) => true,
         _ => false,
     }
@@ -132,7 +142,7 @@ pub fn level_emitters(
                 return Err(format!("it rides {what}, which isn't drawn yet"));
             }
             Ok(guac_ir::particle::Placed {
-                emitter: level_emitter(igz, &e, &mut own)?,
+                emitter: emitter(igz, &e, &mut own)?,
                 position: at.init_matrix.position,
                 rotation: at.init_matrix.rotation,
                 scale: p.scale,
@@ -163,41 +173,18 @@ fn name_of(igz: &Igz<'_>, index: usize) -> String {
         .map_or_else(|| format!("#{index}"), str::to_owned)
 }
 
-/// One emitter as the IR keeps it, its textures into `textures`: a spawn
-/// archive's, whose lightning stays unread by type as before openspec
-/// AS.700, so the extract-wide part reads as it did ([`level_emitter`]
-/// keeps a level's).
+/// One emitter as the IR keeps it, its textures into `textures`, its
+/// lightning kept ([`Kind::Lightning`]): level 208's reflect beams on a
+/// level (openspec AS.700), Lightning Rod's bolt in a spawn archive
+/// (AS.714).
 pub fn emitter(
     igz: &Igz<'_>,
     e: &particle::Emitter<'_>,
     textures: &mut Textures,
 ) -> std::result::Result<Emitter, String> {
-    emitter_with(igz, e, textures, false)
-}
-
-/// [`emitter`] for a level's own emitter (openspec AS.700): its lightning
-/// kept ([`Kind::Lightning`]), level 208's reflect beams.
-pub fn level_emitter(
-    igz: &Igz<'_>,
-    e: &particle::Emitter<'_>,
-    textures: &mut Textures,
-) -> std::result::Result<Emitter, String> {
-    emitter_with(igz, e, textures, true)
-}
-
-fn emitter_with(
-    igz: &Igz<'_>,
-    e: &particle::Emitter<'_>,
-    textures: &mut Textures,
-    lightning: bool,
-) -> std::result::Result<Emitter, String> {
     let mut generators = Vec::with_capacity(e.generators.len());
-    let mut unread: Vec<String> = e.unread.iter().map(|(_, t)| (*t).to_owned()).collect();
+    let unread: Vec<String> = e.unread.iter().map(|(_, t)| (*t).to_owned()).collect();
     for g in &e.generators {
-        if !lightning && matches!(g, Generator::Lightning(_)) {
-            unread.push("LightningGenerator".to_owned());
-            continue;
-        }
         // An image of no whole blocks (the level-up's arrow, 109 x 128) is
         // stored decoded ([`Textures::path`], openspec AH.244).
         let texture = match g.texture() {

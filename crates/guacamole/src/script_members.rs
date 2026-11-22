@@ -972,6 +972,17 @@ impl ScriptWorld {
         }
     }
 
+    /// Where `v` stands when it names an actor's attach node (openspec
+    /// AS.714: Lightning Rod's bolt ends on its projectile's last node),
+    /// with no engine to ask: a hero's node reads off his actor's last
+    /// place. None for anything else.
+    pub(crate) fn node_point(&self, v: Value) -> Option<Vec3> {
+        match self.objs.get(self.handle(v)?) {
+            Some(Object::Node(a, i)) => self.node(a, i, &mut crate::script_engine::NoEngine),
+            _ => None,
+        }
+    }
+
     /// Attach node `i` of actor `a` in the level: its offset turned by the
     /// actor's facing, from its pivot.
     fn node(&self, a: Handle, i: u32, engine: &mut dyn Engine) -> Option<Vec3> {
