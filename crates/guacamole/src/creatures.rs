@@ -1654,7 +1654,7 @@ mod tests {
         assert_eq!(read(&mut app), (false, true, 1, flat), "flat");
         let mirrored = [-scale[0], scale[1], scale[2]];
         assert!(world(&mut app).set_scale(h, mirrored));
-        assert_eq!(read(&mut app).0, true, "mirrored still draws");
+        assert!(read(&mut app).0, "mirrored still draws");
     }
 
     /// AS.63: a skinned clone no script runs (the pod the spawner clones
