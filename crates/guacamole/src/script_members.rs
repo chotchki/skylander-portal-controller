@@ -3733,18 +3733,8 @@ impl ScriptWorld {
         };
         let word = |n: &str| call.words.iter().find(|(k, _)| *k == n).map(|(_, w)| *w);
         let from_value = named("_fromLHS").ok_or(HostFault::Nothing)?;
+        let from = self.point(from_value, engine).ok_or(HostFault::Nothing)?;
         let looker = self.handle(from_value);
-        // A cone looked from a clone hung on another actor (a beam's emitter
-        // on its crystal's node) is taken from what it hangs on's pivot
-        // (openspec AS.755: at the end of its track, the one place its
-        // crystal is lit, 208's push block sees its ice block within the
-        // relay's 3° from the block's pivot and past it from the relay's
-        // own node).
-        let from = match looker.and_then(|l| self.carrier(l)) {
-            Some(c) => self.position(c, engine),
-            None => self.point(from_value, engine),
-        }
-        .ok_or(HostFault::Nothing)?;
         let facing = named("_RHSfacing").and_then(|v| v.as_f32()).unwrap_or(0.0);
         let width = named("_RHSfov").and_then(|v| v.as_f32()).unwrap_or(0.0);
         let limit = named("_RHS").unwrap_or(Value::Int(0));
@@ -3778,7 +3768,17 @@ impl ScriptWorld {
             };
             let feet = (d.length_squared() + f32::MIN_POSITIVE).sqrt() * FEET_PER_METRE;
             let passes = guac_script::compare(code, Value::Float(feet), limit) == Some(true);
-            if off <= width * 0.5 && passes {
+            // A box is in the cone where the cone's own line crosses it, as
+            // a beam drawn along that line meets it (openspec AS.755: 208's
+            // second ice block, its pivot 3.09° off the push block relay's
+            // 3° and its box across the line, melts there in the original).
+            // Stand-in ledger: `cone-box`.
+            let inside = off <= width * 0.5
+                || self
+                    .handle(t)
+                    .and_then(|h| self.actors.get(&h))
+                    .is_some_and(|a| line_meets_box(from, facing, a));
+            if inside && passes {
                 found.push((feet, t));
             }
         }
@@ -4156,18 +4156,6 @@ impl ScriptWorld {
             .collect()
     }
 
-    /// What actor `h` hangs on, a node of another actor or that actor
-    /// itself (openspec AS.755); none for one hung on nothing or on itself.
-    pub(crate) fn carrier(&self, h: Handle) -> Option<Handle> {
-        let a = self.actors.get(&h)?;
-        let owner = match self.object(Some(a.attach)) {
-            Some(Object::Node(owner, _)) => Some(owner),
-            None => self.actor_of(Some(a.attach)),
-            _ => None,
-        }?;
-        (owner != h && self.actors.contains_key(&owner)).then_some(owner)
-    }
-
     /// The actors something not taken off hangs on a node of, each once in
     /// handle order: whose nodes an embedder poses (openspec AH.138), the
     /// rest left at their pivots for nothing.
@@ -4538,6 +4526,39 @@ fn turned_by(angles: Angles, m: Member, by: f32) -> Angles {
 fn fall_point(hero: &Hero) -> Option<Vec3> {
     let fallen = hero.fallen()?;
     Some(hero.pivot - Vec3::Y * fallen.max(6.0 * METRES_PER_FOOT))
+}
+
+/// Whether the line from `from` along heading `facing` (degrees, across the
+/// ground) crosses actor `a`'s solid where that's a box, in plan: its box as
+/// the seam stands it, turned by its facing.
+fn line_meets_box(from: Vec3, facing: f32, a: &crate::script_engine::Actor) -> bool {
+    let Some(solid) = a.havok() else {
+        return false;
+    };
+    let (1, Shape::Box { half_extents, .. }) = (a.solid.shape, solid.shape) else {
+        return false;
+    };
+    let pose = solid.pose(Pose::new(
+        a.position,
+        Quat::from_rotation_y(a.angles.facing.to_radians()),
+    ));
+    let back = pose.rotation.inverse();
+    let o = back * (from - pose.position);
+    let r = back * Vec3::new(facing.to_radians().sin(), 0.0, facing.to_radians().cos());
+    let mut near = 0.0f32;
+    let mut far = f32::INFINITY;
+    for (o, r, h) in [(o.x, r.x, half_extents.x), (o.z, r.z, half_extents.z)] {
+        if r.abs() < 1e-6 {
+            if o.abs() > h {
+                return false;
+            }
+            continue;
+        }
+        let (t0, t1) = ((-h - o) / r, (h - o) / r);
+        near = near.max(t0.min(t1));
+        far = far.min(t0.max(t1));
+    }
+    near <= far
 }
 
 /// The top speed `Movement - Add Mover` leaves in the engine's numbers: a
@@ -9883,61 +9904,64 @@ mod fight_tests {
         );
     }
 
-    /// openspec AS.755: a cone from a clone hung on another actor, on a
-    /// node of it or on it, is measured from that actor's pivot, its facing
-    /// still its own; unhung it's measured from its own place.
+    /// openspec AS.755: a box whose extent the cone's line crosses is in
+    /// the cone though its pivot is off it; a box the line passes by, a
+    /// box behind, and anything not a box are measured by their pivots.
     #[test]
-    fn check_fov_from_a_hung_clone_is_taken_from_what_it_hangs_on() {
+    fn check_fov_holds_a_box_its_line_crosses() {
         let mut e = pit();
         let mut w = world();
-        // The carrier at the origin; the clone 2 m east of it, facing north;
-        // the target 10 m north of the carrier: 11.3° off from the clone,
-        // dead ahead from the carrier.
-        w.actors.insert(C3, chompy(Vec3::ZERO, 0.0));
-        w.actors.insert(C2, chompy(Vec3::new(0.0, 0.0, 10.0), 0.0));
-        let call = op(
-            Class::CheckFov,
-            C1,
-            vec![
-                ("_RHSfacing", Some(Value::Float(0.0))),
-                ("_RHSfov", Some(Value::Int(6))),
-                ("_fromLHS", Some(Value::Entity(C1))),
-                ("_LHS", Some(Value::Entity(C2))),
-                ("_RHS", Some(Value::Int(0))),
-            ],
-            Vec::new(),
-        );
-        let mut words = call.clone();
-        words.words = vec![("_relOperator", 2)];
-        let clone = |attach: Value| Actor {
-            template: Some(Obj { unit: 5, index: 7 }),
-            position: Vec3::new(2.0, 0.0, 0.0),
-            attach,
-            ..Actor::blank()
+        w.actors.insert(C1, chompy(Vec3::ZERO, 0.0));
+        // A box 4 m across x and 2 m along z, its pivot 10 m north and 1.5 m
+        // east: 8.5° off the line, which crosses its west half.
+        let boxed = |at: Vec3, shape: i32| {
+            let mut a = chompy(at, 0.0);
+            a.solid.shape = shape;
+            a.solid.width = 4.0 / 0.3048;
+            a.solid.length = 2.0 / 0.3048;
+            a.solid.height = 3.0;
+            a.solid.offset = [0.0; 3];
+            a
         };
-        w.actors.insert(C1, clone(Value::Null));
-        assert_eq!(
-            ask(&mut w, &mut e, &words),
-            Answer::Found(Vec::new()),
-            "unhung"
-        );
-        let node = w.objs.value(Object::Node(C3, 1));
-        for (how, attach) in [("on its node", node), ("on it", Value::Entity(C3))] {
-            w.actors.insert(C1, clone(attach));
-            assert_eq!(w.carrier(C1), Some(C3), "{how}");
-            assert_eq!(
-                ask(&mut w, &mut e, &words),
-                Answer::Found(vec![Value::Entity(C2)]),
-                "{how}"
+        let call = |target: Handle| {
+            let mut c = op(
+                Class::CheckFov,
+                C1,
+                vec![
+                    ("_RHSfacing", Some(Value::Float(0.0))),
+                    ("_RHSfov", Some(Value::Int(6))),
+                    ("_fromLHS", Some(Value::Entity(C1))),
+                    ("_LHS", Some(Value::Entity(target))),
+                    ("_RHS", Some(Value::Int(0))),
+                ],
+                Vec::new(),
             );
+            c.words = vec![("_relOperator", 2)];
+            c
+        };
+        let cases = [
+            ("crossed", Vec3::new(1.5, 0.0, 10.0), 1, true),
+            ("passed by", Vec3::new(2.5, 0.0, 10.0), 1, false),
+            ("behind", Vec3::new(1.5, 0.0, -10.0), 1, false),
+            ("a capsule", Vec3::new(1.5, 0.0, 10.0), 2, false),
+        ];
+        for (how, at, shape, held) in cases {
+            w.actors.insert(C2, boxed(at, shape));
+            let want = if held {
+                vec![Value::Entity(C2)]
+            } else {
+                Vec::new()
+            };
+            assert_eq!(ask(&mut w, &mut e, &call(C2)), Answer::Found(want), "{how}");
         }
-        // Hung on itself, it's its own.
-        w.actors.insert(C1, clone(Value::Entity(C1)));
-        assert_eq!(w.carrier(C1), None);
+        // Turned 90° the same box is 2 m across x: the line passes it by.
+        let mut turned = boxed(Vec3::new(1.5, 0.0, 10.0), 1);
+        turned.angles.facing = 90.0;
+        w.actors.insert(C2, turned);
         assert_eq!(
-            ask(&mut w, &mut e, &words),
+            ask(&mut w, &mut e, &call(C2)),
             Answer::Found(Vec::new()),
-            "on itself"
+            "turned"
         );
     }
 

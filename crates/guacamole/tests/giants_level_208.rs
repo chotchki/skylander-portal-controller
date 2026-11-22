@@ -1204,9 +1204,48 @@ fn level_208s_way_by_the_stick_to_the_second_beam() {
         relay.1.x < relay.0.x - 4.0 && flat(relay.1, ice) < 5.0,
         "the crystal's beam west at the second ice block: {relay:?}"
     );
-    // Not melted (openspec AS.755): its cone misses the block's pivot by
-    // 0.09 deg.
-    println!("the second ice block {}", behaviour(&run, ICE_BLOCK_2));
+    // Melted (openspec AS.755): the relay's cone, taken from the push
+    // block it hangs on, holds the block; it melts and takes itself off.
+    // A stall (no change in 600 steps) ends it.
+    let (mut last, mut since, mut melted) = (behaviour(&run, ICE_BLOCK_2), 0u32, None);
+    for _ in 0..3000 {
+        still(&mut run, &mut stops, [false; 4]);
+        if removed(&run, ICE_BLOCK_2) {
+            melted = Some(run.steps);
+            break;
+        }
+        let b = behaviour(&run, ICE_BLOCK_2);
+        if b != last {
+            println!("  {} {ICE_BLOCK_2} {b}", run.steps);
+            (last, since) = (b, 0);
+        } else {
+            since += 1;
+            assert!(since < 600, "the second ice block stalled at {last}");
+        }
+    }
+    println!("the second ice block melted at step {melted:?}");
+    assert!(melted.is_some(), "the second ice block melted");
+    // And the way west past where it stood is open to the stick.
+    let past_block = Vec3::new(-68.0, 3.4, -58.0);
+    let west = fight_to(
+        &mut run,
+        &mut stops,
+        &[],
+        &[],
+        past_block,
+        3000,
+        &|run: &Run| flat(run.hero().pivot, past_block) < 2.0,
+    );
+    println!(
+        "past the second ice block {} at {}",
+        west.ended,
+        run.hero().pivot
+    );
+    assert!(
+        west.ended,
+        "past the second ice block: {}",
+        run.hero().pivot
+    );
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
 }
