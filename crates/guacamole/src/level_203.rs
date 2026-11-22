@@ -6,7 +6,7 @@ pub const LEVEL: &str = "level_203_the_machine";
 
 /// The start area's placements, by name, listed and never walked (openspec
 /// AS.704).
-pub const START: [&str; 18] = [
+pub const START: [&str; 21] = [
     "molekin_at_start",
     "miner_hat",
     "_TRIGGER_crushers_begining",
@@ -25,6 +25,9 @@ pub const START: [&str; 18] = [
     "reset_point_OFF_1",
     "reset_point_OFF_2",
     "DamageZone_Crushers_203",
+    "TeleporterStart_introduction",
+    "TeleporterEnd_introduction",
+    "TeleporterHelper",
 ];
 
 /// [`START`] on 203 alone.

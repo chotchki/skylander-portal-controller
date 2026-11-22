@@ -487,31 +487,34 @@ fn first_in(log: &[(u32, String, String)], name: &str, states: &[&str]) -> Optio
         .map(|e| e.0)
 }
 
+/// Past the intro, down the conveyors to Setup_001's trigger and the fight
+/// fought to the gate's opening: what it did.
+fn fought_open(stops: &mut Vec<String>) -> (Run, Fought) {
+    let mut run = past_intro(stops);
+    walk(&mut run, stops, &[ALONG[0], ALONG[1], TRIGGER], &mut |_| {});
+    let gate = |run: &Run| behaviour(run, GATE) != "wait to be opened";
+    let out = fight_to(
+        &mut run,
+        stops,
+        Vec3::new(-100.0, 7.7, -238.0),
+        12000,
+        &gate,
+    );
+    (run, out)
+}
+
 /// openspec AS.705: Setup_001's fight by its own trigger. Down the start
 /// area's conveyors to the trigger at the second's foot, the Troll comes
-/// down his path and the three Fire Chompies in the yard wake; with them
-/// beaten the pipe sends five more one at a time; with all beaten the
-/// controller takes itself off and the gate opens. Nothing stops.
+/// down his path and shoots and the three Fire Chompies in the yard wake;
+/// with them beaten the pipe sends five more one at a time; with all
+/// beaten the controller takes itself off and the gate lowers. Nothing
+/// stops.
 #[test]
 #[ignore = "reads the Giants dump"]
 fn level_203s_first_fight_opens_the_start_areas_gate() {
     println!("load at start: {}", load());
     let mut stops = Vec::new();
-    let mut run = past_intro(&mut stops);
-    walk(
-        &mut run,
-        &mut stops,
-        &[ALONG[0], ALONG[1], TRIGGER],
-        &mut |_| {},
-    );
-    let gate = |run: &Run| behaviour(run, GATE) != "wait to be opened";
-    let out = fight_to(
-        &mut run,
-        &mut stops,
-        Vec3::new(-100.0, 7.7, -238.0),
-        12000,
-        &gate,
-    );
+    let (run, out) = fought_open(&mut stops);
     for e in &out.log {
         println!("  {e:?}");
     }
@@ -524,10 +527,50 @@ fn level_203s_first_fight_opens_the_start_areas_gate() {
         run.hero().pivot
     );
     assert!(out.ended, "the gate opened");
+    assert_eq!(behaviour(&run, GATE), "lower spikes");
     for f in FOES {
         assert!(first_in(&out.log, f, &["removed"]).is_some(), "{f} beaten");
     }
     assert!(first_in(&out.log, "Setup_001_Controller", &["removed"]).is_some());
+    assert!(
+        out.clones.get("Troll_BFG_Bullet").copied().unwrap_or(0) > 0,
+        "the Troll shoots"
+    );
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
+}
+
+/// Past the gate: the two conveyors east, then south onto the introduction
+/// teleporter's start.
+const PAST_GATE: [(f32, f32); 3] = [(-87.0, -219.6), (-73.6, -226.8), (-73.7, -249.0)];
+
+/// Where the introduction teleporter sets him down: its end's place.
+const TELEPORTER_END: Vec3 = Vec3::new(-10.811, 2.346, -245.256);
+
+/// openspec AS.706: past the opened gate, along the next two conveyors
+/// onto the introduction teleporter's start, which carries him to its end
+/// on the lower walkway. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_203s_introduction_teleporter_takes_him_on() {
+    println!("load at start: {}", load());
+    let mut stops = Vec::new();
+    let (mut run, out) = fought_open(&mut stops);
+    assert!(out.ended, "the gate opened");
+    walk(&mut run, &mut stops, &PAST_GATE, &mut |_| {});
+    let start = run.steps;
+    let mut arrived = None;
+    for _ in 0..600u32 {
+        still(&mut run, &mut stops, [false; 4]);
+        if arrived.is_none() && run.hero().pivot.distance(TELEPORTER_END) < 1.0 {
+            arrived = Some(run.steps - start);
+        }
+    }
+    let at = run.hero().pivot;
+    println!("arrived after {arrived:?} steps, at {at}");
+    assert!(arrived.is_some(), "carried to its end");
+    assert!(at.distance(TELEPORTER_END) < 1.0, "stays there: {at}");
+    assert!(run.hero().footing.supported, "on the ground");
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
 }
