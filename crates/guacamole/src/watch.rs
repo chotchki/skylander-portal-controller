@@ -130,6 +130,33 @@ pub(crate) struct HeroWatch {
     /// Every awake actor but him within [`NEAR`] of his pivot across the
     /// ground, nearest first, as `name at d m`: what may pin him.
     pub near: Vec<String>,
+    /// The seam bodies within [`TOUCH`] of his solid where he stands, one
+    /// each, nearest first, as `name d m` (negative inside): what his move
+    /// meets (an actor's body by its placement, a prop's, the level's).
+    pub touching: Vec<String>,
+}
+
+/// How near the seam's bodies count as against him for
+/// [`HeroWatch::touching`], metres.
+pub(crate) const TOUCH: f32 = 0.05;
+
+/// [`HeroWatch::touching`] of the planes the seam gave at his solid: one per
+/// body, its nearest plane's distance, nearest first, each named by `name`.
+pub(crate) fn touching(
+    planes: &[guac_motion::seam::ContactPlane],
+    name: impl Fn(guac_motion::seam::BodyId) -> String,
+) -> Vec<String> {
+    let mut by: Vec<(guac_motion::seam::BodyId, f32)> = Vec::new();
+    for p in planes {
+        match by.iter_mut().find(|(b, _)| *b == p.body) {
+            Some((_, d)) => *d = d.min(p.distance),
+            None => by.push((p.body, p.distance)),
+        }
+    }
+    by.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.0.cmp(&b.0.0)));
+    by.into_iter()
+        .map(|(b, d)| format!("{} {d:.2} m", name(b)))
+        .collect()
 }
 
 /// How near an actor stands to the hero for [`HeroWatch::near`], metres.
@@ -164,6 +191,7 @@ pub(crate) fn hero_watch(
             .into_iter()
             .map(|(d, n)| format!("{n} at {d:.2} m"))
             .collect(),
+        touching: Vec::new(),
     }
 }
 
@@ -281,9 +309,26 @@ pub(crate) struct WatchShots<'w, 's> {
     source: Option<Res<'w, ScriptSource>>,
     earning: Option<Res<'w, Earning>>,
     heroes: Query<'w, 's, (&'static HeroRun, &'static HeroBody)>,
+    seam: crate::physics::AvianSeam<'w, 's>,
+    embodied: Option<Res<'w, crate::creatures::Embodied>>,
 }
 
 impl WatchShots<'_, '_> {
+    /// A seam body by what it is: an actor's by its placement's name, a
+    /// prop's by its object, else the level's.
+    fn body_name(&self, world: &ScriptWorld, id: guac_motion::seam::BodyId) -> String {
+        if let Some(h) = self.embodied.as_deref().and_then(|e| e.whose(id)) {
+            return match world.actor(h) {
+                Some(_) => world.name(h).to_owned(),
+                None => "hero".to_owned(),
+            };
+        }
+        match id.0.checked_sub(guacamole::props::PROP_BODIES) {
+            Some(i) if id.0 < crate::creatures::ACTOR_BODIES => format!("prop {i}"),
+            _ => format!("level {}", id.0),
+        }
+    }
+
     /// None until something's watched and the level's run is made.
     pub(crate) fn shot(&self) -> Option<WatchShot> {
         let names = self.asks.as_deref()?.names();
@@ -310,7 +355,23 @@ impl WatchShots<'_, '_> {
                 .map(|e| (e.progress.xp, e.progress.gold))
         });
         let mut shot = read(&rt.vm, world, level, &names, hero, seated, figure);
-        shot.hero = joined.map(|(_, b)| hero_watch(&rt.vm, world, seated, &b.hero));
+        shot.hero = joined.map(|(_, b)| {
+            let mut w = hero_watch(&rt.vm, world, seated, &b.hero);
+            let solid = b.hero.solid();
+            let pose = solid.pose(guac_motion::seam::Pose::new(
+                b.hero.pivot,
+                b.hero.rotation(),
+            ));
+            let planes = guac_motion::seam::PhysicsSeam::contacts(
+                &self.seam,
+                &solid.in_world(),
+                pose,
+                TOUCH,
+                &b.exclude,
+            );
+            w.touching = touching(&planes, |id| self.body_name(world, id));
+            w
+        });
         Some(shot)
     }
 }
@@ -561,6 +622,25 @@ mod tests {
             "{:?}",
             far.near
         );
+    }
+
+    /// openspec AS.756: what the seam has against him reads one line a
+    /// body, its nearest plane's gap (inside negative), nearest first.
+    #[test]
+    fn what_touches_the_hero_reads_one_line_a_body_nearest_first() {
+        use guac_motion::seam::{BodyId, ContactPlane};
+        let plane = |body: u32, distance: f32| ContactPlane {
+            body: BodyId(body),
+            triangle: None,
+            material: None,
+            normal: Vec3::Y,
+            point: Vec3::ZERO,
+            distance,
+        };
+        let planes = [plane(7, 0.03), plane(9, 0.01), plane(7, -0.1)];
+        let lines = touching(&planes, |b| format!("b{}", b.0));
+        assert_eq!(lines, ["b7 -0.10 m", "b9 0.01 m"]);
+        assert!(touching(&[], |_| String::new()).is_empty());
     }
 
     /// Once a placement is taken off it reads `gone`.
