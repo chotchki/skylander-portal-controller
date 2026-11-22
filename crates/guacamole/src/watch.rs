@@ -141,7 +141,7 @@ pub(crate) struct HeroWatch {
 
 /// How near the seam's bodies count as against him for
 /// [`HeroWatch::touching`], metres.
-pub(crate) const TOUCH: f32 = 0.05;
+pub(crate) const TOUCH: f32 = 0.25;
 
 /// [`HeroWatch::touching`] of the planes the seam gave at his solid: one per
 /// body, its nearest plane's distance, nearest first, each named by `name`.
