@@ -743,9 +743,11 @@ pub(crate) struct SpawnShot {
     /// AS.186's [`ScriptWorld::hangs_on_nothing`]).
     pub hung_on: Option<String>,
     pub on_nothing: bool,
-    /// Whether it puts anything on the screen now (openspec AS.716): the TV
-    /// holds parts for it ([`Self::parts`]), its tint's alpha is over 0 and
-    /// every axis of its scale is ([`shows`]).
+    /// Whether the TV draws anything of it now (openspec AS.716): it holds
+    /// parts for it ([`Self::parts`]), its actor's tint alpha is over 0 and
+    /// no axis of its own scale is 0 ([`shows`]). Not whether the camera
+    /// sees it, nor a fade its model's own tracks make; a clone hung on a
+    /// parent at scale 0 still draws at its own scale, so reads drawn.
     pub drawn: bool,
     /// Whether the TV has parts up for it: a static clone's model's parts,
     /// or a skinned one drawn as a creature is (what `drawn` read before

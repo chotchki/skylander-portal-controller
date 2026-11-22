@@ -1281,4 +1281,58 @@ mod tests {
             "a fixed-step system the table lacks"
         );
     }
+
+    /// openspec AS.664: the drawn hung clones are put at their actors'
+    /// places after every node they can hang on is posed this step (his
+    /// hands, a creature's nodes, the creatures placed), and after the
+    /// clones' own first place; run before any of them, a clone on a node
+    /// stands where the node was a step ago, the card face sinking into
+    /// its turning stone. The frame-set table above doesn't see an order
+    /// inside `Frame::Hands`.
+    #[test]
+    fn the_hung_clones_are_placed_after_the_nodes_they_hang_on() {
+        use bevy::ecs::schedule::Schedules;
+        use bevy::ecs::system::IntoSystem;
+        use bevy::prelude::FixedUpdate;
+        use std::any::TypeId;
+        let mut app = fixed_step_app();
+        let world = app.world_mut();
+        let mut fixed = world
+            .resource_mut::<Schedules>()
+            .remove(FixedUpdate)
+            .expect("FixedUpdate");
+        fixed.initialize(world).expect("it builds");
+        let order: Vec<TypeId> = fixed
+            .systems()
+            .expect("initialized")
+            .map(|(_, s)| s.system_type())
+            .collect();
+        let at = |ty: TypeId, what: &str| {
+            order
+                .iter()
+                .position(|t| *t == ty)
+                .unwrap_or_else(|| panic!("{what} isn't scheduled"))
+        };
+        let hung = at(
+            hero_scripts::place_hung_clones.system_type_id(),
+            "the hung clones' places",
+        );
+        for (ty, what) in [
+            (
+                hero_scripts::draw_clones.system_type_id(),
+                "the clones' draw",
+            ),
+            (hero_scripts::pose_hands.system_type_id(), "his hands"),
+            (
+                creatures::pose_creature_nodes.system_type_id(),
+                "a creature's nodes",
+            ),
+            (
+                creatures::place_creatures.system_type_id(),
+                "the creatures' places",
+            ),
+        ] {
+            assert!(at(ty, what) < hung, "{what} after the hung clones");
+        }
+    }
 }
