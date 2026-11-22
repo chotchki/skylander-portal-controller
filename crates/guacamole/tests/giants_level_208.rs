@@ -249,8 +249,10 @@ fn behaviour(run: &Run, name: &str) -> String {
     }
 }
 
-/// The wall's bricks still standing (clones of `brick` and `brick2`): how
-/// many, and the farthest of each template's from the wall's place.
+/// The wall's bricks still standing (clones of `brick` and `brick2` within
+/// 30 m of its place: the river's wall past Setup_002, 50 m off, lays its
+/// own, openspec AS.346): how many, and the farthest of each template's
+/// from the wall's place.
 fn bricks(run: &Run, wall: Vec3) -> (usize, [f32; 2]) {
     let mut n = 0;
     let mut far = [0.0f32; 2];
@@ -259,7 +261,11 @@ fn bricks(run: &Run, wall: Vec3) -> (usize, [f32; 2]) {
         let Some(k) = ["brick", "brick2"].iter().position(|t| *t == name) else {
             continue;
         };
-        if let Some(a) = run.world.actor(h).filter(|a| !a.removed) {
+        if let Some(a) = run
+            .world
+            .actor(h)
+            .filter(|a| !a.removed && a.position.distance(wall) < 30.0)
+        {
             n += 1;
             far[k] = far[k].max(a.position.distance(wall));
         }
