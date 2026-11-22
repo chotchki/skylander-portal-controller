@@ -2419,7 +2419,6 @@ fn enter(
     // His body for a clone of it to draw with (openspec AS.710: Stealth
     // Elf's decoy).
     level.add_body(
-        &walker.load_file,
         crate::level::CreatureModel {
             path: read.loaded.model.name.clone(),
             model: read.loaded.model.clone(),
@@ -3234,11 +3233,6 @@ mod tests {
             }
         }
         assert!(level.creature(&format!("C:/x/Not{name}")).is_none());
-        // A clone of another placement on his body is drawn with it; the one
-        // his join makes of his own placement isn't a second him.
-        assert!(level.holds_clone("009_EruptorDecoy", &path));
-        assert!(!level.holds_clone("009_Eruptor", &path));
-        assert!(!level.holds_clone("009_EruptorDecoy", &format!("C:/x/Not{name}")));
     }
 
     /// The camera following him rewrites no material, standing or walking:

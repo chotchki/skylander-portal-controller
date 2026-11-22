@@ -1699,10 +1699,10 @@ pub(crate) struct Loaded {
     /// for their materials.
     creatures: Vec<CreatureModel>,
     images: Vec<(ImageKey, Handle<Image>)>,
-    /// The bodies of the heroes drawn in it, each under its model's file
-    /// name with the hero's load file (openspec AS.710: what a clone of a
-    /// hero's own body draws with, Stealth Elf's decoy, [`Level::add_body`]).
-    hero_bodies: Vec<(String, CreatureModel)>,
+    /// The bodies of the heroes drawn in it (openspec AS.710: what a clone
+    /// of a hero's own body draws with, Stealth Elf's decoy,
+    /// [`Level::add_body`]).
+    hero_bodies: Vec<CreatureModel>,
     /// Where the hero starts, before he's settled.
     pub(crate) start: Vec3,
     /// Materials lit with the level's but in the hero's scene
@@ -2095,29 +2095,12 @@ impl Level {
         path: &str,
     ) -> Option<(&CreatureModel, &[((String, bool, Sampler), Handle<Image>)])> {
         let l = self.stage.loaded()?;
-        let c = l.creatures.iter().find(|c| c.path == path).or_else(|| {
-            l.hero_bodies
-                .iter()
-                .map(|(_, b)| b)
-                .find(|b| same_file(&b.path, path))
-        })?;
+        let c = l
+            .creatures
+            .iter()
+            .find(|c| c.path == path)
+            .or_else(|| l.hero_bodies.iter().find(|b| same_file(&b.path, path)))?;
         Some((c, &l.images))
-    }
-
-    /// Whether a clone of the template `name` whose model is at `path` is
-    /// drawn as a creature: the level holds a creature at that path, or a
-    /// hero's body of that file and the template isn't that hero's own
-    /// placement (openspec AS.710: his decoy is drawn with his body, but the
-    /// clone his join makes of his own placement isn't a second him: the TV
-    /// draws him by his own path, `play::show_hero`).
-    pub(crate) fn holds_clone(&self, name: &str, path: &str) -> bool {
-        let Some(l) = self.stage.loaded() else {
-            return false;
-        };
-        l.creatures.iter().any(|c| c.path == path)
-            || l.hero_bodies
-                .iter()
-                .any(|(owner, b)| same_file(&b.path, path) && !owner.eq_ignore_ascii_case(name))
     }
 
     /// `body`, a hero's own model as the TV draws him, kept for a clone of
@@ -2125,25 +2108,22 @@ impl Level {
     /// archive's own body out, so Stealth Elf's decoy, her legendary's and
     /// Lightning Rod's upgrade avatar had nothing to draw with): from now on
     /// [`Level::creature`] answers a path naming its file with it, where the
-    /// level has no creature at that exact path, and [`Level::holds_clone`]
-    /// draws a clone of it but one of `owner`'s own placement. `images` are the handles
+    /// level has no creature at that exact path (the clone a join makes of
+    /// his own placement is him, never drawn as one:
+    /// `creatures::skinned_clones`). `images` are the handles
     /// his draw made, by the key his materials sample them by, filed again
     /// under the key a creature's draw asks ([`remaster::samples_srgb`]).
     /// Once a level, the first of a name kept. Nothing before the level's
     /// loaded.
     pub(crate) fn add_body(
         &mut self,
-        owner: &str,
         body: CreatureModel,
         images: &[((String, bool, Sampler), Handle<Image>)],
     ) {
         let Some(l) = self.stage.loaded_mut() else {
             return;
         };
-        if l.hero_bodies
-            .iter()
-            .any(|(_, b)| same_file(&b.path, &body.path))
-        {
+        if l.hero_bodies.iter().any(|b| same_file(&b.path, &body.path)) {
             return;
         }
         for m in &body.model.materials {
@@ -2162,7 +2142,7 @@ impl Level {
                 }
             }
         }
-        l.hero_bodies.push((owner.to_owned(), body));
+        l.hero_bodies.push(body);
     }
 
     /// The level's lights and fog, once loaded.
