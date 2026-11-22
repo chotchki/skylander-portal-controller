@@ -76,6 +76,13 @@ A clone a level's scripts make SHALL draw its template's model off the level's o
 - **WHEN** a script clones a template whose model shows nothing (`inviso.mdl`)
 - **THEN** the clone draws nothing
 
+### Requirement: A clone of a hero's own body draws with his body
+A clone a joined hero's scripts make of a template whose model is his own body SHALL draw with the model, clips and attach nodes the TV draws him with, what hangs on its nodes riding them; the clone his join makes of his own placement SHALL NOT draw a second him. On the dump three templates do: Stealth Elf's decoy, her legendary's and Lightning Rod's upgrade avatar.
+
+#### Scenario: Stealth Elf's decoy
+- **WHEN** Stealth Elf's second action runs
+- **THEN** her decoy runs ahead with a knife in each hand while she is unseen, and goes with them
+
 ### Requirement: Level 214's bombs open its walls
 On level 214 a hero within 10 ft across and 8 ft up or down of a spawner's bomb SHALL carry it 12 ft over his pivot (22 for a Giant), a tap of the fourth action (△) SHALL throw it, and its burst SHALL open every breakable castle wall within 20 ft, the wall and its solid gone within 0.6 s of the throw, so the pods' fight is reached on foot. A spawner SHALL clone a bomb only while none of its own stands and no player carries one.
 

@@ -202,7 +202,12 @@ impl Plugin for CreaturesPlugin {
             .init_resource::<DrawnCreatures>()
             .add_systems(
                 FixedUpdate,
-                (pose_creature_nodes, place_bodies, place_creatures)
+                (
+                    pose_creature_nodes,
+                    place_bodies,
+                    place_creatures,
+                    crate::hero_scripts::place_hung_clones,
+                )
                     .chain()
                     .in_set(Frame::Hands)
                     .after(crate::hero_scripts::pose_hands),
@@ -413,22 +418,23 @@ pub(crate) struct CreatureSpawner<'w, 's> {
 
 /// The clones whose template's model the level draws skinned (openspec
 /// AG.150, AS.63: `holds` says whether the level holds a creature model at
-/// a path), but a template `props::UNDRAWN_SPAWNS` names, the creatures the
+/// a path), but a template `props::UNDRAWN_SPAWNS` names, a hero's own
+/// (the clone a join makes of his placement is him, drawn as him: openspec
+/// AS.710, [`ScriptWorld::unwalked_clones`]), the creatures the
 /// engine walks left to [`ScriptWorld::creatures`], and one hanging on an
 /// actor taken off (AS.186, [`ScriptWorld::hangs_on_nothing`]): drawn as a
 /// creature is.
 pub(crate) fn skinned_clones(world: &ScriptWorld, holds: impl Fn(&str) -> bool) -> Vec<Handle> {
     world
-        .clones()
+        .unwalked_clones()
         .into_iter()
         .filter(|&h| !world.hangs_on_nothing(h))
         .filter(|&h| {
             world.actor(h).is_some_and(|a| {
-                a.walker.is_none()
-                    && a.template.and_then(|t| world.template(t)).is_some_and(|p| {
-                        !guacamole::props::UNDRAWN_SPAWNS.contains(&p.name.as_str())
-                            && p.model.as_deref().is_some_and(&holds)
-                    })
+                a.template.and_then(|t| world.template(t)).is_some_and(|p| {
+                    !guacamole::props::UNDRAWN_SPAWNS.contains(&p.name.as_str())
+                        && p.model.as_deref().is_some_and(&holds)
+                })
             })
         })
         .collect()
@@ -737,7 +743,20 @@ pub(crate) struct SpawnShot {
     /// AS.186's [`ScriptWorld::hangs_on_nothing`]).
     pub hung_on: Option<String>,
     pub on_nothing: bool,
+    /// Whether the TV draws anything of it now (openspec AS.716): it holds
+    /// parts for it ([`Self::parts`]), its actor's tint alpha is over 0 and
+    /// no axis of its own scale is 0 ([`shows`]). Not whether the camera
+    /// sees it, nor a fade its model's own tracks make; a clone hung on a
+    /// parent at scale 0 still draws at its own scale, so reads drawn.
     pub drawn: bool,
+    /// Whether the TV has parts up for it: a static clone's model's parts,
+    /// or a skinned one drawn as a creature is (what `drawn` read before
+    /// AS.716, alpha 0 and scale 0 included).
+    pub parts: bool,
+    /// Its tint's alpha as the scripts leave it, 0 to 255.
+    pub alpha: u8,
+    /// Its scale, percent per axis.
+    pub scale: [f32; 3],
     /// Its template's model, by path, if it names one (openspec AS.531:
     /// what a card game's clones draw with, read off the art part).
     pub model: Option<String>,
@@ -849,13 +868,14 @@ impl CreatureShots<'_, '_> {
             c.drawn_step = laid.map(|w| w.step);
         }
         for s in &mut out.spawned {
-            s.drawn = self
+            s.parts = self
                 .drawn
                 .as_ref()
                 .is_some_and(|d| d.0.contains_key(&s.handle))
                 || Entity::try_from_bits(s.handle)
                     .and_then(|e| self.clones.get(e).ok())
                     .is_some_and(|(_, c)| c.draws);
+            s.drawn = shows(s.parts, s.alpha, s.scale);
         }
         for p in &mut out.people {
             let drawn = self
@@ -873,6 +893,15 @@ impl CreatureShots<'_, '_> {
         }
         Some(out)
     }
+}
+
+/// Whether a clone the TV has `parts` up for puts anything on the screen
+/// (openspec AS.716): its parts draw at its tint's `alpha`
+/// ([`crate::tints`], blended under 255) and its `scale` (percent per axis,
+/// [`guacamole::props::actor_transform`]), so at alpha 0 or flat on an axis
+/// they draw nothing.
+pub(crate) fn shows(parts: bool, alpha: u8, scale: [f32; 3]) -> bool {
+    parts && alpha > 0 && scale.iter().all(|&s| s != 0.0)
 }
 
 /// Every creature the engine walks (taken off ones too), the placements
@@ -943,6 +972,9 @@ pub(crate) fn report(vm: &guac_script::Vm, world: &ScriptWorld) -> CreaturesRepo
                 hung_on,
                 on_nothing: world.hangs_on_nothing(c),
                 drawn: false,
+                parts: false,
+                alpha: (a.tint & 0xFF) as u8,
+                scale: a.scale,
                 model: a
                     .template
                     .and_then(|t| world.template(t))
@@ -1568,6 +1600,60 @@ mod tests {
     /// The art piece's skinned clones.
     fn art(app: &App) -> Vec<Handle> {
         skinned_of(app, guac_formats::script::builder::FIGHT_ART)
+    }
+
+    /// openspec AS.716: `/api/_test/tv`'s `drawn` for a clone is what's on
+    /// the screen, not that the TV holds parts for it: the skinned art,
+    /// drawn, reads drawn at its tint's alpha; at alpha 0 (Sprocket's turret
+    /// before AS.690, Oil Blazer's roller on 2.0) or flat on an axis it
+    /// reads undrawn with its parts still up, and back at full it reads
+    /// drawn again.
+    #[test]
+    fn a_clone_at_alpha_0_or_scale_0_reads_undrawn() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        use crate::test_support::play::fight_app_with_art;
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _) = fight_app_with_art(tmp.path(), None);
+        until(&mut app, "the art drawn", |a| {
+            art(a)
+                .first()
+                .is_some_and(|h| a.world().resource::<DrawnCreatures>().0.contains_key(h))
+        });
+        let h = art(&app)[0];
+        let read = |app: &mut App| {
+            let out = app
+                .world_mut()
+                .run_system_once(|s: CreatureShots| s.shot())
+                .unwrap()
+                .expect("the run's made");
+            let s = out
+                .spawned
+                .into_iter()
+                .find(|s| s.handle == h)
+                .expect("listed");
+            (s.drawn, s.parts, s.alpha, s.scale)
+        };
+        let scale = app
+            .world()
+            .resource::<ScriptWorld>()
+            .actor(h)
+            .unwrap()
+            .scale;
+        assert_eq!(read(&mut app), (true, true, 255, scale));
+        fn world(app: &mut App) -> Mut<'_, ScriptWorld> {
+            app.world_mut().resource_mut::<ScriptWorld>()
+        }
+        assert!(world(&mut app).set_tint(h, 0x8080_8000));
+        assert_eq!(read(&mut app), (false, true, 0, scale), "at alpha 0");
+        assert!(world(&mut app).set_tint(h, 0x8080_8001));
+        assert_eq!(read(&mut app), (true, true, 1, scale), "at alpha 1");
+        let flat = [scale[0], 0.0, scale[2]];
+        assert!(world(&mut app).set_scale(h, flat));
+        assert_eq!(read(&mut app), (false, true, 1, flat), "flat");
+        let mirrored = [-scale[0], scale[1], scale[2]];
+        assert!(world(&mut app).set_scale(h, mirrored));
+        assert!(read(&mut app).0, "mirrored still draws");
     }
 
     /// AS.63: a skinned clone no script runs (the pod the spawner clones

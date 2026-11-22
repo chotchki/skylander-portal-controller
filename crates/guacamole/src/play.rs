@@ -2416,6 +2416,17 @@ fn enter(
         // He drops onto the last one's place as he comes in (AG.100).
         s.commands.entity(hero_entity).insert(DropIn(DROP));
     }
+    // His body for a clone of it to draw with (openspec AS.710: Stealth
+    // Elf's decoy).
+    level.add_body(
+        crate::level::CreatureModel {
+            path: read.loaded.model.name.clone(),
+            model: read.loaded.model.clone(),
+            palette: read.palette.clone(),
+            nodes: read.nodes.clone(),
+        },
+        &drawn.images,
+    );
     c.model = Model3d::Ready(read);
     let now = s.time.elapsed();
     let lit = drawn.lit.iter().map(|l| l.material.clone()).collect();
@@ -2655,6 +2666,9 @@ struct DrawnHero {
     attachments: SpawnedAttachments,
     scrolling: Vec<(Vec<Scroll>, Handle<CharacterMaterial>)>,
     lit: Vec<LitAlso>,
+    /// His textures as his materials sample them: what a clone of his body
+    /// draws over too (openspec AS.710, [`crate::level::Level::add_body`]).
+    images: Vec<((String, bool, Sampler), Handle<Image>)>,
 }
 
 /// The hero's model on his entity at his scale, in the level's layer, its
@@ -2744,6 +2758,7 @@ fn draw_hero(
         attachments,
         scrolling,
         lit,
+        images: handles,
     })
 }
 
@@ -3177,6 +3192,47 @@ mod tests {
         test_pad::press(&mut app, pad, GamepadButton::Start);
         app.update();
         assert_eq!(mode(&app), Mode::Paused);
+    }
+
+    /// openspec AS.710: the hero drawn hands the level his body, so a clone
+    /// of it (Stealth Elf's decoy) draws with his model, palette and attach
+    /// nodes over the images his draw made: answered by a path naming his
+    /// model's file in any case, not by another file's.
+    #[test]
+    fn the_heros_body_is_the_levels_for_a_clone_of_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, tx) = play_app(tmp.path());
+        tx.send(write_level(tmp.path(), &lights())).unwrap();
+        until(&mut app, "the level", |a| level_state(a) == "ready");
+        place(&mut app, 0, ERUPTOR, "Eruptor");
+        until(&mut app, "the level", |a| mode(a) == Mode::Level);
+        app.update();
+        let world = app.world();
+        let on = world.resource::<Play>().on_stage().expect("the hero");
+        let name = on.model.name.clone();
+        let level = world.resource::<Level>();
+        let path = format!("C:/tfb/Content/Models/characters/{}", name.to_uppercase());
+        let (body, images) = level.creature(&path).expect("his body by its file");
+        assert!(
+            Arc::ptr_eq(&body.model, &on.model),
+            "the model he's drawn with"
+        );
+        assert_eq!(
+            body.palette.as_ref().map(|p| p.owner.clone()),
+            on.palette.as_ref().map(|p| p.owner.clone())
+        );
+        assert!(body.model.materials.iter().any(|m| !m.textures.is_empty()));
+        for m in &body.model.materials {
+            for t in &m.textures {
+                let key = (
+                    t.texture.clone(),
+                    remaster::samples_srgb(m, t.role),
+                    t.sampler,
+                );
+                assert!(images.iter().any(|(k, _)| *k == key), "{key:?}");
+            }
+        }
+        assert!(level.creature(&format!("C:/x/Not{name}")).is_none());
     }
 
     /// The camera following him rewrites no material, standing or walking:

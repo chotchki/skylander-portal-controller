@@ -2497,6 +2497,25 @@ impl ScriptWorld {
         c
     }
 
+    /// The clones with no walk of their own that aren't a hero: what the TV
+    /// may draw on their template's model as a creature (openspec AS.710).
+    /// A spawn of a hero's minion template answers with him
+    /// ([`Self::hero_template`]), so that clone is him, drawn as him, never
+    /// a second him beside him, whatever its template's name.
+    pub fn unwalked_clones(&self) -> Vec<Handle> {
+        self.clones()
+            .into_iter()
+            .filter(|h| {
+                self.actors.get(h).is_some_and(|a| {
+                    a.walker.is_none()
+                        && !a
+                            .template
+                            .is_some_and(|t| self.hero_templates.contains_key(&t))
+                })
+            })
+            .collect()
+    }
+
     pub(crate) fn get(&mut self, at: &Access, engine: &mut dyn Engine) -> Result<Value, HostFault> {
         if self.to_interface(at) {
             return self.interface_get(at);
@@ -8092,6 +8111,61 @@ mod tests {
                 "{other}"
             );
         }
+    }
+
+    /// openspec AS.710: the clone a spawn of a hero's minion template makes
+    /// is him, so it isn't among the clones the TV may draw as creatures,
+    /// though his body names its model; a plain clone of the same model is,
+    /// and a walking one isn't.
+    #[test]
+    fn a_heros_own_clone_is_never_an_unwalked_one() {
+        let o = |unit, index| Obj { unit, index };
+        let (spawner, minion, decoy) = (o(4, 10), o(4, 11), o(4, 12));
+        let body = |obj, name: &str| Placed {
+            model: Some("C:/tfb/Content/Models/characters/RockDragon.mdl".into()),
+            ..Placed::named(obj, name, None, 5)
+        };
+        let files = Files {
+            placed: vec![
+                Placed::named(spawner, "Spawner", None, RUNNING),
+                body(minion, "004_RockDragon"),
+                body(decoy, "004_RockDragonDecoy"),
+            ],
+            ..Files::default()
+        };
+        let handles = headless_handles(&files);
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let hero: Handle = 1 << 41;
+        world.hero_template(minion, hero);
+        let mut spawn = headless_spawner(1 << 40);
+        let mut clone_of = |world: &mut ScriptWorld, t: Obj| {
+            let Answer::Run {
+                result: Some(Value::Entity(h)),
+                ..
+            } = world.spawn(
+                Value::Object(t),
+                None,
+                None,
+                handles[&spawner],
+                &mut spawn,
+                &mut NoEngine,
+            )
+            else {
+                panic!("spawned");
+            };
+            h
+        };
+        assert_eq!(clone_of(&mut world, minion), hero, "the spawn is him");
+        let plain = clone_of(&mut world, decoy);
+        assert!(world.clones().contains(&hero));
+        assert_eq!(world.unwalked_clones(), [plain]);
+        world.actors.get_mut(&plain).unwrap().walker =
+            Some(Box::new(crate::script_engine::Walker {
+                body: None,
+                aim: guac_motion::steer::Aim::Still,
+                along: 0,
+            }));
+        assert!(world.unwalked_clones().is_empty(), "a walking one");
     }
 
     /// openspec AS.54: a level's first encounter walks its placements that

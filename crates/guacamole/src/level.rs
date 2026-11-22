@@ -845,6 +845,14 @@ fn read_spawn_archive(
     guacamole::props::spawn_models(&spawns).map_err(|e| format!("{rel}: {e}"))
 }
 
+/// Whether two model paths name the same file, the disc's way: by the
+/// name after the last separator, its case ignored (an archive writes
+/// `Characters/` and `characters/` both).
+pub(crate) fn same_file(a: &str, b: &str) -> bool {
+    let file = |p: &str| p.rsplit(['/', '\\']).next().unwrap_or(p).to_owned();
+    file(a).eq_ignore_ascii_case(&file(b))
+}
+
 /// One spawn archive's part, with where it's kept.
 fn read_spawn_part(
     source: &LevelSource,
@@ -1696,6 +1704,10 @@ pub(crate) struct Loaded {
     /// for their materials.
     creatures: Vec<CreatureModel>,
     images: Vec<(ImageKey, Handle<Image>)>,
+    /// The bodies of the heroes drawn in it (openspec AS.710: what a clone
+    /// of a hero's own body draws with, Stealth Elf's decoy,
+    /// [`Level::add_body`]).
+    hero_bodies: Vec<CreatureModel>,
     /// Where the hero starts, before he's settled.
     pub(crate) start: Vec3,
     /// Materials lit with the level's but in the hero's scene
@@ -2088,8 +2100,54 @@ impl Level {
         path: &str,
     ) -> Option<(&CreatureModel, &[((String, bool, Sampler), Handle<Image>)])> {
         let l = self.stage.loaded()?;
-        let c = l.creatures.iter().find(|c| c.path == path)?;
+        let c = l
+            .creatures
+            .iter()
+            .find(|c| c.path == path)
+            .or_else(|| l.hero_bodies.iter().find(|b| same_file(&b.path, path)))?;
         Some((c, &l.images))
+    }
+
+    /// `body`, a hero's own model as the TV draws him, kept for a clone of
+    /// it (openspec AS.710: the extract's spawn parts leave a character
+    /// archive's own body out, so Stealth Elf's decoy, her legendary's and
+    /// Lightning Rod's upgrade avatar had nothing to draw with): from now on
+    /// [`Level::creature`] answers a path naming its file with it, where the
+    /// level has no creature at that exact path (the clone a join makes of
+    /// his own placement is him, never drawn as one:
+    /// `creatures::skinned_clones`). `images` are the handles
+    /// his draw made, by the key his materials sample them by, filed again
+    /// under the key a creature's draw asks ([`remaster::samples_srgb`]).
+    /// Once a level, the first of a name kept. Nothing before the level's
+    /// loaded.
+    pub(crate) fn add_body(
+        &mut self,
+        body: CreatureModel,
+        images: &[((String, bool, Sampler), Handle<Image>)],
+    ) {
+        let Some(l) = self.stage.loaded_mut() else {
+            return;
+        };
+        if l.hero_bodies.iter().any(|b| same_file(&b.path, &body.path)) {
+            return;
+        }
+        for m in &body.model.materials {
+            for t in &m.textures {
+                let mine = (t.texture.clone(), remaster::is_srgb(t.role), t.sampler);
+                let asked = (
+                    t.texture.clone(),
+                    remaster::samples_srgb(m, t.role),
+                    t.sampler,
+                );
+                let Some(handle) = images.iter().find(|(k, _)| *k == mine).map(|(_, h)| h) else {
+                    continue;
+                };
+                if !l.images.iter().any(|(k, _)| *k == asked) {
+                    l.images.push((asked, handle.clone()));
+                }
+            }
+        }
+        l.hero_bodies.push(body);
     }
 
     /// The level's lights and fog, once loaded.
@@ -3262,6 +3320,7 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
         placed_unread: built.placed_unread.take(),
         creatures: std::mem::take(&mut built.creatures),
         images: image_handles,
+        hero_bodies: Vec::new(),
         start: built.walk.start,
         also: Vec::new(),
         frame_lights: None,
