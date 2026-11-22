@@ -65,9 +65,10 @@ pub fn start(level: &str) -> impl Iterator<Item = &'static str> {
 /// The first fight, before the start area's gate (openspec AS.705), each
 /// placement on its own script: once a player is in Setup_001's trigger
 /// (at the second conveyor's foot) its controller walks the riveter Troll
-/// (`S2_Enemy_TrollBFG.ai`, his gun a `Troll_BF_Gun` clone, his shots
-/// `Troll_BFG_Bullet` clones on the projectile system, his mines
-/// `Troll_BFG_Mine`) down his path, and the three Fire Chompies in the yard
+/// (`S2_Enemy_TrollBFG.ai`: his gun a `Troll_BF_Gun` clone, his shots
+/// `Troll_BFG_Bullet` clones on the projectile system; the bullet's own
+/// script, its spin and glow, never ran listed or not, AS.766) down his
+/// path, and the three Fire Chompies in the yard
 /// wake to the hero (each attaches to him and explodes); with all three
 /// gone it has the Chompy pipe (`GasJet_Pipe(13)`, its flame a pair of
 /// clones) send five more one at a time, then takes itself off. The gate
@@ -90,14 +91,7 @@ pub const WAY: crate::scripts::Encounter = crate::scripts::Encounter {
         "Enemy_Chompy_Fire(68)",
         "GasJet_Pipe(13)",
     ],
-    clones: &[
-        "203_Chompy_Pipe_Fire_p1",
-        "203_Chompy_Pipe_Fire_p2",
-        "Troll_BF_Gun",
-        "Troll_BFG_Bullet",
-        "Troll_BFG_Mine",
-        "Troll_BFG_Mine_Claw",
-    ],
+    clones: &["203_Chompy_Pipe_Fire_p1", "203_Chompy_Pipe_Fire_p2"],
     steered: &[],
 };
 
@@ -144,7 +138,7 @@ mod tests {
         for other in ["level_202", "level_208_ice"] {
             assert!(encounters(other).all(|e| *e != WAY), "{other}");
             let off = level_config(Mode::Play, &files, 5, other);
-            for name in ["Enemy_Troll_BFG(1)", "GasJet_Pipe(13)", "Troll_BFG_Bullet"] {
+            for name in ["Enemy_Troll_BFG(1)", "GasJet_Pipe(13)"] {
                 assert!(
                     !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
                     "{name} on {other}"
