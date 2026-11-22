@@ -7,6 +7,8 @@
 //!
 //! No recording of 203 exists: every step is the level's own scripts.
 
+use std::collections::HashMap;
+
 use guac_motion::seam::Vec3;
 use guac_motion::stick::Stick;
 use guac_script::Mode;
@@ -176,6 +178,356 @@ fn level_203s_intro_skipped_hands_him_over_and_he_walks() {
     assert!(at.distance(HAND_OVER) < 0.5, "set down at its place: {at}");
     assert!(intro_off(&run), "the intro off");
     walks_on(&mut run, &mut stops);
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
+}
+
+/// Skipped by △ once it plays, then the stick his: the run past its intro.
+fn past_intro(stops: &mut Vec<String>) -> Run {
+    let mut run = joined_203(stops);
+    for k in 0..3000u32 {
+        still(
+            &mut run,
+            stops,
+            [false, false, false, k > 120 && k % 20 == 10],
+        );
+        if k > 200 && !guacamole::anchors::scene_holds(&run.vm) {
+            break;
+        }
+    }
+    assert!(intro_off(&run), "the intro off");
+    run
+}
+
+/// A placement's behaviour now: `removed`, `asleep`, or its own.
+fn behaviour(run: &Run, name: &str) -> String {
+    let h = run.placed(name).0;
+    match run.vm.placement_of(h) {
+        None => "-".to_owned(),
+        Some(id) if run.vm.removed(id) => "removed".to_owned(),
+        Some(id) if run.vm.asleep(id) => "asleep".to_owned(),
+        Some(id) => run.vm.behaviour(id).unwrap_or("?").to_ascii_lowercase(),
+    }
+}
+
+/// A placement's place now.
+fn at(run: &Run, name: &str) -> Vec3 {
+    let h = run.placed(name).0;
+    run.world.actor(h).map(|a| a.position).expect(name)
+}
+
+/// The way along the start area's conveyors to its gate: the first
+/// conveyor's foot, the second's, the gate.
+const ALONG: [(f32, f32); 3] = [(-143.6, -221.6), (-115.5, -252.9), (-98.0, -222.0)];
+
+/// The start area's gate, Setup_001's fight's.
+const GATE: &str = "enemy_gate_start_area";
+
+/// The start area's two crushers.
+const CRUSHERS: [&str; 2] = ["203_Crusher_begining_a", "203_Crusher_begining_b"];
+
+/// The stick toward each of `goals` in turn, held at each until within
+/// 1.5 m across the ground; cutscenes wait with it let go. Each step
+/// `each` sees the run. Fails on a stall: 3 s with him moved under 0.3 m.
+fn walk(run: &mut Run, stops: &mut Vec<String>, goals: &[(f32, f32)], each: &mut dyn FnMut(&Run)) {
+    for &(gx, gz) in goals {
+        let (mut last, mut still_for) = (run.hero().pivot, 0);
+        for k in 0..2400u32 {
+            each(run);
+            let me = run.hero().pivot;
+            if Vec3::new(me.x - gx, 0.0, me.z - gz).length() < 1.5 {
+                break;
+            }
+            let held = cutscene_name(run).is_some();
+            run.bench.view = (gx - me.x).atan2(gz - me.z).to_degrees();
+            run.bench.hold_view = true;
+            step(
+                run,
+                stops,
+                Stick::new(0.0, if held { 0.0 } else { 1.0 }),
+                [false; 4],
+            );
+            if k % 180 == 179 {
+                let m = run.hero().pivot;
+                still_for = if m.distance(last) < 0.3 && !held {
+                    still_for + 1
+                } else {
+                    0
+                };
+                last = m;
+                assert!(still_for < 1, "held at {m} toward {gx},{gz}");
+            }
+        }
+        let me = run.hero().pivot;
+        assert!(
+            Vec3::new(me.x - gx, 0.0, me.z - gz).length() < 1.5,
+            "short of {gx},{gz}: {me}"
+        );
+        println!("at {gx},{gz} step {}", run.steps);
+    }
+}
+
+/// openspec AS.704: from where the intro hands him over, the stick along
+/// the start area's two conveyors down to its gate: the Molekin at his
+/// talk, the two crushers dropping and lifting on their trigger's timer,
+/// each conveyor running while he's on it. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_203s_start_area_runs_and_he_walks_to_its_gate() {
+    println!("load at start: {}", load());
+    let mut stops = Vec::new();
+    let mut run = past_intro(&mut stops);
+    let mut seen: HashMap<String, Vec<String>> = HashMap::new();
+    let mut heights: HashMap<&str, (f32, f32)> = HashMap::new();
+    let watched = [
+        "molekin_at_start",
+        "_TRIGGER_crushers_begining",
+        "new_conveyor",
+        "new_conveyor(1)",
+        CRUSHERS[0],
+        CRUSHERS[1],
+        GATE,
+    ];
+    walk(&mut run, &mut stops, &ALONG, &mut |run| {
+        for n in watched {
+            let b = behaviour(run, n);
+            let e = seen.entry(n.to_owned()).or_default();
+            if e.last() != Some(&b) {
+                e.push(b);
+            }
+        }
+        for c in CRUSHERS {
+            let y = at(run, c).y;
+            let e = heights.entry(c).or_insert((y, y));
+            *e = (e.0.min(y), e.1.max(y));
+        }
+    });
+    println!("behaviours {seen:#?} crushers' heights {heights:?}");
+    assert!(
+        seen["molekin_at_start"]
+            .iter()
+            .any(|b| b == "norticus end talker")
+    );
+    for c in ["new_conveyor", "new_conveyor(1)"] {
+        assert!(seen[c].iter().any(|b| b == "escalate"), "{c} ran under him");
+    }
+    for c in CRUSHERS {
+        let (lo, hi) = heights[c];
+        assert!(hi - lo > 4.0, "{c} dropped and lifted: {lo}..{hi}");
+        assert!(seen[c].iter().any(|b| b == "drop"), "{c}");
+        assert!(seen[c].iter().any(|b| b == "lift"), "{c}");
+    }
+    assert_eq!(seen[GATE], ["wait to be opened"], "the gate shut");
+    assert_eq!(run.health(), Some(290.0), "unhurt");
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
+}
+
+/// Setup_001's trigger, at the second conveyor's foot.
+const TRIGGER: (f32, f32) = (-106.4, -253.2);
+
+/// Setup_001's fight: the Troll, the three Fire Chompies in the yard and
+/// the five its Chompy pipe sends.
+const FOES: [&str; 9] = [
+    "Enemy_Troll_BFG(1)",
+    "Enemy_Chompy_Fire(1)",
+    "Enemy_Chompy_Fire(2)",
+    "Enemy_Chompy_Fire(3)",
+    "Enemy_Chompy_Fire(4)",
+    "Enemy_Chompy_Fire(5)",
+    "Enemy_Chompy_Fire(66)",
+    "Enemy_Chompy_Fire(67)",
+    "Enemy_Chompy_Fire(68)",
+];
+
+/// What else the fight touches: its controller, its pipe and the gate.
+const FIGHT_WATCH: [&str; 3] = ["Setup_001_Controller", "GasJet_Pipe(13)", GATE];
+
+/// What a fight did ([`fight_to`]).
+#[derive(Debug, Default)]
+struct Fought {
+    /// Each watched placement's behaviour as it changed: step, name, state.
+    log: Vec<(u32, String, String)>,
+    /// The hero's health at the fight's start and his lowest in it.
+    health: (f32, f32),
+    /// Whether `done` held before the cap.
+    ended: bool,
+    /// Where he stood every quarter second.
+    trail: Vec<Vec3>,
+    /// Each clone template's count of clones seen, by name.
+    clones: HashMap<String, usize>,
+}
+
+/// A fight as a kid fights it (giants_level_208's): the nearest of `foes`
+/// awake within 40 m and 12 m of his height chased over the flood's cells
+/// and hit, stepping back out after 4 s pressed into one; with none awake
+/// near, on to `goal`. His health topped up below a third (a kid's food;
+/// the fight's foes outlast a level-1 hero who only swings). Over once
+/// `done` holds or after `cap` steps.
+fn fight_to(
+    run: &mut Run,
+    stops: &mut Vec<String>,
+    goal: Vec3,
+    cap: u32,
+    done: &dyn Fn(&Run) -> bool,
+) -> Fought {
+    let mut fought = Fought::default();
+    let hp = run.health().unwrap_or(0.0);
+    fought.health = (hp, hp);
+    let mut last: HashMap<String, String> = HashMap::new();
+    let mut seen_clones = std::collections::HashSet::new();
+    let (mut pressed, start) = (0u32, run.steps);
+    let (mut route, mut routed, mut next): (Vec<Vec3>, u32, usize) = (Vec::new(), 0, 0);
+    let flat = |a: Vec3, b: Vec3| Vec3::new(a.x - b.x, 0.0, a.z - b.z).length();
+    loop {
+        for n in FOES.iter().chain(&FIGHT_WATCH) {
+            let b = behaviour(run, n);
+            if last.get(*n) != Some(&b) {
+                fought.log.push((run.steps, (*n).to_owned(), b.clone()));
+                last.insert((*n).to_owned(), b);
+            }
+        }
+        if let Some(hp) = run.health() {
+            fought.health.1 = fought.health.1.min(hp);
+        }
+        for h in run.world.clones() {
+            let n = run.world.name(h).to_owned();
+            if seen_clones.insert(h) {
+                *fought.clones.entry(n).or_default() += 1;
+            }
+        }
+        if (run.steps - start).is_multiple_of(15) {
+            fought.trail.push(run.hero().pivot);
+        }
+        if done(run) {
+            fought.ended = true;
+            return fought;
+        }
+        if run.steps >= start + cap {
+            return fought;
+        }
+        if cutscene_name(run).is_some() || guacamole::anchors::scene_holds(&run.vm) {
+            still(run, stops, [false; 4]);
+            continue;
+        }
+        let me = run.hero().pivot;
+        let near = FOES
+            .iter()
+            .map(|n| run.placed(n).0)
+            .filter(|h| {
+                run.vm
+                    .placement_of(*h)
+                    .is_some_and(|i| !run.vm.removed(i) && !run.vm.asleep(i))
+            })
+            .filter_map(|h| {
+                run.world
+                    .actor(h)
+                    .filter(|a| !a.removed)
+                    .map(|a| a.position)
+            })
+            .filter(|p| (p.y - me.y).abs() < 12.0 && flat(*p, me) < 40.0)
+            .min_by(|a, b| a.distance(me).total_cmp(&b.distance(me)));
+        let target = near.unwrap_or(goal);
+        let far = flat(target, me);
+        if near.is_none() && far < 1.0 {
+            still(run, stops, [false; 4]);
+            continue;
+        }
+        let stale = route.last().is_none_or(|e: &Vec3| e.distance(target) > 3.0);
+        if routed + 90 <= run.steps || stale {
+            route = way_to(run, me, target).0;
+            (routed, next) = (run.steps, 0);
+        }
+        let aim = if far <= 4.0 || route.is_empty() {
+            target
+        } else {
+            next = (next..(next + 6).min(route.len()))
+                .min_by(|a, b| flat(me, route[*a]).total_cmp(&flat(me, route[*b])))
+                .unwrap_or(next);
+            route[next..]
+                .iter()
+                .find(|c| flat(me, **c) > 1.5)
+                .copied()
+                .unwrap_or(target)
+        };
+        pressed = if near.is_some() && far <= 2.5 {
+            pressed + 1
+        } else {
+            0
+        };
+        let to = if pressed > 240 {
+            if pressed > 270 {
+                pressed = 0;
+            }
+            Vec3::new(me.x * 2.0 - aim.x, me.y, me.z * 2.0 - aim.z)
+        } else {
+            aim
+        };
+        run.bench.view = (to.x - me.x).atan2(to.z - me.z).to_degrees();
+        run.bench.hold_view = true;
+        let push = if far > 2.5 || pressed > 240 {
+            1.0
+        } else {
+            0.35
+        };
+        let swing = near.is_some() && far <= 5.0 && run.steps.is_multiple_of(20);
+        step(
+            run,
+            stops,
+            Stick::new(0.0, push),
+            [swing, false, false, false],
+        );
+    }
+}
+
+/// The step `name` was first in one of `states`, from `log`.
+fn first_in(log: &[(u32, String, String)], name: &str, states: &[&str]) -> Option<u32> {
+    log.iter()
+        .find(|(_, n, b)| n == name && states.contains(&b.as_str()))
+        .map(|e| e.0)
+}
+
+/// openspec AS.705: Setup_001's fight by its own trigger. Down the start
+/// area's conveyors to the trigger at the second's foot, the Troll comes
+/// down his path and the three Fire Chompies in the yard wake; with them
+/// beaten the pipe sends five more one at a time; with all beaten the
+/// controller takes itself off and the gate opens. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_203s_first_fight_opens_the_start_areas_gate() {
+    println!("load at start: {}", load());
+    let mut stops = Vec::new();
+    let mut run = past_intro(&mut stops);
+    walk(
+        &mut run,
+        &mut stops,
+        &[ALONG[0], ALONG[1], TRIGGER],
+        &mut |_| {},
+    );
+    let gate = |run: &Run| behaviour(run, GATE) != "wait to be opened";
+    let out = fight_to(
+        &mut run,
+        &mut stops,
+        Vec3::new(-100.0, 7.7, -238.0),
+        12000,
+        &gate,
+    );
+    for e in &out.log {
+        println!("  {e:?}");
+    }
+    println!("clones {:?}", out.clones);
+    println!(
+        "ended {} at step {}, health {:?}, at {}",
+        out.ended,
+        run.steps,
+        out.health,
+        run.hero().pivot
+    );
+    assert!(out.ended, "the gate opened");
+    for f in FOES {
+        assert!(first_in(&out.log, f, &["removed"]).is_some(), "{f} beaten");
+    }
+    assert!(first_in(&out.log, "Setup_001_Controller", &["removed"]).is_some());
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
 }

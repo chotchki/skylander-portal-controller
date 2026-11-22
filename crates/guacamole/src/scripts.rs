@@ -3676,6 +3676,7 @@ pub fn encounters(level: &str) -> impl Iterator<Item = &'static Encounter> {
         .chain(std::iter::once(&crate::level_201::WAY))
         .chain(std::iter::once(&crate::level_205::WAY))
         .chain(std::iter::once(&crate::level_208::WAY))
+        .chain(std::iter::once(&crate::level_203::WAY))
         .filter(move |e| e.level == level)
 }
 
@@ -4761,6 +4762,8 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
         placements.extend(crate::level_208::freeze(name).map(str::to_owned));
         // Level 208's first beam puzzle (openspec AS.431).
         placements.extend(crate::level_208::beam(name).map(str::to_owned));
+        // Level 203's start area (openspec AS.704).
+        placements.extend(crate::level_203::start(name).map(str::to_owned));
     }
     // Level 201's own scripts, by their path under its folder (openspec
     // AU.53).
