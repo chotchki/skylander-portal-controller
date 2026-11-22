@@ -181,6 +181,31 @@ pub fn beam_2(level: &str) -> impl Iterator<Item = &'static str> {
     BEAM_2.iter().copied().filter(move |_| on)
 }
 
+/// West of the second ice block, by name (openspec AS.776): each solid to
+/// actors and unlisted was an invisible wall, a box standing that no
+/// attack beat.
+/// - **Two brick walls** (`Wall_Spawner_Template(6)` and `(7)`,
+///   `Brick_Wall_Spawner`) across the way west: listed, each lays its
+///   bricks as he comes in range and a few hits take it off, as the
+///   plaza's and the river's.
+/// - **The third beam set** (`Reflect_Start(3)`, `Reflect_Start.ai`, and
+///   `Melting_Ice_blocks_reflect_3`, `Ice_Cube.ai`): its start beams east
+///   across the push block's track (`Push_Block_Template(9)`, on the
+///   generic listing, its crystal art [`BEAM_2`]'s template); pushed south
+///   twice into the beam, the crystal relays it south and the block melts.
+pub const WEST: [&str; 4] = [
+    "Wall_Spawner_Template(6)",
+    "Wall_Spawner_Template(7)",
+    "Reflect_Start(3)",
+    "Melting_Ice_blocks_reflect_3",
+];
+
+/// [`WEST`] on 208 alone.
+pub fn west(level: &str) -> impl Iterator<Item = &'static str> {
+    let on = level == LEVEL;
+    WEST.iter().copied().filter(move |_| on)
+}
+
 /// What fights on level 208 (openspec AS.345), walked as creatures: the
 /// reveal's five Ice Chompies, then Setup_002's controller, its six foes
 /// (`Setup_002_Enemies`) and Noodles' scene at its first gate.
@@ -328,7 +353,44 @@ mod tests {
         }
         // 208's other walls and sets stay off until a kid's way reaches
         // them.
-        for name in ["Wall_Spawner_Template(6)", "Reflect_Start(3)"] {
+        for name in ["Wall_Spawner_Template(8)", "Reflect_Start(4)"] {
+            assert!(!on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+        }
+    }
+
+    /// openspec AS.776: the way west of the second ice block is on 208's
+    /// listing and on no other level's; the fourth set, the wall past it
+    /// and the ice traps stay off.
+    #[test]
+    fn level_208s_way_west_and_its_traps_are_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        assert_eq!(west(LEVEL).collect::<Vec<_>>(), WEST);
+        for other in ["level_202", "level_205_piratecards"] {
+            let off = level_config(Mode::Play, &files, 5, other);
+            for name in WEST {
+                assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+                assert!(
+                    !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
+                    "{name} on {other}"
+                );
+            }
+            assert_eq!(west(other).count(), 0);
+        }
+        for name in [
+            "Wall_Spawner_Template(6)",
+            "Wall_Spawner_Template(7)",
+            "Melting_Ice_blocks_reflect_3",
+            "Reflect_Start(3)",
+        ] {
+            assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+        }
+        for name in [
+            "Wall_Spawner_Template(8)",
+            "Reflect_Start(4)",
+            "Melting_Ice_blocks_reflect_4",
+            "Ice_Trap_Large(1)",
+        ] {
             assert!(!on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
         }
     }

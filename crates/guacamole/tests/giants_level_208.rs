@@ -1250,6 +1250,118 @@ fn level_208s_way_by_the_stick_to_the_second_beam() {
     println!("load at end: {}", load());
 }
 
+/// openspec AS.776: west of the second ice block, set down where the way
+/// test leaves him: the stick and the attack through the two brick walls
+/// (each laid as he comes, beaten, taken off), then the third push block
+/// pushed south by the stick into the third start's beam until it stops,
+/// and the third ice block melted and taken off. A stall (no change in 600
+/// steps) ends it.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_208s_way_west_of_the_second_ice_block() {
+    println!("load at start: {}", load());
+    let mut stops = Vec::new();
+    let mut run = joined_208(&mut stops);
+    for k in 0..6000u32 {
+        still(&mut run, &mut stops, [false; 4]);
+        if k > 200 && scene_of(&run).is_none() && !guacamole::anchors::scene_holds(&run.vm) {
+            break;
+        }
+    }
+    run.put(Vec3::new(-68.0, 3.4, -58.0), 270.0);
+    let flat = |a: Vec3, b: Vec3| Vec3::new(a.x - b.x, 0.0, a.z - b.z).length();
+    let mut walls = Vec::new();
+    for (wall, past) in [
+        ("Wall_Spawner_Template(6)", Vec3::new(-95.0, 5.0, -57.0)),
+        ("Wall_Spawner_Template(7)", Vec3::new(-103.0, 5.0, -40.0)),
+    ] {
+        let f = fight_to(
+            &mut run,
+            &mut stops,
+            &[wall],
+            &[wall],
+            past,
+            3000,
+            &|run: &Run| flat(run.hero().pivot, past) < 2.0,
+        );
+        let laid = f.log.iter().any(|(_, _, b)| b == "main loop");
+        println!(
+            "{wall}: past {} at step {} at {}, laid {laid}, removed {}",
+            f.ended,
+            run.steps,
+            run.hero().pivot,
+            removed(&run, wall)
+        );
+        walls.push((f.ended, laid, removed(&run, wall)));
+    }
+    // Unlisted, (6) held him short of (-95, -57) and (7) of the way north
+    // past the push block, each an invisible wall.
+    assert!(
+        walls.iter().all(|w| *w == (true, true, true)),
+        "both walls laid, beaten and past: {walls:?}"
+    );
+    // The third set: north of the push block, the stick south until it
+    // stops moving.
+    let block = run.at(PUSH_BLOCK_9);
+    let north = Vec3::new(block.x, block.y, block.z + 4.5);
+    let to = fight_to(&mut run, &mut stops, &[], &[], north, 3000, &|run: &Run| {
+        flat(run.hero().pivot, north) < 1.0
+    });
+    assert!(
+        to.ended,
+        "north of the third push block: {}",
+        run.hero().pivot
+    );
+    let (mut last, mut moves, mut still_for) = (behaviour(&run, PUSH_BLOCK_9), 0u32, 0u32);
+    for _ in 0..1500 {
+        let me = run.hero().pivot;
+        let b = run.at(PUSH_BLOCK_9);
+        run.bench.view = (b.x - me.x).atan2(-10.0).to_degrees();
+        run.bench.hold_view = true;
+        step(&mut run, &mut stops, Stick::new(0.0, 1.0), [false; 4]);
+        let bh = behaviour(&run, PUSH_BLOCK_9);
+        if bh != last {
+            moves += u32::from(bh == "2. moving");
+            (last, still_for) = (bh, 0);
+        } else {
+            still_for += 1;
+        }
+        if moves > 0 && still_for > 300 {
+            break;
+        }
+    }
+    run.bench.hold_view = false;
+    println!(
+        "the third push block: {moves} moves to {}",
+        run.at(PUSH_BLOCK_9)
+    );
+    assert!(moves >= 2, "pushed south: {moves}");
+    let (mut last, mut since, mut melted) = (behaviour(&run, ICE_BLOCK_3), 0u32, None);
+    for _ in 0..3000 {
+        still(&mut run, &mut stops, [false; 4]);
+        if removed(&run, ICE_BLOCK_3) {
+            melted = Some(run.steps);
+            break;
+        }
+        let b = behaviour(&run, ICE_BLOCK_3);
+        if b != last {
+            println!("  {} {ICE_BLOCK_3} {b}", run.steps);
+            (last, since) = (b, 0);
+        } else {
+            since += 1;
+            assert!(since < 600, "the third ice block stalled at {last}");
+        }
+    }
+    println!("the third ice block melted at step {melted:?}");
+    assert!(melted.is_some(), "the third ice block melted");
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
+}
+
+/// The third beam set's push block and ice block (openspec AS.776).
+const PUSH_BLOCK_9: &str = "Push_Block_Template(9)";
+const ICE_BLOCK_3: &str = "Melting_Ice_blocks_reflect_3";
+
 /// Setup_002's spike gate by the spinners (openspec AS.401).
 const GATE: &str = "Spike_Gate_Metal_Template(1)";
 

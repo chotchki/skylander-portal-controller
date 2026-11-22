@@ -4789,6 +4789,8 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
         // AS.701).
         placements.extend(crate::level_208::river(name).map(str::to_owned));
         placements.extend(crate::level_208::beam_2(name).map(str::to_owned));
+        // The way west of the second ice block (openspec AS.776).
+        placements.extend(crate::level_208::west(name).map(str::to_owned));
     }
     // Level 201's own scripts, by their path under its folder (openspec
     // AU.53).
