@@ -40,7 +40,7 @@ use guacamole::scripts::{ScriptClone, ScriptRuntime, ScriptWorld, WorldHost};
 use serde::Serialize;
 use tracing::{info, warn};
 
-use crate::completion::{Art, FONT_ARCHIVE, bitmap_text, load_art_of};
+use crate::completion::{Art, FONT_ARCHIVE, bitmap_text, load_art_of, upright_image};
 use crate::hero_scripts::ScriptSource;
 use crate::input::TvInput;
 use crate::pad::LevelPads;
@@ -699,18 +699,7 @@ fn spawn_hand(
                                     // Stored upside down, as the stones'
                                     // faces are (openspec AS.554).
                                     Some(p) => {
-                                        s.spawn((
-                                            Node {
-                                                width: px(p.size.x * UNIT),
-                                                height: px(p.size.y * UNIT),
-                                                ..default()
-                                            },
-                                            ImageNode {
-                                                image: p.image.clone(),
-                                                flip_y: true,
-                                                ..default()
-                                            },
-                                        ));
+                                        s.spawn(stone_picture(p, 1.0));
                                     }
                                     None => {
                                         s.spawn(pen.text(
@@ -734,17 +723,8 @@ fn spawn_hand(
                             buttons.spawn(ring(focused)).with_children(|b| {
                                 match a.and_then(|a| a.pieces.get(name)) {
                                     Some(p) => {
-                                        b.spawn((
-                                            Node {
-                                                width: px(p.size.x * UNIT),
-                                                height: px(p.size.y * UNIT),
-                                                justify_content: JustifyContent::Center,
-                                                align_items: AlignItems::Center,
-                                                ..default()
-                                            },
-                                            ImageNode::new(p.image.clone()),
-                                        ))
-                                        .with_children(|t| label(t, pen, a, text, LABEL_SIZE));
+                                        b.spawn(button_art(p))
+                                            .with_children(|t| label(t, pen, a, text, LABEL_SIZE));
                                     }
                                     None => label(b, pen, a, text, LABEL_SIZE),
                                 }
@@ -804,17 +784,7 @@ fn spawn_quit(commands: &mut Commands, pen: &Pen, art: &CardArt, focus: QuitFocu
                                 a.and_then(|a| a.pieces.get(if focused { on } else { off }));
                             match piece {
                                 Some(p) => {
-                                    row.spawn((
-                                        Node {
-                                            width: px(p.size.x * UNIT),
-                                            height: px(p.size.y * UNIT),
-                                            justify_content: JustifyContent::Center,
-                                            align_items: AlignItems::Center,
-                                            ..default()
-                                        },
-                                        ImageNode::new(p.image.clone()),
-                                    ))
-                                    .with_children(|t| {
+                                    row.spawn(button_art(p)).with_children(|t| {
                                         if let Some(a) = a {
                                             bitmap_text(
                                                 t,
@@ -887,20 +857,7 @@ fn spawn_loot(
                     .unwrap_or(LOOT_UNREAD);
                 label(panel, pen, a, title, 56.0);
                 if let Some(p) = picture {
-                    panel.spawn((
-                        Node {
-                            width: px(p.size.x * UNIT * 2.0),
-                            height: px(p.size.y * UNIT * 2.0),
-                            ..default()
-                        },
-                        // The interface's images run bottom row first
-                        // (openspec AS.581): drawn as stored it's upside down.
-                        ImageNode {
-                            image: p.image.clone(),
-                            flip_y: true,
-                            ..default()
-                        },
-                    ));
+                    panel.spawn(stone_picture(p, 2.0));
                 }
                 if let Some(name) = &loot.stone_name {
                     label(panel, pen, a, name, LABEL_SIZE);
@@ -968,14 +925,7 @@ fn spawn_score(
                     .with_children(|bx| {
                         let h = cap.map_or(88.0, |c| c.size.y * UNIT);
                         if let Some(c) = cap {
-                            bx.spawn((
-                                Node {
-                                    width: px(c.size.x * UNIT),
-                                    height: px(h),
-                                    ..default()
-                                },
-                                ImageNode::new(c.image.clone()).with_color(tint),
-                            ));
+                            bx.spawn(score_cap(c, h, tint, false));
                         }
                         let mut mid = bx.spawn(Node {
                             min_width: px(96),
@@ -987,10 +937,9 @@ fn spawn_score(
                         match tile {
                             Some(t) => {
                                 mid.insert(ImageNode {
-                                    image: t.image.clone(),
                                     image_mode: NodeImageMode::Stretch,
                                     color: tint,
-                                    ..default()
+                                    ..upright_image(t.image.clone())
                                 });
                             }
                             None => {
@@ -1001,19 +950,7 @@ fn spawn_score(
                             label(m, pen, art.hand.as_ref().or(a), &n.to_string(), SCORE_SIZE)
                         });
                         if let Some(c) = cap {
-                            bx.spawn((
-                                Node {
-                                    width: px(c.size.x * UNIT),
-                                    height: px(h),
-                                    ..default()
-                                },
-                                ImageNode {
-                                    image: c.image.clone(),
-                                    flip_x: true,
-                                    color: tint,
-                                    ..default()
-                                },
-                            ));
+                            bx.spawn(score_cap(c, h, tint, true));
                         }
                     });
                 }
@@ -1081,6 +1018,58 @@ impl CardShots<'_, '_> {
         };
         (shot != CardScreensShot::default()).then_some(shot)
     }
+}
+
+/// A button's disc art at its template's size, its label laid over it, the
+/// right way up (openspec AS.581): the hand select's Play and Custom, the
+/// quit confirm's two.
+fn button_art(p: &crate::completion::Piece) -> (Node, ImageNode) {
+    (
+        Node {
+            width: px(p.size.x * UNIT),
+            height: px(p.size.y * UNIT),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        upright_image(p.image.clone()),
+    )
+}
+
+/// A score box's end cap `h` high in its owner's `tint`, upright (openspec
+/// AS.581), the right one `mirrored` across.
+fn score_cap(
+    c: &crate::completion::Piece,
+    h: f32,
+    tint: Color,
+    mirrored: bool,
+) -> (Node, ImageNode) {
+    (
+        Node {
+            width: px(c.size.x * UNIT),
+            height: px(h),
+            ..default()
+        },
+        ImageNode {
+            flip_x: mirrored,
+            color: tint,
+            ..upright_image(c.image.clone())
+        },
+    )
+}
+
+/// A stone's hand-select picture at `scale` times its template's size, the
+/// right way up (openspec AS.581: the interface's images run bottom row
+/// first): the hand select's slots and the loot panel's stone.
+fn stone_picture(p: &crate::completion::Piece, scale: f32) -> (Node, ImageNode) {
+    (
+        Node {
+            width: px(p.size.x * UNIT * scale),
+            height: px(p.size.y * UNIT * scale),
+            ..default()
+        },
+        upright_image(p.image.clone()),
+    )
 }
 
 #[cfg(test)]

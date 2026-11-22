@@ -1828,24 +1828,10 @@ fn dreadbeards_games_with(
     // scripts' own `Save - Collection Get/Set - Card`, as a family's save
     // after that win would hold them.
     if plans.iter().any(|(p, _)| matches!(p, Plan::Custom(_))) {
-        run.with_host(|vm, host| {
-            let gs = guacamole::scripts::running(vm, host.world, "GameSystems.ai")
-                .expect("the game systems");
-            for stone in STARTERS {
-                vm.call_for(
-                    gs,
-                    "Save - Collection Get/Set - Card",
-                    &[
-                        ("card id", Value::Int(i32::from(stone))),
-                        ("collected", Value::Int(1)),
-                    ],
-                    &[],
-                    host,
-                )?;
-            }
-            Ok::<(), guac_script::Halt>(())
-        })
-        .unwrap_or_else(|h| panic!("the collection: {h}"));
+        let given = run
+            .with_host(guacamole::card_game::give_starter_stones)
+            .unwrap_or_else(|h| panic!("the collection: {h}"));
+        assert!(given, "the game systems run");
     }
     // The TV's hand select answers the page where a plan asks it to.
     if plans
@@ -2394,10 +2380,6 @@ fn dreadbeards_loot_passes_on_the_scripts_own_accept() {
     );
 }
 
-/// The starter stones a first win at Fangs collects (`giants_level_205`'s
-/// first-game test).
-const STARTERS: [u16; 6] = [0, 12, 15, 29, 46, 53];
-
 /// openspec AS.557: backed out of at the hand select (its own back button's
 /// action, as the TV's hand select runs it), the game ends before a board:
 /// Dreadbeard back at his `wait for player`, no board joined, his talk his
@@ -2440,9 +2422,15 @@ fn a_custom_hand_is_the_hand_the_board_deals() {
         played.games, played.offers, played.hands
     );
     assert_eq!(played.offers.len(), 1, "{:?}", played.offers);
-    assert_eq!(played.offers[0].collection, STARTERS);
+    assert_eq!(
+        played.offers[0].collection,
+        guacamole::card_game::STARTER_STONES
+    );
     assert!(
-        guacamole::card_game::hand_takes(&played.offers[0].recommended, &STARTERS),
+        guacamole::card_game::hand_takes(
+            &played.offers[0].recommended,
+            &guacamole::card_game::STARTER_STONES
+        ),
         "recommended off the collection: {:?}",
         played.offers[0]
     );

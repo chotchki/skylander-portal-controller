@@ -497,7 +497,9 @@ fn test_routes(
         // A lane's build that plays the card game (openspec AS.367's first
         // rung) quits it over a route of its own; no landed build has it.
         #[cfg(all(feature = "test-hooks", feature = "played-card-games"))]
-        let routes = routes.merge(hero_scripts::card_quit_routes());
+        let routes = routes
+            .merge(hero_scripts::card_quit_routes())
+            .merge(hero_scripts::card_starter_routes());
         routes
     })
 }

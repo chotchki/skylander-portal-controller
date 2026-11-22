@@ -1037,8 +1037,19 @@ fn piece(parent: &mut ChildSpawnerCommands, art: &Art, name: &str, w: Option<f32
 fn upright(p: &Piece, alpha: f32) -> ImageNode {
     ImageNode {
         color: Color::WHITE.with_alpha(alpha),
+        ..upright_image(p.image.clone())
+    }
+}
+
+/// One of the extract's interface images drawn whole and the right way up:
+/// they run bottom row first, so drawn as stored a checkmark points down
+/// (openspec AS.446, AS.581). Every 2D piece that draws one whole goes
+/// through here; the bitmap font's glyphs and the 3D models' textures
+/// address the rows as stored and don't.
+pub(crate) fn upright_image(image: Handle<Image>) -> ImageNode {
+    ImageNode {
         flip_y: true,
-        ..ImageNode::new(p.image.clone())
+        ..ImageNode::new(image)
     }
 }
 

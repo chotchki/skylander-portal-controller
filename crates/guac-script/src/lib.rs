@@ -560,8 +560,10 @@
 //!   packed value or a value cell's number (`setref r = s.first.screen
 //!   measurement.x`), or a host member's number (`setref r = my.actorinfo.
 //!   movement.actorphysics.ground turn rate`, as the hero's movement data
-//!   keeps his): written through `valuedereferencer`, that part or member
-//!   changes; read, a host member's is asked anew. A reference set to a
+//!   keeps his) or a part of one's packed value (a clone's `placement.tint`
+//!   alpha, which Sprocket's slide macro fades her turret in through,
+//!   openspec AS.690): written through `valuedereferencer`, that part or
+//!   member changes; read, a host member's is asked anew. A reference set to a
 //!   number instead (a macro's reference parameter its caller left at its
 //!   literal 0) names a value of its own holding the number, made the first
 //!   time it's written or read through: a write stays there and reaches no

@@ -1171,5 +1171,39 @@ pub fn quit(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<bool, Halt> {
     Ok(true)
 }
 
+/// The stones a fresh save's first win at Fangs (205's tutorial) collects,
+/// as `giants_level_205`'s first-game test reads them off the save after it
+/// (openspec AS.367, AS.675).
+pub const STARTER_STONES: [u16; 6] = [0, 12, 15, 29, 46, 53];
+
+/// The game systems' collection write a won game's stones go through.
+pub const COLLECT_CARD: &str = "Save - Collection Get/Set - Card";
+
+/// The starter stones collected into the run's save through the scripts'
+/// own collection write (openspec AS.675: a lane's route to a save holding
+/// them, as Fangs' won tutorial leaves it, so the hand select offers a hand
+/// off the collection and Custom shows). It gives stones only: no game is
+/// counted won, no pirate's state touched. False when the game systems
+/// don't run.
+pub fn give_starter_stones(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<bool, Halt> {
+    let Some(gs) = running(vm, host.world, GAME_SYSTEMS) else {
+        return Ok(false);
+    };
+    for stone in STARTER_STONES {
+        vm.call_for(
+            gs,
+            COLLECT_CARD,
+            &[
+                ("card id", Value::Int(i32::from(stone))),
+                ("collected", Value::Int(1)),
+            ],
+            &[],
+            host,
+        )?;
+    }
+    info!(stones = ?STARTER_STONES, "the starter stones collected through the scripts' own write");
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests;
