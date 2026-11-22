@@ -31,16 +31,14 @@
 pub const LEVEL: &str = "level_203_the_machine";
 
 /// The start area's placements and the introduction teleporter, by name,
-/// listed and never walked (openspec AS.704, AS.706).
-pub const START: [&str; 21] = [
+/// listed and never walked (openspec AS.704, AS.706): only what runs a
+/// script, since a listing picks whose scripts run (the hat, chains and
+/// damage zones they clone are templates with none).
+pub const START: [&str; 16] = [
     "molekin_at_start",
-    "miner_hat",
     "_TRIGGER_crushers_begining",
     "203_Crusher_begining_a",
     "203_Crusher_begining_b",
-    "Chain_203_old",
-    "Chain_203_old_pole",
-    "DamageZone",
     "new_conveyor",
     "new_conveyor(1)",
     "new_conveyor(2)",
@@ -50,7 +48,6 @@ pub const START: [&str; 21] = [
     "reset_point_ON_2",
     "reset_point_OFF_1",
     "reset_point_OFF_2",
-    "DamageZone_Crushers_203",
     "TeleporterStart_introduction",
     "TeleporterEnd_introduction",
     "TeleporterHelper",
@@ -63,23 +60,23 @@ pub fn start(level: &str) -> impl Iterator<Item = &'static str> {
 }
 
 /// The first fight, before the start area's gate (openspec AS.705), each
-/// placement on its own script: once a player is in Setup_001's trigger
-/// (at the second conveyor's foot) its controller walks the riveter Troll
-/// (`S2_Enemy_TrollBFG.ai`: his gun a `Troll_BF_Gun` clone, his shots
-/// `Troll_BFG_Bullet` clones on the projectile system; the bullet's own
-/// script, its spin and glow, never ran listed or not, AS.766) down his
-/// path, and the three Fire Chompies in the yard
-/// wake to the hero (each attaches to him and explodes); with all three
-/// gone it has the Chompy pipe (`GasJet_Pipe(13)`, its flame a pair of
-/// clones) send five more one at a time, then takes itself off. The gate
+/// placement that runs a script (its trigger volume and the Troll's path are
+/// data its controller reads). The riveter Troll (`S2_Enemy_TrollBFG.ai`:
+/// his gun a `Troll_BF_Gun` clone, his shots `Troll_BFG_Bullet` clones on
+/// the projectile system, AS.766) wakes by his own 250 ft range and stands
+/// by the gate from the hand-over (his controller's taunts lost, AS.785);
+/// once a player is in Setup_001's trigger (at the second conveyor's foot)
+/// the controller moves him along his path and the three Fire Chompies in
+/// the yard wake to the hero (each attaches to him and explodes); with all
+/// three gone it launches five more one at a time by the Chompy pipe
+/// (`GasJet_Pipe(13)`, off the listing: its own script waits all fight for
+/// a trigger that never comes, AS.787), then takes itself off. The gate
 /// (`enemy_gate_start_area`, on the generic listing) lowers its spikes once
 /// the yard's foes are gone.
 pub const WAY: crate::scripts::Encounter = crate::scripts::Encounter {
     level: LEVEL,
     placements: &[
         "Setup_001_Controller",
-        "Setup_001_Trigger(1)",
-        "Setup_001_Intro_Path_A1",
         "Enemy_Troll_BFG(1)",
         "Enemy_Chompy_Fire(1)",
         "Enemy_Chompy_Fire(2)",
@@ -89,9 +86,8 @@ pub const WAY: crate::scripts::Encounter = crate::scripts::Encounter {
         "Enemy_Chompy_Fire(66)",
         "Enemy_Chompy_Fire(67)",
         "Enemy_Chompy_Fire(68)",
-        "GasJet_Pipe(13)",
     ],
-    clones: &["203_Chompy_Pipe_Fire_p1", "203_Chompy_Pipe_Fire_p2"],
+    clones: &[],
     steered: &[],
 };
 

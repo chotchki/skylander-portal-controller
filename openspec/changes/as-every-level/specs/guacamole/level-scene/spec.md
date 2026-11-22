@@ -743,3 +743,10 @@ A level's own emitter whose generator is a lightning SHALL be drawn as a strip f
 #### Scenario: The first beam puzzle's two beams
 - **WHEN** level 208's first reflect start is powered and the pivot's target is lit
 - **THEN** a beam runs from the start to the pivot and one from the pivot along its facing, each turn of the switch moving the second, until it reaches the ice block (headless as the block first melts: 10.4 m and 11.0 m, both 1.1 m wide)
+
+### Requirement: A turn a script writes on a node-hung piece holds
+What hangs on a node SHALL draw each axis a script wrote, by an absolute or a relative facing, tilt or roll, as written, and the rest as the node turns: Sprocket's turret top turns with the stick on the TV (343, then 285 after the stick right and 99 after left, where it read 0 throughout), level 214's turret hatch holds its 90 degree turn where it took its node's 351, and a turret's ball keeps the aim its script writes each step.
+
+#### Scenario: Sprocket's turret
+- **WHEN** she is seated and the stick is held right, then left
+- **THEN** the turret's top reads and draws a new facing after each, the node under it unchanged

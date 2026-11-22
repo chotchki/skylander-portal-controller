@@ -23,8 +23,9 @@ const BY: f32 = 7.0;
 const STALL: u32 = 120;
 
 /// `name` on `level` staged: Eruptor joined, set down by it, stepped until
-/// it wakes. The run, the step it woke and what hangs on it by name.
-fn staged(level: &str, name: &'static str) -> (Run, u32, Vec<String>) {
+/// it wakes. The run, whether it was awake at the load, the step it woke
+/// and what hangs on it by name.
+fn staged(level: &str, name: &'static str) -> (Run, bool, u32, Vec<String>) {
     let (mut run, _) = run_on_level(
         Mode::Play,
         level,
@@ -41,9 +42,18 @@ fn staged(level: &str, name: &'static str) -> (Run, u32, Vec<String>) {
         "{name}: listed by the stage, not inert"
     );
     assert!(run.world.creatures().contains(&h), "{name}: walked");
-    assert!(
-        !run.world.actor(h).unwrap().active,
-        "{name}: asleep at the load"
+    // Nothing of the stage's is written on its range, buffer or state: at
+    // the load it is as the activity rule has it from where he starts.
+    // 203's gunner is awake there: the level's start (AS.703, its intro's
+    // walk-in) is 205 ft from him and his file's range is 250.
+    let a = run.world.actor(h).unwrap();
+    let d = (at - run.hero().pivot).length() * guacamole::script_engine::FEET_PER_METRE;
+    let at_load = a.active;
+    assert_eq!(
+        at_load,
+        guacamole::scripts::awake(a.range, a.buffer, false, Some(d)),
+        "{name}: at the load {d:.0} ft from his start, range {}",
+        a.range
     );
     run.world.skip_cutscenes = true;
     for _ in 0..2 {
@@ -83,22 +93,25 @@ fn staged(level: &str, name: &'static str) -> (Run, u32, Vec<String>) {
         "{level} {name}: woke {woke} steps after the set-down by {by}, behaviour {:?}, hung {hung:?}",
         run.vm.behaviour(run.placement(name))
     );
-    (run, woke, hung)
+    (run, at_load, woke, hung)
 }
 
 /// openspec AS.680: 208's bomber and 203's gunner, whose files leave them
-/// waking by range, wake by it once staged and stand in the stage's frame:
+/// waking by range, wake by it once staged and stand in the stage's frame
+/// (the bomber asleep until the set-down puts him in range, the gunner
+/// awake from the load, his range holding 203's start since AS.703):
 /// the camera framed on the creature (a 2 m sphere off its pivot, the
 /// follow camera's picture) holds its pivot and its head height, in front;
 /// its setup hangs its piece on it.
 #[test]
 #[ignore = "reads the Giants dump"]
 fn a_staged_creature_wakes_by_its_range_and_stands_in_the_frame() {
-    for (level, name) in [
-        ("level_208_ice", "Enemy_BombThrower(3)"),
-        ("level_203_the_machine", "Enemy_Troll_BFG(1)"),
+    for (level, name, awake) in [
+        ("level_208_ice", "Enemy_BombThrower(3)", false),
+        ("level_203_the_machine", "Enemy_Troll_BFG(1)", true),
     ] {
-        let (run, _, hung) = staged(level, name);
+        let (run, at_load, _, hung) = staged(level, name);
+        assert_eq!(at_load, awake, "{name}: awake at the load");
         // What its setup hangs on it (AS.660's look): the bomber's bomb in
         // hand, the gunner's gun.
         assert!(!hung.is_empty(), "{name}: nothing hung on it");

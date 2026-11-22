@@ -288,7 +288,13 @@ fn level_203s_start_area_runs_and_he_walks_to_its_gate() {
         CRUSHERS[1],
         GATE,
     ];
+    let mut ran = std::collections::HashSet::new();
     walk(&mut run, &mut stops, &ALONG, &mut |run| {
+        for n in guacamole::level_203::START {
+            if !matches!(behaviour(run, n).as_str(), "-" | "asleep" | "removed") {
+                ran.insert(n);
+            }
+        }
         for n in watched {
             let b = behaviour(run, n);
             let e = seen.entry(n.to_owned()).or_default();
@@ -318,6 +324,16 @@ fn level_203s_start_area_runs_and_he_walks_to_its_gate() {
         assert!(seen[c].iter().any(|b| b == "lift"), "{c}");
     }
     assert_eq!(seen[GATE], ["wait to be opened"], "the gate shut");
+    // Every listing before the gate runs its script on the way (the
+    // as-203-start review: 17 of the level file's 36 names' removal went
+    // unnoticed, seven of them doing nothing).
+    println!("ran {ran:?}");
+    for n in guacamole::level_203::START {
+        if PAST_THE_GATE.contains(&n) {
+            continue;
+        }
+        assert!(ran.contains(n), "{n} listed and idle");
+    }
     assert_eq!(run.health(), Some(290.0), "unhurt");
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
@@ -536,9 +552,21 @@ fn level_203s_first_fight_opens_the_start_areas_gate() {
         out.clones.get("Troll_BFG_Bullet").copied().unwrap_or(0) > 0,
         "the Troll shoots"
     );
+
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
 }
+
+/// What [`guacamole::level_203::START`] lists past the gate.
+const PAST_THE_GATE: [&str; 7] = [
+    "new_conveyor(2)",
+    "new_conveyor(3)",
+    "reset_point_ON_2",
+    "reset_point_OFF_2",
+    "TeleporterStart_introduction",
+    "TeleporterEnd_introduction",
+    "TeleporterHelper",
+];
 
 /// Past the gate: the two conveyors east, then south onto the introduction
 /// teleporter's start.
@@ -557,7 +585,19 @@ fn level_203s_introduction_teleporter_takes_him_on() {
     let mut stops = Vec::new();
     let (mut run, out) = fought_open(&mut stops);
     assert!(out.ended, "the gate opened");
-    walk(&mut run, &mut stops, &PAST_GATE, &mut |_| {});
+    let mut carried: HashMap<&str, bool> = HashMap::new();
+    walk(&mut run, &mut stops, &PAST_GATE, &mut |run| {
+        for c in &PAST_THE_GATE[..2] {
+            *carried.entry(c).or_default() |= behaviour(run, c) == "escalate";
+        }
+        for r in &PAST_THE_GATE[2..4] {
+            *carried.entry(r).or_default() |=
+                !matches!(behaviour(run, r).as_str(), "-" | "asleep" | "removed");
+        }
+    });
+    for c in &PAST_THE_GATE[..4] {
+        assert!(carried[c], "{c} ran as he passed");
+    }
     let start = run.steps;
     let mut arrived = None;
     for _ in 0..600u32 {
