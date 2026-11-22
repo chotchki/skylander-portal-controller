@@ -4554,6 +4554,29 @@ impl ScriptWorld {
         Some((steer_physics(&a.physics), aim))
     }
 
+    /// How the engine walks `hero` as [`ScriptWorld::engine_walk`] reads
+    /// him (the watch's, openspec AS.756): `mover`, `written` (a script set
+    /// his walk this step), `pad` (the engine's model on the stick) or
+    /// `still` (the engine's model, his controller no pad), with his ground
+    /// top speed in ft/s; none for no actor.
+    pub fn walk_read(&self, hero: Handle) -> Option<String> {
+        let a = self.actors.get(&hero)?;
+        let how = if a.physics.ground_max_speed >= MOVER_TOP_SPEED {
+            "mover"
+        } else if self.walk_written.contains(&hero) {
+            "written"
+        } else if self
+            .controllers
+            .iter()
+            .any(|c| a.controller == Value::Entity(*c))
+        {
+            "pad"
+        } else {
+            "still"
+        };
+        Some(format!("{how} {:.1}", a.physics.ground_max_speed))
+    }
+
     /// One game frame of a hero whose scripts walk him: the engine alone
     /// while he's one of their movers, its velocity model on his own numbers
     /// off them ([`ScriptWorld::engine_walk`]).

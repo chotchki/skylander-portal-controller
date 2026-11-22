@@ -134,6 +134,9 @@ pub(crate) struct HeroWatch {
     /// each, nearest first, as `name d m` (negative inside): what his move
     /// meets (an actor's body by its placement, a prop's, the level's).
     pub touching: Vec<String>,
+    /// How the engine walks him ([`ScriptWorld::walk_read`]): `mover`,
+    /// `written`, `pad` or `still`, with his ground top speed.
+    pub engine: Option<String>,
 }
 
 /// How near the seam's bodies count as against him for
@@ -192,6 +195,7 @@ pub(crate) fn hero_watch(
             .map(|(d, n)| format!("{n} at {d:.2} m"))
             .collect(),
         touching: Vec::new(),
+        engine: h.and_then(|h| world.walk_read(h)),
     }
 }
 
@@ -612,6 +616,10 @@ mod tests {
                 .as_deref()
         );
         assert!(as_him.behaviour.is_some());
+        // How the engine walks him, read off his actor (openspec AS.756).
+        assert_eq!(as_him.engine, world.walk_read(creature));
+        assert!(as_him.engine.is_some());
+        assert_eq!(watch.engine, None);
         // Past 2.5 m nobody.
         hero.pivot = c + Vec3::new(2.0, 0.0, 1.6);
         let far = hero_watch(vm, world, None, &hero);
