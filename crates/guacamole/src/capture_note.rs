@@ -7,7 +7,8 @@
 //!   writes the text into the capture's `capture.json` `note` and its
 //!   `note.txt`, as the phone's typed note is kept; an empty one leaves the
 //!   capture as it was. Cancel (Esc or the pad's right button) deletes the
-//!   capture's folder. Either way the game goes on.
+//!   capture's own files and its folder ([`delete_capture`]: never a tree),
+//!   unless a phone's note joined it meanwhile. Either way the game goes on.
 //! - Paused is the level's clock stopped, as Start's pause stops it
 //!   ([`crate::pause::hold_time`]): the scripts' step, the physics, the
 //!   hero, creatures, the camera, particles and the scripts' sounds run
@@ -103,6 +104,8 @@ pub(crate) struct Open {
     slot: Option<Entity>,
     /// The captured frame, once it lands, till it's on the prompt.
     frame: Option<Handle<Image>>,
+    /// The captured frame is on the prompt.
+    shown: bool,
     /// Where the focus was, given back after.
     focus_before: Option<Entity>,
     /// Save or Cancel pressed on screen.
@@ -185,6 +188,7 @@ impl NoteTake<'_> {
             input: None,
             slot: None,
             frame: None,
+            shown: false,
             focus_before: None,
             clicked: None,
         });
@@ -239,6 +243,33 @@ pub(crate) fn save_note(folder: &Path, note: &str, at: SystemTime) -> Result<(),
     let bytes = serde_json::to_vec_pretty(&json).map_err(|e| e.to_string())?;
     std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
     crate::flags::add_note(folder, note, at).map_err(|e| e.to_string())
+}
+
+/// What a capture's folder holds ([`crate::flags`]' `capture`): the files
+/// Cancel deletes, and the only ones.
+const CAPTURE_FILES: [&str; 4] = ["capture.json", "log.txt", "note.txt", "frame.png"];
+
+/// Deletes the capture in `folder`: its own files by name, then the folder,
+/// only if that leaves it empty. Never a tree: a folder holding anything
+/// else (another capture, a subfolder) stays with that in it, and a symlink
+/// is refused, so a Cancel can't reach past the one capture it was asked
+/// for. A folder already gone is done.
+pub(crate) fn delete_capture(folder: &Path) -> std::io::Result<()> {
+    use std::io::ErrorKind;
+    let meta = match std::fs::symlink_metadata(folder) {
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
+        meta => meta?,
+    };
+    if !meta.is_dir() {
+        return Err(std::io::Error::other("not a capture's folder"));
+    }
+    for name in CAPTURE_FILES {
+        match std::fs::remove_file(folder.join(name)) {
+            Err(e) if e.kind() != ErrorKind::NotFound => return Err(e),
+            _ => {}
+        }
+    }
+    std::fs::remove_dir(folder)
 }
 
 /// A route's post: characters typed into the box, or a named key
@@ -568,6 +599,7 @@ fn show(
         && let Some(frame) = open.frame.take()
     {
         commands.entity(slot).insert(ImageNode::new(frame));
+        open.shown = true;
         redrawn.write(Redrawn::Overlay);
     }
 }
@@ -744,7 +776,7 @@ fn answer(
 ) {
     note.deleting.retain_mut(|(folder, tries)| {
         *tries -= 1;
-        !(std::fs::remove_dir_all(&*folder).is_ok() || !folder.exists() || *tries == 0)
+        !(delete_capture(folder).is_ok() || *tries == 0)
     });
     let Some(open) = note.open.as_mut() else {
         return;
@@ -795,13 +827,24 @@ fn answer(
                 last.noted = true;
             }
         }
+        // A phone's note joined it while the prompt was up (the join rule,
+        // and the phone was told so): it stays.
+        Answer::Cancel
+            if state.as_ref().is_some_and(|s| {
+                s.last
+                    .as_ref()
+                    .is_some_and(|l| l.folder == open.folder && l.noted)
+            }) =>
+        {
+            info!(folder = %open.name, "the capture cancelled but kept: a phone's note is in it");
+        }
         Answer::Cancel => {
             if let Some(state) = state.as_mut()
                 && state.last.as_ref().is_some_and(|l| l.folder == open.folder)
             {
                 state.last = None;
             }
-            match std::fs::remove_dir_all(&open.folder) {
+            match delete_capture(&open.folder) {
                 Ok(()) => {
                     info!(folder = %open.name, "the capture cancelled and deleted: the game goes on")
                 }
@@ -842,7 +885,7 @@ fn publish(
             .and_then(|e| texts.get(e).ok())
             .map(|t| t.value().to_string())
             .unwrap_or_default(),
-        frame: open.is_some_and(|o| o.slot.is_some() && o.frame.is_none() && o.root.is_some()),
+        frame: open.is_some_and(|o| o.shown),
         paused: time.is_paused(),
         answered: note
             .answered
@@ -1218,6 +1261,237 @@ mod tests {
         app.update();
         assert!(!open(&app));
         assert!(folders(&dir).is_empty());
+    }
+
+    /// Cancel reaches the one capture and nothing past it (openspec AS.808):
+    /// an older capture beside it stays; a second Esc does nothing; and the
+    /// delete itself takes only a capture's own files, so a folder holding
+    /// anything else, the flags root among them, or a symlink, keeps it all.
+    #[test]
+    fn cancel_deletes_its_own_capture_and_nothing_else() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, dir, asks) = tv(tmp.path());
+        let older = dir.join("2026-11-22T18-50-00.000Z-pad");
+        std::fs::create_dir_all(&older).unwrap();
+        std::fs::write(older.join("capture.json"), "{}").unwrap();
+        std::fs::write(older.join("frame.png"), "png").unwrap();
+        crate::test_support::tv::key(&mut app, crate::flags::FLAG_KEY, Key::Character("f".into()));
+        app.update();
+        assert!(open(&app));
+        assert_eq!(folders(&dir).len(), 2);
+        for _ in 0..2 {
+            asks.note.push(Posted::Key(Named::Escape));
+            app.update();
+            app.update();
+        }
+        assert!(!open(&app));
+        assert_eq!(
+            folders(&dir),
+            vec![older.clone()],
+            "the older capture stays"
+        );
+        assert!(older.join("capture.json").exists() && older.join("frame.png").exists());
+        assert_eq!(app.world().resource::<NoteOpen>().answered.len(), 1);
+
+        // The delete, asked of what isn't one capture.
+        assert!(
+            delete_capture(&dir).is_err(),
+            "the root, with a capture in it"
+        );
+        assert!(older.join("capture.json").exists());
+        let nested = tmp.path().join("nested");
+        std::fs::create_dir_all(nested.join("inner")).unwrap();
+        std::fs::write(nested.join("capture.json"), "{}").unwrap();
+        std::fs::write(nested.join("keep.txt"), "x").unwrap();
+        assert!(delete_capture(&nested).is_err());
+        assert!(nested.join("inner").is_dir() && nested.join("keep.txt").exists());
+        let link = tmp.path().join("link");
+        std::os::unix::fs::symlink(&older, &link).unwrap();
+        assert!(delete_capture(&link).is_err(), "a symlink");
+        assert!(older.join("frame.png").exists(), "its target kept");
+        assert!(
+            delete_capture(&tmp.path().join("gone")).is_ok(),
+            "gone is done"
+        );
+    }
+
+    /// A phone's note that joins the capture while its prompt is up (the
+    /// join rule; the phone told it joined) keeps the capture through a
+    /// Cancel (openspec AS.808).
+    #[test]
+    fn cancel_keeps_a_capture_the_phone_noted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, dir, asks) = tv(tmp.path());
+        crate::test_support::tv::key(&mut app, crate::flags::FLAG_KEY, Key::Character("f".into()));
+        app.update();
+        assert!(open(&app));
+        let mut ask = asks.push_for_tests("the gate");
+        app.update();
+        assert!(ask.try_recv().unwrap().joined);
+        asks.note.push(Posted::Key(Named::Escape));
+        app.update();
+        app.update();
+        assert!(!open(&app));
+        let made = folders(&dir);
+        assert_eq!(made.len(), 1, "kept");
+        assert!(made[0].join("note.txt").exists());
+    }
+
+    /// Esc and the arrows under the prompt reach no screen (no Back, no
+    /// quit), and the route reads the frame on the prompt only once it's
+    /// there (openspec AS.808).
+    #[test]
+    fn escape_under_the_prompt_reaches_no_screen() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _, asks) = tv(tmp.path());
+        crate::test_support::tv::key(&mut app, crate::flags::FLAG_KEY, Key::Character("f".into()));
+        app.update();
+        assert!(open(&app));
+        assert!(!asks.note.shot().frame, "no frame lands headless");
+        app.world_mut()
+            .resource_mut::<Messages<crate::input::TvInput>>()
+            .clear();
+        app.world_mut().resource_mut::<Messages<AppExit>>().clear();
+        crate::test_support::tv::key(&mut app, KeyCode::Escape, Key::Escape);
+        app.update();
+        let heard: Vec<_> = app
+            .world_mut()
+            .resource_mut::<Messages<crate::input::TvInput>>()
+            .drain()
+            .collect();
+        assert!(heard.is_empty(), "the screen heard {heard:?}");
+        assert!(
+            app.world_mut()
+                .resource_mut::<Messages<AppExit>>()
+                .drain()
+                .next()
+                .is_none(),
+            "nothing quits"
+        );
+        assert!(!open(&app), "Esc cancelled");
+    }
+
+    /// Start under the prompt pauses nothing, and the game after is as it
+    /// was before the press; a prompt opened under Start's pause leaves the
+    /// level paused under Start after (openspec AS.808).
+    #[test]
+    fn the_prompt_leaves_starts_pause_as_it_found_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad, _, _) = fight(tmp.path(), true);
+        let paused = |app: &App| {
+            (
+                app.world().resource::<Time<Virtual>>().is_paused(),
+                app.world()
+                    .resource::<LevelPads>()
+                    .seat()
+                    .and_then(|s| s.pause())
+                    .is_some(),
+            )
+        };
+        app.update();
+        assert_eq!(paused(&app), (false, false));
+        test_pad::press(&mut app, pad, FLAG_BUTTON);
+        app.update();
+        assert!(open(&app));
+        test_pad::press(&mut app, pad, GamepadButton::Start);
+        app.update();
+        assert!(open(&app), "Start answers nothing");
+        assert_eq!(
+            paused(&app),
+            (true, false),
+            "the prompt's hold, not Start's"
+        );
+        test_pad::press(&mut app, pad, GamepadButton::South);
+        app.update();
+        assert!(!open(&app));
+        assert_eq!(paused(&app), (false, false), "running, as before");
+        assert!(steps(&mut app, 5).iter().sum::<u64>() > 0);
+
+        test_pad::press(&mut app, pad, GamepadButton::Start);
+        app.update();
+        assert_eq!(paused(&app), (true, true), "Start's pause");
+        test_pad::press(&mut app, pad, FLAG_BUTTON);
+        app.update();
+        assert!(open(&app), "a capture under Start's pause asks too");
+        test_pad::press(&mut app, pad, GamepadButton::East);
+        app.update();
+        assert!(!open(&app), "cancelled");
+        assert_eq!(paused(&app), (true, true), "still Start's pause");
+        assert_eq!(steps(&mut app, 5), vec![0; 5], "nothing steps under it");
+    }
+
+    /// The captured frame onto the prompt and off it again, ten times over
+    /// (openspec AS.808): the route says it's there only once it is, the
+    /// frame on disk is the shot's own pixels, and after each answer the
+    /// thumbnail and its node are gone, the image count back where it was.
+    #[test]
+    fn the_frame_shows_and_is_freed_when_the_prompt_closes() {
+        use bevy::render::view::window::screenshot::Screenshot;
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, dir, asks) = tv(tmp.path());
+        let count = |app: &mut App| {
+            let nodes = app
+                .world_mut()
+                .query::<&ImageNode>()
+                .iter(app.world())
+                .count();
+            (app.world().resource::<Assets<Image>>().len(), nodes)
+        };
+        let before = count(&mut app);
+        for i in 0..10u8 {
+            crate::test_support::tv::key(
+                &mut app,
+                crate::flags::FLAG_KEY,
+                Key::Character("f".into()),
+            );
+            app.update();
+            assert!(open(&app), "press {i}");
+            assert!(!asks.note.shot().frame, "no frame before it lands");
+            let shot = app
+                .world_mut()
+                .query_filtered::<Entity, With<Screenshot>>()
+                .iter(app.world())
+                .next()
+                .expect("the capture's screenshot");
+            let image = Image::new_fill(
+                bevy::render::render_resource::Extent3d {
+                    width: 64,
+                    height: 36,
+                    depth_or_array_layers: 1,
+                },
+                bevy::render::render_resource::TextureDimension::D2,
+                &[i * 20, 80, 160, 255],
+                bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+                bevy::asset::RenderAssetUsages::all(),
+            );
+            app.world_mut().trigger(ScreenshotCaptured {
+                entity: shot,
+                image,
+            });
+            app.world_mut().entity_mut(shot).despawn();
+            app.update();
+            assert!(asks.note.shot().frame, "press {i}: the frame on it");
+            asks.note.push(Posted::Key(Named::Enter));
+            app.update();
+            app.update();
+            assert!(!open(&app));
+        }
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(count(&mut app), before, "(images, image nodes)");
+        // The frame saved is the shot's, written off the frame's thread.
+        let made = folders(&dir);
+        assert_eq!(made.len(), 10);
+        let png = made[9].join("frame.png");
+        let until = Instant::now() + Duration::from_secs(5);
+        while !png.exists() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        let saved = image::open(&png).unwrap().to_rgb8();
+        assert_eq!(saved.dimensions(), (64, 36));
+        assert_eq!(saved.get_pixel(10, 10).0, [180, 80, 160]);
     }
 
     /// The clock a playback keeps reads the same after a hold as it did at
