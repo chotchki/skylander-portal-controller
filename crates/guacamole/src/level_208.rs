@@ -156,6 +156,21 @@ pub fn river(level: &str) -> impl Iterator<Item = &'static str> {
     RIVER.iter().copied().filter(move |_| on)
 }
 
+/// Under the river's north edge (openspec AS.757): the level mesh's wall
+/// there leaves a 4 m gap (x -30.5, z -31 to -27) where the river's floor
+/// runs out to a 20 m drop onto the ground below, which holds loot and the
+/// heavy Biclops' start. The level's way back up is the jump pad at the
+/// drop's foot (`PvP_JumpPad_NORMAL(3)`, `PR_PvP_jumpPad.ai`, 201's and
+/// chapter 1's): unlisted, a hero who went over stayed down there.
+pub const UNDER_RIVER: [&str; 1] = ["PvP_JumpPad_NORMAL(3)"];
+
+/// [`UNDER_RIVER`] on 208 alone (201 and chapter 1 name pads of the same
+/// name of their own).
+pub fn under_river(level: &str) -> impl Iterator<Item = &'static str> {
+    let on = level == LEVEL;
+    UNDER_RIVER.iter().copied().filter(move |_| on)
+}
+
 /// The second beam puzzle (openspec AS.701's set 2), past the river wall,
 /// listed by name as [`BEAM`] lists the first (the reflect scripts are
 /// shared, and listed by path they'd wake every set on every level that
@@ -427,6 +442,29 @@ mod tests {
             "Ice_Trap_Large(1)",
         ] {
             assert!(!on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+        }
+    }
+
+    /// openspec AS.757: the jump pad under the river's north edge is on
+    /// 208's listing and on no other level's (201 and chapter 1 name their
+    /// own pads by the same name).
+    #[test]
+    fn level_208s_pad_under_the_river_is_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        assert_eq!(under_river(LEVEL).collect::<Vec<_>>(), UNDER_RIVER);
+        for name in UNDER_RIVER {
+            assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+        }
+        for other in ["level_202", "level_205_piratecards"] {
+            let off = level_config(Mode::Play, &files, 5, other);
+            for name in UNDER_RIVER {
+                assert!(
+                    !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
+                    "{name} on {other}"
+                );
+            }
+            assert_eq!(under_river(other).count(), 0);
         }
     }
 

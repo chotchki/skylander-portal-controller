@@ -1446,6 +1446,90 @@ fn level_208s_setup_003_by_its_own_triggers() {
     println!("load at end: {}", load());
 }
 
+/// openspec AS.757: over the river's north edge and back. The level mesh's
+/// wall there has a 4 m gap (x -30.5, z -31 to -27): the stick north from
+/// the river takes him over it, 20 m down, and the level's jump pad at the
+/// drop's foot (`PvP_JumpPad_NORMAL(3)`) carries him back up onto the
+/// river. Unlisted, he stood on it and stayed down. A stall (no move in 300
+/// steps off the pad) ends it.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_208s_river_edge_drops_him_and_its_jump_pad_brings_him_back() {
+    println!("load at start: {}", load());
+    let mut stops = Vec::new();
+    let mut run = joined_208(&mut stops);
+    for k in 0..6000u32 {
+        still(&mut run, &mut stops, [false; 4]);
+        if k > 200 && scene_of(&run).is_none() && !guacamole::anchors::scene_holds(&run.vm) {
+            break;
+        }
+    }
+    let flat = |a: Vec3, b: Vec3| Vec3::new(a.x - b.x, 0.0, a.z - b.z).length();
+    run.put(Vec3::new(-31.0, 4.7, -31.0), 0.0);
+    let over = Vec3::new(-31.0, 0.0, -20.0);
+    let mut fell = None;
+    for _ in 0..600 {
+        let me = run.hero().pivot;
+        run.bench.view = (over.x - me.x).atan2(over.z - me.z).to_degrees();
+        run.bench.hold_view = true;
+        step(&mut run, &mut stops, Stick::new(0.0, 1.0), [false; 4]);
+        if run.hero().pivot.y < -10.0 && run.hero().footing.supported {
+            fell = Some(run.steps);
+            break;
+        }
+    }
+    println!("over the edge at step {fell:?}, at {}", run.hero().pivot);
+    assert!(
+        fell.is_some(),
+        "over the gap and down: {}",
+        run.hero().pivot
+    );
+    let pad = run.at(UNDER_RIVER_PAD);
+    let (mut back, mut last, mut since) = (None, run.hero().pivot, 0u32);
+    for _ in 0..1800 {
+        let me = run.hero().pivot;
+        if me.y > 3.0 && run.hero().footing.supported {
+            back = Some((run.steps, me));
+            break;
+        }
+        let to = if me.y < -10.0 {
+            pad
+        } else {
+            Vec3::new(-28.0, 0.0, -31.0)
+        };
+        run.bench.view = (to.x - me.x).atan2(to.z - me.z).to_degrees();
+        run.bench.hold_view = true;
+        let push = if flat(me, pad) < 0.5 && me.y < -10.0 {
+            0.0
+        } else {
+            1.0
+        };
+        step(&mut run, &mut stops, Stick::new(0.0, push), [false; 4]);
+        if run.hero().pivot.distance(last) < 0.01 {
+            since += 1;
+            assert!(
+                since < 300,
+                "held at {} by the pad ({}): {}",
+                run.hero().pivot,
+                behaviour(&run, UNDER_RIVER_PAD),
+                run.steps
+            );
+        } else {
+            (last, since) = (run.hero().pivot, 0);
+        }
+    }
+    println!(
+        "back up at {back:?}, the pad {}",
+        behaviour(&run, UNDER_RIVER_PAD)
+    );
+    assert!(back.is_some(), "back up on the river: {}", run.hero().pivot);
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
+}
+
+/// The jump pad under the river's north edge (openspec AS.757).
+const UNDER_RIVER_PAD: &str = "PvP_JumpPad_NORMAL(3)";
+
 /// Setup_003's controller and the foes its script names (openspec AS.402).
 const SETUP_003_CONTROLLER: &str = "Setup_003_Controller";
 const SETUP_003_FOES: [&str; 9] = [

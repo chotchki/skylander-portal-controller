@@ -4794,6 +4794,8 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
         // Level 208's river wall and second beam puzzle (openspec AS.346,
         // AS.701).
         placements.extend(crate::level_208::river(name).map(str::to_owned));
+        // The jump pad under the river's north edge (openspec AS.757).
+        placements.extend(crate::level_208::under_river(name).map(str::to_owned));
         placements.extend(crate::level_208::beam_2(name).map(str::to_owned));
         // The way west of the second ice block (openspec AS.776).
         placements.extend(crate::level_208::west(name).map(str::to_owned));
