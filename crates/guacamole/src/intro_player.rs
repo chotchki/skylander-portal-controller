@@ -78,6 +78,15 @@ pub struct AnchoredClock {
 }
 
 impl AnchoredClock {
+    /// The clock after a hold of `held`: its start moved on by it, so the
+    /// time held isn't counted (openspec AS.805).
+    #[cfg(any(feature = "test-hooks", test))]
+    pub(crate) fn shift(&mut self, held: Duration) {
+        if let Some(t0) = self.t0.as_mut() {
+            *t0 += held;
+        }
+    }
+
     /// Seconds into the intro at `now`. `position` is the sink's; `None`
     /// runs on the wall clock alone.
     pub fn tick(&mut self, now: Instant, position: Option<Duration>) -> f64 {
@@ -186,10 +195,19 @@ impl Plugin for IntroPlugin {
             })
             .add_systems(
                 Update,
-                (queue_intros, play_intros, overlay_holds_focus).chain(),
+                (queue_intros, play_intros, overlay_holds_focus)
+                    .chain()
+                    .in_set(WallClockPlayback),
             );
     }
 }
+
+/// What plays by the wall clock, not the level's: an intro here and the
+/// level end's movie (`crate::movies`). A capture's note prompt (openspec
+/// AS.805, `test-hooks` builds) stops the set while it's up and holds each
+/// playback's clock and sound ([`Playback::hold`], [`Playback::resume`]).
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct WallClockPlayback;
 
 /// While an intro plays, its overlay holds the input focus, so an Enter or
 /// Space the widgets would take lands on a node with no button; the focus
@@ -353,6 +371,46 @@ fn start(
 ) -> Playback {
     let files = library.map(|library| intro::files(library, &entry.movie));
     Playback::open(commands, entry, files, now)
+}
+
+/// A capture's note prompt holding a playback (openspec AS.805): its sound
+/// paused where it is while its steps don't run ([`WallClockPlayback`]),
+/// and after, every clock it keeps moved on by the time held, so it
+/// neither skips the frames it missed nor ends early.
+#[cfg(any(feature = "test-hooks", test))]
+impl Playback {
+    /// Its sound, once it has a sink, paused (called each frame held, so a
+    /// sink that comes during the hold is paused too).
+    pub(crate) fn hold(&self, sinks: &Query<&AudioSink>) {
+        if let Audio::Spawned { entity, .. } | Audio::Sink(entity) = self.audio
+            && let Ok(sink) = sinks.get(entity)
+            && !sink.is_paused()
+        {
+            sink.pause();
+        }
+    }
+
+    /// Goes on after a hold of `held`.
+    pub(crate) fn resume(&mut self, held: Duration, sinks: &Query<&AudioSink>) {
+        self.started += held;
+        self.clock.shift(held);
+        if let Audio::Spawned { at, .. } = &mut self.audio {
+            *at += held;
+        }
+        if let Audio::Spawned { entity, .. } | Audio::Sink(entity) = self.audio
+            && let Ok(sink) = sinks.get(entity)
+        {
+            sink.play();
+        }
+    }
+}
+
+#[cfg(any(feature = "test-hooks", test))]
+impl IntroPlayer {
+    /// The intro playing, for a hold.
+    pub(crate) fn playback_mut(&mut self) -> Option<&mut Playback> {
+        self.current.as_mut()
+    }
 }
 
 impl Playback {
