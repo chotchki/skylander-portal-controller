@@ -1358,6 +1358,9 @@ fn level_208s_way_west_of_the_second_ice_block() {
     // way to Setup_003's first trigger as an ice block waiting on its beam
     // (unlisted, an invisible wall), and its start beams to the pivot.
     assert_eq!(behaviour(&run, ICE_BLOCK_4), "wait for beam to hit");
+    // Its post runs its script, drawn where it stands (unlisted, its box
+    // stands undrawn: an invisible wall).
+    assert_eq!(behaviour(&run, "Reflect_Post(1)"), "wait forever");
     let (start_4, pivot_3) = (run.at("Reflect_Start(4)"), run.at("Reflect_Pivot_Round(3)"));
     let fourth = beams(&run);
     println!("the fourth set's beams: {fourth:?}");
