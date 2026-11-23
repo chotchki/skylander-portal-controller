@@ -702,6 +702,26 @@ impl Sequence {
     }
 
     /// `sequence.time remaining`: seconds left at its rate.
+    /// A playing looping sound's time left, as its script reads it: this
+    /// pass's without the [`DONE_MARGIN`] rule, the next pass's at the wrap,
+    /// so never none while it loops (openspec AS.824). The margin is the
+    /// original's for an animation's sequence (AH.55, AH.184); read on a
+    /// sound, Ninjini's hover saw none at each wrap and started a second
+    /// copy that nothing stopped (stand-in ledger `sound-loop-left`).
+    pub fn sound_loop_remaining(&self) -> f32 {
+        let rate = self.rate * 0.01;
+        if rate <= 0.0 || !self.plays() {
+            return 0.0;
+        }
+        let left = self.length - self.time;
+        let left = if left <= rate * DONE_MARGIN {
+            left.max(0.0) + self.length
+        } else {
+            left
+        };
+        left / rate
+    }
+
     pub fn time_remaining(&self) -> f32 {
         let rate = self.rate * 0.01;
         if rate <= 0.0 {

@@ -1774,7 +1774,13 @@ impl ScriptWorld {
                     return Err(HostFault::Nothing);
                 };
                 let s = self.sequences.get(i as usize).ok_or(HostFault::Nothing)?;
+                // A looping sound's, not an animation's (openspec AS.824).
+                let sound_loop = s.looping
+                    && !matches!(self.object(Some(s.template)), Some(Object::Clip { .. }));
                 match m {
+                    Member::SeqTimeRemaining if sound_loop => {
+                        Value::Float(s.sound_loop_remaining())
+                    }
                     Member::SeqTimeRemaining => Value::Float(s.time_remaining()),
                     Member::SeqPercentRemaining => Value::Float(s.percent_remaining()),
                     Member::SeqRate => Value::Float(s.rate),

@@ -60,7 +60,7 @@
 use guac_ir::sound::{DataHome, DataRef, Sound};
 use guac_script::{Access, Answer, Handle, HostFault, Obj, Value};
 use guac_sound::{Falloff, Limit, LimitBehavior, Lookup, Params, SoundId};
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::script_engine::{Engine, Object, Sequence};
 use crate::script_members::Member;
@@ -114,7 +114,25 @@ impl ScriptWorld {
     }
 
     fn note_refused(&mut self, id: SoundId, name: Option<String>, why: String) {
-        debug!(sound = ?name, stem = %id.stem, object = id.object, %why, "a sound's start played nothing");
+        self.note_refused_at(id, name, why, false);
+    }
+
+    /// [`Self::note_refused`], at TRACE when `playing_on` says a copy of the
+    /// same loop already plays on its actor (openspec AS.824): the level's
+    /// placed sounds ask again for a loop still playing, the limit refuses
+    /// as it should and nothing goes unheard, so the line is no news.
+    fn note_refused_at(
+        &mut self,
+        id: SoundId,
+        name: Option<String>,
+        why: String,
+        playing_on: bool,
+    ) {
+        if playing_on {
+            trace!(sound = ?name, stem = %id.stem, object = id.object, %why, "a sound's start played nothing: its loop plays on its actor");
+        } else {
+            debug!(sound = ?name, stem = %id.stem, object = id.object, %why, "a sound's start played nothing");
+        }
         if self.sound_refused.len() == RECENT {
             self.sound_refused.pop_front();
         }
@@ -257,7 +275,8 @@ impl ScriptWorld {
         }
         let on_actor = self.playing_copies(template, Some(actor));
         if let Err(why) = self.make_room(params.actor_limit, &on_actor) {
-            self.note_refused(id, name, format!("{why} on its actor"));
+            let looping = on_actor.iter().any(|&i| self.sequences[i].looping);
+            self.note_refused_at(id, name, format!("{why} on its actor"), looping);
             return Some(Answer::Skip);
         }
         let everywhere = self.playing_copies(template, None);
@@ -853,7 +872,11 @@ impl ScriptWorld {
         };
         Some(Value::Float(match m {
             Member::SeqRawDuration => length,
-            Member::SeqTimeRemaining => most(Sequence::time_remaining),
+            // Every copy here is a sound's (openspec AS.824).
+            Member::SeqTimeRemaining => most(|s| match s.looping {
+                true => s.sound_loop_remaining(),
+                false => s.time_remaining(),
+            }),
             _ => most(Sequence::percent_remaining),
         }))
     }
@@ -957,6 +980,8 @@ mod tests {
     /// A streamed one, and a music track (streamed too).
     const STREAMED: u32 = 17;
     const MUSIC: u32 = 18;
+    /// A loop whose actor limit of one fails.
+    const LOOP_FAILS: u32 = 19;
 
     fn props(actor: u32, actor_how: u32, global: u32, global_how: u32) -> u32 {
         actor << 18 | actor_how << 23 | global << 25 | global_how << 30
@@ -1014,6 +1039,7 @@ mod tests {
                     no_limit | guac_sound::MUSIC << 1,
                     DataRef::Here(DataHome::Level, 91),
                 ),
+                sound(LOOP_FAILS, 1, props(1, 0, 0, 0), here),
             ],
             data: [(90, None), (91, Some(-7))]
                 .into_iter()
@@ -1621,6 +1647,97 @@ mod tests {
         assert_eq!(w.plays().len(), 1, "half way through its second");
         steps(&mut w, 31);
         assert_eq!(ended(&w), [(ONCE, "played out")]);
+    }
+
+    /// openspec AS.824: a start of a loop its actor's limit refuses while
+    /// a copy of it plays there (the level's placed sounds asking again)
+    /// logs at TRACE, recorded as before; a one-shot's refusal on its actor
+    /// or everywhere stays DEBUG.
+    #[test]
+    fn a_loop_refused_while_it_plays_on_its_actor_is_no_news() {
+        #[derive(Clone, Default)]
+        struct Buf(Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Buf {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let buf = Buf::default();
+        let out = buf.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(move || out.clone())
+            .finish();
+        let mut w = world();
+        tracing::subscriber::with_default(subscriber, || {
+            started(start(&mut w, A, LOOP_FAILS));
+            assert_eq!(start(&mut w, A, LOOP_FAILS), Answer::Skip);
+            started(start(&mut w, A, FAILS));
+            assert_eq!(start(&mut w, A, FAILS), Answer::Skip);
+            started(start(&mut w, A, GLOBAL));
+            started(start(&mut w, B, GLOBAL));
+            assert_eq!(start(&mut w, A, GLOBAL), Answer::Skip);
+        });
+        let text = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
+        let line = |object: u32| {
+            text.lines()
+                .find(|l| l.contains(&format!("object={object} ")))
+                .unwrap_or_else(|| panic!("no line for {object}: {text}"))
+                .to_owned()
+        };
+        assert!(line(LOOP_FAILS).contains("TRACE"), "{text}");
+        assert!(line(FAILS).contains("DEBUG"), "{text}");
+        assert!(line(GLOBAL).contains("DEBUG"), "{text}");
+        let refused: Vec<u32> = w.sounds_refused().map(|r| r.id.object).collect();
+        assert_eq!(refused, [LOOP_FAILS, FAILS, GLOBAL], "each still recorded");
+    }
+
+    /// openspec AS.824: a looping sound's copy never reads none left while
+    /// it loops, so a script starting it again on none (Ninjini's hover)
+    /// keeps one copy, the sound info's read the same; a one-shot still
+    /// reads none in its last two frames (AH.55's margin).
+    #[test]
+    fn a_looping_sound_reads_time_left_through_its_wrap_and_a_one_shot_keeps_the_margin() {
+        let mut w = world();
+        // Ninjini's hover (openspec AS.824): each step, a loop started again
+        // whenever its copy reads none left, the reference moved to the new
+        // copy.
+        let mut copy = started(start(&mut w, A, LOOP));
+        let mut least = f32::MAX;
+        for _ in 0..200 {
+            steps(&mut w, 1);
+            let left = read(&mut w, "sequence", "time remaining", copy)
+                .as_f32()
+                .unwrap();
+            least = least.min(left);
+            if left == 0.0 {
+                copy = started(start(&mut w, A, LOOP));
+            }
+            // The sound info's own read, the most over A's copies.
+            let info = sound_value(LOOP);
+            let at = Access {
+                placement: A,
+                receiver: Some(info),
+                member: MemberId::named("sequence", "time remaining"),
+                other_point: None,
+                via: None,
+                op: None,
+            };
+            assert!(w.get(&at, &mut NoEngine).unwrap().as_f32().unwrap() > 0.0);
+        }
+        assert!(least > 0.0, "none left read at a wrap");
+        let loops = w.plays().iter().filter(|p| p.id.object == LOOP).count();
+        assert_eq!(loops, 1, "one copy over three passes");
+        // A one-shot reads none in its last two frames, as AH.55 measured.
+        let once = started(start(&mut w, B, ONCE));
+        steps(&mut w, 59);
+        let left = read(&mut w, "sequence", "time remaining", once);
+        assert_eq!(left.as_f32(), Some(0.0));
     }
 
     /// openspec AR.36: a sound info itself, asked a sequence member by a
