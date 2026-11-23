@@ -118,9 +118,10 @@ impl ScriptWorld {
     }
 
     /// [`Self::note_refused`], at TRACE when `playing_on` says a copy of the
-    /// same loop already plays on its actor (openspec AS.824): the level's
-    /// placed sounds ask again for a loop still playing, the limit refuses
-    /// as it should and nothing goes unheard, so the line is no news.
+    /// same sound still plays on its actor, as every refusal by its actor's
+    /// limit does (openspec AS.824): the level's placed sounds ask again for
+    /// a cricket still playing, the limit refuses as it should and nothing
+    /// goes unheard, so the line is no news.
     fn note_refused_at(
         &mut self,
         id: SoundId,
@@ -276,8 +277,9 @@ impl ScriptWorld {
         }
         let on_actor = self.playing_copies(template, Some(actor));
         if let Err(why) = self.make_room(params.actor_limit, &on_actor) {
-            let looping = on_actor.iter().any(|&i| self.sequences[i].looping);
-            self.note_refused_at(id, name, format!("{why} on its actor"), looping);
+            // A copy of the same sound plays on the same actor: nothing new
+            // goes unheard (openspec AS.824).
+            self.note_refused_at(id, name, format!("{why} on its actor"), true);
             return Some(Answer::Skip);
         }
         let everywhere = self.playing_copies(template, None);
@@ -1650,10 +1652,10 @@ mod tests {
         assert_eq!(ended(&w), [(ONCE, "played out")]);
     }
 
-    /// openspec AS.824: a start of a loop its actor's limit refuses while
-    /// a copy of it plays there (the level's placed sounds asking again)
-    /// logs at TRACE (its record `quiet`), recorded as before; a one-shot's
-    /// refusal on its actor or everywhere stays DEBUG.
+    /// openspec AS.824: a start its actor's limit refuses, a copy of the
+    /// same sound playing there (the level's placed sounds asking again, a
+    /// loop or a one-shot), logs at TRACE (its record `quiet`), recorded as
+    /// before; a refusal by the limit everywhere stays DEBUG.
     #[test]
     fn a_loop_refused_while_it_plays_on_its_actor_is_no_news() {
         let mut w = world();
@@ -1668,8 +1670,8 @@ mod tests {
             w.sounds_refused().map(|r| (r.id.object, r.quiet)).collect();
         assert_eq!(
             refused,
-            [(LOOP_FAILS, true), (FAILS, false), (GLOBAL, false)],
-            "each recorded, the loop's alone at TRACE"
+            [(LOOP_FAILS, true), (FAILS, true), (GLOBAL, false)],
+            "each recorded, the actor's limit's at TRACE"
         );
     }
 
