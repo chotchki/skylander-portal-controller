@@ -523,7 +523,13 @@ pub(crate) fn fight_app(
     tmp: &std::path::Path,
     asked: Option<crate::dev_entry::Asked>,
 ) -> (App, Entity) {
-    fight_app_on(tmp, asked, false)
+    fight_app_on(tmp, asked, false, |_| {})
+}
+
+/// [`fight_app`] with `more` added as the app's plugins are (a capture's
+/// note prompt over the fight, openspec AS.805).
+pub(crate) fn fight_app_with(tmp: &std::path::Path, more: impl FnOnce(&mut App)) -> (App, Entity) {
+    fight_app_on(tmp, None, false, more)
 }
 
 /// Where [`fight_app_with_art`] stands the art's template: 3 m beside the
@@ -536,18 +542,20 @@ pub(crate) fn fight_app_with_art(
     tmp: &std::path::Path,
     asked: Option<crate::dev_entry::Asked>,
 ) -> (App, Entity) {
-    fight_app_on(tmp, asked, true)
+    fight_app_on(tmp, asked, true, |_| {})
 }
 
 fn fight_app_on(
     tmp: &std::path::Path,
     asked: Option<crate::dev_entry::Asked>,
     art: bool,
+    more: impl FnOnce(&mut App),
 ) -> (App, Entity) {
     let asks = crate::dev_entry::EntryAsks::default();
     let entry = crate::dev_entry::plugin(true, asks.clone()).expect("a dev build's entry");
     let (mut app, tx) = play_app_with(tmp, |app| {
         app.add_plugins((crate::creatures::CreaturesPlugin, entry));
+        more(app);
     });
     write_attack_parts(tmp);
     write_figure_rows(tmp);

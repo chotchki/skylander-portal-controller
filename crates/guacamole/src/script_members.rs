@@ -2225,6 +2225,17 @@ impl ScriptWorld {
                         if ground.is_none() =>
                     {
                         a.angles = turned_by(a.angles, m, x);
+                        // A turn by its own axis is the script's too: hung on
+                        // a node it holds as turned (openspec AS.713:
+                        // Sprocket's turret top, hung on its base's node and
+                        // turned by the stick a relative facing a step, took
+                        // the node's turn back at each placing and never
+                        // moved on the TV).
+                        a.turned_axes |= match m {
+                            Member::RelativeFacing => Actor::FACING,
+                            Member::RelativeTilt => Actor::TILT,
+                            _ => Actor::ROLL,
+                        };
                     }
                     Member::RelativeFacing => {
                         a.angles.facing = x;
@@ -7091,6 +7102,59 @@ mod tests {
         w.place_hung(&mut e);
         let at = w.actors[&TOP].position;
         assert!(at.distance(Vec3::new(2.0, 1.5, 3.0)) < 1e-4, "{at}");
+    }
+
+    /// openspec AS.713: Sprocket's turret top hangs on its base's node and
+    /// her script turns it by the stick, a `relative facing` each step. Each
+    /// turn holds through the node's placing and the next adds to it;
+    /// unwritten, the top turns as its node does.
+    #[test]
+    fn a_relative_turn_on_a_node_hung_actor_holds_through_its_placing() {
+        const BASE_T: Obj = Obj { unit: 9, index: 7 };
+        const BASE: Handle = 0x6000_0071;
+        const TOP: Handle = 0x6000_0072;
+        let mut e = bench();
+        let mut w = world();
+        let mut template = crate::scripts::Placed::named(BASE_T, "Turret_Base", None, 5);
+        template.model = Some("base.mdl".into());
+        w.templates.insert(BASE_T, template);
+        w.set_origin_nodes(HashMap::from([(
+            "base.mdl".to_owned(),
+            vec![NodePose {
+                at: Vec3::new(0.0, 1.0, 0.0),
+                turn: euler([0.0, 30.0, 0.0]),
+            }],
+        )]));
+        let mut base = Actor::blank();
+        base.template = Some(BASE_T);
+        w.actors.insert(BASE, base);
+        let mut top = Actor::blank();
+        top.attach = w.objs.value(Object::Node(BASE, 0));
+        w.actors.insert(TOP, top);
+        w.place_hung(&mut e);
+        assert!(
+            (w.actors[&TOP].angles.facing - 30.0).abs() < 1e-3,
+            "unwritten: its node's"
+        );
+        let turn = w.objs.value(Object::Facet(TOP, Facet::Orientation));
+        let relative = at(
+            "orientationmeasurement",
+            "relative facing",
+            Some(turn),
+            None,
+        );
+        for _ in 0..3 {
+            w.set_member(
+                &relative,
+                Member::RelativeFacing,
+                Value::Float(10.0),
+                &mut e,
+            )
+            .unwrap();
+            w.place_hung(&mut e);
+        }
+        let facing = w.actors[&TOP].angles.facing;
+        assert!((facing - 60.0).abs() < 1e-3, "turned three times: {facing}");
     }
 
     /// openspec AS.445: a turret's ball hangs on its body's static node and

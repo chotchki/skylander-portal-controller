@@ -264,6 +264,9 @@ pub(crate) struct FlagAsks {
     asks: Arc<Mutex<Vec<PhoneAsk>>>,
     /// Key presses posted (`POST /api/_test/flag/key`), not yet fed in.
     keys: Arc<std::sync::atomic::AtomicUsize>,
+    /// A capture's note prompt's own asks (openspec AS.805).
+    #[cfg(any(feature = "test-hooks", test))]
+    pub(crate) note: crate::capture_note::NoteAsks,
 }
 
 impl FlagAsks {
@@ -284,6 +287,12 @@ impl FlagAsks {
         let (reply, rx) = oneshot::channel();
         asks.push(PhoneAsk { note, reply });
         Some(rx)
+    }
+
+    /// A phone's ask as the route queues it, for the note prompt's tests.
+    #[cfg(test)]
+    pub(crate) fn push_for_tests(&self, note: &str) -> oneshot::Receiver<Taken> {
+        self.push(note.into()).expect("room")
     }
 
     fn take(&self) -> Vec<PhoneAsk> {
@@ -370,31 +379,52 @@ pub(crate) struct Flags {
     pub(crate) log_dir: PathBuf,
     /// The routes' side: the phone's asks land here.
     pub(crate) asks: FlagAsks,
+    /// A hand's capture asks for its note ([`crate::capture_note`],
+    /// openspec AS.805): off on a run nobody sits at
+    /// (`GUAC_TEST_POSTED_PADS_ONLY`).
+    pub(crate) prompts: bool,
 }
 
 /// Where captures go and the last one taken.
 #[derive(Resource)]
-struct FlagState {
+pub(crate) struct FlagState {
     dir: PathBuf,
     log_dir: PathBuf,
-    last: Option<LastCapture>,
+    pub(crate) last: Option<LastCapture>,
+    #[cfg(any(feature = "test-hooks", test))]
+    prompts: bool,
 }
+
+/// Where the captures are taken in `Last`, for what answers after them.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct TakeFlags;
+
+/// [`FLAG_KEY`]'s press this frame was posted (`/api/_test/flag/key`),
+/// not a hand's.
+#[derive(Resource, Debug, Default)]
+struct PostedKeyNow(bool);
 
 impl Plugin for Flags {
     fn build(&self, app: &mut App) {
-        info!(dir = %self.dir.display(), key = ?FLAG_KEY, "playtest flags on");
+        info!(dir = %self.dir.display(), key = ?FLAG_KEY, prompts = self.prompts, "playtest flags on");
         app.insert_resource(FlagState {
             dir: self.dir.clone(),
             log_dir: self.log_dir.clone(),
             last: None,
+            #[cfg(any(feature = "test-hooks", test))]
+            prompts: self.prompts,
         })
         .insert_resource(self.asks.clone())
         .init_resource::<FlagsTaken>()
+        .init_resource::<PostedKeyNow>()
         .add_systems(
             PreUpdate,
             feed_posted_keys.before(bevy::input::InputSystems),
         )
-        .add_systems(Last, take_flags);
+        .add_systems(Last, take_flags.in_set(TakeFlags));
+        #[cfg(any(feature = "test-hooks", test))]
+        app.insert_resource(self.asks.note.clone())
+            .add_plugins(crate::capture_note::NotePlugin);
     }
 }
 
@@ -556,7 +586,7 @@ pub(crate) fn log_tail(dir: &Path, lines: usize) -> Result<Vec<String>, String> 
 }
 
 /// Appends a note, with its time, to the capture's `note.txt`.
-fn add_note(folder: &Path, note: &str, at: SystemTime) -> std::io::Result<()> {
+pub(crate) fn add_note(folder: &Path, note: &str, at: SystemTime) -> std::io::Result<()> {
     use std::io::Write;
     let mut f = std::fs::OpenOptions::new()
         .create(true)
@@ -829,6 +859,7 @@ fn feed_posted_keys(
     window: Query<Entity, With<bevy::window::PrimaryWindow>>,
     mut keys: MessageWriter<bevy::input::keyboard::KeyboardInput>,
     mut down: Local<bool>,
+    mut posted: ResMut<PostedKeyNow>,
 ) {
     use bevy::input::ButtonState;
     let Some(asks) = asks else {
@@ -842,6 +873,7 @@ fn feed_posted_keys(
         return;
     };
     *down = state == ButtonState::Pressed;
+    posted.0 = *down;
     keys.write(bevy::input::keyboard::KeyboardInput {
         key_code: FLAG_KEY,
         logical_key: bevy::input::keyboard::Key::Character("f".into()),
@@ -852,24 +884,50 @@ fn feed_posted_keys(
     });
 }
 
-/// The key, the capture buttons and the phone's asks, this frame.
+/// The key, the capture buttons and the phone's asks, this frame. A
+/// hand's press asks for its note ([`crate::capture_note`], openspec
+/// AS.805); while that prompt is up the key types into it and the button
+/// is its Save, so neither takes a capture.
+#[allow(clippy::too_many_arguments)]
 fn take_flags(
     mut commands: Commands,
     mut state: ResMut<FlagState>,
     keys: Option<Res<ButtonInput<KeyCode>>>,
-    pads: Query<(&Gamepad, Option<&Name>)>,
+    pads: Query<(Entity, &Gamepad, Option<&Name>)>,
     asks: Option<Res<FlagAsks>>,
     reads: CaptureReads,
+    mut posted: ResMut<PostedKeyNow>,
+    #[cfg(any(feature = "test-hooks", test))] mut note: crate::capture_note::NoteTake,
 ) {
+    let posted = std::mem::take(&mut posted.0);
     let pressed = if keys.as_deref().is_some_and(|k| k.just_pressed(FLAG_KEY)) {
-        Some(Source::Key)
+        Some((Source::Key, None))
     } else {
         pads.iter()
-            .find(|(p, _)| p.just_pressed(FLAG_BUTTON))
-            .map(|(_, n)| Source::Pad(n.map_or_else(|| "pad".into(), |n| n.as_str().to_owned())))
+            .find(|(_, p, _)| p.just_pressed(FLAG_BUTTON))
+            .map(|(e, _, n)| {
+                (
+                    Source::Pad(n.map_or_else(|| "pad".into(), |n| n.as_str().to_owned())),
+                    Some(e),
+                )
+            })
     };
-    if let Some(source) = pressed {
-        capture(&mut commands, &mut state, &reads, source, "");
+    #[cfg(any(feature = "test-hooks", test))]
+    let pressed = pressed.filter(|_| !note.is_open());
+    #[cfg(not(any(feature = "test-hooks", test)))]
+    let _ = posted;
+    if let Some((source, _by)) = pressed {
+        let taken = capture(&mut commands, &mut state, &reads, source.clone(), "");
+        #[cfg(any(feature = "test-hooks", test))]
+        if let Some((name, shot)) = taken {
+            let hand = note.hand_asked();
+            if crate::capture_note::asks_for_note(&source, state.prompts, posted, hand) {
+                let folder = state.dir.join(&name);
+                note.open(&mut commands, folder, name, shot, _by);
+            }
+        }
+        #[cfg(not(any(feature = "test-hooks", test)))]
+        let _ = taken;
     }
     for ask in asks.map(|a| a.take()).unwrap_or_default() {
         let now = SystemTime::now();
@@ -885,12 +943,12 @@ fn take_flags(
                 joined: true,
             })
         } else {
-            capture(&mut commands, &mut state, &reads, Source::Phone, &ask.note).map(|folder| {
-                Taken {
+            capture(&mut commands, &mut state, &reads, Source::Phone, &ask.note).map(
+                |(folder, _)| Taken {
                     folder,
                     joined: false,
-                }
-            })
+                },
+            )
         };
         if let Some(taken) = taken {
             let _ = ask.reply.send(taken);
@@ -899,15 +957,15 @@ fn take_flags(
 }
 
 /// Writes one capture's folder: `capture.json` and `log.txt` now, the note
-/// if any, `frame.png` once the frame lands. Its name, or none when the
-/// folder couldn't be made.
+/// if any, `frame.png` once the frame lands. Its name and the frame's
+/// screenshot entity, or none when the folder couldn't be made.
 fn capture(
     commands: &mut Commands,
     state: &mut FlagState,
     reads: &CaptureReads,
     source: Source,
     note: &str,
-) -> Option<String> {
+) -> Option<(String, Entity)> {
     let at = SystemTime::now();
     let name = folder_name(at, &source, |n| state.dir.join(n).exists());
     let folder = state.dir.join(&name);
@@ -935,7 +993,7 @@ fn capture(
         error!(folder = %folder.display(), %e, "a flag's note wasn't written");
     }
     let png = folder.join("frame.png");
-    commands
+    let shot = commands
         .spawn(reads.screenshot())
         .observe(move |captured: On<ScreenshotCaptured>| {
             let (image, path) = (captured.image.clone(), png.clone());
@@ -943,7 +1001,8 @@ fn capture(
                 Ok(()) => info!(path = %path.display(), "a flag's frame saved"),
                 Err(why) => error!(path = %path.display(), %why, "a flag's frame not saved"),
             });
-        });
+        })
+        .id();
     info!(folder = %folder.display(), source = source.name(), "flag captured");
     state.last = Some(LastCapture {
         folder,
@@ -952,7 +1011,7 @@ fn capture(
         source,
         at,
     });
-    Some(name)
+    Some((name, shot))
 }
 
 /// `shot` as an 8-bit RGB PNG at `path`.
@@ -1158,6 +1217,7 @@ mod tests {
                 dir: dir.clone(),
                 log_dir: logs,
                 asks: asks.clone(),
+                prompts: false,
             });
         app.update();
         assert!(app.world().contains_resource::<FlagsTaken>());
@@ -1283,6 +1343,7 @@ mod tests {
                 dir: dir.clone(),
                 log_dir: tmp.path().join("no-logs"),
                 asks: asks.clone(),
+                prompts: false,
             });
         app.update();
         asks.keys.fetch_add(1, Ordering::Relaxed);

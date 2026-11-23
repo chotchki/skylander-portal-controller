@@ -16,6 +16,8 @@ mod alert;
 mod announce;
 mod arrival;
 mod button_prompt;
+#[cfg(any(feature = "test-hooks", test))]
+mod capture_note;
 mod card_motion;
 mod card_screens;
 mod card_view;
@@ -308,6 +310,9 @@ fn playtest_flags(
                 dir,
                 log_dir: setup::log_dir(root),
                 asks: asks.clone(),
+                // AS.805: a hand's capture asks for its note, never on a
+                // run nobody sits at.
+                prompts: !posted_pads_only(),
             })
         }
         Err(flags::FlagDirError::InCheckout { dir, repo }) => {
@@ -494,6 +499,9 @@ fn test_routes(
         // AS.680's creature stage.
         #[cfg(feature = "test-hooks")]
         let routes = routes.merge(stage::routes(stage::shared(), level_asks));
+        // AS.805's capture note: the hand's press, the typing and the read.
+        #[cfg(feature = "test-hooks")]
+        let routes = routes.merge(capture_note::routes(flag_asks));
         // A lane's build that plays the card game (openspec AS.367's first
         // rung) quits it over a route of its own; no landed build has it.
         #[cfg(all(feature = "test-hooks", feature = "played-card-games"))]

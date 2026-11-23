@@ -750,3 +750,10 @@ A spawn archive's emitter whose generator is a lightning (a hero's attack, the l
 #### Scenario: Lightning Rod's thrown bolt
 - **WHEN** Lightning Rod throws his bolt
 - **THEN** a lightning runs along the projectile from node to node as it flies, and a streak from where it left his hand to the projectile
+
+### Requirement: A turn a script writes on a node-hung piece holds
+What hangs on a node SHALL draw each axis a script wrote, by an absolute or a relative facing, tilt or roll, as written, and the rest as the node turns: Sprocket's turret top turns with the stick on the TV (343, then 285 after the stick right and 99 after left, where it read 0 throughout), level 214's turret hatch holds its 90 degree turn where it took its node's 351, and a turret's ball keeps the aim its script writes each step.
+
+#### Scenario: Sprocket's turret
+- **WHEN** she is seated and the stick is held right, then left
+- **THEN** the turret's top reads and draws a new facing after each, the node under it unchanged

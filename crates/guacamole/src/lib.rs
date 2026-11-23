@@ -24,6 +24,7 @@ pub mod hud_messages;
 pub mod interface_host;
 pub mod interiors;
 pub mod level_201;
+pub mod level_203;
 pub mod level_205;
 pub mod level_208;
 pub mod level_end;

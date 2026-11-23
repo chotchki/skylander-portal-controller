@@ -161,7 +161,30 @@ impl Plugin for MoviesPlugin {
             muted,
             ..Movies::default()
         })
-        .add_systems(Update, (play_movies, show_band).chain());
+        .add_systems(
+            Update,
+            (play_movies, show_band)
+                .chain()
+                .in_set(crate::intro_player::WallClockPlayback),
+        );
+    }
+}
+
+/// The movie for a capture's note prompt's hold (openspec AS.805,
+/// [`Playback::hold`]): the playing one, its play time moved on by a hold.
+#[cfg(any(feature = "test-hooks", test))]
+impl Movies {
+    pub(crate) fn playback_mut(&mut self) -> Option<&mut Playback> {
+        match self.current.as_mut() {
+            Some(Running::Playing { playback, .. }) => Some(playback),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn shift(&mut self, held: std::time::Duration) {
+        if let Some(Running::Playing { started, .. }) = self.current.as_mut() {
+            *started += held;
+        }
     }
 }
 

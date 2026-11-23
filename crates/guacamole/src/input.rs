@@ -422,7 +422,14 @@ fn route_input(
     ending: Option<Res<crate::completion::LevelEnding>>,
     mut out: MessageWriter<TvInput>,
     flags: Option<Res<crate::flags::FlagsTaken>>,
+    #[cfg(any(feature = "test-hooks", test))] note: Option<Res<crate::capture_note::NoteOpen>>,
 ) {
+    // A capture's note prompt (openspec AS.805) takes the keys and the pads
+    // alone: nothing passes to an intro, a modal, the level or the screen.
+    #[cfg(any(feature = "test-hooks", test))]
+    let noting = note.is_some_and(|n| n.is_open());
+    #[cfg(not(any(feature = "test-hooks", test)))]
+    let noting = false;
     let (mut frame, dpad, stick) = read_devices(
         keys.as_deref(),
         pads.iter().map(|(_, p)| p),
@@ -444,8 +451,14 @@ fn route_input(
     }
 
     let playing = queue.as_ref().is_some_and(|q| q.playing().is_some());
-    let layer = Layer::top(playing, level.shows()).over(modals.hold());
-    if matches!(layer, Layer::Intro | Layer::Level) {
+    let layer = if noting {
+        // As under a modal: the pads move no one, a face held through it
+        // stays the hero's only once let go.
+        Layer::Modal
+    } else {
+        Layer::top(playing, level.shows()).over(modals.hold())
+    };
+    if noting || matches!(layer, Layer::Intro | Layer::Level) {
         repeat.swallow();
     }
     // The hero reads the walking pad only while the level's layer is on top
@@ -490,7 +503,12 @@ fn route_input(
         hero.0.stick = walked.stick;
         hero.0.buttons = walked.buttons;
     }
-    match layer.take(frame) {
+    let taken = if noting {
+        Taken::Nothing
+    } else {
+        layer.take(frame)
+    };
+    match taken {
         Taken::Skip => {
             if let Some(queue) = queue.as_mut() {
                 info!("intro skipped by a key or button");
