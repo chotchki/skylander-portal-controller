@@ -676,6 +676,10 @@ pub struct ScriptWorld {
     /// The engine frames this run has made, which plays are stamped by.
     pub(crate) sound_clock: u64,
     pub(crate) sounds_started: usize,
+    /// Starts refused since the run began, and how many of them by their
+    /// actor's own limit with a copy still playing there (openspec AS.824:
+    /// those log at TRACE, so a capture counts them instead).
+    pub(crate) sounds_refused_count: (usize, usize),
     /// The last plays ended and the last starts refused, newest last.
     pub(crate) sound_ended: std::collections::VecDeque<crate::sounds::SoundEnded>,
     pub(crate) sound_refused: std::collections::VecDeque<crate::sounds::SoundRefused>,
@@ -1087,6 +1091,7 @@ impl ScriptWorld {
             plays: Vec::new(),
             sound_clock: 0,
             sounds_started: 0,
+            sounds_refused_count: (0, 0),
             sound_ended: Default::default(),
             sound_refused: Default::default(),
             sound_written: HashMap::new(),
@@ -1176,6 +1181,12 @@ impl ScriptWorld {
     /// The last plays that ended, newest last ([`crate::sounds::RECENT`]).
     pub fn sounds_ended(&self) -> impl ExactSizeIterator<Item = &crate::sounds::SoundEnded> {
         self.sound_ended.iter()
+    }
+
+    /// Starts that played nothing since the run began, and of them those
+    /// refused by their actor's own limit (openspec AS.824).
+    pub fn sounds_refused_count(&self) -> (usize, usize) {
+        self.sounds_refused_count
     }
 
     /// The last starts that played nothing, newest last.

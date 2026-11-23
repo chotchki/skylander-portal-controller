@@ -176,6 +176,9 @@ pub(crate) struct RefusedShot {
     pub object: u32,
     pub at: u64,
     pub why: String,
+    /// Refused by its actor's own limit, a copy still playing there: logged
+    /// at TRACE (openspec AS.824).
+    pub quiet: bool,
 }
 
 /// What `/api/_test/tv` reports of the sounds (openspec AR.9).
@@ -197,6 +200,12 @@ pub(crate) struct SoundReport {
     /// newest last.
     pub ended: Vec<EndedShot>,
     pub refused: Vec<RefusedShot>,
+    /// Starts refused since the run began, and of them by their actor's
+    /// own limit (openspec AS.824): a leak shows here as a count that keeps
+    /// climbing, the playing copies of one sound beside it, with the log
+    /// quiet.
+    pub refused_total: usize,
+    pub refused_quiet: usize,
     /// Voices sounding now, rung-out ones included.
     pub voices: usize,
     /// Files the player holds now, read or reading, and how many it has let
@@ -488,8 +497,11 @@ fn hear_sounds(
                 object: r.id.object,
                 at: r.at,
                 why: r.why.clone(),
+                quiet: r.quiet,
             })
             .collect(),
+        refused_total: world.sounds_refused_count().0,
+        refused_quiet: world.sounds_refused_count().1,
         voices: heard.iter().count(),
         files: out.files.len(),
         released: out.released,

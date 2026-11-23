@@ -134,6 +134,8 @@ impl ScriptWorld {
         } else {
             debug!(sound = ?name, stem = %id.stem, object = id.object, %why, "a sound's start played nothing");
         }
+        self.sounds_refused_count.0 += 1;
+        self.sounds_refused_count.1 += usize::from(playing_on);
         if self.sound_refused.len() == RECENT {
             self.sound_refused.pop_front();
         }
@@ -1673,6 +1675,7 @@ mod tests {
             [(LOOP_FAILS, true), (FAILS, true), (GLOBAL, false)],
             "each recorded, the actor's limit's at TRACE"
         );
+        assert_eq!(w.sounds_refused_count(), (3, 2), "counted past the log");
     }
 
     /// openspec AS.824: a looping sound's copy never reads none left while

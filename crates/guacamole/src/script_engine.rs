@@ -701,7 +701,6 @@ impl Sequence {
         100.0 * self.left() / self.length
     }
 
-    /// `sequence.time remaining`: seconds left at its rate.
     /// A playing looping sound's time left, as its script reads it: this
     /// pass's without the [`DONE_MARGIN`] rule, the next pass's at the wrap,
     /// so never none while it loops (openspec AS.824). The margin is the
@@ -722,6 +721,7 @@ impl Sequence {
         left / rate
     }
 
+    /// `sequence.time remaining`: seconds left at its rate.
     pub fn time_remaining(&self) -> f32 {
         let rate = self.rate * 0.01;
         if rate <= 0.0 {
