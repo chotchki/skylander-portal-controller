@@ -3570,7 +3570,7 @@ pub const HUB_DOORS: [&str; 2] = ["/Utilities_Controller.ai", "/Hub2_Door.ai"];
 /// Level 214's rooms' talkers (AS.180): Rob in the workshop and the card
 /// pirate whose game isn't open yet in the pub, each at rest on its
 /// palette's slot 0, a random network.
-pub const LEVEL_PEOPLE: [(&str, &str); 29] = [
+pub const LEVEL_PEOPLE: [(&str, &str); 31] = [
     ("level_213_tutotial", "2.NPC_Norticus_First_Cave"),
     ("level_213_tutotial", "Slave_1_hammer(3)"),
     ("level_213_tutotial", "Slave_Carry(3)"),
@@ -3603,6 +3603,11 @@ pub const LEVEL_PEOPLE: [(&str, &str); 29] = [
     ("level_201", "NPC_RunningDude"),
     ("level_201", "Brock"),
     ("level_201", "Auric-STORE"),
+    // Its card talkers whose game isn't open yet (openspec AS.816), drawn
+    // as 214's is (AS.180): the ghost by the bone ribs and the Mabu in the
+    // tower's room. Undrawn, the ghost's talk came from nobody.
+    ("level_201", "CardGame_Template_no_Cards"),
+    ("level_201", "CardGame_Template_no_plAY"),
 ];
 
 /// Whether a placement whose script is `script` is one of the hub's
@@ -7992,6 +7997,11 @@ mod tests {
             assert!(is_level_person("level_214_tutotial_2", name), "{name}");
             assert!(passages("level_214_tutotial_2").contains(&name), "{name}");
             assert!(!is_level_person("level_201", name), "{name}");
+        }
+        // Level 201's card talkers (AS.816), there alone.
+        for name in ["CardGame_Template_no_Cards", "CardGame_Template_no_plAY"] {
+            assert!(is_level_person("level_201", name), "{name}");
+            assert!(!is_level_person("level_214_tutotial_2", name), "{name}");
         }
         world.walk(0x10A);
         assert_eq!(world.people(), [0x10B], "a walked one isn't");
