@@ -229,7 +229,10 @@ pub fn set_4(level: &str) -> impl Iterator<Item = &'static str> {
 
 /// What fights on level 208 (openspec AS.345), walked as creatures: the
 /// reveal's five Ice Chompies, then Setup_002's controller, its six foes
-/// (`Setup_002_Enemies`) and Noodles' scene at its first gate.
+/// (`Setup_002_Enemies`) and Noodles' scene at its first gate; then
+/// Setup_003's controller (openspec AS.402), the nine foes its script
+/// names (`enemy a` to `enemy i`: the bomb thrower and eight Cyclopes) and
+/// the bomber's reveal by the fourth ice block.
 pub const WAY: Encounter = Encounter {
     level: LEVEL,
     placements: &[
@@ -246,6 +249,17 @@ pub const WAY: Encounter = Encounter {
         "Enemy_Cyclops_Near(24)",
         "Enemy_Biclops_Heavy_S2(1)",
         "IGC_Noodles_FirstGate",
+        "Setup_003_Controller",
+        "Enemy_BombThrower(3)",
+        "Enemy_Cyclops_Near(4)",
+        "Enemy_Cyclops_Near(5)",
+        "Enemy_Cyclops_Near(16)",
+        "Enemy_Cyclops_Near(17)",
+        "Enemy_Cyclops_Near(18)",
+        "Enemy_Cyclops_Near(19)",
+        "Enemy_Cyclops_Near(25)",
+        "Enemy_Cyclops_Near(26)",
+        "Cyclops_Bomber_IGC_Trigger",
     ],
     clones: &[],
     steered: &[],

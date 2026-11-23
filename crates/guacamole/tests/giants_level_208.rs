@@ -1371,6 +1371,82 @@ fn level_208s_way_west_of_the_second_ice_block() {
     println!("load at end: {}", load());
 }
 
+/// openspec AS.402: Setup_003 on its own triggers. The way to its first
+/// trigger is held at the fourth ice block (AS.796), so he's set down past
+/// it, by the trigger; then the stick and the attack at its foes until its
+/// controller is off, 24,000 steps at most.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_208s_setup_003_by_its_own_triggers() {
+    println!("load at start: {}", load());
+    let mut stops = Vec::new();
+    let mut run = joined_208(&mut stops);
+    for k in 0..6000u32 {
+        still(&mut run, &mut stops, [false; 4]);
+        if k > 200 && scene_of(&run).is_none() && !guacamole::anchors::scene_holds(&run.vm) {
+            break;
+        }
+    }
+    assert_eq!(behaviour(&run, SETUP_003_CONTROLLER), "asleep");
+    let trigger = run.at("Setup_003_Trigger(1)");
+    run.put(trigger, 300.0);
+    let mut held = 0;
+    while held < 600 && behaviour(&run, SETUP_003_CONTROLLER).starts_with("bomber - execute")
+        || held < 60
+    {
+        still(&mut run, &mut stops, [false; 4]);
+        held += 1;
+    }
+    println!(
+        "on the trigger {held} steps: {}, the reveal {}",
+        behaviour(&run, SETUP_003_CONTROLLER),
+        behaviour(&run, "Cyclops_Bomber_IGC_Trigger")
+    );
+    let fought = fight_to(
+        &mut run,
+        &mut stops,
+        &SETUP_003_FOES,
+        &[SETUP_003_CONTROLLER, "Cyclops_Bomber_IGC_Trigger"],
+        Vec3::new(-151.8, 8.2, -33.9),
+        24000,
+        &|run: &Run| removed(run, SETUP_003_CONTROLLER),
+    );
+    for (step, n, b) in &fought.log {
+        println!("  {step} {n} {b}");
+    }
+    println!(
+        "setup_003: ended {} at step {}, health {:?}, scenes {:?}, at {}",
+        fought.ended,
+        run.steps,
+        fought.health,
+        fought.scenes,
+        run.hero().pivot
+    );
+    assert!(fought.ended, "Setup_003's controller off: {:?}", fought.log);
+    for n in SETUP_003_FOES {
+        assert!(
+            first_in(&fought.log, n, &["removed"]).is_some(),
+            "{n} beaten"
+        );
+    }
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
+}
+
+/// Setup_003's controller and the foes its script names (openspec AS.402).
+const SETUP_003_CONTROLLER: &str = "Setup_003_Controller";
+const SETUP_003_FOES: [&str; 9] = [
+    "Enemy_BombThrower(3)",
+    "Enemy_Cyclops_Near(4)",
+    "Enemy_Cyclops_Near(5)",
+    "Enemy_Cyclops_Near(16)",
+    "Enemy_Cyclops_Near(17)",
+    "Enemy_Cyclops_Near(18)",
+    "Enemy_Cyclops_Near(19)",
+    "Enemy_Cyclops_Near(25)",
+    "Enemy_Cyclops_Near(26)",
+];
+
 /// The third beam set's push block and ice block (openspec AS.776).
 const PUSH_BLOCK_9: &str = "Push_Block_Template(9)";
 const ICE_BLOCK_3: &str = "Melting_Ice_blocks_reflect_3";
