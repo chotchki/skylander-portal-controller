@@ -223,6 +223,9 @@ pub struct SoundRefused {
     pub id: SoundId,
     pub at: u64,
     pub why: String,
+    /// Logged at TRACE, not DEBUG: a loop refused while a copy of it plays
+    /// on its actor (openspec AS.824).
+    pub quiet: bool,
 }
 
 #[cfg(test)]

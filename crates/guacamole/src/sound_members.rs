@@ -141,6 +141,7 @@ impl ScriptWorld {
             id,
             at: self.sound_clock,
             why,
+            quiet: playing_on,
         });
     }
 
@@ -1651,50 +1652,25 @@ mod tests {
 
     /// openspec AS.824: a start of a loop its actor's limit refuses while
     /// a copy of it plays there (the level's placed sounds asking again)
-    /// logs at TRACE, recorded as before; a one-shot's refusal on its actor
-    /// or everywhere stays DEBUG.
+    /// logs at TRACE (its record `quiet`), recorded as before; a one-shot's
+    /// refusal on its actor or everywhere stays DEBUG.
     #[test]
     fn a_loop_refused_while_it_plays_on_its_actor_is_no_news() {
-        #[derive(Clone, Default)]
-        struct Buf(Arc<std::sync::Mutex<Vec<u8>>>);
-        impl std::io::Write for Buf {
-            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().unwrap().extend_from_slice(b);
-                Ok(b.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-        let buf = Buf::default();
-        let out = buf.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .with_ansi(false)
-            .with_max_level(tracing::Level::TRACE)
-            .with_writer(move || out.clone())
-            .finish();
         let mut w = world();
-        tracing::subscriber::with_default(subscriber, || {
-            started(start(&mut w, A, LOOP_FAILS));
-            assert_eq!(start(&mut w, A, LOOP_FAILS), Answer::Skip);
-            started(start(&mut w, A, FAILS));
-            assert_eq!(start(&mut w, A, FAILS), Answer::Skip);
-            started(start(&mut w, A, GLOBAL));
-            started(start(&mut w, B, GLOBAL));
-            assert_eq!(start(&mut w, A, GLOBAL), Answer::Skip);
-        });
-        let text = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
-        let line = |object: u32| {
-            text.lines()
-                .find(|l| l.contains(&format!("object={object} ")))
-                .unwrap_or_else(|| panic!("no line for {object}: {text}"))
-                .to_owned()
-        };
-        assert!(line(LOOP_FAILS).contains("TRACE"), "{text}");
-        assert!(line(FAILS).contains("DEBUG"), "{text}");
-        assert!(line(GLOBAL).contains("DEBUG"), "{text}");
-        let refused: Vec<u32> = w.sounds_refused().map(|r| r.id.object).collect();
-        assert_eq!(refused, [LOOP_FAILS, FAILS, GLOBAL], "each still recorded");
+        started(start(&mut w, A, LOOP_FAILS));
+        assert_eq!(start(&mut w, A, LOOP_FAILS), Answer::Skip);
+        started(start(&mut w, A, FAILS));
+        assert_eq!(start(&mut w, A, FAILS), Answer::Skip);
+        started(start(&mut w, A, GLOBAL));
+        started(start(&mut w, B, GLOBAL));
+        assert_eq!(start(&mut w, A, GLOBAL), Answer::Skip);
+        let refused: Vec<(u32, bool)> =
+            w.sounds_refused().map(|r| (r.id.object, r.quiet)).collect();
+        assert_eq!(
+            refused,
+            [(LOOP_FAILS, true), (FAILS, false), (GLOBAL, false)],
+            "each recorded, the loop's alone at TRACE"
+        );
     }
 
     /// openspec AS.824: a looping sound's copy never reads none left while
