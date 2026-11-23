@@ -1402,6 +1402,19 @@ fn level_208s_setup_003_by_its_own_triggers() {
         behaviour(&run, SETUP_003_CONTROLLER),
         behaviour(&run, "Cyclops_Bomber_IGC_Trigger")
     );
+    // On the trigger the controller runs the bomber's reveal: past its
+    // wait, the reveal playing or played (a break fails here, not at the
+    // cap).
+    let on = behaviour(&run, SETUP_003_CONTROLLER);
+    assert!(
+        !["asleep", "bomber - execute trigger"].contains(&on.as_str()),
+        "Setup_003 woken by its trigger: {on}"
+    );
+    assert!(
+        ["cutscene out", "done", "removed"]
+            .contains(&behaviour(&run, "Cyclops_Bomber_IGC_Trigger").as_str()),
+        "the bomber's reveal"
+    );
     let fought = fight_to(
         &mut run,
         &mut stops,
