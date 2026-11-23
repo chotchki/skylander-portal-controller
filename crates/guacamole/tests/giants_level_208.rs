@@ -1354,6 +1354,19 @@ fn level_208s_way_west_of_the_second_ice_block() {
     }
     println!("the third ice block melted at step {melted:?}");
     assert!(melted.is_some(), "the third ice block melted");
+    // The fourth set (openspec AS.776): listed, its block stands across the
+    // way to Setup_003's first trigger as an ice block waiting on its beam
+    // (unlisted, an invisible wall), and its start beams to the pivot.
+    assert_eq!(behaviour(&run, ICE_BLOCK_4), "wait for beam to hit");
+    let (start_4, pivot_3) = (run.at("Reflect_Start(4)"), run.at("Reflect_Pivot_Round(3)"));
+    let fourth = beams(&run);
+    println!("the fourth set's beams: {fourth:?}");
+    assert!(
+        fourth
+            .iter()
+            .any(|(from, end, _)| flat(*from, start_4) < 4.0 && flat(*end, pivot_3) < 1.0),
+        "the fourth start's beam to its pivot: {fourth:?}"
+    );
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
 }
@@ -1361,6 +1374,9 @@ fn level_208s_way_west_of_the_second_ice_block() {
 /// The third beam set's push block and ice block (openspec AS.776).
 const PUSH_BLOCK_9: &str = "Push_Block_Template(9)";
 const ICE_BLOCK_3: &str = "Melting_Ice_blocks_reflect_3";
+
+/// The fourth beam set's ice block (openspec AS.776).
+const ICE_BLOCK_4: &str = "Melting_Ice_blocks_reflect_4";
 
 /// Setup_002's spike gate by the spinners (openspec AS.401).
 const GATE: &str = "Spike_Gate_Metal_Template(1)";

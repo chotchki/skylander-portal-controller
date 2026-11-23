@@ -206,6 +206,27 @@ pub fn west(level: &str) -> impl Iterator<Item = &'static str> {
     WEST.iter().copied().filter(move |_| on)
 }
 
+/// The fourth beam set, by name (openspec AS.776): its ice block
+/// (`Melting_Ice_blocks_reflect_4`, `Ice_Cube.ai`) stands across the way
+/// to Setup_003's first trigger, unlisted an invisible wall. Listed it
+/// stands as an ice block, its start (`Reflect_Start(4)`) beams to the
+/// pivot (`Reflect_Pivot_Round(3)`), whose switch turns it 45° a press, and
+/// the post (`Reflect_Post(1)`) faces the block. What powers the post is
+/// unread (AS.796): no pivot facing points at it, so the block doesn't melt
+/// yet.
+pub const SET_4: [&str; 4] = [
+    "Reflect_Start(4)",
+    "Reflect_Pivot_Round(3)",
+    "Reflect_Post(1)",
+    "Melting_Ice_blocks_reflect_4",
+];
+
+/// [`SET_4`] on 208 alone.
+pub fn set_4(level: &str) -> impl Iterator<Item = &'static str> {
+    let on = level == LEVEL;
+    SET_4.iter().copied().filter(move |_| on)
+}
+
 /// What fights on level 208 (openspec AS.345), walked as creatures: the
 /// reveal's five Ice Chompies, then Setup_002's controller, its six foes
 /// (`Setup_002_Enemies`) and Noodles' scene at its first gate.
@@ -353,7 +374,7 @@ mod tests {
         }
         // 208's other walls and sets stay off until a kid's way reaches
         // them.
-        for name in ["Wall_Spawner_Template(8)", "Reflect_Start(4)"] {
+        for name in ["Wall_Spawner_Template(8)", "Reflect_Start(5)"] {
             assert!(!on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
         }
     }
@@ -387,11 +408,33 @@ mod tests {
         }
         for name in [
             "Wall_Spawner_Template(8)",
-            "Reflect_Start(4)",
-            "Melting_Ice_blocks_reflect_4",
+            "Reflect_Start(5)",
+            "Melting_Ice_blocks_reflect_5",
             "Ice_Trap_Large(1)",
         ] {
             assert!(!on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+        }
+    }
+
+    /// openspec AS.776: the fourth beam set is on 208's listing and on no
+    /// other level's.
+    #[test]
+    fn level_208s_fourth_set_is_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        assert_eq!(set_4(LEVEL).collect::<Vec<_>>(), SET_4);
+        for name in SET_4 {
+            assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+        }
+        for other in ["level_202", "level_205_piratecards"] {
+            let off = level_config(Mode::Play, &files, 5, other);
+            for name in SET_4 {
+                assert!(
+                    !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
+                    "{name} on {other}"
+                );
+            }
+            assert_eq!(set_4(other).count(), 0);
         }
     }
 
