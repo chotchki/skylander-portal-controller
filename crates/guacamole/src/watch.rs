@@ -313,7 +313,9 @@ pub(crate) struct WatchShots<'w, 's> {
     source: Option<Res<'w, ScriptSource>>,
     earning: Option<Res<'w, Earning>>,
     heroes: Query<'w, 's, (&'static HeroRun, &'static HeroBody)>,
-    seam: crate::physics::AvianSeam<'w, 's>,
+    // Optional: an app with no physics (the binary's screen tests) has no
+    // spatial query, and `touching` reads empty there.
+    seam: Option<crate::physics::AvianSeam<'w, 's>>,
     embodied: Option<Res<'w, crate::creatures::Embodied>>,
 }
 
@@ -366,14 +368,16 @@ impl WatchShots<'_, '_> {
                 b.hero.pivot,
                 b.hero.rotation(),
             ));
-            let planes = guac_motion::seam::PhysicsSeam::contacts(
-                &self.seam,
-                &solid.in_world(),
-                pose,
-                TOUCH,
-                &b.exclude,
-            );
-            w.touching = touching(&planes, |id| self.body_name(world, id));
+            if let Some(seam) = &self.seam {
+                let planes = guac_motion::seam::PhysicsSeam::contacts(
+                    seam,
+                    &solid.in_world(),
+                    pose,
+                    TOUCH,
+                    &b.exclude,
+                );
+                w.touching = touching(&planes, |id| self.body_name(world, id));
+            }
             w
         });
         Some(shot)
