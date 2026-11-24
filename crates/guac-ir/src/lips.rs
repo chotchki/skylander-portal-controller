@@ -26,6 +26,10 @@ pub struct Lips {
     /// Each data info with a stream that reads, `level.bld`'s then the
     /// English pack's, each home in object order (the sounds part's order).
     pub lines: Vec<Line>,
+    /// `global.bld`'s lines, its `level.bld`'s then its English pack's: the
+    /// same in every level's part, kept with each since a level's scripts
+    /// play them (level 201's arena commander's lines are global sounds).
+    pub global: Vec<Line>,
     /// Each model with a viseme set that reads, by path as placements name
     /// it, in object order.
     pub faces: Vec<Face>,
@@ -156,7 +160,10 @@ mod tests {
         assert!((w[1] - 0.4).abs() < 1e-5, "{w:?}");
         // Past the end the last frame holds.
         let (past, last) = (v.weights(100.0), v.weights(299.0 / 24.0));
-        assert!(past.iter().zip(&last).all(|(a, b)| (a - b).abs() < 1e-5), "{past:?} {last:?}");
+        assert!(
+            past.iter().zip(&last).all(|(a, b)| (a - b).abs() < 1e-5),
+            "{past:?} {last:?}"
+        );
         assert!((past[1] - 0.8).abs() < 1e-5, "{past:?}");
         assert!((v.length() - 299.0 / 24.0).abs() < 1e-5);
     }
@@ -194,6 +201,7 @@ mod tests {
                 name: Some("vo_x_001.wav".into()),
                 visemes: line(),
             }],
+            global: Vec::new(),
             faces: vec![Face {
                 owner: "C:/m/Elf.mdl".into(),
                 shapes: Vec::new(),

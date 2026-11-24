@@ -39,6 +39,14 @@ fn identity() -> DumpIdentity {
 fn every_levels_lines_and_faces_read() {
     let dump = PathBuf::from(env_or_dotenv("GUAC_GIANTS_DUMP").expect("set GUAC_GIANTS_DUMP"));
     let usrdir = dump.join("PS3_GAME/USRDIR");
+    let (global, global_refused) = levels::global_lines(&usrdir).unwrap();
+    println!(
+        "GLOBAL\tlines {}\trefused {}",
+        global.len(),
+        global_refused.len()
+    );
+    assert!(global_refused.is_empty(), "{global_refused:#?}");
+    assert!(!global.is_empty());
     let (mut lines, mut faces, mut refused) = (0usize, 0usize, Vec::new());
     let mut names: Vec<String> = std::fs::read_dir(usrdir.join(levels::LEVEL_FOLDER))
         .unwrap()
@@ -58,7 +66,9 @@ fn every_levels_lines_and_faces_read() {
         let igz = Igz::parse(&entry).unwrap();
         let pack = guac_extract::interface::english_pack(&archive).unwrap();
         let pack = pack.as_deref().map(|p| Igz::parse(p).unwrap());
-        let r = levels::lips(&igz, pack.as_ref(), level, identity()).unwrap().ir;
+        let r = levels::lips(&igz, pack.as_ref(), &[], level, identity())
+            .unwrap()
+            .ir;
         let shapes: Vec<String> = r
             .faces
             .iter()
@@ -85,9 +95,16 @@ fn every_levels_lines_and_faces_read() {
         }
         lines += r.lines.len();
         faces += r.faces.len();
-        refused.extend(r.refused.iter().map(|(n, why)| format!("{level} {n}: {why}")));
+        refused.extend(
+            r.refused
+                .iter()
+                .map(|(n, why)| format!("{level} {n}: {why}")),
+        );
     }
-    println!("TOTAL\tlines {lines}\tfaces {faces}\trefused {}", refused.len());
+    println!(
+        "TOTAL\tlines {lines}\tfaces {faces}\trefused {}",
+        refused.len()
+    );
     for r in &refused {
         println!("REFUSED\t{r}");
     }

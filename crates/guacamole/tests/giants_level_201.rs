@@ -3145,3 +3145,99 @@ fn the_name_extractor_names_a_text_key_and_a_placement_by_the_linked_files() {
         Some("Activator_Template(1)")
     );
 }
+
+/// openspec AS.820: the arena's commander speaks with his mouth. His first
+/// line plays on him once the waves start; through it the lips part's
+/// stream weighs his face's shapes (two or more of them in turn), his posed
+/// face moves off the pose his clips give him (his jaw and lips, nothing
+/// of his body past them), and once the line ends no shape weighs. Stalls
+/// fail it: no line within 6,000 steps of the arena.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn the_arenas_commander_moves_his_mouth_while_he_speaks() {
+    println!("load at start: {}", load());
+    let mouths = mouths_of("level_201");
+    let skinned = skinned_models_of("level_201");
+    let mut w = fresh();
+    // into_the_arena's walk, its last rest left to the watch: his first
+    // line starts in it.
+    w.run
+        .put(guac_motion::seam::Vec3::new(-175.8, 26.0, 22.2), 0.0);
+    w.rest(30);
+    assert!(w.stretch(
+        "h -180.3 20.7 20; a 150; s 30; w -173.2 22.2; w -171.2 24.2; w -168.2 25.2; w -165.2 26.2; w -162.8 27.8; w -162.8 31.8; w -160.2 32.2; h -158.6 34.3 20; a 150; w -162.8 30.2; w -163.2 26.8; w -166.8 26.2; w -168.2 28.8; w -172.2 28.8; w -175.8 29.2; w -175.8 33.2; w -175.8 37.2; w -175.8 41.2; s 120; cs"
+    ));
+    let start = w.run.steps;
+    // Each step he speaks: the step, the line, the shape weighed most, how
+    // far his face's joints move off his unspoken pose.
+    let mut said: Vec<(u32, Option<String>, Option<usize>, f32)> = Vec::new();
+    let mut moved_joints: std::collections::BTreeSet<String> = Default::default();
+    let mut ended = None;
+    while ended.is_none() {
+        assert!(
+            w.run.steps < start + 6_000,
+            "no line of his within 6,000 steps"
+        );
+        w.rest(1);
+        let Some(h) = commander(&w) else { continue };
+        let speaking = mouths.speaking(&w.run.world, h);
+        match (&speaking, said.is_empty()) {
+            (None, false) => ended = Some(w.run.steps),
+            (None, true) => continue,
+            _ => {}
+        }
+        let Some(sp) = speaking else { break };
+        // A line already under way when the watch began is let go: the
+        // next one is watched from its start.
+        if said.is_empty() && sp.seconds > 0.1 {
+            continue;
+        }
+        let a = w.run.world.actor(h).unwrap();
+        let path = a
+            .obj
+            .or(a.template)
+            .and_then(|o| w.run.world.template(o))
+            .and_then(|p| p.model.clone())
+            .unwrap();
+        let face = mouths.face(&path).expect("his model has a face");
+        let (_, model) = skinned.iter().find(|(p, _)| *p == path).unwrap();
+        let idle = [(&model.idle, 0.5, 1.0)];
+        let still = model.skeleton.blend_over(&idle, &[]);
+        let mouth: Vec<_> = face.iter().zip(sp.weights.iter().copied()).collect();
+        let spoken = model.skeleton.blend_over_mouth(&idle, &[], &mouth);
+        // How far each joint turns (degrees) or slides (cm) off his
+        // unspoken pose.
+        let mut most = 0.0f32;
+        for (j, (a, b)) in still.iter().zip(&spoken).enumerate() {
+            let slide = (0..3)
+                .map(|i| (a.translation[i] - b.translation[i]).abs())
+                .fold(0.0, f32::max)
+                * 100.0;
+            let dot: f32 = (0..4).map(|i| a.rotation[i] * b.rotation[i]).sum();
+            let turn = 2.0 * dot.abs().min(1.0).acos().to_degrees();
+            let d = slide.max(turn);
+            if d > 0.5 {
+                moved_joints.insert(model.skeleton.joints[j].name.clone());
+            }
+            most = most.max(d);
+        }
+        said.push((w.run.steps, sp.line.clone(), sp.shape(), most));
+    }
+    let shapes: std::collections::BTreeSet<usize> = said.iter().filter_map(|s| s.2).collect();
+    let moving = said.iter().filter(|s| s.3 > 0.5).count();
+    println!(
+        "his line {:?}: steps {}..{:?}, {} steps, shapes {shapes:?}, the face moved on {moving}, most {:.1}, joints {moved_joints:?}",
+        said[0].1,
+        said[0].0,
+        ended,
+        said.len(),
+        said.iter().map(|s| s.3).fold(0.0, f32::max)
+    );
+    assert!(said.len() > 30, "a line of a second or more");
+    assert!(shapes.len() >= 2, "{shapes:?}");
+    assert!(moving * 2 > said.len(), "{moving} of {}", said.len());
+    assert!(
+        !moved_joints.is_empty() && moved_joints.len() < 20,
+        "a face's joints, not his body: {moved_joints:?}"
+    );
+}

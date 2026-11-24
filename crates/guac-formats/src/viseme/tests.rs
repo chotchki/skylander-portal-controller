@@ -81,7 +81,13 @@ fn one_block() -> Vec<u8> {
         48,
         3,
         &[block_bytes(&[
-            T::S(2, vec![0, 0, 0, 10, 20, 47, 47, 47], 0.0, 0.8, vec![0, 255, 128, 0, 0]),
+            T::S(
+                2,
+                vec![0, 0, 0, 10, 20, 47, 47, 47],
+                0.0,
+                0.8,
+                vec![0, 255, 128, 0, 0],
+            ),
             T::C(0.0),
             T::S(1, vec![0, 0, 47, 47], -0.5, 0.5, vec![0, 255]),
         ])],
@@ -139,10 +145,16 @@ fn a_bad_magic_a_missing_footer_or_a_short_block_refuses() {
     let good = one_block();
     let mut b = good.clone();
     b[0] = 0;
-    assert!(matches!(parse(&b).unwrap_err().kind, ErrorKind::BadMagic { .. }));
+    assert!(matches!(
+        parse(&b).unwrap_err().kind,
+        ErrorKind::BadMagic { .. }
+    ));
     let mut b = good.clone();
     *b.last_mut().unwrap() = 0;
-    assert!(matches!(parse(&b).unwrap_err().kind, ErrorKind::BadMagic { .. }));
+    assert!(matches!(
+        parse(&b).unwrap_err().kind,
+        ErrorKind::BadMagic { .. }
+    ));
     // The last track's points cut off: the footer's word is all that's left.
     let mut b = good[..good.len() - 16].to_vec();
     b.extend(FOOTER);

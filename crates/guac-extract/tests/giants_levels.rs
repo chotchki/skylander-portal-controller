@@ -129,9 +129,12 @@ fn read_level(
             levels::PARTICLES => encoded(levels::particles(igz, level, id())),
             levels::LIPS => {
                 let pack = guac_extract::interface::english_pack(archive).unwrap_or(None);
-                let pack = pack.as_deref().map(guac_formats::igz::Igz::parse).transpose();
+                let pack = pack
+                    .as_deref()
+                    .map(guac_formats::igz::Igz::parse)
+                    .transpose();
                 match pack {
-                    Ok(pack) => encoded(levels::lips(igz, pack.as_ref(), level, id())),
+                    Ok(pack) => encoded(levels::lips(igz, pack.as_ref(), &[], level, id())),
                     Err(e) => Err(e.to_string()),
                 }
             }

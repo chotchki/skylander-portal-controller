@@ -2196,6 +2196,7 @@ fn write_level(dir: &mut guac_extract::IdentityDir, entry: LevelEntry) -> Result
         identity: particles.identity,
         level: level.clone(),
         lines: Vec::new(),
+        global: Vec::new(),
         faces: Vec::new(),
         refused: Vec::new(),
     };

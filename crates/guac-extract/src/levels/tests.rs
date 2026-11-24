@@ -1396,7 +1396,10 @@ fn a_data_infos_viseme_stream_reads_into_its_line() {
     let (lines, refused) = lip_lines(&igz, DataHome::Pack);
     assert_eq!(lines.len(), 1, "{refused:?}");
     let l = &lines[0];
-    assert_eq!((l.home, l.name.as_deref()), (DataHome::Pack, Some("vo_test_000.wav")));
+    assert_eq!(
+        (l.home, l.name.as_deref()),
+        (DataHome::Pack, Some("vo_test_000.wav"))
+    );
     assert_eq!(l.object as usize, igz.object_at(data[0]).unwrap().0);
     assert_eq!(l.visemes.frames, 25);
     assert_eq!(l.visemes.blocks, [vec![Track::Constant(0.5); 9]]);
@@ -1412,7 +1415,7 @@ fn a_data_infos_viseme_stream_reads_into_its_line() {
 fn a_placed_models_viseme_set_is_its_face() {
     use guac_formats::model::builder::NetworkSpec;
     let spec = creature_level(Some("C:/x/Chest.ai"));
-    let r = lips(parsed(&spec), None, LEVEL, identity()).unwrap();
+    let r = lips(parsed(&spec), None, &[], LEVEL, identity()).unwrap();
     assert!(r.ir.faces.is_empty() && r.ir.lines.is_empty());
     let mut spec = creature_level(Some("C:/x/Chest.ai"));
     let (path, chest) = spec.skinned.as_mut().unwrap();
@@ -1425,7 +1428,7 @@ fn a_placed_models_viseme_set_is_its_face() {
             file,
         })
         .collect();
-    let r = lips(parsed(&spec), None, LEVEL, identity()).unwrap();
+    let r = lips(parsed(&spec), None, &[], LEVEL, identity()).unwrap();
     assert_eq!(r.ir.faces.len(), 1, "{:?}", r.ir.refused);
     let f = &r.ir.faces[0];
     assert_eq!(f.owner, path);

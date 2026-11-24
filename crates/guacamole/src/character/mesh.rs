@@ -268,6 +268,22 @@ pub fn blended_over(
         .collect()
 }
 
+/// [`blended_over`] with a speaker's mouth shapes laid on last, each at
+/// its weight (openspec AS.820, [`guac_ir::model::Skeleton::blend_over_mouth`]).
+pub fn blended_over_mouth(
+    model: &Model,
+    clips: &[(&guac_ir::clip::Clip, f64, f64)],
+    over: &[(&guac_ir::clip::Clip, f64)],
+    mouth: &[(&guac_ir::clip::Clip, f32)],
+) -> Vec<Transform> {
+    model
+        .skeleton
+        .blend_over_mouth(clips, over, mouth)
+        .iter()
+        .map(joint_transform)
+        .collect()
+}
+
 /// What [`spawn_character`] made.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpawnedCharacter {

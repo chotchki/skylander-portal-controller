@@ -578,8 +578,7 @@ pub fn visemes<'a>(
     let at = igz.objects()[set].at;
     let mut out = Vec::with_capacity(list.elements.len());
     for e in list.elements {
-        let Some(e) =
-            e.filter(|&e| is_a(igz.type_name(&igz.objects()[e]), PhysicsAnimation::TYPE))
+        let Some(e) = e.filter(|&e| is_a(igz.type_name(&igz.objects()[e]), PhysicsAnimation::TYPE))
         else {
             return Err(igz.err_at(at, "_visemeSet", ErrorKind::Missing));
         };

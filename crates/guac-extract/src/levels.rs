@@ -1152,9 +1152,7 @@ pub fn lip_lines(
         let stream = BuildDataInfo::read(igz, v)
             .map_err(s)
             .and_then(|b| match b.payload() {
-                Some(Payload::LipSync(bytes)) => {
-                    guac_formats::viseme::parse(bytes).map_err(s)
-                }
+                Some(Payload::LipSync(bytes)) => guac_formats::viseme::parse(bytes).map_err(s),
                 _ => Err("no lip-sync block".to_owned()),
             });
         match stream {
@@ -1172,9 +1170,7 @@ pub fn lip_lines(
                             b.tracks
                                 .into_iter()
                                 .map(|t| match t {
-                                    guac_formats::viseme::Track::Constant(v) => {
-                                        Track::Constant(v)
-                                    }
+                                    guac_formats::viseme::Track::Constant(v) => Track::Constant(v),
                                     guac_formats::viseme::Track::Spline {
                                         degree,
                                         knots,
@@ -1196,6 +1192,28 @@ pub fn lip_lines(
     (lines, refused)
 }
 
+/// `global.bld`'s lines ([`lip_lines`] over its `level.bld` and English
+/// pack) under `usrdir`, each part's refusals with them: what every level's
+/// lips part carries as [`guac_ir::lips::Lips::global`].
+pub fn global_lines(
+    usrdir: &Path,
+) -> Result<(Vec<guac_ir::lips::Line>, Vec<(String, String)>), String> {
+    use guac_ir::sound::DataHome;
+    let path = usrdir.join(crate::roster::GLOBAL);
+    let archive = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let bld = level_bld(&archive)?;
+    let level = Igz::parse(&bld).map_err(s)?;
+    let pack = crate::interface::english_pack(&archive)?;
+    let pack = pack.as_deref().map(Igz::parse).transpose().map_err(s)?;
+    let (mut lines, mut refused) = lip_lines(&level, DataHome::Level);
+    if let Some(pack) = &pack {
+        let (l, r) = lip_lines(pack, DataHome::Pack);
+        lines.extend(l);
+        refused.extend(r);
+    }
+    Ok((lines, refused))
+}
+
 /// The lips part (openspec AS.820): each data info of `igz` (the level's
 /// `level.bld`) and of `pack` (its English pack) whose viseme stream reads,
 /// in the sounds part's order, and each model a placement names whose body
@@ -1205,6 +1223,7 @@ pub fn lip_lines(
 pub fn lips(
     igz: &Igz<'_>,
     pack: Option<&Igz<'_>>,
+    global: &[guac_ir::lips::Line],
     level: &str,
     identity: DumpIdentity,
 ) -> Result<Read<guac_ir::lips::Lips>, String> {
@@ -1214,6 +1233,7 @@ pub fn lips(
         identity,
         level: level.to_owned(),
         lines: Vec::new(),
+        global: global.to_vec(),
         faces: Vec::new(),
         refused: Vec::new(),
     };

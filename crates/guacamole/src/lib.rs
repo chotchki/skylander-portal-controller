@@ -32,6 +32,7 @@ pub mod level_scene;
 pub mod level_scripts;
 pub mod level_switch;
 pub mod lightning;
+pub mod mouths;
 pub mod on_screen;
 pub mod particles;
 pub mod picks;

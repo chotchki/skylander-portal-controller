@@ -200,7 +200,8 @@ fn a_named_level_extracts_end_to_end_and_resumes() {
             (levels::LIPS, {
                 let pack = guac_extract::interface::english_pack(&archive).unwrap();
                 let pack = pack.as_deref().map(|p| Igz::parse(p).unwrap());
-                ron(levels::lips(&igz, pack.as_ref(), name, id()))
+                let global = levels::global_lines(&usrdir).unwrap().0;
+                ron(levels::lips(&igz, pack.as_ref(), &global, name, id()))
             }),
         ];
         let m = dir.manifest().clone();

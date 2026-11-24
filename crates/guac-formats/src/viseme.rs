@@ -78,7 +78,12 @@ fn truncated(field: &'static str, offset: usize, needed: usize, available: usize
     err(field, offset, ErrorKind::Truncated { needed, available })
 }
 
-fn take<'a>(b: &'a [u8], at: usize, n: usize, field: &'static str) -> Result<&'a [u8], FormatError> {
+fn take<'a>(
+    b: &'a [u8],
+    at: usize,
+    n: usize,
+    field: &'static str,
+) -> Result<&'a [u8], FormatError> {
     at.checked_add(n)
         .and_then(|end| b.get(at..end))
         .ok_or_else(|| truncated(field, at, at.saturating_add(n), b.len()))

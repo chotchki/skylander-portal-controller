@@ -138,7 +138,12 @@ fn basis(degree: usize, knots: &[u8], points: usize, u: f64) -> (usize, [f64; 4]
 }
 
 /// The curve at `frame`, clamped to its knots.
-pub(crate) fn curve<const N: usize>(degree: u8, knots: &[u8], points: &[[f32; N]], frame: f64) -> [f64; N] {
+pub(crate) fn curve<const N: usize>(
+    degree: u8,
+    knots: &[u8],
+    points: &[[f32; N]],
+    frame: f64,
+) -> [f64; N] {
     let d = usize::from(degree);
     let last = knots.last().map_or(0.0, |&k| f64::from(k));
     let (first, n) = basis(d, knots, points.len(), frame.clamp(0.0, last));
@@ -241,35 +246,6 @@ impl Qs {
             t: std::array::from_fn(|i| self.t[i] + rt[i]),
             r: qmul(self.r, child.r),
             s: std::array::from_fn(|i| self.s[i] * child.s[i]),
-        }
-    }
-
-    /// This transform moved by `weight` of the way `rest` turns and slides
-    /// to `to`: the turn `rest⁻¹ to` (short way round) scaled from none and
-    /// applied after this one's own, the slide `to - rest` added.
-    fn moved_by(&self, rest: &Self, to: &Self, weight: f64) -> Self {
-        let [x, y, z, w] = rest.r;
-        let mut d = qmul([-x, -y, -z, w], to.r);
-        if d[3] < 0.0 {
-            d = d.map(|c| -c);
-        }
-        let none = Self {
-            t: [0.0; 3],
-            r: [0.0, 0.0, 0.0, 1.0],
-            s: [1.0; 3],
-        };
-        let turn = none.blend(
-            &Self {
-                t: [0.0; 3],
-                r: d,
-                s: [1.0; 3],
-            },
-            weight,
-        );
-        Self {
-            t: std::array::from_fn(|i| self.t[i] + weight * (to.t[i] - rest.t[i])),
-            r: qmul(self.r, turn.r),
-            s: self.s,
         }
     }
 
@@ -479,14 +455,13 @@ impl Skeleton {
     }
 
     /// [`Skeleton::blend_over`] with a speaker's mouth laid on last
-    /// (openspec AS.820): each `(shape, weight)` of its viseme set, at the
-    /// weight a line's stream gives it now, moves each joint the shape's
-    /// first frame holds off the joint's reference pose by that offset
-    /// times the weight (the rotation's share by a turn from none, the
-    /// translation's linearly), over whatever posed the joint. Shapes
-    /// authored at the reference pose move only the joints they shape, the
-    /// jaw and lips; how the original weighs them is unread (stand-in
-    /// ledger: `viseme-blend`).
+    /// (openspec AS.820): each `(shape, weight)` of his viseme set at the
+    /// weight a line's stream gives it now. A shape is a pose of the joints
+    /// it tracks (the jaw, on the disc's sets), not an offset: each such
+    /// joint goes from what posed it toward the shapes' weighted blend by
+    /// their total weight, capped at 1, as a partial clip blends by its
+    /// weight. At no weight nothing moves. How the original weighs them is
+    /// unread (stand-in ledger: `viseme-blend`).
     pub fn blend_over_mouth(
         &self,
         clips: &[(&Clip, f64, f64)],
@@ -513,20 +488,45 @@ impl Skeleton {
                 }
             }
         }
+        // Each joint a shape tracks: its shapes' poses and weights.
+        let mut shaped: std::collections::BTreeMap<usize, Vec<(Qs, f64)>> = Default::default();
         for (shape, weight) in mouth {
             let w = f64::from(*weight);
             if !(w > 0.0 && w.is_finite()) {
                 continue;
             }
             for tr in &shape.tracks {
-                let j = usize::from(tr.joint);
-                let (Some(slot), Some(joint)) = (local.get_mut(j), self.joints.get(j)) else {
-                    continue;
-                };
-                let rest = Qs::of(&joint.reference);
-                let at = Clip::track_qs(tr, 0.0);
-                *slot = slot.moved_by(&rest, &at, w);
+                shaped
+                    .entry(usize::from(tr.joint))
+                    .or_default()
+                    .push((Clip::track_qs(tr, 0.0), w));
             }
+        }
+        for (j, poses) in shaped {
+            let Some(slot) = local.get_mut(j) else {
+                continue;
+            };
+            let total: f64 = poses.iter().map(|(_, w)| w).sum();
+            let lead = poses[0].0.r;
+            let (mut t, mut r, mut sc) = ([0.0; 3], [0.0; 4], [0.0; 3]);
+            for (q, w) in &poses {
+                let w = w / total;
+                let dot: f64 = (0..4).map(|i| lead[i] * q.r[i]).sum();
+                let sign = if dot < 0.0 { -w } else { w };
+                for i in 0..3 {
+                    t[i] += w * q.t[i];
+                    sc[i] += w * q.s[i];
+                }
+                for i in 0..4 {
+                    r[i] += sign * q.r[i];
+                }
+            }
+            let target = Qs {
+                t,
+                r: normalize(r),
+                s: sc,
+            };
+            *slot = slot.blend(&target, total.min(1.0));
         }
         self.compose(&local).iter().map(Qs::transform).collect()
     }
@@ -631,8 +631,8 @@ mod tests {
         a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-5)
     }
 
-    /// A shape: the arm (the jaw) turned a quarter about x off its
-    /// reference and slid 0.5 down y.
+    /// A shape: the arm (the jaw) posed turned a quarter about x and slid
+    /// 0.5 down y from its reference.
     fn jaw_open() -> Clip {
         let h = std::f32::consts::FRAC_1_SQRT_2;
         Clip {
@@ -655,12 +655,12 @@ mod tests {
         }
     }
 
-    /// openspec AS.820: a mouth shape moves the joints it shapes by its
-    /// offset off their reference times its weight, over the pose under it;
-    /// at weight 0 nothing moves, and a joint it holds at its reference
-    /// doesn't move at any weight.
+    /// openspec AS.820: a mouth shape poses the joints it tracks; each goes
+    /// from the pose under it toward the shapes' weighted blend by their
+    /// total weight (capped at 1); at no weight nothing moves, and a joint
+    /// no shape tracks never does.
     #[test]
-    fn a_mouth_shape_moves_its_joints_by_its_weight() {
+    fn a_mouth_shape_poses_its_joints_by_its_weight() {
         let sk = skeleton();
         let idle = clip();
         let under = [(&idle, 0.05, 1.0)];
@@ -669,7 +669,9 @@ mod tests {
         assert_eq!(sk.blend_over_mouth(&under, &[], &[(&jaw, 0.0)]), none);
         let full = sk.blend_over_mouth(&under, &[], &[(&jaw, 1.0)]);
         let half = sk.blend_over_mouth(&under, &[], &[(&jaw, 0.5)]);
+        let past = sk.blend_over_mouth(&under, &[], &[(&jaw, 3.0)]);
         assert_eq!(full[0], none[0], "the root isn't shaped");
+        assert_eq!(past, full, "a total past 1 is the shape's pose");
         // The arm's turn off the root's, in the root's frame.
         let local = |pose: &[Transform]| {
             let [x, y, z, w] = pose[0].rotation.map(f64::from);
@@ -677,25 +679,31 @@ mod tests {
         };
         let angle = |q: [f64; 4]| 2.0 * q[3].abs().clamp(-1.0, 1.0).acos().to_degrees();
         assert!(angle(local(&none)) < 1e-4);
-        assert!((angle(local(&full)) - 90.0).abs() < 1e-3, "{:?}", local(&full));
-        assert!((angle(local(&half)) - 45.0).abs() < 1e-3, "{:?}", local(&half));
+        assert!(
+            (angle(local(&full)) - 90.0).abs() < 1e-3,
+            "{:?}",
+            local(&full)
+        );
+        assert!(
+            (angle(local(&half)) - 45.0).abs() < 0.5,
+            "{:?}",
+            local(&half)
+        );
         assert!(local(&full)[0] > 0.0, "about +x");
-        // The slide: half of 0.5 down the root's own y.
+        // Two shapes at 0.25 each: half way to their blend, here the same
+        // pose as one at 0.5.
+        let two = sk.blend_over_mouth(&under, &[], &[(&jaw, 0.25), (&jaw, 0.25)]);
+        assert!((angle(local(&two)) - angle(local(&half))).abs() < 1e-6);
+        // The slide: the shape's -0.5 on the root's own y, half of it at 0.5.
         let slid = |pose: &[Transform]| {
             let [x, y, z, w] = pose[0].rotation.map(f64::from);
-            let d: [f64; 3] = std::array::from_fn(|i| f64::from(pose[1].translation[i] - pose[0].translation[i]));
+            let d: [f64; 3] =
+                std::array::from_fn(|i| f64::from(pose[1].translation[i] - pose[0].translation[i]));
             rotate([-x, -y, -z, w], d)
         };
+        assert!((slid(&full)[1] + 0.5).abs() < 1e-4, "{:?}", slid(&full));
         assert!((slid(&half)[1] + 0.25).abs() < 1e-4, "{:?}", slid(&half));
-        assert!((slid(&none)[1]).abs() < 1e-4);
-        // A shape that holds the arm at its reference moves nothing.
-        let mut rest = jaw_open();
-        rest.tracks[0].translation.constant = [2.0, 0.0, 0.0];
-        rest.tracks[0].rotation = RotationTrack::Constant([0.0, 0.0, 0.0, 1.0]);
-        let still = sk.blend_over_mouth(&under, &[], &[(&rest, 1.0)]);
-        for (a, b) in still.iter().zip(&none) {
-            assert!(close(a.translation, b.translation));
-        }
+        assert!(slid(&none)[1].abs() < 1e-4);
     }
 
     #[test]

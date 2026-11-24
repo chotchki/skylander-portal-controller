@@ -532,7 +532,11 @@ fn a_bodys_viseme_set_reads_its_shape_clips_in_order() {
         let p = portal_model(igz).unwrap();
         let sk = skeleton(igz, &p.hero).unwrap();
         visemes(igz, &p.hero, &sk).map(|v| {
-            v.map(|v| v.iter().map(|c| c.file.unwrap_or_default()).collect::<Vec<_>>())
+            v.map(|v| {
+                v.iter()
+                    .map(|c| c.file.unwrap_or_default())
+                    .collect::<Vec<_>>()
+            })
         })
     };
     let s = sample();
@@ -552,5 +556,8 @@ fn a_bodys_viseme_set_reads_its_shape_clips_in_order() {
     );
     let mut bent = s.clone();
     *bent.visemes[1].clip.track_to_bone.last_mut().unwrap() = 7;
-    assert_eq!(read(&bent).unwrap_err().field, "transformTrackToBoneIndices");
+    assert_eq!(
+        read(&bent).unwrap_err().field,
+        "transformTrackToBoneIndices"
+    );
 }
