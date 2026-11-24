@@ -1509,6 +1509,29 @@ impl ScriptWorld {
         out
     }
 
+    /// Placements' own actors with a script of their own that neither walk
+    /// nor are one of the [`ScriptWorld::people`] (openspec AS.512: a hub
+    /// stage's `LandingPod`, docked in the ship's top ring), in handle
+    /// order; whether the script runs and the model is skinned are the
+    /// caller's to check.
+    pub fn scripted_placements(&self) -> Vec<Handle> {
+        let people = self.people();
+        let mut out: Vec<Handle> = self
+            .actors
+            .iter()
+            .filter(|(h, a)| {
+                a.walker.is_none()
+                    && !people.contains(h)
+                    && a.obj
+                        .and_then(|o| self.templates.get(&o))
+                        .is_some_and(|p| p.script.is_some())
+            })
+            .map(|(h, _)| *h)
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
     /// The people the TV draws unwalked: each placement whose script is one
     /// of [`HUB_PEOPLE`]'s (openspec AU.28) or a chest's (AU.39,
     /// [`crate::treasure::is_treasure`]) or whose name is one of the run's
@@ -3654,8 +3677,9 @@ pub fn is_hub(level: &str) -> bool {
 pub const SHIP: [&str; 3] = ["The_Ship_1", "214_Intro_Ship", "Hub_Engine"];
 
 /// The landing pod (openspec AS.443), by script, every tick, on every level
-/// that places one but the hub's stages ([`level_config`]; 201's, 205's
-/// and 208's intros fly a clone of it):
+/// that places one (201's, 205's and 208's intros fly a clone of it, a hub
+/// stage docks one in the ship's top ring and its arrival flies a clone,
+/// AS.512):
 /// its STARTUP clones its base, plank, propeller and wheel (`LP_Parts`)
 /// onto its nodes, each by its own id, and its SHUTDOWN takes them off.
 /// Off the listing the pod flew as its mast, sail and wings alone, the
@@ -4846,13 +4870,10 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
     if is_hub(name)
         && let Whitelist::Only { scripts, .. } = &mut config.whitelist
     {
-        // Not the landing pod's own script (the as-ship-scenes review): on
-        // a hub stage it builds the base, plank and wheel onto the stage's
-        // own `LandingPod`, docked in the ship's top ring, a scripted
-        // skinned placement the TV doesn't draw, so they stood there as
-        // half a pod, and the pod's own clip moved the arrival's camera off
-        // 2.0's. AS.512.
-        scripts.retain(|s| !LANDING_POD_SCRIPTS.contains(&s.as_str()));
+        // The landing pod's own script stays listed here too (openspec
+        // AS.512): it builds the base, plank and wheel onto the stage's own
+        // `LandingPod`, docked in the ship's top ring, which the TV draws
+        // now (`creatures::wanted`), and onto the arrival's flying clone.
         scripts.extend(HUB_SCRIPTS.iter().map(|s| (*s).to_owned()));
         scripts.extend(HUB_PEOPLE.iter().map(|s| (*s).to_owned()));
         scripts.extend(HUB_DOORS.iter().map(|s| (*s).to_owned()));
@@ -8055,11 +8076,12 @@ mod tests {
     /// its background by script, every tick, on each hub stage's listing
     /// and no other level's; each stage's intro by its placement, as level
     /// 214's.
-    /// The as-ship-scenes review: the landing pod's own script runs on the
-    /// levels whose intros fly its clone and not on a hub stage, where it
-    /// built half a pod onto the stage's undrawn `LandingPod` (AS.512).
+    /// The landing pod's own script runs on the levels whose intros fly its
+    /// clone and on each hub stage (openspec AS.512: taken off there by the
+    /// as-ship-scenes review while the stage's docked `LandingPod` went
+    /// undrawn, so the arrival's flying pod had no base either).
     #[test]
-    fn the_landing_pods_script_runs_off_the_hub() {
+    fn the_landing_pods_script_runs_where_a_pod_is_placed() {
         let files = Files::default();
         let pod = "C:/tfb/Content/Levels/Includes/GameElement_LandingPod/Scripts/LandingPod.ai";
         for level in ["level_201", "level_205_piratecards", "level_208_ice"] {
@@ -8073,7 +8095,7 @@ mod tests {
             "level_hub_2_stage_4",
         ] {
             let c = level_config(Mode::Play, &files, 4, stage);
-            assert!(!c.whitelist.lists("LandingPod", pod), "{stage}");
+            assert!(c.whitelist.lists("LandingPod", pod), "{stage}");
         }
     }
 

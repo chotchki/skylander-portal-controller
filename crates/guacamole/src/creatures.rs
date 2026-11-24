@@ -446,7 +446,8 @@ pub(crate) fn skinned_clones(world: &ScriptWorld, holds: impl Fn(&str) -> bool) 
 }
 
 /// What [`draw_creatures`] draws, each with its model's path: the walked
-/// creatures and the people whose script `runs`, the skinned clones the
+/// creatures, the people and the other placements of a skinned model the
+/// level `holds` whose script `runs` (AS.512), the skinned clones the
 /// level `holds` models for, and a scriptless placement something hangs on
 /// (openspec AS.371: the chain pull's chain, so its clips pose the node the
 /// galleon rides), each while it's on.
@@ -455,11 +456,23 @@ pub(crate) fn wanted(
     runs: impl Fn(Handle) -> bool,
     holds: impl Fn(&str) -> bool,
 ) -> Vec<(Handle, String)> {
-    let clones = skinned_clones(world, holds);
+    let clones = skinned_clones(world, &holds);
+    // A placement of a skinned model whose script runs, neither walked nor
+    // one of the people (openspec AS.512: a hub stage's docked
+    // `LandingPod`, the base its script builds onto it drawn with it).
+    let placed = world.scripted_placements().into_iter().filter(|h| {
+        world
+            .actor(*h)
+            .and_then(|a| a.obj)
+            .and_then(|o| world.template(o))
+            .and_then(|p| p.model.as_deref())
+            .is_some_and(&holds)
+    });
     world
         .creatures()
         .into_iter()
         .chain(world.people())
+        .chain(placed)
         .filter(|h| runs(*h))
         .chain(clones)
         .chain(world.scriptless_hung_on())
@@ -1727,6 +1740,46 @@ mod tests {
         );
         assert!(world.take_off(chain));
         assert!(wanted(&world, |_| false, |_| true).is_empty(), "taken off");
+    }
+
+    /// openspec AS.512: a placement of a skinned model with a script of its
+    /// own, neither walked nor one of the people (a hub stage's docked
+    /// `LandingPod`), is drawn while its script runs; not while it doesn't,
+    /// not when the level holds no skinned model for it, not without a
+    /// script.
+    #[test]
+    fn a_scripted_skinned_placement_is_drawn_while_its_script_runs() {
+        use guacamole::scripts::{Files, Placed, headless_handles, headless_objects};
+        let pod = guac_script::Obj { unit: 5, index: 1 };
+        let crate_ = guac_script::Obj { unit: 5, index: 2 };
+        let model = "C:/m/Landing_Pod.mdl";
+        let files = Files {
+            placed: vec![
+                Placed {
+                    model: Some(model.into()),
+                    ..Placed::named(pod, "LandingPod", Some("C:/x/LandingPod.ai"), 4)
+                },
+                Placed {
+                    model: Some("C:/m/crate.mdl".into()),
+                    ..Placed::named(crate_, "crate", None, 4)
+                },
+            ],
+            ..Files::default()
+        };
+        let handles = headless_handles(&files);
+        let world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let p = handles[&pod];
+        let skinned = |m: &str| m == model;
+        assert_eq!(
+            wanted(&world, |h| h == p, skinned),
+            [(p, model.to_owned())],
+            "its script runs"
+        );
+        assert!(wanted(&world, |_| false, skinned).is_empty(), "it doesn't");
+        assert!(
+            wanted(&world, |_| true, |_| false).is_empty(),
+            "no skinned model held"
+        );
     }
 
     /// openspec AS.180: a person is reported posed by the clips the TV
