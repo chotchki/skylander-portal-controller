@@ -2577,13 +2577,19 @@ impl ScriptWorld {
                 // could see him past it. On level 208 alone for now: on
                 // every level, 214's third island's enemies notice him and
                 // its fight goes on other steps (stand-in ledger
-                // `lifted-reference`).
+                // `lifted-reference`). A hero's own scripts' such writes
+                // on every level (openspec AS.815): `Calc - Get Actor
+                // Center Point` lifts the aimer's point and its target's,
+                // and kept where they were last set, Cynder's breath cast
+                // its rays from where she had stood and missed up and down
+                // every slope.
                 // Not one a script has put somewhere itself since (openspec
                 // AS.431): a beam emitter's ray end, put 1000 ft ahead of
                 // it, has its height set over it each step.
                 let a = match m {
                     Member::VerticalOffset
-                        if self.level() == Some(crate::level_208::LEVEL)
+                        if (self.level() == Some(crate::level_208::LEVEL)
+                            || engine.hero(at.placement).is_some())
                             && self
                                 .reference_of(r)
                                 .is_some_and(|k| self.actor_of(Some(o)) == Some(k))
@@ -5902,6 +5908,69 @@ mod tests {
             "{p:?}"
         );
         assert!((p.y - (0.5 + 3.0 * METRES_PER_FOOT)).abs() < 1e-5, "{p:?}");
+    }
+
+    /// openspec AS.815: off level 208 a hero's own script lifting a
+    /// reference's own point over the actor it names takes it from where
+    /// that actor stands now (`Calc - Get Actor Center Point`, which his
+    /// ranged attacks cast their rays from and to): a foe's and his own,
+    /// each moved since its reference was set. Any other placement's write
+    /// keeps the point's place across the ground, as before.
+    #[test]
+    fn a_heros_own_scripts_lift_a_reference_over_where_its_actor_stands() {
+        const CELL: u32 = 13;
+        const MINE: u32 = 14;
+        let mut e = bench();
+        let mut w = world();
+        let solid = guac_motion::tuning::eruptor_solid();
+        e.hero = Some(Hero::actor(solid, Vec3::new(1.0, 0.0, 1.0), 0.0));
+        w.actors.insert(HERO, Actor::blank());
+        let here = Vec3::new(3.0, 1.0, 4.0);
+        let moved = Vec3::new(-6.0, 2.0, 9.0);
+        w.actors.insert(BALL, ball(here, 0.0));
+        let kept = |w: &mut ScriptWorld, e: &mut Bench, cell: u32, of: Handle| {
+            w.referenced(cell, Value::Entity(of), e);
+            let mut a = at(
+                "placementreference",
+                "remembered",
+                Some(Value::Entity(of)),
+                None,
+            );
+            a.via = Some(cell);
+            w.get_member(&a, Member::Remembered, e).unwrap()
+        };
+        let foe = kept(&mut w, &mut e, CELL, BALL);
+        let me = kept(&mut w, &mut e, MINE, HERO);
+        w.actors.get_mut(&BALL).unwrap().position = moved;
+        e.hero.as_mut().unwrap().pivot = Vec3::new(10.0, 3.0, -2.0);
+        let lift = |w: &mut ScriptWorld, e: &mut Bench, by: Handle, p: Value, of: Handle| {
+            let mut a = at(
+                "positionmeasurement",
+                "vertical offset",
+                Some(p),
+                Some(Value::Entity(of)),
+            );
+            a.placement = by;
+            w.set_member(&a, Member::VerticalOffset, Value::Float(3.0), e)
+                .unwrap();
+            w.point(p, e).unwrap()
+        };
+        let up = 3.0 * METRES_PER_FOOT;
+        // Another placement's write (the combat manager's): kept across.
+        let p = lift(&mut w, &mut e, 1, foe, BALL);
+        assert!(
+            (p.x - here.x).abs() < 1e-5 && (p.z - here.z).abs() < 1e-5,
+            "{p:?}"
+        );
+        // His own script's: over where each stands now.
+        let p = lift(&mut w, &mut e, HERO, foe, BALL);
+        assert!(
+            (p - (moved + Vec3::Y * up)).length() < 1e-5,
+            "the foe: {p:?}"
+        );
+        let p = lift(&mut w, &mut e, HERO, me, HERO);
+        let pivot = Vec3::new(10.0, 3.0, -2.0);
+        assert!((p - (pivot + Vec3::Y * up)).length() < 1e-5, "him: {p:?}");
     }
 
     /// openspec AS.431: a reference's point a script has put somewhere
