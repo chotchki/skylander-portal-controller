@@ -126,6 +126,10 @@ const WAY: [(&str, &str); 18] = [
 /// dam's south side into the channel once the top block was down.
 const KID_AIM: f32 = 5.0;
 
+/// Half a push block's side across the ground, metres: its script makes
+/// it 15 ft square.
+const BLOCK_HALF: f32 = 15.0 * 0.3048 / 2.0;
+
 /// The placements whose behaviour, wake and range the walk records: the
 /// setups' controllers, the life wall's controller and its two triggers,
 /// what the first trigger takes off at the start, the arena's script and
@@ -497,9 +501,30 @@ impl Walker {
             off: false,
         };
         let (mut was, mut rested) = (false, None);
+        let (ux, uz) = (dx / n, dz / n);
         for k in 0..900u32 {
             let b = self.run.world.actor(h).map_or(start, |a| a.position);
-            let stick = self.toward([b.x + along[0], b.z + along[1]], 1.0);
+            // Off the block's back (beside it or past it), he comes back
+            // behind its middle before he pushes again, as a hand lines a
+            // block up (openspec AS.815: with his aim landing, an elf
+            // lobber's arrow on 201 knocks him 2.5 m sideways between the
+            // first block's two moves, and held at its far point he walked
+            // up its side and on past it).
+            let me = self.run.hero().pivot;
+            let (px, pz) = (me.x - b.x, me.z - b.z);
+            let (back, side) = (px * ux + pz * uz, px * uz - pz * ux);
+            let aim = if back > -BLOCK_HALF {
+                // Out to its side first, then round behind it.
+                let s = if side < 0.0 { -1.0 } else { 1.0 };
+                let out = BLOCK_HALF + 1.5;
+                let back = if side.abs() < out - 0.5 { back } else { -BLOCK_HALF - 1.5 };
+                [b.x + uz * s * out + ux * back, b.z - ux * s * out + uz * back]
+            } else if side.abs() > BLOCK_HALF {
+                [b.x - ux * (BLOCK_HALF + 1.5), b.z - uz * (BLOCK_HALF + 1.5)]
+            } else {
+                [b.x + along[0], b.z + along[1]]
+            };
+            let stick = self.toward(aim, 1.0);
             self.step(stick, [false; 4]);
             let now = moving(self);
             let a = self.run.world.actor(h);
