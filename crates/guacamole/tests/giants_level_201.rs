@@ -217,7 +217,17 @@ struct Walked {
     marks: Vec<(String, u32, Handle, Option<u32>)>,
     /// Each step of the heavy elf's reveal (openspec AS.171): the scripts'
     /// eye, the way it looks and where the heavy elf stands.
-    reveal: Vec<(u32, [f32; 3], [f32; 3], Option<[f32; 3]>)>,
+    reveal: Vec<RevealStep>,
+}
+
+/// One step of the heavy elf's reveal: the step, the scripts' eye, the way
+/// it looks and where the heavy elf stands.
+#[derive(Debug, Clone, Copy)]
+struct RevealStep {
+    step: u32,
+    eye: [f32; 3],
+    look: [f32; 3],
+    elf: Option<[f32; 3]>,
 }
 
 /// A kid's push: the block, each move's first step and where it came to
@@ -391,12 +401,12 @@ impl Walker {
                 .filter_map(|h| self.run.world.actor(h).filter(|a| !a.removed))
                 .map(|a| a.position.to_array())
                 .next();
-            self.walked.reveal.push((
-                self.run.steps,
-                v.eye.to_array(),
-                v.forward().to_array(),
+            self.walked.reveal.push(RevealStep {
+                step: self.run.steps,
+                eye: v.eye.to_array(),
+                look: v.forward().to_array(),
                 elf,
-            ));
+            });
         }
         let up = guacamole::announcements::enemy_card(&self.run.vm, &self.run.world);
         let string = up.as_ref().and_then(|c| match c.string {
@@ -1034,14 +1044,19 @@ fn its_heavy_elfs_reveal_looks_at_him() {
         reveal.len()
     );
     let arena = bevy::math::Vec3::from_array(ARENA);
-    for (step, eye, _, _) in reveal {
+    for RevealStep { step, eye, .. } in reveal {
         let off = bevy::math::Vec3::from_array(*eye).distance(arena);
         assert!(
             off < 45.0,
             "step {step}: the eye {eye:?} {off:.1} m off the arena"
         );
     }
-    let (step, eye, look, elf) = reveal.last().unwrap();
+    let RevealStep {
+        step,
+        eye,
+        look,
+        elf,
+    } = reveal.last().unwrap();
     let elf = bevy::math::Vec3::from_array(elf.expect("the heavy elf stands"));
     let to = elf - bevy::math::Vec3::from_array(*eye);
     let off = to
