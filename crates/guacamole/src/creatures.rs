@@ -974,7 +974,12 @@ impl CreatureShots<'_, '_> {
                         let over = playing_clips(c, world);
                         let still =
                             guacamole::character::mesh::blended_over(&c.model, &base, &over);
-                        Some(drawn.rotation.angle_between(still.get(j)?.rotation).to_degrees())
+                        Some(
+                            drawn
+                                .rotation
+                                .angle_between(still.get(j)?.rotation)
+                                .to_degrees(),
+                        )
                     });
                     out.mouths.push(MouthShot {
                         name: world.name(c.actor),
