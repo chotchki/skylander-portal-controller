@@ -559,8 +559,13 @@ fn draw_creatures(
         let mut colour = Vec::with_capacity(model.materials.len());
         let mut lit = Vec::with_capacity(model.materials.len());
         let mut failed = None;
-        for m in &model.materials {
+        let order = guacamole::character::part_order(&model);
+        for (k, m) in model.materials.iter().enumerate() {
             let made = CharacterMaterial::from_ir(m, &scene, |t| texture(t, m))
+                .map(|mut c| {
+                    c.depth_bias = order[k];
+                    c
+                })
                 .map_err(|e| e.to_string())
                 .and_then(|c| {
                     reference_material(m)

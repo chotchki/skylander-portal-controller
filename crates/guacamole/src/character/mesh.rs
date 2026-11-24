@@ -9,7 +9,7 @@ use bevy::asset::{Assets, Handle, RenderAssetUsages};
 use bevy::camera::visibility::NoFrustumCulling;
 use bevy::ecs::entity::Entity;
 use bevy::ecs::system::Commands;
-use bevy::math::{Mat4, Quat, Vec3};
+use bevy::math::{Mat4, Quat, Vec3, Vec3A};
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
 use bevy::mesh::{
     Indices, Mesh, Mesh3d, MeshVertexAttribute, PrimitiveTopology, VertexAttributeValues,
@@ -17,6 +17,7 @@ use bevy::mesh::{
 };
 use bevy::pbr::{Material, MeshMaterial3d};
 use bevy::prelude::{ChildOf, Name, Transform, Visibility};
+use bevy::shape::Aabb3d;
 use guac_ir::model::{self, Model, Segment, Skeleton};
 
 /// The third texture-coordinate set, which Bevy has no attribute for.
@@ -165,6 +166,46 @@ fn whole_normals(segment: &Segment) -> Vec<[f32; 3]> {
         .collect()
 }
 
+/// The box round all of a model's parts in bind pose: what each of its part
+/// meshes sorts by (openspec AS.821). Bevy sorts a blended part by its own
+/// mesh's box centre, so a model's parts drew in whatever order their
+/// centres fell from the camera; Cali's eyes-and-lashes part, whose clear
+/// texels write depth, then drew before the head that holds her lids and
+/// hid them. `None` for a model with no vertices.
+pub fn model_bounds(segments: &[Segment]) -> Option<Aabb3d> {
+    let mut points = segments.iter().flat_map(|s| s.positions.iter());
+    let first = Vec3A::from_array(*points.next()?);
+    let (min, max) = points.fold((first, first), |(lo, hi), p| {
+        let p = Vec3A::from_array(*p);
+        (lo.min(p), hi.max(p))
+    });
+    Some(Aabb3d { min, max })
+}
+
+/// The step between a model's parts' sort biases, metres of view depth: far
+/// under anything a camera tells apart, so it orders a model's own parts
+/// alone, all sorting at [`model_bounds`].
+pub const PART_STEP: f32 = 1.0e-3;
+
+/// Each of `model`'s materials' sort bias ([`Material::depth_bias`]): its
+/// first part's place in the model's part order times [`PART_STEP`], so a
+/// model's blended parts draw in its own order, as the original draws a
+/// model (openspec AS.821); 0 for a material no part names.
+pub fn part_order(model: &Model) -> Vec<f32> {
+    part_order_of(&model.segments, model.materials.len())
+}
+
+/// [`part_order`] over `segments` naming `materials` materials.
+fn part_order_of(segments: &[Segment], materials: usize) -> Vec<f32> {
+    let mut out = vec![None; materials];
+    for (i, s) in segments.iter().enumerate() {
+        if let Some(slot) = out.get_mut(usize::from(s.material)) {
+            slot.get_or_insert(i as f32 * PART_STEP);
+        }
+    }
+    out.into_iter().map(|b| b.unwrap_or(0.0)).collect()
+}
+
 /// Each joint's inverse joint, in joint order: what a skin influence's
 /// joint index picks.
 pub fn inverse_bindposes(skeleton: &Skeleton) -> Vec<Mat4> {
@@ -272,11 +313,20 @@ pub fn spawn_character<M: Material>(
             return Err(MeshError::Joint { joint, joints });
         }
     }
-    let built = model
+    let mut built = model
         .segments
         .iter()
         .map(segment_mesh)
         .collect::<Result<Vec<_>, _>>()?;
+    // Every part sorts at the model's one box (openspec AS.821). Bevy
+    // recomputes a render-world-only mesh's box from its own positions as it
+    // takes the mesh over, so the parts keep their main-world copy, whose
+    // box goes across as set.
+    let bounds = model_bounds(&model.segments);
+    for m in &mut built {
+        m.final_aabb = bounds;
+        m.asset_usage = RenderAssetUsages::default();
+    }
 
     let root = commands
         .spawn((
@@ -530,6 +580,83 @@ mod tests {
                 "{t:?}"
             );
         }
+    }
+
+    /// openspec AS.821: a model's parts all sort at its one box, which they
+    /// keep as Bevy takes them over (the main-world copy kept, so it isn't
+    /// recomputed off each part's own positions), and its blended parts
+    /// draw in its own part order: Cali's eyes-and-lashes part, its box
+    /// centre deeper than her head's from a camera at her side, drew first
+    /// and its clear texels' depth hid her lids.
+    #[test]
+    fn a_models_parts_sort_at_its_one_box_in_its_own_order() {
+        use bevy::camera::primitives::MeshAabb;
+        let mut m = model();
+        let mut head = segment();
+        head.material = 1;
+        let mut eyes = segment();
+        eyes.material = 0;
+        for p in &mut eyes.positions {
+            p[0] += 3.0;
+            p[2] += 2.0;
+        }
+        m.segments = vec![head, eyes];
+        use bevy::asset::AssetApp;
+        use bevy::ecs::system::RunSystemOnce;
+        let mut app = bevy::app::App::new();
+        app.add_plugins((
+            bevy::prelude::MinimalPlugins,
+            bevy::asset::AssetPlugin::default(),
+        ))
+        .init_asset::<Mesh>()
+        .init_asset::<SkinnedMeshInverseBindposes>()
+        .init_asset::<bevy::pbr::StandardMaterial>();
+        let world = app.world_mut();
+        let handles: Vec<Handle<bevy::pbr::StandardMaterial>> = {
+            let mut assets = world.resource_mut::<Assets<bevy::pbr::StandardMaterial>>();
+            (0..2)
+                .map(|_| assets.add(bevy::pbr::StandardMaterial::default()))
+                .collect()
+        };
+        let spawned =
+            world
+                .run_system_once(
+                    move |mut commands: Commands,
+                          mut meshes: bevy::prelude::ResMut<Assets<Mesh>>,
+                          mut inverse: bevy::prelude::ResMut<
+                        Assets<SkinnedMeshInverseBindposes>,
+                    >| {
+                        spawn_character(
+                            &mut commands,
+                            &m,
+                            Transform::IDENTITY,
+                            0.0,
+                            &mut meshes,
+                            &mut inverse,
+                            &handles,
+                        )
+                        .unwrap()
+                    },
+                )
+                .unwrap();
+        let meshes = app.world().resource::<Assets<Mesh>>();
+        let centres: Vec<Vec3> = spawned
+            .meshes
+            .iter()
+            .map(|h| Vec3::from(meshes.get(h).unwrap().get_aabb().unwrap().center))
+            .collect();
+        assert_eq!(centres[0], centres[1], "one sort point for the model");
+        for h in &spawned.meshes {
+            let usage = meshes.get(h).unwrap().asset_usage;
+            assert!(
+                usage.contains(RenderAssetUsages::MAIN_WORLD),
+                "kept, so the box goes across as set"
+            );
+        }
+        // Its parts in its own order: the head (part 0, material 1) first.
+        let mut parts = vec![segment(), segment()];
+        parts[0].material = 1;
+        assert_eq!(part_order_of(&parts, 3), vec![PART_STEP, 0.0, 0.0]);
     }
 
     #[test]

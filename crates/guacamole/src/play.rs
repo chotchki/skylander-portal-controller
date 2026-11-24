@@ -2698,11 +2698,13 @@ fn draw_hero(
     let mut colour = Vec::with_capacity(drawn.materials.len());
     let mut lit = Vec::with_capacity(drawn.materials.len());
     let mut scrolling = Vec::new();
-    for m in &drawn.materials {
+    let order = guacamole::character::part_order(&model);
+    for (k, m) in drawn.materials.iter().enumerate() {
         // Lit in the world's frame once the level takes them
         // (`Level::light_also`).
-        let material = CharacterMaterial::from_ir(m, scene, texture)
+        let mut material = CharacterMaterial::from_ir(m, scene, texture)
             .map_err(|e| format!("material {}: {e}", m.name))?;
+        material.depth_bias = order.get(k).copied().unwrap_or(0.0);
         let reference = reference_material(m).map_err(|e| format!("material {}: {e}", m.name))?;
         let handle = s.materials.add(material);
         if !m.scrolls.is_empty() {
