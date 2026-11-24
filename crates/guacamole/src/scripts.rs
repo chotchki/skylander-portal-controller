@@ -2905,7 +2905,7 @@ impl ScriptWorld {
         a.buffer_loaded = k.buffer_loaded;
         a.buffer = k.buffer;
         a.range = k.range;
-        a.waypoints = Vec::new();
+        // Its template's waypoints, as `spawn` gave them (openspec AS.171).
         a.clones = k.clones.clone();
         a.position = k.origin;
         a.origin = k.origin;
@@ -2963,7 +2963,10 @@ impl ScriptWorld {
         } else {
             Value::Entity(spawner)
         };
-        a.waypoints = Vec::new();
+        // A clone keeps its template's waypoints (openspec AS.171): the
+        // heavy elf's reveal, spawned by the arena's script, looks from its
+        // own, and read empty its camera looked from the world's origin.
+        // A copy of a clone keeps the clone's.
         a.removed = false;
         a.clones = Vec::new();
         a.attach = Value::Null;
@@ -8789,6 +8792,11 @@ mod tests {
         assert_eq!(a.physics, made.physics);
         assert_eq!(a.id, 7, "its spawner's id kept");
         assert_eq!(a.template, Some(GRUNT));
+        assert_eq!(
+            a.waypoints,
+            [Value::Object(NODE)],
+            "its template's waypoints"
+        );
         assert!(!a.removed);
         assert!(w.revived.is_empty(), "the VM restarts it, not the embedder");
         w.op(
@@ -9098,6 +9106,13 @@ mod tests {
         );
         assert_eq!(made, vec![Value::Object(GRUNT)]);
         assert_eq!(w.clones(), vec![900]);
+        // Its template's waypoints (openspec AS.171: the heavy elf's
+        // reveal, a clone, looks from its own; read empty, the world's
+        // origin).
+        assert_eq!(
+            w.elements(&at("actorinfo", "waypoints", Some(clone)), &mut NoEngine),
+            Ok(vec![Value::Object(NODE)])
+        );
         assert_eq!(
             w.get(&at("abstractplacement", "id", Some(clone)), &mut NoEngine),
             Ok(Value::Int(41))
