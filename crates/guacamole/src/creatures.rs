@@ -878,6 +878,9 @@ pub(crate) struct MouthShot {
     /// Where the first joint his face's shapes move stands (the jaw on the
     /// disc's sets), metres: what a driver aims a pinned camera at.
     pub jaw: Option<[f32; 3]>,
+    /// How far that joint is drawn turned off the pose his clips give him
+    /// with no line, degrees: the mouth on the TV's drawn model.
+    pub jaw_turn: Option<f32>,
 }
 
 /// One of the people as `/api/_test/tv` reports it.
@@ -921,6 +924,7 @@ pub(crate) struct CreatureShots<'w, 's> {
     time: Res<'w, Time>,
     level: Option<Res<'w, Level>>,
     globals: Query<'w, 's, &'static GlobalTransform>,
+    locals: Query<'w, 's, &'static Transform>,
 }
 
 impl CreatureShots<'_, '_> {
@@ -955,12 +959,23 @@ impl CreatureShots<'_, '_> {
             for c in &self.creatures {
                 if let Some(sp) = m.speaking(world, c.actor) {
                     let face = m.face(&c.path);
-                    let jaw = face
+                    let joint = face
                         .and_then(|f| f.first())
                         .and_then(|shape| shape.tracks.first())
-                        .and_then(|t| c.joints.get(usize::from(t.joint)))
+                        .map(|t| usize::from(t.joint));
+                    let jaw = joint
+                        .and_then(|j| c.joints.get(j))
                         .and_then(|&e| self.globals.get(e).ok())
                         .map(|g| g.translation().to_array());
+                    let jaw_turn = joint.and_then(|j| {
+                        let drawn = self.locals.get(*c.joints.get(j)?).ok()?;
+                        let seconds = self.time.elapsed().saturating_sub(c.since).as_secs_f64();
+                        let base = base_clips(c, world, seconds);
+                        let over = playing_clips(c, world);
+                        let still =
+                            guacamole::character::mesh::blended_over(&c.model, &base, &over);
+                        Some(drawn.rotation.angle_between(still.get(j)?.rotation).to_degrees())
+                    });
                     out.mouths.push(MouthShot {
                         name: world.name(c.actor),
                         line: sp.line.clone(),
@@ -969,6 +984,7 @@ impl CreatureShots<'_, '_> {
                         weights: sp.weights,
                         face: face.is_some(),
                         jaw,
+                        jaw_turn,
                     });
                 }
             }
