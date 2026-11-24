@@ -3330,7 +3330,10 @@ fn cynders_breath_lands_up_and_down_a_slope_as_on_the_level() {
 
 /// openspec AS.835: Cynder's breath at a foe in play on top of the bank by
 /// the fence, from below it, where the as-aim review's TV run pressed 83
-/// times for one kill. The bench above sets her facing and holds its foe;
+/// times for one kill, after breaths at the fight on the level as a kid
+/// comes from one. Walked there by the stick her scripts keep her points
+/// fresh, so AS.815's lift isn't what this turns on (taken out, 6 of 6
+/// still; the set-down bench above holds it). The bench above sets her facing and holds its foe;
 /// here the setup's Chompy is woken and left to its own script on the
 /// bank's top (in its fight, not held; set back there before each breath,
 /// as the TV's stood there), she walks below it by the stick and is turned
@@ -3411,6 +3414,20 @@ fn cynders_breath_lands_on_a_foe_in_play_on_the_banks_top() {
         .expect("ground");
         Vec3::new(p.x, hit.point.y, p.z)
     };
+    // Two breaths at the fight on the level first, as a kid comes from
+    // one: her scripts' points were last set there.
+    let level = BREATH_CASES[0].1;
+    for k in 0..80 {
+        if k == 0 {
+            run.put(Vec3::from_array(level), 0.0);
+        }
+        run.bench.pads[0] = Pad {
+            stick: Stick::new(0.0, 0.0),
+            actions: [k % 40 < 2, false, false, false],
+            connected: true,
+        };
+        stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+    }
     run.put(ground(&run, from), 0.0);
     // The stick at a heading across the ground for `steps` steps.
     let push = |run: &mut Run, heading: f32, steps: u32, stops: &mut Vec<String>| {
