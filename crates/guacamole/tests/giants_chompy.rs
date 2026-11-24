@@ -3817,6 +3817,26 @@ fn a_stunned_chompy_hit_again_stays_stunned_to_its_first_end() {
     // The detector fires the step a stay passes AH.10's longest, so what it
     // ran to is read from the steps: the draws moved with chapter 1's way on
     // the listing (AU.33), and a 'battle' a little past the record is no stall.
+    // Which of the four waits its turn behind the other three is the roll's,
+    // so each is held to the longest 'battle' AH.10 recorded for any of them
+    // (openspec AS.815: with his lobs aimed from where he and they stand,
+    // Enemy_Chompy(3) stood 256 steps 4.8 m off him while the rest nipped;
+    // on the base, seed 12 has it stand 258, seeds 4 and 6 stand (4) 356 and
+    // 379 under the rule, and AH.10 holds one 432).
+    let four = limits
+        .iter()
+        .filter(|l| CHOMPIES.contains(&l.placement.as_str()) && l.behaviour == "battle")
+        .map(|l| l.longest_stay)
+        .fold(0.0, f32::max);
+    let limits: Vec<StallLimit> = limits
+        .into_iter()
+        .map(|mut l| {
+            if CHOMPIES.contains(&l.placement.as_str()) && l.behaviour == "battle" {
+                l.longest_stay = four;
+            }
+            l
+        })
+        .collect();
     let stalled: Vec<Stall> = stalls(&snaps, &limits)
         .into_iter()
         .filter(|s| {
