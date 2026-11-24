@@ -1894,6 +1894,201 @@ mod tests {
         );
     }
 
+    /// openspec AS.857: the TV's posing step moves a speaker's mouth. A line
+    /// whose stream weighs a one-shape face (its jaw, the creature's `top`
+    /// joint, turned a quarter about x) plays on the drawn creature: while
+    /// it plays the drawn jaw turns off the pose his clips give him, by the
+    /// stream's weight at the line's own time; under Start's pause the
+    /// line's time and the jaw hold; once the line is over the jaw is back
+    /// where his clips put it, and a creature with no line never moves.
+    #[test]
+    fn a_line_turns_its_speakers_jaw_and_none_leaves_it() {
+        use guac_ir::clip::{Clip, RotationTrack, Track, VecTrack};
+        use guac_ir::lips::{Face, Line, Lips, Track as Weight, Visemes};
+        use guac_ir::sound::{Audio, DataHome, DataRef, Sound, SoundData, Sounds};
+        use guac_script::Obj;
+        const STEM: &str = "level_mouth";
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = fight_app(tmp.path(), Some(start()));
+        let c = creature(&app);
+        until(&mut app, "the creature drawn", |a| {
+            a.world().resource::<DrawnCreatures>().0.contains_key(&c)
+        });
+        let root = app.world().resource::<DrawnCreatures>().0[&c];
+        let (path, jaw) = {
+            let d = app.world().get::<DrawnCreature>(root).unwrap();
+            (d.path.clone(), d.joints[1])
+        };
+        let identity = guac_ir::DumpIdentity {
+            title_id: "BLUS30968".into(),
+            app_ver: "01.00".into(),
+            manifest_hash: guac_ir::Sha256([0; 32]),
+        };
+        let h = std::f32::consts::FRAC_1_SQRT_2;
+        let open = Clip {
+            name: "Test_A.ma".into(),
+            duration: 0.0,
+            frame_duration: 1.0 / 30.0,
+            frames: 1,
+            tracks: vec![Track {
+                joint: 1,
+                translation: VecTrack {
+                    constant: [0.0, 1.0, 0.0],
+                    spline: None,
+                },
+                rotation: RotationTrack::Constant([h, 0.0, 0.0, h]),
+                scale: VecTrack {
+                    constant: [1.0; 3],
+                    spline: None,
+                },
+            }],
+        };
+        // Two seconds, its one shape's weight rising from 0 to 1.
+        let lips = Lips {
+            identity: identity.clone(),
+            level: STEM.into(),
+            lines: vec![Line {
+                home: DataHome::Pack,
+                object: 5,
+                name: Some("vo_test_001".into()),
+                visemes: Visemes {
+                    frames: 49,
+                    frame_time: 1.0 / 24.0,
+                    blocks: vec![vec![Weight::Spline {
+                        degree: 1,
+                        knots: vec![0, 0, 48, 48],
+                        points: vec![0.0, 1.0],
+                    }]],
+                },
+            }],
+            global: Vec::new(),
+            faces: vec![Face {
+                owner: path,
+                shapes: vec![open],
+            }],
+            refused: Vec::new(),
+        };
+        app.world_mut()
+            .resource_mut::<Level>()
+            .set_mouths(Some(Arc::new(guacamole::mouths::Mouths::new(lips))));
+        let sound = Sound {
+            object: 900,
+            name: Some("vo_test_001".into()),
+            data: DataRef::Here(DataHome::Pack, 5),
+            flags: 0x4000_0000,
+            properties: 0,
+            playback_mode: 0,
+            playback_percent: 100.0,
+            volume_percent: 80.0,
+            volume_randomness_percent: 0.0,
+            pitch_randomness_percent: 0.0,
+            pan_percent: 0.0,
+            attenuation_distance_full: 1.0,
+            attenuation_distance_silent: 150.0,
+            rumble_duration: 2.0,
+            reverb_amount: 0.0,
+            reverb_randomness_percent: 0.0,
+            filter_percent: 0.0,
+            filter_randomness_percent: 0.0,
+            filter_attenuation_distance_minimum: 1.0,
+            filter_attenuation_distance_maximum: 200.0,
+            filter_maximum_percent: 100.0,
+            sample_rate_reduction: 0.0,
+        };
+        let book = guac_sound::SoundBook::new([Sounds {
+            identity,
+            archive: format!("level/{STEM}.bld"),
+            sounds: vec![sound],
+            data: vec![SoundData {
+                home: DataHome::Pack,
+                object: 5,
+                name: Some("vo_test_001.wav".into()),
+                raw_duration: 2.0,
+                streamed: None,
+                lip_sync: true,
+                audio: Some(Audio {
+                    file: "audio/sounds/0011223344556677.mp3".into(),
+                    rate: 48_000,
+                    channels: 1,
+                    samples: 96_000,
+                    loop_points: None,
+                }),
+            }],
+            refused: Vec::new(),
+        }]);
+        let unit = app.world().resource::<ScriptSource>().level_unit().unwrap();
+        app.world_mut()
+            .resource_mut::<ScriptWorld>()
+            .set_sounds(Arc::new(book), HashMap::from([(unit, STEM.to_owned())]));
+        // How far the drawn jaw stands off the pose his clips give him now,
+        // degrees, and the line's time on him.
+        let turn = |app: &mut App| {
+            app.update();
+            let w = app.world();
+            let d = w.get::<DrawnCreature>(root).unwrap();
+            let world = w.resource::<ScriptWorld>();
+            let seconds = w
+                .resource::<Time>()
+                .elapsed()
+                .saturating_sub(d.since)
+                .as_secs_f64();
+            let still = guacamole::character::mesh::blended_over(
+                &d.model,
+                &base_clips(d, world, seconds),
+                &playing_clips(d, world),
+            );
+            let drawn = w.get::<Transform>(jaw).unwrap().rotation;
+            let said = w
+                .resource::<Level>()
+                .mouths()
+                .and_then(|m| m.speaking(world, c))
+                .map(|s| s.seconds);
+            (drawn.angle_between(still[1].rotation).to_degrees(), said)
+        };
+        for _ in 0..5 {
+            assert!(turn(&mut app).0 < 0.01, "no line, no turn");
+        }
+        let copy = app
+            .world_mut()
+            .resource_mut::<ScriptWorld>()
+            .play_sound_on(Obj { unit, index: 900 }, c);
+        assert!(copy.is_some(), "the line starts on him");
+        let mut most = 0.0f32;
+        let (mut said, mut tries) = (None, 0);
+        while said.is_none_or(|t: f32| t < 1.0) {
+            tries += 1;
+            assert!(tries < 2_000, "the line never got a second in");
+            let (deg, t) = turn(&mut app);
+            assert!(t.is_some(), "he speaks until the line's end");
+            most = most.max(deg);
+            said = t;
+        }
+        // A second in, the shape weighs about half: about 45 degrees.
+        assert!(
+            (30.0..60.0).contains(&most),
+            "the jaw turned {most} degrees by a second into the line"
+        );
+        test_pad::press(&mut app, pad, GamepadButton::Start);
+        let (held, at) = turn(&mut app);
+        for _ in 0..10 {
+            let (deg, t) = turn(&mut app);
+            assert_eq!(t, at, "Start's pause holds the line's time");
+            assert!((deg - held).abs() < 1e-3, "and the jaw: {deg} {held}");
+        }
+        test_pad::press(&mut app, pad, GamepadButton::Start);
+        let mut tries = 0;
+        loop {
+            tries += 1;
+            assert!(tries < 4_000, "the line never ended");
+            if turn(&mut app).1.is_none() {
+                break;
+            }
+        }
+        for _ in 0..5 {
+            assert!(turn(&mut app).0 < 0.01, "the line over, the jaw is back");
+        }
+    }
+
     /// openspec AS.512 (the as-mouths lane): `placed` reports the drawing
     /// rule's other placements, a model's whose script runs, and never a
     /// walked creature or a scriptless or modelless placement.

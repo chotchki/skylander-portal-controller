@@ -1985,6 +1985,14 @@ impl Level {
         self.stage.loaded()
     }
 
+    /// A test's lips part in place of the level's (openspec AS.857).
+    #[cfg(test)]
+    pub(crate) fn set_mouths(&mut self, mouths: Option<Arc<guacamole::mouths::Mouths>>) {
+        if let Some(l) = self.stage.loaded_mut() {
+            l.mouths = mouths;
+        }
+    }
+
     fn ms(&self) -> Option<u64> {
         self.since.map(|t| t.elapsed().as_millis() as u64)
     }

@@ -258,5 +258,8 @@ fn block(data: &[u8], at: usize, tracks: usize) -> Result<Block, FormatError> {
     Ok(Block { tracks: out })
 }
 
+#[cfg(any(test, feature = "test-fixtures"))]
+pub mod builder;
+
 #[cfg(test)]
 mod tests;

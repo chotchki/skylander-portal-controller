@@ -1,98 +1,5 @@
+use super::builder::{T, block_bytes, one_block, stream_bytes};
 use super::*;
-
-/// One track as the builder writes it.
-enum T {
-    C(f32),
-    /// degree, knots, low, high, raw points.
-    S(u8, Vec<u8>, f32, f32, Vec<u8>),
-}
-
-fn pad(b: &mut Vec<u8>) {
-    while !b.len().is_multiple_of(4) {
-        b.push(0);
-    }
-}
-
-/// A block's bytes, laid out from a 4-aligned start.
-fn block_bytes(tracks: &[T]) -> Vec<u8> {
-    let mut b: Vec<u8> = tracks
-        .iter()
-        .map(|t| match t {
-            T::C(_) => CONSTANT,
-            T::S(..) => SPLINE,
-        })
-        .collect();
-    pad(&mut b);
-    for t in tracks {
-        match t {
-            T::C(v) => b.extend(v.to_be_bytes()),
-            T::S(d, knots, lo, hi, points) => {
-                let n = points.len() as u16 - 1;
-                b.extend(n.to_be_bytes());
-                b.push(*d);
-                b.extend(knots);
-                pad(&mut b);
-                b.extend(lo.to_be_bytes());
-                b.extend(hi.to_be_bytes());
-                b.extend(points);
-                pad(&mut b);
-            }
-        }
-    }
-    b
-}
-
-/// A whole stream of `frames` frames at 1/24 s, `blocks` its blocks.
-fn stream_bytes(frames: u32, tracks: u32, blocks: &[Vec<u8>]) -> Vec<u8> {
-    let nb = blocks.len() as u32;
-    let mut b = MAGIC.to_vec();
-    let ft = 1.0f32 / 24.0;
-    for w in [frames, 16, 1, tracks] {
-        b.extend(w.to_be_bytes());
-    }
-    for f in [(frames - 1) as f32 * ft, 255.0 * ft, ft] {
-        b.extend(f.to_be_bytes());
-    }
-    for w in [nb, nb, 0xDEAD, 0] {
-        b.extend(w.to_be_bytes());
-    }
-    let mut starts = Vec::new();
-    let mut at = 0u32;
-    for bl in blocks {
-        starts.push(at);
-        at += bl.len() as u32;
-    }
-    let mut words: Vec<u32> = starts[1..].to_vec();
-    words.extend(std::iter::repeat_n(16, nb as usize));
-    words.push(0);
-    for w in words {
-        b.extend(w.to_be_bytes());
-    }
-    for bl in blocks {
-        b.extend(bl);
-    }
-    b.extend([0; 4]);
-    b.extend(FOOTER);
-    b
-}
-
-fn one_block() -> Vec<u8> {
-    stream_bytes(
-        48,
-        3,
-        &[block_bytes(&[
-            T::S(
-                2,
-                vec![0, 0, 0, 10, 20, 47, 47, 47],
-                0.0,
-                0.8,
-                vec![0, 255, 128, 0, 0],
-            ),
-            T::C(0.0),
-            T::S(1, vec![0, 0, 47, 47], -0.5, 0.5, vec![0, 255]),
-        ])],
-    )
-}
 
 #[test]
 fn a_one_block_stream_reads_its_header_and_tracks() {
@@ -207,5 +114,77 @@ fn no_prefix_or_byte_change_panics() {
             b[i] = v;
             let _ = parse(&b);
         }
+    }
+}
+
+/// The header's own refusals (the as-mouths review): a block count of 0 or
+/// one that disagrees with its copy, a frame time that isn't a positive
+/// number, a spline's degree outside 1-3, knots that run backwards, and a
+/// stream too short for its header, each an error and never a panic.
+#[test]
+fn a_bad_header_or_spline_refuses() {
+    let good = one_block();
+    let with = |at: usize, word: [u8; 4]| {
+        let mut b = good.clone();
+        b[at..at + 4].copy_from_slice(&word);
+        parse(&b)
+    };
+    assert!(matches!(
+        with(32, 0u32.to_be_bytes()).unwrap_err().kind,
+        ErrorKind::CountMismatch { .. }
+    ));
+    let mut b = good.clone();
+    b[32..40].copy_from_slice(&[0; 8]);
+    assert!(matches!(
+        parse(&b).unwrap_err().kind,
+        ErrorKind::OutOfRange { value: 0, .. }
+    ));
+    assert!(matches!(
+        with(36, 2u32.to_be_bytes()).unwrap_err().kind,
+        ErrorKind::CountMismatch {
+            found: 2,
+            expected: 1
+        }
+    ));
+    for ft in [0.0f32, -1.0 / 24.0, f32::NAN, f32::INFINITY] {
+        assert!(
+            matches!(
+                with(28, ft.to_be_bytes()).unwrap_err().kind,
+                ErrorKind::Unsupported { .. }
+            ),
+            "{ft}"
+        );
+    }
+    // The first track's spline head: its degree byte, then its knots.
+    let spline = 48 + 8 + 4;
+    assert_eq!(good[spline + 2], 2, "the builder's quadratic");
+    for degree in [0u8, 4, 0xFF] {
+        let mut b = good.clone();
+        b[spline + 2] = degree;
+        assert!(
+            matches!(
+                parse(&b).unwrap_err().kind,
+                ErrorKind::Unsupported { value } if value == u64::from(degree)
+            ),
+            "{degree}"
+        );
+    }
+    let mut b = good.clone();
+    b[spline + 3 + 3] = 30; // 0, 0, 0, 30, 20: backwards
+    assert!(parse(&b).is_err());
+    assert!(parse(&good[..40]).is_err(), "a header cut short");
+    assert!(parse(&MAGIC).is_err(), "the magic alone");
+}
+
+/// A spline's point count is a u16 off the disc: one past what its block
+/// holds refuses without reading past the slice (the as-mouths review).
+#[test]
+fn a_spline_counting_past_its_block_refuses() {
+    let good = one_block();
+    let spline = 48 + 8 + 4;
+    for n in [5u16, 200, u16::MAX] {
+        let mut b = good.clone();
+        b[spline..spline + 2].copy_from_slice(&n.to_be_bytes());
+        assert!(parse(&b).is_err(), "{n}");
     }
 }
