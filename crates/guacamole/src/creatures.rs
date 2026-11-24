@@ -2087,6 +2087,31 @@ mod tests {
         for _ in 0..5 {
             assert!(turn(&mut app).0 < 0.01, "the line over, the jaw is back");
         }
+        // Said again and stopped halfway, as a scene's skip stops its
+        // lines: the jaw is back on the next frame.
+        let again = app
+            .world_mut()
+            .resource_mut::<ScriptWorld>()
+            .play_sound_on(Obj { unit, index: 900 }, c);
+        assert!(again.is_some());
+        let mut tries = 0;
+        while turn(&mut app).1.is_none_or(|t| t < 0.5) {
+            tries += 1;
+            assert!(tries < 2_000, "the second line never got going");
+        }
+        assert!(turn(&mut app).0 > 10.0, "his mouth open again");
+        for s in app
+            .world_mut()
+            .resource_mut::<ScriptWorld>()
+            .sequences_mut()
+            .iter_mut()
+            .filter(|s| s.actor == c && s.plays() && s.length > 1.9)
+        {
+            s.stopped = true;
+        }
+        let (deg, said) = turn(&mut app);
+        assert_eq!(said, None, "a stopped line says nothing");
+        assert!(deg < 0.01, "and leaves his jaw at once: {deg}");
     }
 
     /// openspec AS.512 (the as-mouths lane): `placed` reports the drawing
