@@ -4129,7 +4129,14 @@ impl ScriptWorld {
                 }
             }
             let motion = v * (dt * METRES_PER_FOOT);
-            let coming = v;
+            // Its step's real motion: what its scripts moved it by since
+            // the engine's last move (a shot held over the ground is set
+            // down a slope by its position, not its velocity) and this move.
+            let coming = motion
+                + self
+                    .flown_to
+                    .get(&h)
+                    .map_or(Vec3::ZERO, |&p| a.position - p);
             let rotation =
                 guac_motion::solid::euler([a.angles.tilt, a.angles.facing, a.angles.roll]);
             let solid = a.havok().filter(|_| a.solid.interacts_with_level_mesh != 0);
@@ -4185,7 +4192,10 @@ impl ScriptWorld {
                 a.velocity = v;
                 a.contacts = contacts;
             }
+            self.flown_to.insert(h, at);
         }
+        self.flown_to
+            .retain(|h, _| self.actors.get(h).is_some_and(|a| !a.removed && a.launched));
         self.place_hung_actors(engine);
     }
 
@@ -4681,11 +4691,11 @@ impl ScriptWorld {
     }
 }
 
-/// How much of a flying actor's speed has to go into walkable ground, and
+/// How much of a flying actor's motion has to go into walkable ground, and
 /// downward, for its touch to count as a landing ([`lands_on`]).
 const LANDING_SHARE: f32 = 0.1;
 
-/// Whether a flying actor moving at `v` keeps a contact whose normal is
+/// Whether a flying actor whose step moved it by `v` keeps a contact whose normal is
 /// `normal` (openspec AS.836). A wall or a ceiling always counts; ground it
 /// could stand on counts only when it comes down onto it, more than
 /// [`LANDING_SHARE`] of its speed both downward and into it, or rests on it. The projectile
@@ -4702,8 +4712,8 @@ fn lands_on(v: Vec3, normal: Vec3) -> bool {
     speed < RESTING || v.y < -LANDING_SHARE * speed && v.dot(normal) < -LANDING_SHARE * speed
 }
 
-/// Under this speed, ft/s, a flying actor rests on what it touches.
-const RESTING: f32 = 0.01;
+/// Under this step's motion, metres, a flying actor rests on what it touches.
+const RESTING: f32 = 1e-5;
 
 fn steer_physics(p: &crate::script_engine::Physics) -> SteerPhysics {
     SteerPhysics {
@@ -5356,7 +5366,8 @@ mod tests {
         let a = w.actor(BALL).unwrap();
         assert!(a.position.x > -6.0, "{}", a.position.x);
         assert!(a.contacts.is_empty(), "skimming: {:?}", a.contacts);
-        // Dropped onto the floor from over it.
+        // Dropped onto the floor from over it (a fresh one: not moved there).
+        w.flown_to.remove(&BALL);
         w.actors.insert(BALL, ball(Vec3::new(-6.0, 2.0, -8.0), 0.0));
         w.set_velocity(BALL, Vec3::new(0.0, -30.0, 0.0), &mut e)
             .unwrap();
@@ -5364,6 +5375,21 @@ mod tests {
         let a = w.actor(BALL).unwrap();
         assert_eq!(a.contacts.len(), 1, "landed: {}", a.position);
         assert_eq!(a.contacts[0].body, BodyId(1));
+        // Set down by its script between moves, a step at a time, onto
+        // the floor (as a shot held over the ground is down a slope): it
+        // lands though its velocity is level.
+        w.flown_to.remove(&BALL);
+        w.actors.insert(BALL, ball(Vec3::new(-6.0, 1.3, -8.0), 0.0));
+        w.set_velocity(BALL, Vec3::new(20.0, 0.0, 0.0), &mut e)
+            .unwrap();
+        let mut landed = false;
+        for _ in 0..10 {
+            w.advance(STEP, &mut e);
+            let a = w.actors.get_mut(&BALL).unwrap();
+            landed |= !a.contacts.is_empty();
+            a.position.y -= 0.1;
+        }
+        assert!(landed, "set down onto the floor");
         // Up a 21 degree climb, flying level into it, or along it; down
         // into it falling.
         let up = Vec3::new(0.0, 21f32.to_radians().cos(), -21f32.to_radians().sin());

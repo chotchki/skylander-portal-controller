@@ -714,6 +714,10 @@ pub struct ScriptWorld {
     /// The actors the game's pause lets rest (openspec AS.205,
     /// [`pause_rest`]): the engine moves none of them and their clips hold.
     pub(crate) resting: std::collections::HashSet<Handle>,
+    /// Where each flying actor's last engine move left it (openspec
+    /// AS.836): with where it stands at the next, what its scripts moved it
+    /// by between, so a touch is judged by how it really moved.
+    pub(crate) flown_to: std::collections::HashMap<Handle, Vec3>,
     /// A pause asked ([`PAUSE`] called, its value and whether it plays
     /// sound) and not yet made: its first write, `system.game time scale`,
     /// names the placement making it.
@@ -1103,6 +1107,7 @@ impl ScriptWorld {
             surfaces_stood: Default::default(),
             dropped: Default::default(),
             resting: Default::default(),
+            flown_to: Default::default(),
             pause_asked: None,
             pausers: Vec::new(),
             pause_controlled: Vec::new(),
