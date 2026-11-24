@@ -4129,6 +4129,7 @@ impl ScriptWorld {
                 }
             }
             let motion = v * (dt * METRES_PER_FOOT);
+            let coming = v;
             let rotation =
                 guac_motion::solid::euler([a.angles.tilt, a.angles.facing, a.angles.roll]);
             let solid = a.havok().filter(|_| a.solid.interacts_with_level_mesh != 0);
@@ -4156,9 +4157,13 @@ impl ScriptWorld {
                 );
                 at = end;
                 v = slid;
-                // What it touches where it ends up, at rest against it too.
+                // What it touches where it ends up, at rest against it too,
+                // bar ground it isn't coming down onto (openspec AS.836).
                 let end = solid.pose(Pose::new(at, rotation));
                 for p in engine.seam().contacts(&shape, end, TOUCH, &own) {
+                    if !lands_on(coming, p.normal) {
+                        continue;
+                    }
                     contacts.push(Contact {
                         point: p.point,
                         normal: p.normal,
@@ -4675,6 +4680,30 @@ impl ScriptWorld {
         }
     }
 }
+
+/// How much of a flying actor's speed has to go into walkable ground, and
+/// downward, for its touch to count as a landing ([`lands_on`]).
+const LANDING_SHARE: f32 = 0.1;
+
+/// Whether a flying actor moving at `v` keeps a contact whose normal is
+/// `normal` (openspec AS.836). A wall or a ceiling always counts; ground it
+/// could stand on counts only when it comes down onto it, more than
+/// [`LANDING_SHARE`] of its speed both downward and into it, or rests on it. The projectile
+/// manager's wall check (`Check for Detonation - Wall`) judges a contact by
+/// its normal's heading alone, which reads 0 for level ground, so a shot
+/// held 3 ft over a climb (`Projectile Flight - Trace Ground`) touched the
+/// slope ahead and went as at a wall, while a thrown ball lands by the
+/// floor it falls onto. Stand-in ledger: `flying-contacts`.
+fn lands_on(v: Vec3, normal: Vec3) -> bool {
+    if normal.y < guac_motion::ground::MAX_SLOPE_COS {
+        return true;
+    }
+    let speed = v.length();
+    speed < RESTING || v.y < -LANDING_SHARE * speed && v.dot(normal) < -LANDING_SHARE * speed
+}
+
+/// Under this speed, ft/s, a flying actor rests on what it touches.
+const RESTING: f32 = 0.01;
 
 fn steer_physics(p: &crate::script_engine::Physics) -> SteerPhysics {
     SteerPhysics {
@@ -5308,6 +5337,44 @@ mod tests {
             .unwrap();
         let n = w.vector(w.object(Some(normal)).unwrap(), &mut e).unwrap();
         assert!(n.dot(Vec3::NEG_Z) > 0.999);
+    }
+
+    /// openspec AS.836: a flying actor skimming ground it could stand on
+    /// keeps no contact with it, on the level and up a climb; one falling
+    /// onto it keeps it (a thrown ball's landing), and a wall is always one
+    /// (the test above).
+    #[test]
+    fn a_shot_skimming_ground_keeps_no_contact_and_a_falling_one_lands() {
+        let mut e = bench();
+        let mut w = world();
+        // Its 0.762 m reach on the floor's top, flying along it away from the wall.
+        w.actors
+            .insert(BALL, ball(Vec3::new(-6.0, 0.762, -8.0), 0.0));
+        w.set_velocity(BALL, Vec3::new(20.0, 0.0, 0.0), &mut e)
+            .unwrap();
+        fly(&mut w, &mut e, 5);
+        let a = w.actor(BALL).unwrap();
+        assert!(a.position.x > -6.0, "{}", a.position.x);
+        assert!(a.contacts.is_empty(), "skimming: {:?}", a.contacts);
+        // Dropped onto the floor from over it.
+        w.actors.insert(BALL, ball(Vec3::new(-6.0, 2.0, -8.0), 0.0));
+        w.set_velocity(BALL, Vec3::new(0.0, -30.0, 0.0), &mut e)
+            .unwrap();
+        fly(&mut w, &mut e, 10);
+        let a = w.actor(BALL).unwrap();
+        assert_eq!(a.contacts.len(), 1, "landed: {}", a.position);
+        assert_eq!(a.contacts[0].body, BodyId(1));
+        // Up a 21 degree climb, flying level into it, or along it; down
+        // into it falling.
+        let up = Vec3::new(0.0, 21f32.to_radians().cos(), -21f32.to_radians().sin());
+        assert!(!lands_on(Vec3::new(0.0, 0.0, 20.0), up));
+        assert!(!lands_on(
+            Vec3::new(0.0, 20.0 * 21f32.to_radians().tan(), 20.0),
+            up
+        ));
+        assert!(!lands_on(Vec3::new(0.0, -0.5, 20.0), up));
+        assert!(lands_on(Vec3::new(0.0, -15.0, 10.0), up));
+        assert!(lands_on(Vec3::new(0.0, 0.0, 20.0), Vec3::NEG_Z));
     }
 
     #[test]
