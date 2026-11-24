@@ -771,3 +771,10 @@ What hangs on a node SHALL draw each axis a script wrote, by an absolute or a re
 #### Scenario: Sprocket's turret
 - **WHEN** she is seated and the stick is held right, then left
 - **THEN** the turret's top reads and draws a new facing after each, the node under it unchanged
+
+### Requirement: A speaker's mouth moves with his line
+While a voice line whose sound carries a viseme stream plays on a drawn speaker whose model has a viseme set, the TV SHALL pose his mouth by the stream's weights at the line's time, muted or not, holding with a pause and closing when the line stops (its end, a scene's skip, the speaker taken off). A line out of `global.bld` moves the mouth as a level's own does.
+
+#### Scenario: The arena's commander speaks
+- **WHEN** level 201's arena commander says his first line on the TV, muted
+- **THEN** his jaw turns through two or more of his shapes while it plays and stands still once it ends
