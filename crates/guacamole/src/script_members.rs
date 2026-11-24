@@ -2421,19 +2421,23 @@ impl ScriptWorld {
                 {
                     self.set_position(at.placement, h, at_node, engine)?;
                 }
-                // Hung on an actor itself (no node, no hero either side), it
-                // starts square with it, as one hung on a node takes the
-                // node's turn (openspec AS.819: the heavy elf's
-                // `Magic_Shield`, spawned at his facing and hung on him,
-                // read and drew twice his facing, its push 7 ft along that;
-                // `Ships.ai`'s parts, spawned at facing 0, are unchanged).
+                // Hung on an actor itself (no node, no hero either side) at
+                // that actor's own facing, it starts square with it (openspec
+                // AS.819: the heavy elf's `Magic_Shield`, spawned at his
+                // facing and hung on him, read and drew twice his facing, its
+                // push 7 ft along that). A facing of its own kept: a sheep's
+                // puddle spawned at a random one, `Ships.ai`'s parts at 0.
                 let square = engine.hero(h).is_none()
-                    && match self.object(Some(v)) {
-                        None => self
-                            .actor_of(Some(v))
-                            .is_some_and(|o| o != h && engine.hero(o).is_none()),
-                        _ => false,
-                    };
+                    && self.object(Some(v)).is_none()
+                    && self
+                        .actor_of(Some(v))
+                        .filter(|&o| o != h && engine.hero(o).is_none())
+                        .and_then(|o| self.angles_within(o, engine, HUNG_DEPTH))
+                        .zip(self.actors.get(&h))
+                        .is_some_and(|(g, a)| {
+                            let d = (a.angles.facing - g.facing).rem_euclid(360.0);
+                            d.min(360.0 - d) < 0.01
+                        });
                 // Hung where it hangs from, no offset yet.
                 if let Some(a) = self.actors.get_mut(&h) {
                     // Hung somewhere new, a turn written before is its own
@@ -6908,9 +6912,11 @@ mod tests {
             a.angles.facing = facing;
             a
         };
+        const PUDDLE: Handle = 0x6000_0085;
         w.actors.insert(DOME, clone(141.0));
         w.actors.insert(PART, clone(0.0));
         w.actors.insert(CAPE, clone(141.0));
+        w.actors.insert(PUDDLE, clone(37.0));
         let hang = |w: &mut ScriptWorld, e: &mut Bench, h: Handle, on: Handle| {
             let node = at(
                 "abstractplacement",
@@ -6924,12 +6930,16 @@ mod tests {
         hang(&mut w, &mut e, DOME, ELF);
         hang(&mut w, &mut e, PART, ELF);
         hang(&mut w, &mut e, CAPE, HERO);
+        hang(&mut w, &mut e, PUDDLE, ELF);
         let read = |w: &ScriptWorld, e: &mut Bench, h: Handle| {
             w.angles_within(h, e, HUNG_DEPTH).unwrap().facing
         };
         assert_eq!(read(&w, &mut e, DOME), 141.0, "read at his facing");
         assert_eq!(read(&w, &mut e, PART), 141.0, "facing 0: as before");
         assert_eq!(w.actors[&CAPE].angles.facing, 141.0, "on a hero: its own");
+        // A facing of its own (`Sheep.ai`'s puddle, spawned at a random
+        // one) is kept, read on top of his, as before.
+        assert_eq!(read(&w, &mut e, PUDDLE), 178.0, "its own facing kept");
         let drawn =
             |w: &ScriptWorld, h: Handle| crate::props::actor_transform(&w.actors[&h]).rotation;
         let close = |a: Quat, b: Quat| a.dot(b).abs() > 1.0 - 1e-6;
