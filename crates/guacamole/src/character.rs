@@ -42,7 +42,9 @@ pub use material::{
     LIGHTS_IN_VIEW, LIGHTS_IN_WORLD, MaterialError, NO_SCENE_LIGHTS, SKY_FROM_SCENE, SceneLights,
     reference_material,
 };
-pub use mesh::{MeshError, SpawnedCharacter, segment_mesh, spawn_character, static_mesh};
+pub use mesh::{
+    MeshError, SpawnedCharacter, part_order, segment_mesh, spawn_character, static_mesh,
+};
 pub use warm::{MeshShape, WarmError, WarmKey};
 
 /// Embeds the shader, registers [`CharacterMaterial`] and puts its two scene

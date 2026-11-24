@@ -681,9 +681,11 @@ fn spawn_stage(
     let mut colour = Vec::with_capacity(drawn.materials.len());
     let mut glow = Vec::with_capacity(drawn.materials.len());
     let mut scrolling = Vec::new();
-    for m in &drawn.materials {
-        let material = CharacterMaterial::from_ir(m, scene, texture)
+    let order = guacamole::character::part_order(&model);
+    for (k, m) in drawn.materials.iter().enumerate() {
+        let mut material = CharacterMaterial::from_ir(m, scene, texture)
             .map_err(|e| format!("material {}: {e}", m.name))?;
+        material.depth_bias = order.get(k).copied().unwrap_or(0.0);
         let mask = material.glow_mask().map(|g| s.materials.add(g));
         let part = s.materials.add(material);
         if !m.scrolls.is_empty() {

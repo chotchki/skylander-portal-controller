@@ -2421,14 +2421,34 @@ impl ScriptWorld {
                 {
                     self.set_position(at.placement, h, at_node, engine)?;
                 }
+                // Hung on an actor itself (no node, no hero either side) at
+                // that actor's own facing, it starts square with it (openspec
+                // AS.819: the heavy elf's `Magic_Shield`, spawned at his
+                // facing and hung on him, read and drew twice his facing, its
+                // push 7 ft along that). A facing of its own kept: a sheep's
+                // puddle spawned at a random one, `Ships.ai`'s parts at 0.
+                let square = engine.hero(h).is_none()
+                    && self.object(Some(v)).is_none()
+                    && self
+                        .actor_of(Some(v))
+                        .filter(|&o| o != h && engine.hero(o).is_none())
+                        .and_then(|o| self.angles_within(o, engine, HUNG_DEPTH))
+                        .zip(self.actors.get(&h))
+                        .is_some_and(|(g, a)| {
+                            let d = (a.angles.facing - g.facing).rem_euclid(360.0);
+                            d.min(360.0 - d) < 0.01
+                        });
                 // Hung where it hangs from, no offset yet.
                 if let Some(a) = self.actors.get_mut(&h) {
                     // Hung somewhere new, a turn written before is its own
-                    // under its new carrier's (`Ships.ai`'s parts, cloned
-                    // and hung; AS.443).
+                    // under its new carrier's (AS.443), but for its facing on
+                    // an actor itself (above).
                     if a.attach != v {
                         a.turned = false;
                         a.turned_axes = 0;
+                        if square {
+                            a.angles.facing = 0.0;
+                        }
                     }
                     a.attach = v;
                     a.hung = Vec3::ZERO;
@@ -6933,6 +6953,72 @@ mod tests {
             .unwrap();
         w.place_hung(&mut e);
         assert!(w.actors[&BUTTON].carried.is_some(), "hung anew");
+    }
+
+    /// openspec AS.819: a clone spawned at its carrier's facing and hung on
+    /// it (the heavy elf's `Magic_Shield`, `S2_Enemy_Elf_Heavy.ai`) starts
+    /// square with it: it reads and is drawn at his facing, not twice it,
+    /// and turns with him as he turns to charge; one spawned at facing 0
+    /// (`Ships.ai`'s parts) is as before; on a hero it keeps its own (AU.37).
+    #[test]
+    fn a_clone_hung_on_an_actor_itself_starts_square_with_it() {
+        const ELF: Handle = 0x6000_0081;
+        const DOME: Handle = 0x6000_0082;
+        const PART: Handle = 0x6000_0083;
+        const CAPE: Handle = 0x6000_0084;
+        let mut e = bench();
+        e.hero = Some(Hero::actor(eruptor_solid(), Vec3::ZERO, 141.0));
+        let mut w = world();
+        w.actors.insert(HERO, Actor::blank());
+        let mut elf = Actor::blank();
+        elf.position = Vec3::new(-202.0, 24.0, 83.0);
+        elf.angles.facing = 141.0;
+        w.actors.insert(ELF, elf);
+        let clone = |facing: f32| {
+            let mut a = Actor::blank();
+            a.template = Some(Obj { unit: 9, index: 8 });
+            a.position = Vec3::new(-202.0, 24.0, 83.0);
+            a.angles.facing = facing;
+            a
+        };
+        const PUDDLE: Handle = 0x6000_0085;
+        w.actors.insert(DOME, clone(141.0));
+        w.actors.insert(PART, clone(0.0));
+        w.actors.insert(CAPE, clone(141.0));
+        w.actors.insert(PUDDLE, clone(37.0));
+        let hang = |w: &mut ScriptWorld, e: &mut Bench, h: Handle, on: Handle| {
+            let node = at(
+                "abstractplacement",
+                "attach node",
+                Some(Value::Entity(h)),
+                None,
+            );
+            w.set_member(&node, Member::AttachNode, Value::Entity(on), e)
+                .unwrap();
+        };
+        hang(&mut w, &mut e, DOME, ELF);
+        hang(&mut w, &mut e, PART, ELF);
+        hang(&mut w, &mut e, CAPE, HERO);
+        hang(&mut w, &mut e, PUDDLE, ELF);
+        let read = |w: &ScriptWorld, e: &mut Bench, h: Handle| {
+            w.angles_within(h, e, HUNG_DEPTH).unwrap().facing
+        };
+        assert_eq!(read(&w, &mut e, DOME), 141.0, "read at his facing");
+        assert_eq!(read(&w, &mut e, PART), 141.0, "facing 0: as before");
+        assert_eq!(w.actors[&CAPE].angles.facing, 141.0, "on a hero: its own");
+        // A facing of its own (`Sheep.ai`'s puddle, spawned at a random
+        // one) is kept, read on top of his, as before.
+        assert_eq!(read(&w, &mut e, PUDDLE), 178.0, "its own facing kept");
+        let drawn =
+            |w: &ScriptWorld, h: Handle| crate::props::actor_transform(&w.actors[&h]).rotation;
+        let close = |a: Quat, b: Quat| a.dot(b).abs() > 1.0 - 1e-6;
+        w.place_hung(&mut e);
+        assert!(close(drawn(&w, DOME), drawn(&w, ELF)), "drawn as he is");
+        // He turns to charge; it turns with him.
+        w.actors.get_mut(&ELF).unwrap().angles.facing = 230.0;
+        w.place_hung(&mut e);
+        assert_eq!(read(&w, &mut e, DOME), 230.0);
+        assert!(close(drawn(&w, DOME), drawn(&w, ELF)));
     }
 
     /// openspec AS.443: a static model's attach nodes stand where its whole

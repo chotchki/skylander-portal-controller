@@ -223,6 +223,19 @@ struct Walked {
     /// AS.447): the gate, the step its spikes start down, its mark, and the
     /// step the mark went.
     marks: Vec<(String, u32, Handle, Option<u32>)>,
+    /// Each step of the heavy elf's reveal (openspec AS.171): the scripts'
+    /// eye, the way it looks and where the heavy elf stands.
+    reveal: Vec<RevealStep>,
+}
+
+/// One step of the heavy elf's reveal: the step, the scripts' eye, the way
+/// it looks and where the heavy elf stands.
+#[derive(Debug, Clone, Copy)]
+struct RevealStep {
+    step: u32,
+    eye: [f32; 3],
+    look: [f32; 3],
+    elf: Option<[f32; 3]>,
 }
 
 /// A kid's push: the block, each move's first step and where it came to
@@ -384,6 +397,25 @@ impl Walker {
         self.watch_marks();
         let steps = self.run.steps;
         let scene = cutscene_name(&self.run);
+        if scene.as_deref() == Some("IGC_Elf_Heavy_Reveal") {
+            let v = self.run.world.viewport();
+            let elf = self
+                .run
+                .world
+                .creatures()
+                .into_iter()
+                .chain(self.run.world.clones())
+                .filter(|h| self.run.world.name(*h) == "Enemy_Elf_Heavy_S2")
+                .filter_map(|h| self.run.world.actor(h).filter(|a| !a.removed))
+                .map(|a| a.position.to_array())
+                .next();
+            self.walked.reveal.push(RevealStep {
+                step: self.run.steps,
+                eye: v.eye.to_array(),
+                look: v.forward().to_array(),
+                elf,
+            });
+        }
         let up = guacamole::announcements::enemy_card(&self.run.vm, &self.run.world);
         let string = up.as_ref().and_then(|c| match c.string {
             guac_script::Value::Object(o) => self.run.vm.program().name_of(o).map(str::to_owned),
@@ -1026,6 +1058,54 @@ fn its_arena_runs_its_battle_to_the_outro() {
         w.removed("castleArena_script")
             .is_some_and(|s| s >= outro.0),
         "{castle:?}"
+    );
+}
+
+/// AS.171: the heavy elf's reveal looks at him. It looks from its
+/// placement's own waypoints, and its placement is a template the arena's
+/// script clones: a clone read none, so its eye went to the world's
+/// origin and slid off down -z (chotchki's playtest of 2026-11-22, "the
+/// camera pulled away to a completely random part of the level"). Every
+/// step its eye stays within 45 m of the arena's middle (its first steps the
+/// game camera's, 32 m off), and by its end he
+/// stands within 25 m of the eye and 30° of the way it looks.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn its_heavy_elfs_reveal_looks_at_him() {
+    let w = walked();
+    let reveal = &w.reveal;
+    assert!(
+        reveal.len() > 60,
+        "the reveal played: {} steps",
+        reveal.len()
+    );
+    let arena = bevy::math::Vec3::from_array(ARENA);
+    for RevealStep { step, eye, .. } in reveal {
+        let off = bevy::math::Vec3::from_array(*eye).distance(arena);
+        assert!(
+            off < 45.0,
+            "step {step}: the eye {eye:?} {off:.1} m off the arena"
+        );
+    }
+    let RevealStep {
+        step,
+        eye,
+        look,
+        elf,
+    } = reveal.last().unwrap();
+    let elf = bevy::math::Vec3::from_array(elf.expect("the heavy elf stands"));
+    let to = elf - bevy::math::Vec3::from_array(*eye);
+    let off = to
+        .angle_between(bevy::math::Vec3::from_array(*look))
+        .to_degrees();
+    println!(
+        "the reveal's last step {step}: the eye {eye:?}, him {:.1} m off at {off:.1} degrees",
+        to.length()
+    );
+    assert!(
+        to.length() < 25.0 && off < 30.0,
+        "{:.1} m, {off:.1} degrees",
+        to.length()
     );
 }
 
