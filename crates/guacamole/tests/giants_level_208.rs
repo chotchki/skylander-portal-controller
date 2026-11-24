@@ -1204,12 +1204,355 @@ fn level_208s_way_by_the_stick_to_the_second_beam() {
         relay.1.x < relay.0.x - 4.0 && flat(relay.1, ice) < 5.0,
         "the crystal's beam west at the second ice block: {relay:?}"
     );
-    // Not melted (openspec AS.755): its cone misses the block's pivot by
-    // 0.09 deg.
-    println!("the second ice block {}", behaviour(&run, ICE_BLOCK_2));
+    // Melted (openspec AS.755): the relay's cone, taken from the push
+    // block it hangs on, holds the block; it melts and takes itself off.
+    // A stall (no change in 600 steps) ends it.
+    let (mut last, mut since, mut melted) = (behaviour(&run, ICE_BLOCK_2), 0u32, None);
+    for _ in 0..3000 {
+        still(&mut run, &mut stops, [false; 4]);
+        if removed(&run, ICE_BLOCK_2) {
+            melted = Some(run.steps);
+            break;
+        }
+        let b = behaviour(&run, ICE_BLOCK_2);
+        if b != last {
+            println!("  {} {ICE_BLOCK_2} {b}", run.steps);
+            (last, since) = (b, 0);
+        } else {
+            since += 1;
+            assert!(since < 600, "the second ice block stalled at {last}");
+        }
+    }
+    println!("the second ice block melted at step {melted:?}");
+    assert!(melted.is_some(), "the second ice block melted");
+    // And the way west past where it stood is open to the stick.
+    let past_block = Vec3::new(-68.0, 3.4, -58.0);
+    let west = fight_to(
+        &mut run,
+        &mut stops,
+        &[],
+        &[],
+        past_block,
+        3000,
+        &|run: &Run| flat(run.hero().pivot, past_block) < 2.0,
+    );
+    println!(
+        "past the second ice block {} at {}",
+        west.ended,
+        run.hero().pivot
+    );
+    assert!(
+        west.ended,
+        "past the second ice block: {}",
+        run.hero().pivot
+    );
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
 }
+
+/// openspec AS.776: west of the second ice block, set down where the way
+/// test leaves him: the stick and the attack through the two brick walls
+/// (each laid as he comes, beaten, taken off), then the third push block
+/// pushed south by the stick into the third start's beam until it stops,
+/// and the third ice block melted and taken off. A stall (no change in 600
+/// steps) ends it.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_208s_way_west_of_the_second_ice_block() {
+    println!("load at start: {}", load());
+    let mut stops = Vec::new();
+    let mut run = joined_208(&mut stops);
+    for k in 0..6000u32 {
+        still(&mut run, &mut stops, [false; 4]);
+        if k > 200 && scene_of(&run).is_none() && !guacamole::anchors::scene_holds(&run.vm) {
+            break;
+        }
+    }
+    run.put(Vec3::new(-68.0, 3.4, -58.0), 270.0);
+    let flat = |a: Vec3, b: Vec3| Vec3::new(a.x - b.x, 0.0, a.z - b.z).length();
+    let mut walls = Vec::new();
+    for (wall, past) in [
+        ("Wall_Spawner_Template(6)", Vec3::new(-95.0, 5.0, -57.0)),
+        ("Wall_Spawner_Template(7)", Vec3::new(-103.0, 5.0, -40.0)),
+    ] {
+        let f = fight_to(
+            &mut run,
+            &mut stops,
+            &[wall],
+            &[wall],
+            past,
+            3000,
+            &|run: &Run| flat(run.hero().pivot, past) < 2.0,
+        );
+        let laid = f.log.iter().any(|(_, _, b)| b == "main loop");
+        println!(
+            "{wall}: past {} at step {} at {}, laid {laid}, removed {}",
+            f.ended,
+            run.steps,
+            run.hero().pivot,
+            removed(&run, wall)
+        );
+        walls.push((f.ended, laid, removed(&run, wall)));
+    }
+    // Unlisted, (6) held him short of (-95, -57) and (7) of the way north
+    // past the push block, each an invisible wall.
+    assert!(
+        walls.iter().all(|w| *w == (true, true, true)),
+        "both walls laid, beaten and past: {walls:?}"
+    );
+    // The third set: north of the push block, the stick south until it
+    // stops moving.
+    let block = run.at(PUSH_BLOCK_9);
+    let north = Vec3::new(block.x, block.y, block.z + 4.5);
+    let to = fight_to(&mut run, &mut stops, &[], &[], north, 3000, &|run: &Run| {
+        flat(run.hero().pivot, north) < 1.0
+    });
+    assert!(
+        to.ended,
+        "north of the third push block: {}",
+        run.hero().pivot
+    );
+    let (mut last, mut moves, mut still_for) = (behaviour(&run, PUSH_BLOCK_9), 0u32, 0u32);
+    for _ in 0..1500 {
+        let me = run.hero().pivot;
+        let b = run.at(PUSH_BLOCK_9);
+        run.bench.view = (b.x - me.x).atan2(-10.0).to_degrees();
+        run.bench.hold_view = true;
+        step(&mut run, &mut stops, Stick::new(0.0, 1.0), [false; 4]);
+        let bh = behaviour(&run, PUSH_BLOCK_9);
+        if bh != last {
+            moves += u32::from(bh == "2. moving");
+            (last, still_for) = (bh, 0);
+        } else {
+            still_for += 1;
+        }
+        if moves > 0 && still_for > 300 {
+            break;
+        }
+    }
+    run.bench.hold_view = false;
+    println!(
+        "the third push block: {moves} moves to {}",
+        run.at(PUSH_BLOCK_9)
+    );
+    assert!(moves >= 2, "pushed south: {moves}");
+    let (mut last, mut since, mut melted) = (behaviour(&run, ICE_BLOCK_3), 0u32, None);
+    for _ in 0..3000 {
+        still(&mut run, &mut stops, [false; 4]);
+        if removed(&run, ICE_BLOCK_3) {
+            melted = Some(run.steps);
+            break;
+        }
+        let b = behaviour(&run, ICE_BLOCK_3);
+        if b != last {
+            println!("  {} {ICE_BLOCK_3} {b}", run.steps);
+            (last, since) = (b, 0);
+        } else {
+            since += 1;
+            assert!(since < 600, "the third ice block stalled at {last}");
+        }
+    }
+    println!("the third ice block melted at step {melted:?}");
+    assert!(melted.is_some(), "the third ice block melted");
+    // The fourth set (openspec AS.776): listed, its block stands across the
+    // way to Setup_003's first trigger as an ice block waiting on its beam
+    // (unlisted, an invisible wall), and its start beams to the pivot.
+    assert_eq!(behaviour(&run, ICE_BLOCK_4), "wait for beam to hit");
+    // Its post runs its script, drawn where it stands (unlisted, its box
+    // stands undrawn: an invisible wall).
+    assert_eq!(behaviour(&run, "Reflect_Post(1)"), "wait forever");
+    let (start_4, pivot_3) = (run.at("Reflect_Start(4)"), run.at("Reflect_Pivot_Round(3)"));
+    let fourth = beams(&run);
+    println!("the fourth set's beams: {fourth:?}");
+    assert!(
+        fourth
+            .iter()
+            .any(|(from, end, _)| flat(*from, start_4) < 4.0 && flat(*end, pivot_3) < 1.0),
+        "the fourth start's beam to its pivot: {fourth:?}"
+    );
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
+}
+
+/// openspec AS.402: Setup_003 on its own triggers. The way to its first
+/// trigger is held at the fourth ice block (AS.796), so he's set down past
+/// it, by the trigger; then the stick and the attack at its foes until its
+/// controller is off, 24,000 steps at most.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_208s_setup_003_by_its_own_triggers() {
+    println!("load at start: {}", load());
+    let mut stops = Vec::new();
+    let mut run = joined_208(&mut stops);
+    for k in 0..6000u32 {
+        still(&mut run, &mut stops, [false; 4]);
+        if k > 200 && scene_of(&run).is_none() && !guacamole::anchors::scene_holds(&run.vm) {
+            break;
+        }
+    }
+    assert_eq!(behaviour(&run, SETUP_003_CONTROLLER), "asleep");
+    let trigger = run.at("Setup_003_Trigger(1)");
+    run.put(trigger, 300.0);
+    let mut held = 0;
+    while held < 600 && behaviour(&run, SETUP_003_CONTROLLER).starts_with("bomber - execute")
+        || held < 60
+    {
+        still(&mut run, &mut stops, [false; 4]);
+        held += 1;
+    }
+    println!(
+        "on the trigger {held} steps: {}, the reveal {}",
+        behaviour(&run, SETUP_003_CONTROLLER),
+        behaviour(&run, "Cyclops_Bomber_IGC_Trigger")
+    );
+    // On the trigger the controller runs the bomber's reveal: past its
+    // wait, the reveal playing or played (a break fails here, not at the
+    // cap).
+    let on = behaviour(&run, SETUP_003_CONTROLLER);
+    assert!(
+        !["asleep", "bomber - execute trigger"].contains(&on.as_str()),
+        "Setup_003 woken by its trigger: {on}"
+    );
+    assert!(
+        ["cutscene out", "done", "removed"]
+            .contains(&behaviour(&run, "Cyclops_Bomber_IGC_Trigger").as_str()),
+        "the bomber's reveal"
+    );
+    let fought = fight_to(
+        &mut run,
+        &mut stops,
+        &SETUP_003_FOES,
+        &[SETUP_003_CONTROLLER, "Cyclops_Bomber_IGC_Trigger"],
+        Vec3::new(-151.8, 8.2, -33.9),
+        24000,
+        &|run: &Run| removed(run, SETUP_003_CONTROLLER),
+    );
+    for (step, n, b) in &fought.log {
+        println!("  {step} {n} {b}");
+    }
+    println!(
+        "setup_003: ended {} at step {}, health {:?}, scenes {:?}, at {}",
+        fought.ended,
+        run.steps,
+        fought.health,
+        fought.scenes,
+        run.hero().pivot
+    );
+    assert!(fought.ended, "Setup_003's controller off: {:?}", fought.log);
+    for n in SETUP_003_FOES {
+        assert!(
+            first_in(&fought.log, n, &["removed"]).is_some(),
+            "{n} beaten"
+        );
+    }
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
+}
+
+/// openspec AS.757: over the river's north edge and back. The level mesh's
+/// wall there has a 4 m gap (x -30.5, z -31 to -27): the stick north from
+/// the river takes him over it, 20 m down, and the level's jump pad at the
+/// drop's foot (`PvP_JumpPad_NORMAL(3)`) carries him back up onto the
+/// river. Unlisted, he stood on it and stayed down. A stall (no move in 300
+/// steps off the pad) ends it.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_208s_river_edge_drops_him_and_its_jump_pad_brings_him_back() {
+    println!("load at start: {}", load());
+    let mut stops = Vec::new();
+    let mut run = joined_208(&mut stops);
+    for k in 0..6000u32 {
+        still(&mut run, &mut stops, [false; 4]);
+        if k > 200 && scene_of(&run).is_none() && !guacamole::anchors::scene_holds(&run.vm) {
+            break;
+        }
+    }
+    let flat = |a: Vec3, b: Vec3| Vec3::new(a.x - b.x, 0.0, a.z - b.z).length();
+    run.put(Vec3::new(-31.0, 4.7, -31.0), 0.0);
+    let over = Vec3::new(-31.0, 0.0, -20.0);
+    let mut fell = None;
+    for _ in 0..600 {
+        let me = run.hero().pivot;
+        run.bench.view = (over.x - me.x).atan2(over.z - me.z).to_degrees();
+        run.bench.hold_view = true;
+        step(&mut run, &mut stops, Stick::new(0.0, 1.0), [false; 4]);
+        if run.hero().pivot.y < -10.0 && run.hero().footing.supported {
+            fell = Some(run.steps);
+            break;
+        }
+    }
+    println!("over the edge at step {fell:?}, at {}", run.hero().pivot);
+    assert!(
+        fell.is_some(),
+        "over the gap and down: {}",
+        run.hero().pivot
+    );
+    let pad = run.at(UNDER_RIVER_PAD);
+    let (mut back, mut last, mut since) = (None, run.hero().pivot, 0u32);
+    for _ in 0..1800 {
+        let me = run.hero().pivot;
+        if me.y > 3.0 && run.hero().footing.supported {
+            back = Some((run.steps, me));
+            break;
+        }
+        let to = if me.y < -10.0 {
+            pad
+        } else {
+            Vec3::new(-28.0, 0.0, -31.0)
+        };
+        run.bench.view = (to.x - me.x).atan2(to.z - me.z).to_degrees();
+        run.bench.hold_view = true;
+        let push = if flat(me, pad) < 0.5 && me.y < -10.0 {
+            0.0
+        } else {
+            1.0
+        };
+        step(&mut run, &mut stops, Stick::new(0.0, push), [false; 4]);
+        if run.hero().pivot.distance(last) < 0.01 {
+            since += 1;
+            assert!(
+                since < 300,
+                "held at {} by the pad ({}): {}",
+                run.hero().pivot,
+                behaviour(&run, UNDER_RIVER_PAD),
+                run.steps
+            );
+        } else {
+            (last, since) = (run.hero().pivot, 0);
+        }
+    }
+    println!(
+        "back up at {back:?}, the pad {}",
+        behaviour(&run, UNDER_RIVER_PAD)
+    );
+    assert!(back.is_some(), "back up on the river: {}", run.hero().pivot);
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
+}
+
+/// The jump pad under the river's north edge (openspec AS.757).
+const UNDER_RIVER_PAD: &str = "PvP_JumpPad_NORMAL(3)";
+
+/// Setup_003's controller and the foes its script names (openspec AS.402).
+const SETUP_003_CONTROLLER: &str = "Setup_003_Controller";
+const SETUP_003_FOES: [&str; 9] = [
+    "Enemy_BombThrower(3)",
+    "Enemy_Cyclops_Near(4)",
+    "Enemy_Cyclops_Near(5)",
+    "Enemy_Cyclops_Near(16)",
+    "Enemy_Cyclops_Near(17)",
+    "Enemy_Cyclops_Near(18)",
+    "Enemy_Cyclops_Near(19)",
+    "Enemy_Cyclops_Near(25)",
+    "Enemy_Cyclops_Near(26)",
+];
+
+/// The third beam set's push block and ice block (openspec AS.776).
+const PUSH_BLOCK_9: &str = "Push_Block_Template(9)";
+const ICE_BLOCK_3: &str = "Melting_Ice_blocks_reflect_3";
+
+/// The fourth beam set's ice block (openspec AS.776).
+const ICE_BLOCK_4: &str = "Melting_Ice_blocks_reflect_4";
 
 /// Setup_002's spike gate by the spinners (openspec AS.401).
 const GATE: &str = "Spike_Gate_Metal_Template(1)";

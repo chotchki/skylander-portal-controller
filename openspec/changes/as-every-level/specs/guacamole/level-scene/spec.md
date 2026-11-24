@@ -327,6 +327,20 @@ Level 208's first ice block SHALL melt by its beam puzzle: once the block's scen
 - **WHEN** a hero on the lower terrace presses △ at the pivot's switch until its beam reaches the ice block
 - **THEN** the block melts and goes, and he walks west to Setup_002's trigger with nothing stopped
 
+### Requirement: Level 208's way past its second ice block
+Level 208's second and third ice blocks SHALL melt by their own beam sets, a cone looked from a crystal hung on another actor measured from that actor's pivot (the second's relay sees its block 2.56° off its facing from the push block's pivot, 3.09° from its own node, past the 3° half width); between them two brick walls lay their bricks as he comes and fall to his attacks.
+
+#### Scenario: West of the river wall
+- **WHEN** a hero pushes the second push block to its track's end and presses △ at the pivot's switch, then walks west attacking the walls and pushes the third push block south
+- **THEN** the second block melts, both walls fall and the third block melts, with nothing stopped
+
+### Requirement: Level 208's river edge
+Level 208 SHALL bring a hero who goes over the frozen river's north edge back up: the level's mesh leaves a 4 m gap where the river's floor runs to a 20 m drop, and the jump pad at the drop's foot carries him back onto the river (headless 25 s from the edge; on the Mac he was back up 5 s after reaching the pad).
+
+#### Scenario: Over the edge and back
+- **WHEN** a hero holds the stick north over the gap and then walks onto the jump pad below
+- **THEN** he lands back on the frozen river
+
 ### Requirement: Level 205's way off its start island
 Level 205's crane SHALL lay its boat east from the Giant Pirate Head's stage to the far pier, its hint pan to the wheel at the pier's south end, and the wheel's talk button swing the crane and its mast 90° so the boat lies from the pier's end to Setup_001's yard, a second press swinging them back.
 

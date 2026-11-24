@@ -156,6 +156,21 @@ pub fn river(level: &str) -> impl Iterator<Item = &'static str> {
     RIVER.iter().copied().filter(move |_| on)
 }
 
+/// Under the river's north edge (openspec AS.757): the level mesh's wall
+/// there leaves a 4 m gap (x -30.5, z -31 to -27) where the river's floor
+/// runs out to a 20 m drop onto the ground below, which holds loot and the
+/// heavy Biclops' start. The level's way back up is the jump pad at the
+/// drop's foot (`PvP_JumpPad_NORMAL(3)`, `PR_PvP_jumpPad.ai`, 201's and
+/// chapter 1's): unlisted, a hero who went over stayed down there.
+pub const UNDER_RIVER: [&str; 1] = ["PvP_JumpPad_NORMAL(3)"];
+
+/// [`UNDER_RIVER`] on 208 alone (201 and chapter 1 name pads of the same
+/// name of their own).
+pub fn under_river(level: &str) -> impl Iterator<Item = &'static str> {
+    let on = level == LEVEL;
+    UNDER_RIVER.iter().copied().filter(move |_| on)
+}
+
 /// The second beam puzzle (openspec AS.701's set 2), past the river wall,
 /// listed by name as [`BEAM`] lists the first (the reflect scripts are
 /// shared, and listed by path they'd wake every set on every level that
@@ -181,9 +196,58 @@ pub fn beam_2(level: &str) -> impl Iterator<Item = &'static str> {
     BEAM_2.iter().copied().filter(move |_| on)
 }
 
+/// West of the second ice block, by name (openspec AS.776): each solid to
+/// actors and unlisted was an invisible wall, a box standing that no
+/// attack beat.
+/// - **Two brick walls** (`Wall_Spawner_Template(6)` and `(7)`,
+///   `Brick_Wall_Spawner`) across the way west: listed, each lays its
+///   bricks as he comes in range and a few hits take it off, as the
+///   plaza's and the river's.
+/// - **The third beam set** (`Reflect_Start(3)`, `Reflect_Start.ai`, and
+///   `Melting_Ice_blocks_reflect_3`, `Ice_Cube.ai`): its start beams east
+///   across the push block's track (`Push_Block_Template(9)`, on the
+///   generic listing, its crystal art [`BEAM_2`]'s template); pushed south
+///   twice into the beam, the crystal relays it south and the block melts.
+pub const WEST: [&str; 4] = [
+    "Wall_Spawner_Template(6)",
+    "Wall_Spawner_Template(7)",
+    "Reflect_Start(3)",
+    "Melting_Ice_blocks_reflect_3",
+];
+
+/// [`WEST`] on 208 alone.
+pub fn west(level: &str) -> impl Iterator<Item = &'static str> {
+    let on = level == LEVEL;
+    WEST.iter().copied().filter(move |_| on)
+}
+
+/// The fourth beam set, by name (openspec AS.776): its ice block
+/// (`Melting_Ice_blocks_reflect_4`, `Ice_Cube.ai`) stands across the way
+/// to Setup_003's first trigger, unlisted an invisible wall. Listed it
+/// stands as an ice block, its start (`Reflect_Start(4)`) beams to the
+/// pivot (`Reflect_Pivot_Round(3)`), whose switch turns it 45° a press, and
+/// the post (`Reflect_Post(1)`) faces the block. What powers the post is
+/// unread (AS.796): no pivot facing points at it, so the block doesn't melt
+/// yet.
+pub const SET_4: [&str; 4] = [
+    "Reflect_Start(4)",
+    "Reflect_Pivot_Round(3)",
+    "Reflect_Post(1)",
+    "Melting_Ice_blocks_reflect_4",
+];
+
+/// [`SET_4`] on 208 alone.
+pub fn set_4(level: &str) -> impl Iterator<Item = &'static str> {
+    let on = level == LEVEL;
+    SET_4.iter().copied().filter(move |_| on)
+}
+
 /// What fights on level 208 (openspec AS.345), walked as creatures: the
 /// reveal's five Ice Chompies, then Setup_002's controller, its six foes
-/// (`Setup_002_Enemies`) and Noodles' scene at its first gate.
+/// (`Setup_002_Enemies`) and Noodles' scene at its first gate; then
+/// Setup_003's controller (openspec AS.402), the nine foes its script
+/// names (`enemy a` to `enemy i`: the bomb thrower and eight Cyclopes) and
+/// the bomber's reveal by the fourth ice block.
 pub const WAY: Encounter = Encounter {
     level: LEVEL,
     placements: &[
@@ -200,6 +264,17 @@ pub const WAY: Encounter = Encounter {
         "Enemy_Cyclops_Near(24)",
         "Enemy_Biclops_Heavy_S2(1)",
         "IGC_Noodles_FirstGate",
+        "Setup_003_Controller",
+        "Enemy_BombThrower(3)",
+        "Enemy_Cyclops_Near(4)",
+        "Enemy_Cyclops_Near(5)",
+        "Enemy_Cyclops_Near(16)",
+        "Enemy_Cyclops_Near(17)",
+        "Enemy_Cyclops_Near(18)",
+        "Enemy_Cyclops_Near(19)",
+        "Enemy_Cyclops_Near(25)",
+        "Enemy_Cyclops_Near(26)",
+        "Cyclops_Bomber_IGC_Trigger",
     ],
     clones: &[],
     steered: &[],
@@ -328,8 +403,90 @@ mod tests {
         }
         // 208's other walls and sets stay off until a kid's way reaches
         // them.
-        for name in ["Wall_Spawner_Template(6)", "Reflect_Start(3)"] {
+        for name in ["Wall_Spawner_Template(8)", "Reflect_Start(5)"] {
             assert!(!on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+        }
+    }
+
+    /// openspec AS.776: the way west of the second ice block is on 208's
+    /// listing and on no other level's; the fourth set, the wall past it
+    /// and the ice traps stay off.
+    #[test]
+    fn level_208s_way_west_and_its_traps_are_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        assert_eq!(west(LEVEL).collect::<Vec<_>>(), WEST);
+        for other in ["level_202", "level_205_piratecards"] {
+            let off = level_config(Mode::Play, &files, 5, other);
+            for name in WEST {
+                assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+                assert!(
+                    !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
+                    "{name} on {other}"
+                );
+            }
+            assert_eq!(west(other).count(), 0);
+        }
+        for name in [
+            "Wall_Spawner_Template(6)",
+            "Wall_Spawner_Template(7)",
+            "Melting_Ice_blocks_reflect_3",
+            "Reflect_Start(3)",
+        ] {
+            assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+        }
+        for name in [
+            "Wall_Spawner_Template(8)",
+            "Reflect_Start(5)",
+            "Melting_Ice_blocks_reflect_5",
+            "Ice_Trap_Large(1)",
+        ] {
+            assert!(!on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+        }
+    }
+
+    /// openspec AS.757: the jump pad under the river's north edge is on
+    /// 208's listing and on no other level's (201 and chapter 1 name their
+    /// own pads by the same name).
+    #[test]
+    fn level_208s_pad_under_the_river_is_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        assert_eq!(under_river(LEVEL).collect::<Vec<_>>(), UNDER_RIVER);
+        for name in UNDER_RIVER {
+            assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+        }
+        for other in ["level_202", "level_205_piratecards"] {
+            let off = level_config(Mode::Play, &files, 5, other);
+            for name in UNDER_RIVER {
+                assert!(
+                    !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
+                    "{name} on {other}"
+                );
+            }
+            assert_eq!(under_river(other).count(), 0);
+        }
+    }
+
+    /// openspec AS.776: the fourth beam set is on 208's listing and on no
+    /// other level's.
+    #[test]
+    fn level_208s_fourth_set_is_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        assert_eq!(set_4(LEVEL).collect::<Vec<_>>(), SET_4);
+        for name in SET_4 {
+            assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+        }
+        for other in ["level_202", "level_205_piratecards"] {
+            let off = level_config(Mode::Play, &files, 5, other);
+            for name in SET_4 {
+                assert!(
+                    !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
+                    "{name} on {other}"
+                );
+            }
+            assert_eq!(set_4(other).count(), 0);
         }
     }
 

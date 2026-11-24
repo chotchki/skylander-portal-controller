@@ -3750,8 +3750,18 @@ impl ScriptWorld {
         };
         let word = |n: &str| call.words.iter().find(|(k, _)| *k == n).map(|(_, w)| *w);
         let from_value = named("_fromLHS").ok_or(HostFault::Nothing)?;
-        let from = self.point(from_value, engine).ok_or(HostFault::Nothing)?;
         let looker = self.handle(from_value);
+        // A cone looked from a clone hung on another actor (a beam's emitter
+        // on its crystal's node) is taken from what it hangs on's pivot
+        // (openspec AS.755: at its track's end, the one place its crystal
+        // is lit, 208's push block sees its ice block 2.56° off the
+        // relay's facing from its own pivot and 3.09° from the relay's
+        // node, past the 3° half width).
+        let from = match looker.and_then(|l| self.carrier(l)) {
+            Some(c) => self.position(c, engine),
+            None => self.point(from_value, engine),
+        }
+        .ok_or(HostFault::Nothing)?;
         let facing = named("_RHSfacing").and_then(|v| v.as_f32()).unwrap_or(0.0);
         let width = named("_RHSfov").and_then(|v| v.as_f32()).unwrap_or(0.0);
         let limit = named("_RHS").unwrap_or(Value::Int(0));
@@ -3766,8 +3776,21 @@ impl ScriptWorld {
             None => (named("_LHS").into_iter().collect(), false),
         };
         let mut found = Vec::new();
+        let carrier = looker.and_then(|l| self.carrier(l));
         for t in targets {
             if from_set && looker.is_some() && self.handle(t) == looker {
+                continue;
+            }
+            // Nor, from a carrier, what hangs on that same carrier, or the
+            // carrier itself (AS.755): an emitter's script takes its
+            // carrier's own target and end out of the set it looks
+            // through, which a cone from the carrier's pivot would hold.
+            if from_set
+                && carrier.is_some()
+                && self
+                    .handle(t)
+                    .is_some_and(|h| Some(h) == carrier || self.carrier(h) == carrier)
+            {
                 continue;
             }
             let Some(p) = self.point(t, engine) else {
@@ -4161,6 +4184,18 @@ impl ScriptWorld {
             })
             .map(|(h, _)| Value::Entity(*h))
             .collect()
+    }
+
+    /// What actor `h` hangs on, a node of another actor or that actor
+    /// itself (openspec AS.755); none for one hung on nothing or on itself.
+    pub(crate) fn carrier(&self, h: Handle) -> Option<Handle> {
+        let a = self.actors.get(&h)?;
+        let owner = match self.object(Some(a.attach)) {
+            Some(Object::Node(owner, _)) => Some(owner),
+            None => self.actor_of(Some(a.attach)),
+            _ => None,
+        }?;
+        (owner != h && self.actors.contains_key(&owner)).then_some(owner)
     }
 
     /// The actors something not taken off hangs on a node of, each once in
@@ -4569,6 +4604,29 @@ impl ScriptWorld {
             false => Aim::Still,
         };
         Some((steer_physics(&a.physics), aim))
+    }
+
+    /// How the engine walks `hero` as [`ScriptWorld::engine_walk`] reads
+    /// him (the watch's, openspec AS.756): `mover`, `written` (a script set
+    /// his walk this step), `pad` (the engine's model on the stick) or
+    /// `still` (the engine's model, his controller no pad), with his ground
+    /// top speed in ft/s; none for no actor.
+    pub fn walk_read(&self, hero: Handle) -> Option<String> {
+        let a = self.actors.get(&hero)?;
+        let how = if a.physics.ground_max_speed >= MOVER_TOP_SPEED {
+            "mover"
+        } else if self.walk_written.contains(&hero) {
+            "written"
+        } else if self
+            .controllers
+            .iter()
+            .any(|c| a.controller == Value::Entity(*c))
+        {
+            "pad"
+        } else {
+            "still"
+        };
+        Some(format!("{how} {:.1}", a.physics.ground_max_speed))
     }
 
     /// One game frame of a hero whose scripts walk him: the engine alone
@@ -9905,6 +9963,94 @@ mod fight_tests {
         assert_eq!(
             ask(&mut w, &mut e, &words),
             Answer::Found(vec![Value::Entity(C2)])
+        );
+    }
+
+    /// openspec AS.755: a cone from a clone hung on another actor, on a
+    /// node of it or on it, is measured from that actor's pivot, its facing
+    /// still its own; unhung it's measured from its own place.
+    #[test]
+    fn check_fov_from_a_hung_clone_is_taken_from_what_it_hangs_on() {
+        let mut e = pit();
+        let mut w = world();
+        // The carrier at the origin; the clone 2 m east of it, facing north;
+        // the target 10 m north of the carrier: 11.3° off from the clone,
+        // dead ahead from the carrier.
+        w.actors.insert(C3, chompy(Vec3::ZERO, 0.0));
+        w.actors.insert(C2, chompy(Vec3::new(0.0, 0.0, 10.0), 0.0));
+        let call = op(
+            Class::CheckFov,
+            C1,
+            vec![
+                ("_RHSfacing", Some(Value::Float(0.0))),
+                ("_RHSfov", Some(Value::Int(6))),
+                ("_fromLHS", Some(Value::Entity(C1))),
+                ("_LHS", Some(Value::Entity(C2))),
+                ("_RHS", Some(Value::Int(0))),
+            ],
+            Vec::new(),
+        );
+        let mut words = call.clone();
+        words.words = vec![("_relOperator", 2)];
+        let clone = |attach: Value| Actor {
+            template: Some(Obj { unit: 5, index: 7 }),
+            position: Vec3::new(2.0, 0.0, 0.0),
+            attach,
+            ..Actor::blank()
+        };
+        w.actors.insert(C1, clone(Value::Null));
+        assert_eq!(
+            ask(&mut w, &mut e, &words),
+            Answer::Found(Vec::new()),
+            "unhung"
+        );
+        let node = w.objs.value(Object::Node(C3, 1));
+        for (how, attach) in [("on its node", node), ("on it", Value::Entity(C3))] {
+            w.actors.insert(C1, clone(attach));
+            assert_eq!(w.carrier(C1), Some(C3), "{how}");
+            assert_eq!(
+                ask(&mut w, &mut e, &words),
+                Answer::Found(vec![Value::Entity(C2)]),
+                "{how}"
+            );
+        }
+        // Through a set, what hangs on the same carrier and the carrier
+        // itself are left out, at its pivot though they stand.
+        let own = 0x6100_0030;
+        w.actors.insert(
+            own,
+            Actor {
+                position: Vec3::ZERO,
+                ..clone(node)
+            },
+        );
+        w.actors.insert(C1, clone(node));
+        let mut through = op(
+            Class::CheckFov,
+            C1,
+            vec![
+                ("_RHSfacing", Some(Value::Float(0.0))),
+                ("_RHSfov", Some(Value::Int(6))),
+                ("_fromLHS", Some(Value::Entity(C1))),
+                ("_LHS", Some(Value::Null)),
+                ("_RHS", Some(Value::Int(0))),
+            ],
+            vec![("_LHS", [own, C3, C2].map(Value::Entity).to_vec())],
+        );
+        through.words = vec![("_relOperator", 2)];
+        assert_eq!(
+            ask(&mut w, &mut e, &through),
+            Answer::Found(vec![Value::Entity(C2)]),
+            "its carrier's own"
+        );
+        w.actors.remove(&own);
+        // Hung on itself, it's its own.
+        w.actors.insert(C1, clone(Value::Entity(C1)));
+        assert_eq!(w.carrier(C1), None);
+        assert_eq!(
+            ask(&mut w, &mut e, &words),
+            Answer::Found(Vec::new()),
+            "on itself"
         );
     }
 

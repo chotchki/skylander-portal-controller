@@ -89,6 +89,11 @@ impl Embodied {
         let next = BodyId(ACTOR_BODIES + self.ids.len() as u32);
         *self.ids.entry(h).or_insert(next)
     }
+
+    /// The actor body `id` was made for (the watch's read, AS.756).
+    pub(crate) fn whose(&self, id: BodyId) -> Option<Handle> {
+        self.ids.iter().find(|(_, b)| **b == id).map(|(h, _)| *h)
+    }
 }
 
 /// Each hero's and each awake creature's body where the step left it (the
