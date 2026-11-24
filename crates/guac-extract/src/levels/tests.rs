@@ -1436,3 +1436,14 @@ fn a_placed_models_viseme_set_is_its_face() {
     assert_eq!(names, ["Chest_A.ma", "Chest_E.ma"]);
     assert!(!f.shapes[0].tracks.is_empty());
 }
+
+/// openspec AS.820: with no `global.bld` under the dump, global's lines are
+/// none and the reason is listed, so a level's own lips still land.
+#[test]
+fn a_missing_global_bld_leaves_no_global_lines_and_says_why() {
+    let tmp = tempfile::tempdir().unwrap();
+    let g = GlobalLines::read(tmp.path());
+    assert!(g.lines.is_empty());
+    assert_eq!(g.refused.len(), 1);
+    assert_eq!(g.refused[0].0, crate::roster::GLOBAL);
+}

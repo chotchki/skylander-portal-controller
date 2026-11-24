@@ -1214,6 +1214,28 @@ pub fn global_lines(
     Ok((lines, refused))
 }
 
+/// `global.bld`'s lines as every level's lips part carries them
+/// ([`global_lines`]), read once a stage. A `global.bld` that's missing or
+/// won't read leaves none, the reason among `refused`, so a level's own
+/// lines and faces still land.
+#[derive(Debug, Clone, Default)]
+pub struct GlobalLines {
+    pub lines: Vec<guac_ir::lips::Line>,
+    pub refused: Vec<(String, String)>,
+}
+
+impl GlobalLines {
+    pub fn read(usrdir: &Path) -> Self {
+        match global_lines(usrdir) {
+            Ok((lines, refused)) => Self { lines, refused },
+            Err(why) => Self {
+                lines: Vec::new(),
+                refused: vec![(crate::roster::GLOBAL.to_owned(), why)],
+            },
+        }
+    }
+}
+
 /// The lips part (openspec AS.820): each data info of `igz` (the level's
 /// `level.bld`) and of `pack` (its English pack) whose viseme stream reads,
 /// in the sounds part's order, and each model a placement names whose body

@@ -612,7 +612,7 @@ fn levels_stage(
     let identity = dir.manifest().identity.clone();
     // global.bld's lines (openspec AS.820), read once for every level's
     // lips part.
-    let mut global_lines: Option<std::result::Result<Vec<guac_ir::lips::Line>, String>> = None;
+    let mut global_lines: Option<levels::GlobalLines> = None;
     let store: HashSet<String> = dir
         .manifest()
         .outputs
@@ -764,13 +764,14 @@ fn levels_stage(
                                 .map(guac_formats::igz::Igz::parse)
                                 .transpose()
                                 .map_err(|e| format!("{}: {e}", crate::sounds::ENGLISH_PACK))?;
-                            let global = global_lines.get_or_insert_with(|| {
-                                levels::global_lines(&usrdir)
-                                    .map(|(lines, _)| lines)
-                                    .map_err(|why| format!("global.bld's lines: {why}"))
-                            });
-                            let global = global.as_ref().map_err(Clone::clone)?;
-                            levels::lips(igz, pack.as_ref(), global, level, id)
+                            let global = global_lines
+                                .get_or_insert_with(|| levels::GlobalLines::read(&usrdir));
+                            levels::lips(igz, pack.as_ref(), &global.lines, level, id).map(
+                                |mut r| {
+                                    r.ir.refused.extend(global.refused.iter().cloned());
+                                    r
+                                },
+                            )
                         })
                         .and_then(|r| encoded(ir, dir, &rel, r)),
                     levels::SPRITES => {
