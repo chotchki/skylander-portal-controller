@@ -3327,3 +3327,188 @@ fn cynders_breath_lands_up_and_down_a_slope_as_on_the_level() {
         assert_eq!(landed, 6, "{label}");
     }
 }
+
+/// openspec AS.835: Cynder's breath at a foe in play on top of the bank by
+/// the fence, from below it, where the as-aim review's TV run pressed 83
+/// times for one kill. The bench above sets her facing and holds its foe;
+/// here the setup's Chompy is woken and left to its own script on the
+/// bank's top (in its fight, not held; set back there before each breath,
+/// as the TV's stood there), she walks below it by the stick and is turned
+/// to it by the stick held at it, as a kid aims her: every breath hurts it.
+/// (The review's driver turned her with a third of the stick, which the
+/// stick's per-axis dead zone reads as a push along one axis alone: she
+/// faced 285 degrees, 42 off the foe, and the breath's autoaim missed it,
+/// as the original's would. A two-step tap misses too: her last breath's
+/// aim turns her to a pot by the bank, and two steps don't turn her back.)
+#[test]
+#[ignore = "reads the Giants dump"]
+fn cynders_breath_lands_on_a_foe_in_play_on_the_banks_top() {
+    use guac_motion::seam::Vec3;
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    const FOE: &str = "Enemy_Chompy(1)";
+    // The review's spot below the bank, the foe on its top, and a spot
+    // down the slope she walks up from.
+    let below = Vec3::new(121.19, 14.89, -147.35);
+    let top = Vec3::new(117.24, 16.55, -141.37);
+    let from = Vec3::new(122.3, 13.5, -149.6);
+    let (mut run, _) = run_on_level(
+        Mode::Play,
+        LEVEL_201,
+        Setup {
+            character: Some(CYNDER),
+            lightning: true,
+            props: true,
+            interface: true,
+            posed_rigs: true,
+            stage: Some(FOE),
+            ..Setup::default()
+        },
+    );
+    run.world.skip_cutscenes = true;
+    let mut stops: Vec<String> = Vec::new();
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    // Past the landing's hand-over, which sets him down where he lands.
+    for _ in 0..150 {
+        stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+    }
+    let (foe, foe_at) = run.placed(FOE);
+    let hp = |run: &Run| -> Option<f32> {
+        let id = run.vm.placement_of(foe)?;
+        let d = run.vm.local(id, "description").map(|v| run.vm.value(v))?;
+        let c = run.vm.field(d, "creature info").map(|v| run.vm.value(v))?;
+        run.vm.field(c, "hp").map(|v| run.vm.value(v))?.as_f32()
+    };
+    let fill = |run: &mut Run| {
+        if let Some(id) = run.vm.placement_of(foe)
+            && let Some(d) = run.vm.local(id, "description").map(|v| run.vm.value(v))
+            && let Some(c) = run.vm.field(d, "creature info").map(|v| run.vm.value(v))
+        {
+            run.vm.set_field(c, "hp", Value::Float(100_000.0));
+        }
+    };
+    let mut woke = false;
+    for _ in 0..200 {
+        run.put(foe_at + Vec3::new(0.0, 0.0, 6.0), 180.0);
+        stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+        if run.world.actor(foe).is_some_and(|a| a.active) && hp(&run).is_some() {
+            woke = true;
+            break;
+        }
+    }
+    assert!(woke, "{FOE} woke by her");
+    let ground = |run: &Run, p: Vec3| {
+        let hit = guac_motion::ground::ray(
+            &run.bench.world,
+            Vec3::new(p.x, p.y + 6.0, p.z),
+            Vec3::NEG_Y,
+            20.0,
+            &[],
+        )
+        .expect("ground");
+        Vec3::new(p.x, hit.point.y, p.z)
+    };
+    run.put(ground(&run, from), 0.0);
+    // The stick at a heading across the ground for `steps` steps.
+    let push = |run: &mut Run, heading: f32, steps: u32, stops: &mut Vec<String>| {
+        for _ in 0..steps {
+            let d = (heading - run.bench.view).to_radians();
+            run.bench.pads[0] = Pad {
+                stick: Stick::new(-d.sin(), d.cos()),
+                actions: [false; 4],
+                connected: true,
+            };
+            stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+        }
+    };
+    // Walked to the spot below the bank as a kid walks there.
+    let walk_below = |run: &mut Run, stops: &mut Vec<String>| {
+        for _ in 0..240 {
+            let at = run.hero().pivot;
+            let to = Vec3::new(below.x - at.x, 0.0, below.z - at.z);
+            if to.length() < 0.3 {
+                break;
+            }
+            push(run, guacamole::script_engine::heading_of(to), 1, stops);
+        }
+        let at = run.hero().pivot;
+        assert!(
+            Vec3::new(below.x - at.x, 0.0, below.z - at.z).length() < 0.6,
+            "walked below the bank: {at}"
+        );
+    };
+    let mut landed = 0;
+    let mut behaviours = Vec::new();
+    let mut over = Vec::new();
+    for _ in 0..6 {
+        fill(&mut run);
+        // Back on the bank's top, as the TV's stood there, and her below
+        // it (a nip knocks her off).
+        assert!(run.world.place(foe, top, 0.0));
+        walk_below(&mut run, &mut stops);
+        over.push(run.world.actor(foe).map_or(0.0, |a| a.position.y) - run.hero().pivot.y);
+        let me = run.hero().pivot;
+        let f = run.world.actor(foe).map_or(top, |a| a.position);
+        let bearing = guacamole::script_engine::heading_of(Vec3::new(f.x - me.x, 0.0, f.z - me.z));
+        // The stick held at it until she faces it: a short tap doesn't
+        // finish the turn from where her last breath's aim left her.
+        let off =
+            |run: &Run| ((run.hero().facing - bearing + 540.0).rem_euclid(360.0) - 180.0).abs();
+        for _ in 0..15 {
+            if off(&run) < 5.0 {
+                break;
+            }
+            push(&mut run, bearing, 1, &mut stops);
+        }
+        assert!(
+            off(&run) < 12.0,
+            "turned to it: {:.1} degrees off",
+            off(&run)
+        );
+        let before = hp(&run);
+        let mut hurt = false;
+        for k in 0..40 {
+            run.bench.pads[0] = Pad {
+                stick: Stick::new(0.0, 0.0),
+                actions: [k < 2, false, false, false],
+                connected: true,
+            };
+            stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+            if let (Some(a), Some(b)) = (before, hp(&run))
+                && b < a
+            {
+                hurt = true;
+            }
+        }
+        println!(
+            "press: her {} facing {:.1}, bearing {bearing:.1}, it at {f}, hurt {hurt}",
+            run.hero().pivot,
+            run.hero().facing
+        );
+        landed += u32::from(hurt);
+        behaviours.push(
+            run.vm
+                .placement_of(foe)
+                .and_then(|i| run.vm.behaviour(i))
+                .unwrap_or("-")
+                .to_owned(),
+        );
+    }
+    println!(
+        "{landed} of 6 landed, it over her by {over:?} at each press ({behaviours:?}); took {:.1?}, load at end: {}",
+        started.elapsed(),
+        load()
+    );
+    assert!(stops.is_empty(), "{stops:#?}");
+    assert!(
+        behaviours
+            .iter()
+            .all(|b| b == "battle" || b.starts_with("attack")),
+        "in its fight throughout: {behaviours:?}"
+    );
+    assert!(over.iter().all(|&h| h > 1.0), "above her: {over:?}");
+    assert_eq!(landed, 6, "every breath hurts it");
+}
