@@ -751,6 +751,19 @@ fn levels_stage(
                     levels::PARTICLES => {
                         levels::particles(igz, level, id).and_then(|r| encoded(ir, dir, &rel, r))
                     }
+                    levels::LIPS => bytes
+                        .as_ref()
+                        .map_err(Clone::clone)
+                        .and_then(|b| crate::interface::english_pack(b))
+                        .and_then(|pack| {
+                            let pack = pack
+                                .as_deref()
+                                .map(guac_formats::igz::Igz::parse)
+                                .transpose()
+                                .map_err(|e| format!("{}: {e}", crate::sounds::ENGLISH_PACK))?;
+                            levels::lips(igz, pack.as_ref(), level, id)
+                        })
+                        .and_then(|r| encoded(ir, dir, &rel, r)),
                     levels::SPRITES => {
                         let archive = format!("{}/{level}.bld", levels::LEVEL_FOLDER);
                         bytes

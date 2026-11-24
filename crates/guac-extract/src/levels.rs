@@ -218,9 +218,12 @@ pub const SPRITES: &str = "sprites";
 /// The level's own emitters (openspec AS.17, [`crate::particles::level_emitters`]):
 /// every emitter its file places, its generators and where it stands.
 pub const PARTICLES: &str = "particles";
-pub const PARTS: [&str; 11] = [
+/// The level's mouths (openspec AS.820, [`lips`]): each voice line's viseme
+/// stream and each placed model's viseme set.
+pub const LIPS: &str = "lips";
+pub const PARTS: [&str; 12] = [
     SCENE, PROPS, COLLISION, PLACEMENTS, LIGHTS, ATMOSPHERE, SCRIPT, PALETTES, NODES, PARTICLES,
-    SPRITES,
+    LIPS, SPRITES,
 ];
 /// The parts a file a level streams in needs on the TV (openspec AS.157: a
 /// hub stage's ship parts): its templates' models and where they're placed,
@@ -232,8 +235,9 @@ pub const STREAMED: [&str; 4] = [PROPS, PLACEMENTS, SCRIPT, PALETTES];
 /// sprites, which nothing draws until the interface does (openspec AT.9), so
 /// a first run hands chapter 1 over once these are in and reads the sprites
 /// after (AT.26).
-pub const PLAYED: [&str; 10] = [
+pub const PLAYED: [&str; 11] = [
     SCENE, PROPS, COLLISION, PLACEMENTS, LIGHTS, ATMOSPHERE, SCRIPT, PALETTES, NODES, PARTICLES,
+    LIPS,
 ];
 
 /// The palettes part's rule past the first run's levels (openspec AS.54:
@@ -1123,6 +1127,132 @@ pub fn palettes(
             palettes,
             loops,
         },
+        textures: Vec::new(),
+    })
+}
+
+/// Each data info of `igz` (`home` of a level's archive) whose viseme
+/// stream reads, in object order, and each whose stream doesn't, by name,
+/// with why ([`lips`]).
+pub fn lip_lines(
+    igz: &Igz<'_>,
+    home: guac_ir::sound::DataHome,
+) -> (Vec<guac_ir::lips::Line>, Vec<(String, String)>) {
+    use guac_formats::igz::layouts::{BuildDataInfo, Layout, ObjectRef, Payload};
+    use guac_ir::lips::{Line, Track, Visemes};
+    let (mut lines, mut refused) = (Vec::new(), Vec::new());
+    for (object, d) in guac_formats::sound::data_infos(igz) {
+        let Ok(d) = d else { continue };
+        let ObjectRef::Object(v) = d.info.viseme_stream else {
+            continue;
+        };
+        let label = d
+            .name()
+            .map_or_else(|| format!("{home:?} data info #{object}"), str::to_owned);
+        let stream = BuildDataInfo::read(igz, v)
+            .map_err(s)
+            .and_then(|b| match b.payload() {
+                Some(Payload::LipSync(bytes)) => {
+                    guac_formats::viseme::parse(bytes).map_err(s)
+                }
+                _ => Err("no lip-sync block".to_owned()),
+            });
+        match stream {
+            Ok(st) => lines.push(Line {
+                home,
+                object: object as u32,
+                name: d.name().map(str::to_owned),
+                visemes: Visemes {
+                    frames: st.frames,
+                    frame_time: st.frame_time,
+                    blocks: st
+                        .blocks
+                        .into_iter()
+                        .map(|b| {
+                            b.tracks
+                                .into_iter()
+                                .map(|t| match t {
+                                    guac_formats::viseme::Track::Constant(v) => {
+                                        Track::Constant(v)
+                                    }
+                                    guac_formats::viseme::Track::Spline {
+                                        degree,
+                                        knots,
+                                        points,
+                                    } => Track::Spline {
+                                        degree,
+                                        knots,
+                                        points,
+                                    },
+                                })
+                                .collect()
+                        })
+                        .collect(),
+                },
+            }),
+            Err(why) => refused.push((label, why)),
+        }
+    }
+    (lines, refused)
+}
+
+/// The lips part (openspec AS.820): each data info of `igz` (the level's
+/// `level.bld`) and of `pack` (its English pack) whose viseme stream reads,
+/// in the sounds part's order, and each model a placement names whose body
+/// lists a viseme set, its shapes as clips on its skeleton. A stream or a
+/// set that won't read is listed in `refused` and the rest land; a model
+/// with no skeleton has no face.
+pub fn lips(
+    igz: &Igz<'_>,
+    pack: Option<&Igz<'_>>,
+    level: &str,
+    identity: DumpIdentity,
+) -> Result<Read<guac_ir::lips::Lips>, String> {
+    use guac_ir::lips::{Face, Lips};
+    use guac_ir::sound::DataHome;
+    let mut out = Lips {
+        identity,
+        level: level.to_owned(),
+        lines: Vec::new(),
+        faces: Vec::new(),
+        refused: Vec::new(),
+    };
+    for (home, igz) in [(DataHome::Level, Some(igz)), (DataHome::Pack, pack)] {
+        let Some(igz) = igz else { continue };
+        let (lines, refused) = lip_lines(igz, home);
+        out.lines.extend(lines);
+        out.refused.extend(refused);
+    }
+    let placements = FormatPlacements::read(igz).map_err(s)?;
+    let mut models: BTreeMap<usize, &str> = BTreeMap::new();
+    for a in &placements.actors {
+        let Some(model) = a.info.model else { continue };
+        let Some(info) = placements.models.get(&model) else {
+            continue;
+        };
+        models.insert(model, info.info.name.unwrap_or_default());
+    }
+    for (model, path) in models {
+        let Ok(hero) = Hero::read(igz, model) else {
+            continue;
+        };
+        let read = fmodel::skeleton(igz, &hero)
+            .and_then(|sk| fmodel::visemes(igz, &hero, &sk))
+            .map_err(s);
+        match read {
+            Ok(Some(shapes)) => out.faces.push(Face {
+                owner: path.to_owned(),
+                shapes: shapes
+                    .iter()
+                    .map(|c| models::clip(&c.clip, c.file.unwrap_or_default()))
+                    .collect(),
+            }),
+            Ok(None) => {}
+            Err(why) => out.refused.push((path.to_owned(), why)),
+        }
+    }
+    Ok(Read {
+        ir: out,
         textures: Vec::new(),
     })
 }

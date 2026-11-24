@@ -444,6 +444,7 @@ fn every_level_part_is_named_and_complete_wants_them_all() {
             "palettes",
             "nodes",
             "particles",
+            "lips",
             "sprites"
         ]
     );
@@ -512,6 +513,14 @@ fn every_level_part_is_named_and_complete_wants_them_all() {
         .unwrap()
         .parts
         .insert(PARTICLES.to_owned(), file(PARTICLES));
+    // AS.820's lips: an extract written before them resumes for those
+    // alone.
+    assert!(!complete(&m), "the lips missing");
+    m.levels
+        .get_mut(LEVELS[0])
+        .unwrap()
+        .parts
+        .insert(LIPS.to_owned(), file(LIPS));
     assert!(complete(&m));
     // AS.52: a part recorded under an older name than its rule's (chapter
     // 1's palettes as `palettes.ron`, before `palettes.v2`) is a part to
@@ -1326,4 +1335,101 @@ fn the_card_games_palettes_read_off_its_archives_each_model_once() {
     std::fs::write(usr.join(CARD_GAME[0]), b"not an archive").unwrap();
     let (archive, _) = card_palettes(usr, identity()).unwrap_err();
     assert_eq!(archive, CARD_GAME[0]);
+}
+
+/// A one-block viseme stream of `tracks` constants at `value`, as the disc
+/// lays one out (guac-formats' `viseme` module).
+fn lip_block(tracks: u32, value: f32) -> Vec<u8> {
+    use guac_formats::viseme::{CONSTANT, FOOTER, MAGIC};
+    let mut b = MAGIC.to_vec();
+    let ft = 1.0f32 / 24.0;
+    for w in [25u32, 16, 1, tracks] {
+        b.extend(w.to_be_bytes());
+    }
+    for f in [24.0 * ft, 255.0 * ft, ft] {
+        b.extend(f.to_be_bytes());
+    }
+    for w in [1u32, 1, 0, 0, 16, 0] {
+        b.extend(w.to_be_bytes());
+    }
+    b.extend(std::iter::repeat_n(CONSTANT, tracks as usize));
+    while b.len() % 4 != 0 {
+        b.push(0);
+    }
+    for _ in 0..tracks {
+        b.extend(value.to_be_bytes());
+    }
+    b.extend([0; 4]);
+    b.extend(FOOTER);
+    b
+}
+
+/// openspec AS.820: a data info's viseme stream reads into its line, keyed
+/// as the sounds part keys the data info; one whose stream isn't a
+/// lip-sync block, or won't parse, is refused by name; one without a
+/// stream has no line.
+#[test]
+fn a_data_infos_viseme_stream_reads_into_its_line() {
+    use guac_formats::igz::builder::IgzBuilder;
+    use guac_ir::lips::Track;
+    use guac_ir::sound::DataHome;
+    let mut b = IgzBuilder::new();
+    let blocks = b.section(0x10);
+    let data = [(); 4].map(|_| b.object(0, "tfbSoundDataInfo", 0x28));
+    let streams = [(); 3].map(|_| b.object(0, "tfbPhysicsAnimation", 0x2C));
+    let at = |l: guac_formats::igz::Location, o: u32| l.offset_by(o).unwrap();
+    for (k, d) in data.iter().enumerate() {
+        b.string(at(*d, 0x08), &format!("vo_test_{k:03}.wav"));
+        b.null_memory_ref(at(*d, 0x14), 0);
+    }
+    let mut bad = lip_block(9, 0.5);
+    bad.truncate(bad.len() - 12);
+    bad.extend(guac_formats::viseme::FOOTER);
+    for (s, bytes) in streams.iter().zip([lip_block(9, 0.5), vec![1u8; 32], bad]) {
+        b.memory_ref(at(*s, 0x14), blocks, &bytes, 2);
+    }
+    for (d, s) in data.iter().zip(&streams) {
+        b.pointer(at(*d, 0x24), *s);
+    }
+    let bytes: &'static [u8] = Vec::leak(b.build());
+    let igz = Igz::parse(bytes).unwrap();
+    let (lines, refused) = lip_lines(&igz, DataHome::Pack);
+    assert_eq!(lines.len(), 1, "{refused:?}");
+    let l = &lines[0];
+    assert_eq!((l.home, l.name.as_deref()), (DataHome::Pack, Some("vo_test_000.wav")));
+    assert_eq!(l.object as usize, igz.object_at(data[0]).unwrap().0);
+    assert_eq!(l.visemes.frames, 25);
+    assert_eq!(l.visemes.blocks, [vec![Track::Constant(0.5); 9]]);
+    let names: Vec<&str> = refused.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(names, ["vo_test_001.wav", "vo_test_002.wav"]);
+    assert!(refused[0].1.contains("no lip-sync block"), "{refused:?}");
+}
+
+/// openspec AS.820: a placed model whose body lists a viseme set is a face,
+/// its shapes as clips in the set's order, owned by the model's path; a
+/// level with none has no faces.
+#[test]
+fn a_placed_models_viseme_set_is_its_face() {
+    use guac_formats::model::builder::NetworkSpec;
+    let spec = creature_level(Some("C:/x/Chest.ai"));
+    let r = lips(parsed(&spec), None, LEVEL, identity()).unwrap();
+    assert!(r.ir.faces.is_empty() && r.ir.lines.is_empty());
+    let mut spec = creature_level(Some("C:/x/Chest.ai"));
+    let (path, chest) = spec.skinned.as_mut().unwrap();
+    let path = path.to_string();
+    chest.visemes = ["Chest_A.ma", "Chest_E.ma"]
+        .into_iter()
+        .map(|file| NetworkSpec {
+            clip: guac_formats::havok::builder::clip(),
+            properties: 0x200,
+            file,
+        })
+        .collect();
+    let r = lips(parsed(&spec), None, LEVEL, identity()).unwrap();
+    assert_eq!(r.ir.faces.len(), 1, "{:?}", r.ir.refused);
+    let f = &r.ir.faces[0];
+    assert_eq!(f.owner, path);
+    let names: Vec<&str> = f.shapes.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, ["Chest_A.ma", "Chest_E.ma"]);
+    assert!(!f.shapes[0].tracks.is_empty());
 }
