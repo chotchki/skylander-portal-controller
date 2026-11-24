@@ -3822,7 +3822,9 @@ fn a_stunned_chompy_hit_again_stays_stunned_to_its_first_end() {
     // (openspec AS.815: with his lobs aimed from where he and they stand,
     // Enemy_Chompy(3) stood 256 steps 4.8 m off him while the rest nipped;
     // on the base, seed 12 has it stand 258, seeds 4 and 6 stand (4) 356 and
-    // 379 under the rule, and AH.10 holds one 432).
+    // 379 under the rule, and AH.10 holds one 432). Its own record holds a
+    // Chompy's walking steps no better: seed 4 has (4) walk 342 of its 356,
+    // chasing, past its own 308.
     let four = limits
         .iter()
         .filter(|l| CHOMPIES.contains(&l.placement.as_str()) && l.behaviour == "battle")
@@ -3850,7 +3852,46 @@ fn a_stunned_chompy_hit_again_stays_stunned_to_its_first_end() {
         })
         .collect();
     assert!(stalled.is_empty(), "{stalled:?}");
+    // With the limit any of the four's, the time no longer catches AH.232's
+    // fault (and on these draws it didn't before either: with the steered
+    // walk's solve put back to the asked walk, 26 runs over 13 rolls, tip and
+    // base, passed the old per-placement limit and the new one alike, a
+    // Chompy walking on the spot up to 111 steps in a row behind another).
+    // So that fault is held directly: no Chompy walks on the spot in
+    // 'battle' past AH.10's 6 frames, on this draw and on roll 1, where it
+    // shows if the solve is lost (77 steps in a row there; 2 at most on
+    // either draw with it, 13 rolls, tip and base).
+    let (_, rolled) = fight(Script {
+        stun: true,
+        steps: 600,
+        seed: Some(1),
+        ..Script::default()
+    });
+    for (c, name) in CHOMPIES.iter().enumerate() {
+        let (here, there) = (on_the_spot(&snaps, c), on_the_spot(&rolled, c));
+        println!("{name} on the spot in 'battle': {here} steps in a row, {there} on roll 1");
+        assert!(here <= 6 && there <= 6, "{name}: {here}, {there} on roll 1");
+    }
     println!("load after: {}", load());
+}
+
+/// The most steps in a row Chompy `c` walks on the spot in 'battle'
+/// (openspec AH.232): its walk over 4 m/s while over the 8 steps to it it
+/// got under a tenth of that further.
+fn on_the_spot(snaps: &[Snap], c: usize) -> usize {
+    const SPAN: usize = 8;
+    let (mut run, mut most) = (0, 0);
+    for i in SPAN..snaps.len() {
+        let (was, now) = (&snaps[i - SPAN].chompies[c], &snaps[i].chompies[c]);
+        let got = Vec3::new(now.pos.x - was.pos.x, 0.0, now.pos.z - was.pos.z).length();
+        let on = !now.gone
+            && now.beh.as_deref() == Some("battle")
+            && now.speed > 4.0
+            && got < 0.1 * now.speed * SPAN as f32 / 60.0;
+        run = if on { run + 1 } else { 0 };
+        most = most.max(run);
+    }
+    most
 }
 
 /// How far past AH.10's longest stay a stay is still the draws, seconds.
