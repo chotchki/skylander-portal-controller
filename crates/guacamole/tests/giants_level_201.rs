@@ -3185,8 +3185,9 @@ fn the_name_extractor_names_a_text_key_and_a_placement_by_the_linked_files() {
 /// openspec AS.820: the arena's commander speaks with his mouth. His first
 /// line plays on him once the waves start; through it the lips part's
 /// stream weighs his face's shapes (two or more of them in turn), his posed
-/// face moves off the pose his clips give him (his jaw and lips, nothing
-/// of his body past them), and once the line ends no shape weighs. Stalls
+/// face moves off the pose his clips give him (his jaw, the one joint his
+/// set tracks, and what hangs on it; nothing of his body past them), and
+/// once the line ends no shape weighs. Stalls
 /// fail it: no line within 6,000 steps of the arena.
 #[test]
 #[ignore = "reads the Giants dump"]
