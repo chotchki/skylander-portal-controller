@@ -517,8 +517,15 @@ impl Walker {
                 // Out to its side first, then round behind it.
                 let s = if side < 0.0 { -1.0 } else { 1.0 };
                 let out = BLOCK_HALF + 1.5;
-                let back = if side.abs() < out - 0.5 { back } else { -BLOCK_HALF - 1.5 };
-                [b.x + uz * s * out + ux * back, b.z - ux * s * out + uz * back]
+                let back = if side.abs() < out - 0.5 {
+                    back
+                } else {
+                    -BLOCK_HALF - 1.5
+                };
+                [
+                    b.x + uz * s * out + ux * back,
+                    b.z - ux * s * out + uz * back,
+                ]
             } else if side.abs() > BLOCK_HALF {
                 [b.x - ux * (BLOCK_HALF + 1.5), b.z - uz * (BLOCK_HALF + 1.5)]
             } else {

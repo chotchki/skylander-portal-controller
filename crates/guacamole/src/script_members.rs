@@ -5307,7 +5307,8 @@ mod tests {
         let mut e = bench();
         let mut w = world();
         // Its 0.762 m reach resting on the floor's top, flying away from the wall.
-        w.actors.insert(BALL, ball(Vec3::new(-6.0, 0.762, -8.0), 0.0));
+        w.actors
+            .insert(BALL, ball(Vec3::new(-6.0, 0.762, -8.0), 0.0));
         w.set_velocity(BALL, Vec3::new(20.0, 0.0, 0.0), &mut e)
             .unwrap();
         fly(&mut w, &mut e, 5);
