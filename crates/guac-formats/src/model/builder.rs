@@ -193,6 +193,9 @@ pub struct CharacterSpec {
     /// The slots whose entry's `Sequence._flags` carries the looping bit
     /// (openspec AS.442), slot 0 the idle's.
     pub looping: Vec<usize>,
+    /// The body's viseme set (openspec AS.820), its clips in order; none
+    /// leaves `_visemeSet` null.
+    pub visemes: Vec<NetworkSpec>,
 }
 
 /// The image an attachment prop's material binds as its colour map.
@@ -379,6 +382,7 @@ pub fn sample() -> CharacterSpec {
         scripts: None,
         own_effects: false,
         looping: Vec::new(),
+        visemes: Vec::new(),
     }
 }
 
@@ -785,6 +789,16 @@ pub(crate) fn character_in(b: &mut IgzBuilder, blocks: u8, spec: &CharacterSpec)
         }
         entry
     };
+    if !spec.visemes.is_empty() {
+        let shapes: Vec<Option<Location>> = spec
+            .visemes
+            .iter()
+            .map(|v| Some(animation(b, &v.clip, v.properties, v.file)))
+            .collect();
+        let set = b.object(0, "tfbAnimationInfoList", 0x18);
+        list(b, set, blocks, &shapes);
+        b.pointer(at(body, 0x30), set);
+    }
     if let Some((clip, properties)) = &spec.idle {
         slots[0] = Some(entry(
             b,

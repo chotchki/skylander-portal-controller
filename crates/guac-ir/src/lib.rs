@@ -19,6 +19,7 @@ pub mod hero;
 mod identity;
 pub mod interface;
 pub mod level;
+pub mod lips;
 pub mod model;
 pub mod nodes;
 pub mod palette;

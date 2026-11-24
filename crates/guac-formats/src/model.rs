@@ -561,6 +561,34 @@ fn palette_clip<'a>(
     })
 }
 
+/// `hero`'s viseme set (openspec AS.820): the clips its body's
+/// `_visemeSet` lists, one per mouth shape in a viseme stream's track order,
+/// each read as a palette slot's clip is ([`palette_slot`]'s refusals).
+/// `None` when the body has none; an element that isn't a clip refuses.
+pub fn visemes<'a>(
+    igz: &Igz<'a>,
+    hero: &Hero<'a>,
+    skeleton: &havok::Skeleton<'_>,
+) -> Result<Option<Vec<PaletteClip<'a>>>, FormatError> {
+    use crate::igz::layouts::{ObjectList, ObjectRef, is_a};
+    let ObjectRef::Object(set) = hero.body.body.viseme_set else {
+        return Ok(None);
+    };
+    let list = ObjectList::read(igz, set)?;
+    let at = igz.objects()[set].at;
+    let mut out = Vec::with_capacity(list.elements.len());
+    for e in list.elements {
+        let Some(e) =
+            e.filter(|&e| is_a(igz.type_name(&igz.objects()[e]), PhysicsAnimation::TYPE))
+        else {
+            return Err(igz.err_at(at, "_visemeSet", ErrorKind::Missing));
+        };
+        let a = PhysicsAnimation::read(igz, e)?;
+        out.push(palette_clip(igz, e, a, skeleton)?);
+    }
+    Ok(Some(out))
+}
+
 /// Slot 0 of `hero`'s animation set: a NORMAL clip, neither additive nor
 /// partial, that poses `skeleton` at its start and halfway.
 pub fn idle<'a>(

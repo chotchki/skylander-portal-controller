@@ -37,6 +37,7 @@ pub mod sfo;
 pub mod sound;
 pub mod texture;
 pub mod toys;
+pub mod viseme;
 
 #[cfg(feature = "test-fixtures")]
 pub mod registry;

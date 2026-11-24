@@ -827,6 +827,11 @@ pub(crate) struct CreaturesReport {
     /// The people ([`ScriptWorld::people`]) whose script runs, each as a
     /// creature's reported, with whether it draws now (openspec AU.34).
     pub people: Vec<PersonShot>,
+    /// The other placements of a model and a script of their own that
+    /// runs, neither walked nor one of the people
+    /// ([`ScriptWorld::scripted_placements`], openspec AS.512), each with
+    /// whether it draws now: what a driver aims a pinned camera at.
+    pub placed: Vec<PersonShot>,
     /// The cutscene up and its scene, by name (openspec AS.461).
     pub scene: Option<guacamole::level_end::SceneUp>,
 }
@@ -900,7 +905,7 @@ impl CreatureShots<'_, '_> {
                     .is_some_and(|(_, c)| c.draws);
             s.drawn = shows(s.parts, s.alpha, s.scale);
         }
-        for p in &mut out.people {
+        for p in out.people.iter_mut().chain(out.placed.iter_mut()) {
             let drawn = self
                 .drawn
                 .as_ref()
@@ -950,19 +955,34 @@ pub(crate) fn report(vm: &guac_script::Vm, world: &ScriptWorld) -> CreaturesRepo
     };
     let creatures = world.creatures().into_iter().filter_map(shot).collect();
     let inert = vm.inert();
+    let person = |handle: Handle| {
+        Some(PersonShot {
+            at: shot(handle)?,
+            drawn: false,
+            posed: Vec::new(),
+            clips: world.clips_on(handle),
+            handle,
+        })
+    };
+    let runs = |h: &Handle| vm.placement_of(*h).is_some() && !inert.contains(h);
     let people = world
         .people()
         .into_iter()
-        .filter(|h| vm.placement_of(*h).is_some() && !inert.contains(h))
-        .filter_map(|handle| {
-            Some(PersonShot {
-                at: shot(handle)?,
-                drawn: false,
-                posed: Vec::new(),
-                clips: world.clips_on(handle),
-                handle,
-            })
+        .filter(runs)
+        .filter_map(person)
+        .collect();
+    let placed = world
+        .scripted_placements()
+        .into_iter()
+        .filter(runs)
+        .filter(|h| {
+            world
+                .actor(*h)
+                .and_then(|a| a.obj)
+                .and_then(|o| world.template(o))
+                .is_some_and(|p| p.model.is_some())
         })
+        .filter_map(person)
         .collect();
     let woken = world
         .woken
@@ -1027,6 +1047,7 @@ pub(crate) fn report(vm: &guac_script::Vm, world: &ScriptWorld) -> CreaturesRepo
         orbs_drawn: 0,
         drawn: 0,
         people,
+        placed,
         scene: guacamole::level_end::scene_up(vm),
     }
 }
@@ -1780,6 +1801,38 @@ mod tests {
             wanted(&world, |_| true, |_| false).is_empty(),
             "no skinned model held"
         );
+    }
+
+    /// openspec AS.512 (the as-mouths lane): `placed` reports the drawing
+    /// rule's other placements, a model's whose script runs, and never a
+    /// walked creature or a scriptless or modelless placement.
+    #[test]
+    fn the_report_lists_a_scripted_placement_of_a_model_with_its_place() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _) = fight_app(tmp.path(), Some(start()));
+        until(&mut app, "the creature walked", |a| {
+            !shot(a).creatures.is_empty()
+        });
+        let c = creature(&app);
+        let r = shot(&app);
+        let w = app.world().resource::<ScriptWorld>();
+        assert!(r.placed.iter().all(|p| p.handle != c), "a walker isn't placed");
+        for p in &r.placed {
+            let a = w.actor(p.handle).unwrap();
+            assert_eq!(p.at.position, a.position.to_array());
+            assert!(w.template(a.obj.unwrap()).unwrap().model.is_some());
+        }
+        let runs = |h: &Handle| {
+            let vm = &app.world().resource::<ScriptRuntime>().vm;
+            vm.placement_of(*h).is_some() && !vm.inert().contains(h)
+        };
+        let want: Vec<Handle> = w
+            .scripted_placements()
+            .into_iter()
+            .filter(runs)
+            .filter(|h| w.template(w.actor(*h).unwrap().obj.unwrap()).unwrap().model.is_some())
+            .collect();
+        assert_eq!(r.placed.iter().map(|p| p.handle).collect::<Vec<_>>(), want);
     }
 
     /// openspec AS.180: a person is reported posed by the clips the TV

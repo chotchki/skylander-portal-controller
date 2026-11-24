@@ -520,3 +520,37 @@ fn the_archive_carries_the_level_and_the_seeds_parse() {
         Igz::parse(&seed).unwrap();
     }
 }
+
+/// openspec AS.820: a body's viseme set reads as its clips in order, each
+/// a palette clip; a body with none reads none; a set holding something
+/// that isn't a clip, or a clip bound past the skeleton, refuses.
+#[test]
+fn a_bodys_viseme_set_reads_its_shape_clips_in_order() {
+    use super::builder::NetworkSpec;
+    let read = |spec: &CharacterSpec| {
+        let igz = parsed(spec);
+        let p = portal_model(igz).unwrap();
+        let sk = skeleton(igz, &p.hero).unwrap();
+        visemes(igz, &p.hero, &sk).map(|v| {
+            v.map(|v| v.iter().map(|c| c.file.unwrap_or_default()).collect::<Vec<_>>())
+        })
+    };
+    let s = sample();
+    assert_eq!(read(&s).unwrap(), None, "no set");
+    let mut s = sample();
+    s.visemes = ["Elf_A.ma", "Elf_E.ma", "Elf_FV.ma"]
+        .into_iter()
+        .map(|file| NetworkSpec {
+            clip: clip(),
+            properties: 0x200,
+            file,
+        })
+        .collect();
+    assert_eq!(
+        read(&s).unwrap(),
+        Some(vec!["Elf_A.ma", "Elf_E.ma", "Elf_FV.ma"])
+    );
+    let mut bent = s.clone();
+    *bent.visemes[1].clip.track_to_bone.last_mut().unwrap() = 7;
+    assert_eq!(read(&bent).unwrap_err().field, "transformTrackToBoneIndices");
+}
