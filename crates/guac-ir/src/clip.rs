@@ -513,12 +513,14 @@ impl Skeleton {
                 let w = w / total;
                 let dot: f64 = (0..4).map(|i| lead[i] * q.r[i]).sum();
                 let sign = if dot < 0.0 { -w } else { w };
-                for i in 0..3 {
-                    t[i] += w * q.t[i];
-                    sc[i] += w * q.s[i];
+                for (acc, v) in t.iter_mut().zip(q.t) {
+                    *acc += w * v;
                 }
-                for i in 0..4 {
-                    r[i] += sign * q.r[i];
+                for (acc, v) in sc.iter_mut().zip(q.s) {
+                    *acc += w * v;
+                }
+                for (acc, v) in r.iter_mut().zip(q.r) {
+                    *acc += sign * v;
                 }
             }
             let target = Qs {

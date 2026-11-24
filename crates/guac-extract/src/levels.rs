@@ -1192,12 +1192,13 @@ pub fn lip_lines(
     (lines, refused)
 }
 
+/// What didn't read, by name or object, with why.
+pub type Refused = Vec<(String, String)>;
+
 /// `global.bld`'s lines ([`lip_lines`] over its `level.bld` and English
 /// pack) under `usrdir`, each part's refusals with them: what every level's
 /// lips part carries as [`guac_ir::lips::Lips::global`].
-pub fn global_lines(
-    usrdir: &Path,
-) -> Result<(Vec<guac_ir::lips::Line>, Vec<(String, String)>), String> {
+pub fn global_lines(usrdir: &Path) -> Result<(Vec<guac_ir::lips::Line>, Refused), String> {
     use guac_ir::sound::DataHome;
     let path = usrdir.join(crate::roster::GLOBAL);
     let archive = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
