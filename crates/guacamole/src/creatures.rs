@@ -875,6 +875,9 @@ pub(crate) struct MouthShot {
     /// `_L`, `_MBP`, `_O`, `_S`, `_TH`, `_UWQ`); none for a closed mouth.
     pub shape: Option<usize>,
     pub face: bool,
+    /// Where the first joint his face's shapes move stands (the jaw on the
+    /// disc's sets), metres: what a driver aims a pinned camera at.
+    pub jaw: Option<[f32; 3]>,
 }
 
 /// One of the people as `/api/_test/tv` reports it.
@@ -917,6 +920,7 @@ pub(crate) struct CreatureShots<'w, 's> {
     washes: Query<'w, 's, &'static CreatureWash>,
     time: Res<'w, Time>,
     level: Option<Res<'w, Level>>,
+    globals: Query<'w, 's, &'static GlobalTransform>,
 }
 
 impl CreatureShots<'_, '_> {
@@ -950,13 +954,21 @@ impl CreatureShots<'_, '_> {
         if let Some(m) = self.level.as_deref().and_then(Level::mouths) {
             for c in &self.creatures {
                 if let Some(sp) = m.speaking(world, c.actor) {
+                    let face = m.face(&c.path);
+                    let jaw = face
+                        .and_then(|f| f.first())
+                        .and_then(|shape| shape.tracks.first())
+                        .and_then(|t| c.joints.get(usize::from(t.joint)))
+                        .and_then(|&e| self.globals.get(e).ok())
+                        .map(|g| g.translation().to_array());
                     out.mouths.push(MouthShot {
                         name: world.name(c.actor),
                         line: sp.line.clone(),
                         seconds: sp.seconds,
                         shape: sp.shape(),
                         weights: sp.weights,
-                        face: m.face(&c.path).is_some(),
+                        face: face.is_some(),
+                        jaw,
                     });
                 }
             }
