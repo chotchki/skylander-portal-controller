@@ -4136,19 +4136,9 @@ impl ScriptWorld {
                 );
                 at = end;
                 v = slid;
-                // What it touches where it ends up, at rest against it too,
-                // but the ground it flies over (openspec AS.825): the
-                // projectile manager's wall check judges a contact by its
-                // normal's heading alone, which reads 0 for level ground, so
-                // a shot held 3 ft over a climb touched it, read it as a wall
-                // and went (Storm Giant's harpoon, Spyro's fireball and Gill
-                // Grunt's shot up 201's slopes). Stand-in ledger:
-                // `flying-contacts`.
+                // What it touches where it ends up, at rest against it too.
                 let end = solid.pose(Pose::new(at, rotation));
                 for p in engine.seam().contacts(&shape, end, TOUCH, &own) {
-                    if p.normal.y > guac_motion::ground::MAX_SLOPE_COS {
-                        continue;
-                    }
                     contacts.push(Contact {
                         point: p.point,
                         normal: p.normal,
@@ -5298,23 +5288,6 @@ mod tests {
             .unwrap();
         let n = w.vector(w.object(Some(normal)).unwrap(), &mut e).unwrap();
         assert!(n.dot(Vec3::NEG_Z) > 0.999);
-    }
-
-    /// openspec AS.825: a flying actor skimming level ground touches it but
-    /// keeps no contact with it (a wall still is one: the test above).
-    #[test]
-    fn a_balls_cast_over_the_ground_keeps_no_contact_with_it() {
-        let mut e = bench();
-        let mut w = world();
-        // Its 0.762 m reach resting on the floor's top, flying away from the wall.
-        w.actors
-            .insert(BALL, ball(Vec3::new(-6.0, 0.762, -8.0), 0.0));
-        w.set_velocity(BALL, Vec3::new(20.0, 0.0, 0.0), &mut e)
-            .unwrap();
-        fly(&mut w, &mut e, 5);
-        let a = w.actor(BALL).unwrap();
-        assert!(a.position.x > -6.0, "{}", a.position.x);
-        assert!(a.contacts.is_empty(), "{:?}", a.contacts);
     }
 
     #[test]
