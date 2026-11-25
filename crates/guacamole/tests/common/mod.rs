@@ -1639,10 +1639,15 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
             false => interface_records_of(&archives[..ARCHIVES.len()]),
         };
         let mut keeper = interface_part_with(&igzs, records).keeper;
-        // The card archives' strings (openspec AS.877): the TV's load has
-        // them off the interface part (the ones it holds) or the card art
-        // part's records; the strings alone here.
+        // The card archives' strings the TV's model holds (openspec AS.877):
+        // the ones the interface part reads (`card_interface_held`, the
+        // board's among them); the strings alone here. The others' strings
+        // aren't in the TV's model, and held here they move the scripts'
+        // text measures and a seeded game with them.
         for (&u, archive) in card_units.iter().zip(&card_archives) {
+            if !guac_extract::screens::card_interface_held(archive) {
+                continue;
+            }
             let bld = std::fs::read(usr.join(archive)).unwrap_or_else(|e| panic!("{archive}: {e}"));
             let arc = std::fs::read(usr.join(archive).with_extension("arc")).ok();
             let record = guac_extract::interface::read(archive, &bld, arc.as_deref(), identity())
