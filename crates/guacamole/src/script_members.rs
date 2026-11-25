@@ -1998,8 +1998,18 @@ impl ScriptWorld {
                     && (self.card_streams.restore() != crate::card_game::Restore::Idle
                         || !self.takes_accept(at.placement));
                 let held = |p: &crate::script_engine::Pad| !unserved && served(p, b);
+                // The card game's end-of-game report, the one reporter that
+                // reads cancel, takes the player's own B to leave (openspec
+                // AS.875); nothing else is ever served cancel.
+                let report_cancel = matches!(b, Button::Cancel) && self.takes_accept(at.placement);
                 let (was, now) = if pad == u8::MAX {
                     (false, false)
+                } else if report_cancel {
+                    let i = usize::from(pad);
+                    (
+                        self.cancel_before.get(i).copied().unwrap_or(false),
+                        self.cancel.get(i).copied().unwrap_or(false),
+                    )
                 } else {
                     let i = usize::from(pad);
                     (
@@ -7369,8 +7379,8 @@ mod tests {
             connected: true,
             ..Pad::default()
         };
+        // Cancel is the card game's report's own (AS.875's test below).
         let others = [
-            Button::Cancel,
             Button::Alt,
             Button::Pause,
             Button::Start,
@@ -7399,6 +7409,68 @@ mod tests {
         assert!(served(&pad([true, false, false, false]), Button::Accept));
         assert!(!served(&pad([false; 4]), Button::Accept));
         assert!(served(&pad([false, false, true, false]), Button::Action(3)));
+    }
+
+    /// openspec AS.875: `cancel button` is served to a theatrical report
+    /// alone (the card game's end-of-game report is the one that reads it,
+    /// to leave), off the pad's third action as the player holds it:
+    /// pressed (3), held (2), let go (0), released (1). Any other reader, a
+    /// talk's cutscene menu and the hub's scripts among them, reads it
+    /// released however it's pressed.
+    #[test]
+    fn only_a_theatrical_report_takes_the_cancel_button() {
+        let mut e = bench();
+        let east = |held: bool| Pad {
+            actions: [false, false, held, false],
+            connected: true,
+            ..Pad::default()
+        };
+        for (reader, taken) in [
+            (Some(crate::card_game::REPORTER), true),
+            (Some("Macros_UI"), false),
+            (Some("Menu_MoreInfo"), false),
+            (None, false),
+        ] {
+            let mut w = world();
+            if let Some(name) = reader {
+                reader_named(&mut w, name);
+            }
+            // A board up beside it changes nothing (openspec AS.875's
+            // review): its manager and every other reader keep cancel
+            // released, the report alone takes it.
+            if reader == Some("Macros_UI") {
+                w.card_streams
+                    .set_restore(crate::card_game::Restore::Replaced);
+            }
+            let button = w.objs.value(Object::Button(0, Button::Cancel));
+            let mut seen = Vec::new();
+            for held in [false, true, true, false, false] {
+                w.read_pads([east(held), Pad::default()]);
+                seen.push(w.get_member(
+                    &at("buttonmeasurement", "pressure state", Some(button), None),
+                    Member::PressureState,
+                    &mut e,
+                ));
+            }
+            let want = if taken { [1, 3, 2, 0, 1] } else { [1; 5] };
+            assert_eq!(seen, want.map(|v| Ok(Value::Int(v))), "{reader:?}");
+        }
+        // Held as the player holds it, whoever the pad walks: the TV's pads
+        // carry no actions for a hero not joined.
+        let mut w = world();
+        reader_named(&mut w, crate::card_game::REPORTER);
+        let button = w.objs.value(Object::Button(0, Button::Cancel));
+        w.read_pads([Pad::default(), Pad::default()]);
+        w.read_pads([Pad::default(), Pad::default()]);
+        w.hold_cancel([true, false]);
+        assert_eq!(
+            w.get_member(
+                &at("buttonmeasurement", "pressure state", Some(button), None),
+                Member::PressureState,
+                &mut e,
+            ),
+            Ok(Value::Int(3))
+        );
     }
 
     /// openspec AS.670: while a card game's board holds the hero's slot

@@ -220,9 +220,9 @@ video-spike = []
 # tests (the dev-dependency above). Nothing in the binary calls them under it.
 card-game-seams = []
 # openspec AS.367's first rung: the TV plays the game on a yes where a
-# landed build answers it as a quit, with its quit route. A lane's build
-# alone, named on its own cargo line with `test-hooks`; no dependency turns
-# it on.
+# build without it answers it as a quit, with its quit route. Off by
+# default and needs `test-hooks`, named on its own cargo line: the landing
+# script's build for chotchki's playtests names it; no dependency turns it on.
 played-card-games = ["card-game-seams"]
 
 [[example]]

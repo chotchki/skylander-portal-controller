@@ -139,3 +139,34 @@ fn the_buttons_and_score_caps_draw_upright() {
         assert_eq!(cap.flip_x, mirrored);
     }
 }
+
+/// openspec AS.875, AS.879: the strip asks over a finished board and at a
+/// tutorial stop: after a loss its two choices (A again, B leave), after a
+/// win and at each tutorial stop A alone; nothing mid-game or with no board.
+#[test]
+fn the_end_of_game_strip_asks_only_over_a_finished_board() {
+    use crate::pad::Face;
+    assert_eq!(game_over(Some("lost")), Some(Strip::Lost));
+    assert_eq!(game_over(Some("won")), Some(Strip::Won));
+    // The tutorial's stops by the names its manager gives them.
+    for b in [
+        "wait for tutorial - board intro",
+        "wait for tutorial - explain strengths",
+        "wait for tutorial - wait for turn intro",
+    ] {
+        assert_eq!(game_over(Some(b)), Some(Strip::Tutorial), "{b}");
+    }
+    let faces = |s| choices(s).iter().map(|(f, _)| *f).collect::<Vec<Face>>();
+    assert_eq!(faces(Strip::Lost), [Face::South, Face::East]);
+    assert_eq!(faces(Strip::Won), [Face::South]);
+    assert_eq!(faces(Strip::Tutorial), [Face::South]);
+    for b in [
+        None,
+        Some("player turn - wait for player card selection"),
+        Some("check for winner"),
+        Some("delay after updating score header"),
+    ] {
+        assert_eq!(game_over(b), None, "{b:?}");
+    }
+    assert_ne!(PLAY_AGAIN, LEAVE);
+}

@@ -513,6 +513,15 @@ pub struct ScriptWorld {
     /// A card game answered with nothing shown, its pirate still to be told
     /// it's quit (openspec AU.34: [`crate::prompt::quit_card_game`]).
     pub(crate) card_game_answered: bool,
+    /// The question a yes last answered (openspec AS.822): a card game
+    /// that yes asked for, quit, keeps it in [`Self::card_quit`].
+    pub(crate) last_yes: Option<Value>,
+    /// A card pirate told his game was quit, by the question that asked for
+    /// it (openspec AS.822: [`crate::prompt::hold_card_question`]).
+    pub(crate) card_quit: Option<crate::prompt::CardQuit>,
+    /// The card game's not-built line written this run: it's written once
+    /// (openspec AS.822).
+    pub(crate) card_line_said: bool,
     /// What each yes asked for that the TV hasn't built, in order (openspec
     /// AS.453: [`crate::prompt::UNBUILT`]), one a yes.
     pub unbuilt: Vec<&'static str>,
@@ -543,6 +552,11 @@ pub struct ScriptWorld {
     /// [`Pad`]s hold back from a hero not joined).
     pub(crate) accept: [bool; 2],
     pub(crate) accept_before: [bool; 2],
+    /// Each pad's cancel (its third action: the right face or the left
+    /// shoulders) as the player holds it, and the step before's: the card
+    /// game's end-of-game report reads it to leave (openspec AS.875).
+    pub(crate) cancel: [bool; 2],
+    pub(crate) cancel_before: [bool; 2],
     pub(crate) normalized: f32,
     pub(crate) ray: Ray,
     /// The points references naming nothing keep, by the reference's cell.
@@ -1039,6 +1053,9 @@ impl ScriptWorld {
             rig_held: Vec::new(),
             rig_holder: None,
             card_game_answered: false,
+            last_yes: None,
+            card_quit: None,
+            card_line_said: false,
             unbuilt: Vec::new(),
             collected: None,
             clip_info: HashMap::new(),
@@ -1050,6 +1067,8 @@ impl ScriptWorld {
             pads_before: [Pad::default(); 2],
             accept: [false; 2],
             accept_before: [false; 2],
+            cancel: [false; 2],
+            cancel_before: [false; 2],
             normalized: 0.0,
             ray: Ray::default(),
             kept_points: HashMap::new(),
@@ -1991,12 +2010,20 @@ impl ScriptWorld {
         self.pads = pads;
         self.accept_before = self.accept;
         self.accept = [pads[0].actions[0], pads[1].actions[0]];
+        self.cancel_before = self.cancel;
+        self.cancel = [pads[0].actions[2], pads[1].actions[2]];
     }
 
     /// Each pad's accept as the player holds it, after [`Self::read_pads`]:
     /// the TV's, whose pads read no attack for a hero not joined.
     pub fn hold_accept(&mut self, accept: [bool; 2]) {
         self.accept = accept;
+    }
+
+    /// Each pad's cancel as the player holds it, after [`Self::read_pads`]
+    /// (openspec AS.875), as [`Self::hold_accept`] holds the accept.
+    pub fn hold_cancel(&mut self, cancel: [bool; 2]) {
+        self.cancel = cancel;
     }
 
     /// Whether the TV passes hat and legendary treasure reports for the

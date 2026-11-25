@@ -4975,9 +4975,9 @@ fn fangs_first_game_on_a_fresh_save_is_the_tutorial_and_its_win_collects_stones(
 }
 
 /// A yes to Fangs on a fresh save in a build that doesn't play the card
-/// game (every landed build): the as-cards-play review. A fresh save's
+/// game (every build without `played-card-games`): the as-cards-play review. A fresh save's
 /// first game against him is the tutorial (the test above), a branch of his
-/// script the hub's pirate never takes, so a landed build's yes there must
+/// script the hub's pirate never takes, so such a build's yes there must
 /// still end as the TV's quit: the card game's start answered with nothing
 /// shown and logged as not built, his result left a quit, no board, no
 /// card stream, the hero walking. No stand-in turns the quit here (the
