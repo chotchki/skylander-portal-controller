@@ -4931,8 +4931,9 @@ fn fangs_games_with(
 #[ignore = "reads the Giants dump"]
 fn fangs_first_game_on_a_fresh_save_is_the_tutorial_and_its_win_collects_stones() {
     println!("load at start: {}", load());
-    // The board's strings, as the TV's model holds them (openspec AS.877).
-    common::CARD_STRINGS.set(true);
+    // The board's strings are the run's by default, as the TV's model holds
+    // them (openspec AS.877, AS.913): this test's lines read them, so it
+    // fails if the default is ever off.
     let started = std::time::Instant::now();
     let p = fangs_games_with(
         &[(Some(cards::Policy::Strong), FANGS_SEEDS[2])],

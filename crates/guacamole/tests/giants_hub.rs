@@ -3013,7 +3013,8 @@ const SITTING_GAMES: u32 = 30;
 /// openspec AS.920: a kid's long sitting at Dreadbeard, every game asked
 /// again after the last: [`SITTING_GAMES`] games in one run on hub stage 2,
 /// each quit at the first pick (its board set up and taken down, as a
-/// played game's is), the board's strings in as the TV's model holds them.
+/// played game's is), the board's strings in as the TV's model holds them
+/// (the harness's default, AS.913).
 /// Each ends, and the VM's sliders running as each ends stay far under the
 /// pool's 400 ([`guac_script::SLIDERS`]): the card game's looping glow
 /// pulses on its sprites outlived the board, about 19 sliders a game held
@@ -3025,7 +3026,6 @@ const SITTING_GAMES: u32 = 30;
 fn a_long_sitting_ends_every_game() {
     let started = std::time::Instant::now();
     println!("load at start: {}", load());
-    common::CARD_STRINGS.set(true);
     let n: u32 = std::env::var("AS920_GAMES").map_or(SITTING_GAMES, |v| v.parse().unwrap());
     let plans: Vec<(Plan, u32)> = (0..n).map(|i| (Plan::Quit, 1000 + i)).collect();
     let p = dreadbeards_games(&plans, GAME_STEPS.saturating_mul(n));
