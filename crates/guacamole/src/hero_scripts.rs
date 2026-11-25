@@ -1495,6 +1495,7 @@ pub(crate) fn feed_pads(
         Pad::default(),
     ]);
     world.hold_accept([held[0], false]);
+    world.hold_cancel([held[2], false]);
 }
 
 /// One step of the run, before the hero's (the module docs).

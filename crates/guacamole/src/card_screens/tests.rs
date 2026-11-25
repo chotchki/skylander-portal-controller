@@ -139,3 +139,21 @@ fn the_buttons_and_score_caps_draw_upright() {
         assert_eq!(cap.flip_x, mirrored);
     }
 }
+
+/// openspec AS.875: the end-of-game strip asks only over a finished board:
+/// after a loss its two choices (A again, B leave), after a win A alone;
+/// nothing mid-game or with no board.
+#[test]
+fn the_end_of_game_strip_asks_only_over_a_finished_board() {
+    assert_eq!(game_over(Some("lost")), Some(true));
+    assert_eq!(game_over(Some("won")), Some(false));
+    for b in [
+        None,
+        Some("player turn - wait for player card selection"),
+        Some("check for winner"),
+        Some("delay after updating score header"),
+    ] {
+        assert_eq!(game_over(b), None, "{b:?}");
+    }
+    assert_ne!(PLAY_AGAIN, LEAVE);
+}

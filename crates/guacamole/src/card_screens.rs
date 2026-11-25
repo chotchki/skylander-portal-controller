@@ -73,6 +73,22 @@ const BEGIN: &str = "UI CardGame HandSelect Button Begin";
 const CUSTOM: &str = "UI CardGame HandSelect Button Custom";
 /// The board record's score box pieces.
 const SCORE_CAP: &str = "ScoreBox_Cap";
+
+/// The end-of-game strip's words (openspec AS.875), ours: the report the
+/// original draws there isn't drawn, and its choice is the kid's to make.
+pub(crate) const PLAY_AGAIN: &str = "Play again";
+pub(crate) const LEAVE: &str = "Leave";
+
+/// What the end of a game asks of the player, by the board's behaviour
+/// (openspec AS.875): after a loss A plays again and B leaves (the report's
+/// first action and cancel); after a win A goes on. None mid-game.
+pub(crate) fn game_over(board: Option<&str>) -> Option<bool> {
+    match board {
+        Some("lost") => Some(true),
+        Some("won") => Some(false),
+        _ => None,
+    }
+}
 const SCORE_TILE: &str = "ScoreBox_Tile";
 
 /// A stone's picture in the hand select's record, by its index.
@@ -539,6 +555,8 @@ enum Drawn {
     Hand(Vec<u16>, HandFocus, bool),
     Quit(QuitFocus),
     Loot(LootShown, crate::pad::Labels),
+    /// The end-of-game strip: lost (A again, B leave) or won (A on).
+    Over(bool, crate::pad::Labels),
 }
 
 /// A drawn card screen's root, for the shots.
@@ -573,7 +591,11 @@ fn show(
         (Some(q), _, _) => Some(Drawn::Quit(*q)),
         (None, Some(e), _) => Some(Drawn::Hand(e.hand.clone(), e.focus, e.can_custom())),
         (None, None, Some(l)) => Some(Drawn::Loot(l.clone(), labels)),
-        _ => None,
+        (None, None, None) => read
+            .pick
+            .as_ref()
+            .and_then(|p| game_over(p.behaviour.as_deref()))
+            .map(|lost| Drawn::Over(lost, labels)),
     };
     let score_want = read.score.filter(|_| read.board);
     let modal_same = shown.as_ref().map(|(d, _)| d) == want.as_ref();
@@ -600,6 +622,7 @@ fn show(
                 }
                 Drawn::Quit(focus) => spawn_quit(&mut commands, &pen, art, *focus),
                 Drawn::Loot(loot, labels) => spawn_loot(&mut commands, &pen, art, loot, *labels),
+                Drawn::Over(lost, labels) => spawn_over(&mut commands, &pen, art, *lost, *labels),
             };
             *shown = Some((w, e));
         }
@@ -880,6 +903,70 @@ fn spawn_loot(
                         );
                         label(line, pen, a, crate::collected_box::CONTINUE, LABEL_SIZE);
                     });
+            });
+        })
+        .id()
+}
+
+/// The end-of-game strip at the bottom over the finished board (openspec
+/// AS.875): each choice its pad glyph and our word.
+fn spawn_over(
+    commands: &mut Commands,
+    pen: &Pen,
+    art: &CardArt,
+    lost: bool,
+    labels: crate::pad::Labels,
+) -> Entity {
+    let a = art.prompt.as_ref();
+    let choices: &[(crate::pad::Face, &str)] = if lost {
+        &[
+            (crate::pad::Face::South, PLAY_AGAIN),
+            (crate::pad::Face::East, LEAVE),
+        ]
+    } else {
+        &[(crate::pad::Face::South, crate::collected_box::CONTINUE)]
+    };
+    commands
+        .spawn((
+            CardScreenRoot("over"),
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(0),
+                bottom: px(48),
+                width: percent(100),
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            GlobalZIndex(SCORE_Z),
+        ))
+        .with_children(|root| {
+            root.spawn((
+                Node {
+                    flex_direction: FlexDirection::Row,
+                    align_items: AlignItems::Center,
+                    column_gap: px(64),
+                    padding: UiRect::axes(px(48), px(20)),
+                    border: UiRect::all(px(3)),
+                    border_radius: BorderRadius::all(px(28)),
+                    ..default()
+                },
+                BackgroundColor(BOX_FILL),
+                BorderColor::all(pen.theme.gold),
+            ))
+            .with_children(|strip| {
+                for (face, word) in choices {
+                    strip
+                        .spawn(Node {
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::Center,
+                            column_gap: px(16),
+                            ..default()
+                        })
+                        .with_children(|line| {
+                            crate::pause::glyph(line, pen, crate::pad::prompt(labels, *face));
+                            label(line, pen, a, word, LABEL_SIZE);
+                        });
+                }
             });
         })
         .id()

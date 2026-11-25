@@ -552,6 +552,11 @@ pub struct ScriptWorld {
     /// [`Pad`]s hold back from a hero not joined).
     pub(crate) accept: [bool; 2],
     pub(crate) accept_before: [bool; 2],
+    /// Each pad's cancel (its third action: the right face or the left
+    /// shoulders) as the player holds it, and the step before's: the card
+    /// game's end-of-game report reads it to leave (openspec AS.875).
+    pub(crate) cancel: [bool; 2],
+    pub(crate) cancel_before: [bool; 2],
     pub(crate) normalized: f32,
     pub(crate) ray: Ray,
     /// The points references naming nothing keep, by the reference's cell.
@@ -1058,6 +1063,8 @@ impl ScriptWorld {
             pads_before: [Pad::default(); 2],
             accept: [false; 2],
             accept_before: [false; 2],
+            cancel: [false; 2],
+            cancel_before: [false; 2],
             normalized: 0.0,
             ray: Ray::default(),
             kept_points: HashMap::new(),
@@ -1998,12 +2005,20 @@ impl ScriptWorld {
         self.pads = pads;
         self.accept_before = self.accept;
         self.accept = [pads[0].actions[0], pads[1].actions[0]];
+        self.cancel_before = self.cancel;
+        self.cancel = [pads[0].actions[2], pads[1].actions[2]];
     }
 
     /// Each pad's accept as the player holds it, after [`Self::read_pads`]:
     /// the TV's, whose pads read no attack for a hero not joined.
     pub fn hold_accept(&mut self, accept: [bool; 2]) {
         self.accept = accept;
+    }
+
+    /// Each pad's cancel as the player holds it, after [`Self::read_pads`]
+    /// (openspec AS.875), as [`Self::hold_accept`] holds the accept.
+    pub fn hold_cancel(&mut self, cancel: [bool; 2]) {
+        self.cancel = cancel;
     }
 
     /// Whether the TV passes hat and legendary treasure reports for the
