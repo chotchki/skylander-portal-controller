@@ -593,7 +593,8 @@ pub fn step(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<Option<Ended>, 
         info!("a cutscene's menu the TV doesn't draw: backed out of");
     }
     if crate::prompt::quit_card_game(vm, host.world) {
-        info!("a card game the TV doesn't draw: quit");
+        // The not-built line says it once a run (openspec AS.822).
+        tracing::debug!("a card game the TV doesn't draw: quit");
     }
     crate::card_game::step(vm, host)?;
     if crate::treasure::answer_hat_load(vm, host)? {

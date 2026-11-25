@@ -40,7 +40,12 @@
 //!   Fangs and the others on 205, 211's and 215's) waits on what his screen
 //!   would have done, his game's end: he's told it's quit
 //!   ([`quit_card_game`]), which plays his quit scene and gives his talk
-//!   back, nothing won, lost or saved.
+//!   back, nothing won, lost or saved. While the hero stays where he said
+//!   yes, that pirate's question asked again is answered with the pirate's
+//!   own no and never put up ([`hold_card_question`], openspec AS.822: a
+//!   kid pressing talk met the same empty question each time); walked
+//!   [`LEFT_A_CARD_PIRATE`] away, the next talk asks it again. The log says
+//!   once a run, at INFO, that the card game isn't in this build.
 
 use guac_script::{Halt, Value, Vm};
 
@@ -86,6 +91,20 @@ const CARD_GAME: &str = "Card Game - Start Card Game";
 /// quit leaves in it.
 const WIN_VALUE: &str = "win val";
 const GAME_QUIT: i32 = -2;
+
+/// How far the hero goes across the ground, metres, from where a card
+/// pirate's yes was answered as a quit before that pirate's question is put
+/// up again (openspec AS.822): past a talk's reach of where he stood.
+pub const LEFT_A_CARD_PIRATE: f32 = 6.0;
+
+/// A card game a yes asked for, quit (openspec AS.822): the question that
+/// asked for it and, from the TV's next read, where the hero stood across
+/// the ground.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CardQuit {
+    pub question: Value,
+    pub hero_at: Option<(f32, f32)>,
+}
 
 /// The game systems' script, in whose name the answer runs.
 const GAME_SYSTEMS: &str = "GameSystems.ai";
@@ -185,7 +204,38 @@ pub fn answer(
         &[],
         host,
     )?;
+    host.world.last_yes = yes.then_some(prompt.question);
     Ok(true)
+}
+
+/// Whether `up`, the question the run asks now, is a card pirate's asked
+/// again while the hero stays where its yes was answered as a quit
+/// (openspec AS.822): the TV answers it no without putting it up. `heroes`
+/// are the joined heroes across the ground; the first read after the quit
+/// marks where they stood, and once none is within [`LEFT_A_CARD_PIRATE`]
+/// of it (or none is joined) the quit is forgotten and the next question is
+/// asked.
+pub fn hold_card_question(
+    world: &mut ScriptWorld,
+    up: Option<&Prompt>,
+    heroes: &[(f32, f32)],
+) -> bool {
+    let Some(quit) = world.card_quit.as_mut() else {
+        return false;
+    };
+    let Some(&first) = heroes.first() else {
+        world.card_quit = None;
+        return false;
+    };
+    let (x, z) = *quit.hero_at.get_or_insert(first);
+    if !heroes
+        .iter()
+        .any(|(hx, hz)| (hx - x).hypot(hz - z) <= LEFT_A_CARD_PIRATE)
+    {
+        world.card_quit = None;
+        return false;
+    }
+    up.is_some_and(|p| p.question == quit.question)
 }
 
 /// Whether `name` is one of [`SCREENS`].
@@ -205,10 +255,22 @@ pub fn answer_screen(world: &mut ScriptWorld, name: &str) -> bool {
     }
     world.card_game_answered |= card_game;
     if let Some((_, what)) = UNBUILT.iter().find(|(s, _)| name.eq_ignore_ascii_case(s)) {
-        tracing::info!(
-            screen = name,
-            "a yes asks for {what}, not built yet: the talk ends with nothing shown"
-        );
+        // The card game's line once a run (openspec AS.822): every pirate
+        // asks for it at each talk, and the line said nothing new after the
+        // first.
+        if card_game && std::mem::replace(&mut world.card_line_said, true) {
+            tracing::debug!(screen = name, "a yes asks for {what} again: quit");
+        } else {
+            tracing::info!(
+                screen = name,
+                "a yes asks for {what}, not built yet: the talk ends with nothing shown{}",
+                if card_game {
+                    " (the card game isn't in this build: every pirate's yes is answered as a quit)"
+                } else {
+                    ""
+                }
+            );
+        }
         world.unbuilt.push(what);
     }
     is_screen(name)
@@ -231,6 +293,13 @@ pub fn quit_card_game(vm: &mut Vm, world: &mut ScriptWorld) -> bool {
     let mut told = false;
     for id in pirates {
         told |= vm.set_local(id, WIN_VALUE, Value::Int(GAME_QUIT));
+    }
+    // The question that yes answered, held while he stays (AS.822).
+    if told && let Some(question) = world.last_yes.take() {
+        world.card_quit = Some(CardQuit {
+            question,
+            hero_at: None,
+        });
     }
     told
 }
@@ -723,11 +792,99 @@ mod tests {
         assert!(!quit_card_game(&mut vm, &mut world), "a store answered");
         assert_eq!(win(&vm), Some(Value::Int(0)));
         assert!(answer_screen(&mut world, &CARD_GAME.to_ascii_lowercase()));
+        // openspec AS.822: the question the yes answered is held with it.
+        world.last_yes = Some(Value::Int(7));
         assert!(quit_card_game(&mut vm, &mut world));
         assert_eq!(win(&vm), Some(Value::Int(GAME_QUIT)));
+        assert_eq!(
+            world.card_quit,
+            Some(CardQuit {
+                question: Value::Int(7),
+                hero_at: None
+            })
+        );
+        assert_eq!(world.last_yes, None, "taken");
+        world.card_quit = None;
         assert!(vm.set_local(id, WIN_VALUE, Value::Int(0)));
         assert!(!quit_card_game(&mut vm, &mut world), "told once");
         assert_eq!(win(&vm), Some(Value::Int(0)));
+        assert_eq!(world.card_quit, None, "nothing quit, nothing held");
+    }
+
+    /// openspec AS.822: after a card pirate's yes is answered as a quit, his
+    /// same question asked again is held (the TV answers it no) while a hero
+    /// stays within [`LEFT_A_CARD_PIRATE`] of where the first read found
+    /// him; another question isn't; once no hero is that near (or none is
+    /// joined) the quit is forgotten and the question is asked again.
+    #[test]
+    fn a_card_pirates_question_is_held_while_the_hero_stays() {
+        let mut world = ScriptWorld::new(&Files::default(), &HashMap::new(), [1, 2, 3, 4, 5, 6, 7]);
+        let ask = |q: i32| Prompt {
+            ui: Value::Int(1),
+            question: Value::Int(q),
+            text: None,
+            yes_first: true,
+            page: Value::Int(2),
+        };
+        let (his, other) = (ask(7), ask(8));
+        assert!(
+            !hold_card_question(&mut world, Some(&his), &[(10.0, 10.0)]),
+            "nothing quit"
+        );
+        world.card_quit = Some(CardQuit {
+            question: Value::Int(7),
+            hero_at: None,
+        });
+        assert!(
+            !hold_card_question(&mut world, None, &[(10.0, 10.0)]),
+            "none up"
+        );
+        assert_eq!(
+            world.card_quit.and_then(|q| q.hero_at),
+            Some((10.0, 10.0)),
+            "marked"
+        );
+        assert!(hold_card_question(&mut world, Some(&his), &[(10.0, 10.0)]));
+        assert!(!hold_card_question(
+            &mut world,
+            Some(&other),
+            &[(10.0, 10.0)]
+        ));
+        // 5 m off, still his: held; a second hero far off doesn't free it.
+        assert!(hold_card_question(
+            &mut world,
+            Some(&his),
+            &[(40.0, 0.0), (13.0, 14.0)]
+        ));
+        // Walked 7.1 m off: forgotten, and back by him he's asked again.
+        assert!(!hold_card_question(&mut world, None, &[(15.0, 15.0)]));
+        assert_eq!(world.card_quit, None);
+        assert!(!hold_card_question(&mut world, Some(&his), &[(10.0, 10.0)]));
+        // No hero joined: forgotten too.
+        world.card_quit = Some(CardQuit {
+            question: Value::Int(7),
+            hero_at: Some((0.0, 0.0)),
+        });
+        assert!(!hold_card_question(&mut world, Some(&his), &[]));
+        assert_eq!(world.card_quit, None);
+    }
+
+    /// openspec AS.822: the card game's not-built line at INFO once a run,
+    /// saying the game isn't in this build; a later yes isn't at INFO, and
+    /// each yes is still counted.
+    #[test]
+    fn the_card_games_line_is_logged_once_a_run() {
+        let mut world = ScriptWorld::new(&Files::default(), &HashMap::new(), [1, 2, 3, 4, 5, 6, 7]);
+        let lines = logged(|| {
+            for _ in 0..3 {
+                assert!(answer_screen(&mut world, CARD_GAME));
+            }
+        });
+        let info: Vec<&String> = lines.iter().filter(|l| l.contains("INFO")).collect();
+        assert_eq!(info.len(), 1, "{lines:?}");
+        assert!(info[0].contains("isn't in this build"), "{lines:?}");
+        assert_eq!(world.unbuilt.len(), 3);
+        assert!(world.card_game_answered);
     }
 
     /// The log's lines while `f` runs.

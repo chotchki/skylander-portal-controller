@@ -513,6 +513,15 @@ pub struct ScriptWorld {
     /// A card game answered with nothing shown, its pirate still to be told
     /// it's quit (openspec AU.34: [`crate::prompt::quit_card_game`]).
     pub(crate) card_game_answered: bool,
+    /// The question a yes last answered (openspec AS.822): a card game
+    /// that yes asked for, quit, keeps it in [`Self::card_quit`].
+    pub(crate) last_yes: Option<Value>,
+    /// A card pirate told his game was quit, by the question that asked for
+    /// it (openspec AS.822: [`crate::prompt::hold_card_question`]).
+    pub(crate) card_quit: Option<crate::prompt::CardQuit>,
+    /// The card game's not-built line written this run: it's written once
+    /// (openspec AS.822).
+    pub(crate) card_line_said: bool,
     /// What each yes asked for that the TV hasn't built, in order (openspec
     /// AS.453: [`crate::prompt::UNBUILT`]), one a yes.
     pub unbuilt: Vec<&'static str>,
@@ -1035,6 +1044,9 @@ impl ScriptWorld {
             rig_held: Vec::new(),
             rig_holder: None,
             card_game_answered: false,
+            last_yes: None,
+            card_quit: None,
+            card_line_said: false,
             unbuilt: Vec::new(),
             collected: None,
             clip_info: HashMap::new(),
