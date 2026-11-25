@@ -79,13 +79,27 @@ const SCORE_CAP: &str = "ScoreBox_Cap";
 pub(crate) const PLAY_AGAIN: &str = "Play again";
 pub(crate) const LEAVE: &str = "Leave";
 
-/// What the end of a game asks of the player, by the board's behaviour
-/// (openspec AS.875): after a loss A plays again and B leaves (the report's
-/// first action and cancel); after a win A goes on. None mid-game.
-pub(crate) fn game_over(board: Option<&str>) -> Option<bool> {
+/// What a strip at the bottom of the board asks of the player.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Strip {
+    /// A lost game (openspec AS.875): A plays again, B leaves (the report's
+    /// first action and cancel).
+    Lost,
+    /// A won game (AS.875): A goes on.
+    Won,
+    /// A tutorial stop (openspec AS.879): the board's manager waits on the
+    /// player's accept under a line the TV doesn't draw (AS.877); A goes on.
+    Tutorial,
+}
+
+/// The strip the board asks for, by its behaviour (openspec AS.875,
+/// AS.879): over a finished game, or at a stop of the tutorial's, each of
+/// which the manager names `wait for tutorial - ...`. None mid-game.
+pub(crate) fn game_over(board: Option<&str>) -> Option<Strip> {
     match board {
-        Some("lost") => Some(true),
-        Some("won") => Some(false),
+        Some("lost") => Some(Strip::Lost),
+        Some("won") => Some(Strip::Won),
+        Some(b) if b.starts_with("wait for tutorial") => Some(Strip::Tutorial),
         _ => None,
     }
 }
@@ -555,8 +569,9 @@ enum Drawn {
     Hand(Vec<u16>, HandFocus, bool),
     Quit(QuitFocus),
     Loot(LootShown, crate::pad::Labels),
-    /// The end-of-game strip: lost (A again, B leave) or won (A on).
-    Over(bool, crate::pad::Labels),
+    /// The strip at the bottom: a game's end (lost: A again, B leave; won:
+    /// A on) or a tutorial stop (A on).
+    Over(Strip, crate::pad::Labels),
 }
 
 /// A drawn card screen's root, for the shots.
@@ -595,7 +610,7 @@ fn show(
             .pick
             .as_ref()
             .and_then(|p| game_over(p.behaviour.as_deref()))
-            .map(|lost| Drawn::Over(lost, labels)),
+            .map(|strip| Drawn::Over(strip, labels)),
     };
     let score_want = read.score.filter(|_| read.board);
     let modal_same = shown.as_ref().map(|(d, _)| d) == want.as_ref();
@@ -622,7 +637,7 @@ fn show(
                 }
                 Drawn::Quit(focus) => spawn_quit(&mut commands, &pen, art, *focus),
                 Drawn::Loot(loot, labels) => spawn_loot(&mut commands, &pen, art, loot, *labels),
-                Drawn::Over(lost, labels) => spawn_over(&mut commands, &pen, art, *lost, *labels),
+                Drawn::Over(strip, labels) => spawn_over(&mut commands, &pen, art, *strip, *labels),
             };
             *shown = Some((w, e));
         }
@@ -908,24 +923,31 @@ fn spawn_loot(
         .id()
 }
 
-/// The end-of-game strip at the bottom over the finished board (openspec
-/// AS.875): each choice its pad glyph and our word.
+/// The strip's choices: each its pad face and our word (openspec AS.875,
+/// AS.879).
+pub(crate) fn choices(strip: Strip) -> &'static [(crate::pad::Face, &'static str)] {
+    match strip {
+        Strip::Lost => &[
+            (crate::pad::Face::South, PLAY_AGAIN),
+            (crate::pad::Face::East, LEAVE),
+        ],
+        Strip::Won | Strip::Tutorial => {
+            &[(crate::pad::Face::South, crate::collected_box::CONTINUE)]
+        }
+    }
+}
+
+/// The strip at the bottom over the board (openspec AS.875, AS.879): each
+/// choice its pad glyph and our word.
 fn spawn_over(
     commands: &mut Commands,
     pen: &Pen,
     art: &CardArt,
-    lost: bool,
+    strip: Strip,
     labels: crate::pad::Labels,
 ) -> Entity {
     let a = art.prompt.as_ref();
-    let choices: &[(crate::pad::Face, &str)] = if lost {
-        &[
-            (crate::pad::Face::South, PLAY_AGAIN),
-            (crate::pad::Face::East, LEAVE),
-        ]
-    } else {
-        &[(crate::pad::Face::South, crate::collected_box::CONTINUE)]
-    };
+    let choices = choices(strip);
     commands
         .spawn((
             CardScreenRoot("over"),
