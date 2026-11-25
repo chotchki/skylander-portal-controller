@@ -645,7 +645,7 @@ impl Plugin for DevEntryPlugin {
         if env.is_some() && at_start.is_none() {
             warn!(
                 value = ?env,
-                "GUAC_DEV_ENTRY isn't `b`, `start`, `end`, `pods`, `elves`, `part`, `part2`, `door2`, `by:<placement>` or `interior:<name>`: no entry"
+                "GUAC_DEV_ENTRY isn't `b`, `start`, `end`, `pods`, `elves`, `part`, `part2`, `door2`, `crane`, `by:<placement>` or `interior:<name>`: no entry"
             );
         }
         if let Some(a) = &at_start {
@@ -1186,8 +1186,11 @@ mod tests {
                 (CRANE_BROUGHT_IN, Vec3::new(-74.8, 24.5, -128.7), 330.0)
             ]
         );
-        assert_eq!((crane.settle, crane.f0), (SETTLE, CRANE_BROUGHT_IN + 1));
+        assert_eq!((crane.settle, crane.f0), (SETTLE, 241));
+        assert_eq!(CRANE_BROUGHT_IN, 240, "past the 120 steps the zone takes");
         assert!(crane.creatures.is_empty() && crane.wake.is_empty());
+        assert_eq!(crane.creatures_at, u32::MAX);
+        assert!(crane.first_alert.is_none() && crane.loot.is_none() && crane.view.is_none());
         // Any placement by name (openspec AU.39): `by:<name>` asks it, a
         // bare `by` names none; off its own facing, turned back on it.
         let by = asked_at_start(true, Some("by: Chest(1)")).unwrap();

@@ -1141,13 +1141,20 @@ impl ScriptWorld {
         }
     }
 
-    /// The ray caster's contact between its two points, through the seam.
-    /// Whether the ray caster's segment meets the solid of `a`, a prop a
-    /// hero stands on (a shape, solid to actors, an actor surface, no
-    /// creature the engine walks), at its outer size (AG.70: the original's
-    /// rays meet a solid with its convex radius). False for anything else,
-    /// which keeps `ray-touch`'s answer.
+    /// Whether the ray caster's segment, pointing straight down, meets the
+    /// solid of `a`, a prop a hero stands on (a shape, solid to actors, an
+    /// actor surface, no creature the engine walks), at its outer size
+    /// (AG.70: the original's rays meet a solid with its convex radius).
+    /// False for anything else, which keeps `ray-touch`'s answer: a ray
+    /// that isn't straight down is the autoaim's (shooter to target), whose
+    /// targets include breakable walls and doors that pass the rest.
     fn stands_on_the_ray(&self, a: Handle, engine: &mut dyn Engine) -> bool {
+        let d = self.ray.end - self.ray.start;
+        let len = d.length();
+        // The walkable-surface check's rays drop 10 ft with no run at all.
+        if len <= 0.0 || d.y >= 0.0 || d.x.hypot(d.z) > len * 0.01 {
+            return false;
+        }
         let Some(k) = self.actors.get(&a) else {
             return false;
         };
@@ -1162,11 +1169,6 @@ impl ScriptWorld {
         let Some(body) = engine.body(a) else {
             return false;
         };
-        let d = self.ray.end - self.ray.start;
-        let len = d.length();
-        if len <= 0.0 {
-            return false;
-        }
         let mut past = Vec::new();
         // Each pass leaves one more body out, so it ends.
         while let Some(hit) = guac_motion::ground::ray_seeing(
@@ -1185,6 +1187,7 @@ impl ScriptWorld {
         false
     }
 
+    /// The ray caster's contact between its two points, through the seam.
     fn ray_contact(&self, engine: &mut dyn Engine) -> Option<(Vec3, Vec3)> {
         self.ray_contact_full(engine).map(|(p, n, _)| (p, n))
     }
@@ -2097,12 +2100,14 @@ impl ScriptWorld {
                     // where it points: yes for one the ray passes within its
                     // reach of (stand-in ledger: `turret-pick`).
                     //
-                    // A prop a hero stands on (a push block) answers by the
-                    // seam (openspec AS.891): the walkable-surface check
-                    // (`Combat.ai`) asks each push block whether a short
-                    // ray down past the seam between two touches it, so a
-                    // hero walks across landed blocks; answered "no", he
-                    // stopped dead at the seam.
+                    // A prop a hero stands on (a push block) answers a ray
+                    // straight down by the seam (openspec AS.891): the
+                    // walkable-surface check (`Combat.ai`) asks each push
+                    // block whether a short ray down past the seam between
+                    // two touches it, so a hero walks across landed blocks;
+                    // answered "no", he stopped dead at the seam. The
+                    // autoaim's rays aren't straight down and keep the "no"
+                    // above (AS.902).
                     if self.stands_on_the_ray(a, engine) {
                         return Ok(Value::Int(1));
                     }
@@ -6794,6 +6799,53 @@ mod tests {
         w.actors.get_mut(&FAR).unwrap().walker = None;
         w.actors.get_mut(&FAR).unwrap().solid.acts_as_actor_surface = 0;
         assert_eq!(touch(&mut w, &mut e, FAR, 1.0), Value::Int(0), "no surface");
+        w.actors.get_mut(&FAR).unwrap().solid.acts_as_actor_surface = 1;
+        // Nor one taken off, one with no shape or one solid to no actor
+        // (AS.902).
+        w.actors.get_mut(&FAR).unwrap().removed = true;
+        assert_eq!(touch(&mut w, &mut e, FAR, 1.0), Value::Int(0), "taken off");
+        w.actors.get_mut(&FAR).unwrap().removed = false;
+        w.actors.get_mut(&FAR).unwrap().solid.shape = 0;
+        assert_eq!(touch(&mut w, &mut e, FAR, 1.0), Value::Int(0), "no shape");
+        w.actors.get_mut(&FAR).unwrap().solid.shape = 1;
+        w.actors.get_mut(&FAR).unwrap().solid.interacts_with_actors = 0;
+        assert_eq!(
+            touch(&mut w, &mut e, FAR, 1.0),
+            Value::Int(0),
+            "to no actor"
+        );
+        w.actors.get_mut(&FAR).unwrap().solid.interacts_with_actors = 1;
+        assert_eq!(touch(&mut w, &mut e, FAR, 1.0), Value::Int(1), "it again");
+        // The autoaim's ray (AS.902): through the block's top at a slant, or
+        // across it level, is no touch; the walkable check's is straight
+        // down.
+        for (start, end, what) in [
+            (
+                Vec3::new(0.2, 1.0, 0.0),
+                Vec3::new(2.0, -1.0, 0.0),
+                "a slant",
+            ),
+            (
+                Vec3::new(0.2, -0.5, 0.0),
+                Vec3::new(4.0, -0.5, 0.0),
+                "level",
+            ),
+            (Vec3::new(1.0, -1.5, 0.0), Vec3::new(1.0, 1.5, 0.0), "up"),
+        ] {
+            w.ray.start = start;
+            w.ray.end = end;
+            let a = at(
+                "positionmeasurement",
+                "collision",
+                Some(Value::Entity(FAR)),
+                Some(ray),
+            );
+            assert_eq!(
+                w.get_member(&a, Member::Collision, &mut e).unwrap(),
+                Value::Int(0),
+                "{what}"
+            );
+        }
     }
 
     /// openspec AS.76: a point put at a place on the screen lands there, on
