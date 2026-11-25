@@ -3699,7 +3699,7 @@ fn level_201s_crane_blocks_land_by_pushes_and_a_hero_crosses_them() {
         assert!(at(&w, n).distance(pit) < 0.05, "{n} at {}", at(&w, n));
     }
     // The crossings: from the stone floor west, from the round platform east.
-    let eruptor = w.run.hero().solid().clone();
+    let eruptor = *w.run.hero().solid();
     let ninjini = guac_motion::solid::SolidInfo {
         kind: guac_motion::solid::SolidKind::Capsule,
         offset: [0.0; 3],
