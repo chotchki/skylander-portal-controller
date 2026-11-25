@@ -1639,6 +1639,9 @@ struct Played {
     games: Vec<Game>,
     /// The VM's sliders running as each game ended (openspec AS.920).
     sliders: Vec<usize>,
+    /// The live clones of the card game's misc streams' templates (a stone's
+    /// asset, the hand select) as each game ended (openspec AS.880).
+    misc_clones: Vec<usize>,
     picks: cards::Picks,
     stays: cards::Stays,
     stops: Vec<guac_script::Halt>,
@@ -1811,6 +1814,7 @@ fn dreadbeards_games_with(
     let (mut picks, mut stays) = (cards::Picks::default(), cards::Stays::default());
     let mut games: Vec<Game> = Vec::new();
     let mut sliders = Vec::new();
+    let mut misc_clones = Vec::new();
     let mut player = cards::Player::new(cards::Policy::Naive);
     let (mut read, mut asked, mut quit_sent) = (0, false, false);
     let mut was_board: Option<String> = None;
@@ -2018,6 +2022,7 @@ fn dreadbeards_games_with(
             };
             if over {
                 sliders.push(run.vm.sliders_running());
+                misc_clones.push(misc_clones_live(&run));
                 let g = &mut games[i];
                 g.ended = run.steps;
                 last_end = run.steps;
@@ -2179,6 +2184,7 @@ fn dreadbeards_games_with(
     Played {
         games,
         sliders,
+        misc_clones,
         picks,
         stays,
         stops,
@@ -2972,6 +2978,30 @@ fn the_card_games_sounds_look_up_on_the_tvs_book_by_their_stems() {
     );
 }
 
+/// The live clones of a template of the card game's misc streams (openspec
+/// AS.880: a stone's asset, the hand select), the misc slot's.
+fn misc_clones_live(run: &Run) -> usize {
+    let misc: Vec<u16> = run
+        .world
+        .card_streams
+        .units
+        .iter()
+        .filter(|(a, _)| a.starts_with("misc/"))
+        .map(|(_, u)| *u)
+        .collect();
+    run.world
+        .clones()
+        .into_iter()
+        .filter(|&h| !run.world.removed(h))
+        .filter(|&h| {
+            run.world
+                .actor(h)
+                .and_then(|a| a.template)
+                .is_some_and(|t| misc.contains(&t.unit))
+        })
+        .count()
+}
+
 /// The quit games of [`a_long_sitting_ends_every_game`] by default; its count
 /// by `AS920_GAMES`.
 const SITTING_GAMES: u32 = 30;
@@ -3009,6 +3039,10 @@ fn a_long_sitting_ends_every_game() {
         "sliders held: {:?}",
         p.sliders
     );
+    // Nothing of a misc stream's outlives it (openspec AS.880): each quit's
+    // hand select's clones go with it.
+    println!("misc streams' clones as each ended {:?}", p.misc_clones);
+    assert!(p.misc_clones.iter().all(|&n| n == 0), "{:?}", p.misc_clones);
     assert!(p.stops.is_empty(), "{:#?}", p.stops);
     println!("load at end: {}", load());
 }

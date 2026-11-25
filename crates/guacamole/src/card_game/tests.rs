@@ -459,3 +459,35 @@ fn a_reward_cards_stone_is_read_off_its_name_string() {
     assert_eq!(stone_of_name("Card_Sprite_006"), None);
     assert_eq!(stone_of_name("Card_Name_(x)"), None);
 }
+
+/// openspec AS.880: a card stream leaving takes its templates' live clones
+/// with it (a stone's asset: the creature it presents and its weapon, hung
+/// on it and never removed by the board): each clone of a template of that
+/// stream is taken off, a scripted one's placement too; a clone of another
+/// stream's template, a file placement and one already off stay as they
+/// were.
+#[test]
+fn a_leaving_streams_clones_go_with_it() {
+    let (program, files, handles) = stream();
+    let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+    let mut vm = Vm::new(program, Config::new(Mode::Strict));
+    let clone = |unit: u16, removed: bool| {
+        let mut a = crate::script_engine::Actor::blank();
+        a.template = Some(Obj { unit, index: 7 });
+        a.removed = removed;
+        a
+    };
+    world.actors.insert(0x900, clone(4, false));
+    world.actors.insert(0x901, clone(4, false));
+    world.actors.insert(0x902, clone(5, false));
+    world.actors.insert(0x903, clone(4, true));
+    let scripted = vm.add(0x901, "Scripted clone", 0);
+    let file = *handles.get(&STARTUP).unwrap();
+    world.actors.get_mut(&file).unwrap().template = Some(Obj { unit: 4, index: 2 });
+    assert_eq!(take_off_clones_of(&mut vm, &mut world, 4), 2);
+    assert!(world.removed(0x900) && world.removed(0x901));
+    assert!(vm.removed(scripted), "its placement taken off");
+    assert!(!world.removed(0x902), "another stream's");
+    assert!(!world.removed(file), "a file placement");
+    assert_eq!(take_off_clones_of(&mut vm, &mut world, 4), 0, "once");
+}
