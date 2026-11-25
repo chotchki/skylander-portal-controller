@@ -2493,6 +2493,9 @@ pub(crate) struct RunShot {
     /// (AS.205).
     pub resting: usize,
     pub pausers: Vec<String>,
+    /// The VM's sliders running, of its pool's [`guac_script::SLIDERS`]
+    /// (openspec AS.920: a full pool stood a long card sitting still).
+    pub sliders: usize,
 }
 
 /// The interiors as [`RunShot`] reports them.
@@ -2583,6 +2586,7 @@ impl RunShots<'_> {
             },
             resting: w.resting_count(),
             pausers: w.pausers().into_iter().map(|h| w.name(h)).collect(),
+            sliders: rt.vm.sliders_running(),
         })
     }
 }
