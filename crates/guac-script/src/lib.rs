@@ -801,6 +801,15 @@
 //!   and set him back down within 2 cm 0.67 s on, his burst 0.7 s in;
 //!   Eruptor's splash mesh widens 25 to 110 over 0.3 s while it rises 5 to
 //!   300 over 0.15 s ping pong, ending flat as it ends wide.
+//! - A slide ends, its place unwritten, once what it eases has left play
+//!   (openspec AS.920): its member's receiver taken off here or, as the host
+//!   tells it ([`Host::left_play`]), an actor taken off or a sprite removed;
+//!   or a local of its own placement once that placement is taken off.
+//!   Nothing reads such a place again, as a sound's copy stops with its
+//!   actor. A reading, not seen in the original: the card game's glow
+//!   pulses loop on its sprites, and kept running past the board's teardown
+//!   they held about 19 sliders a game for good, the pool full in a long
+//!   sitting and the board stuck on a slide that landed at once.
 //!
 //! # Modes, the budget and the whitelist
 //!

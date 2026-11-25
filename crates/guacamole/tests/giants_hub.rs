@@ -1637,6 +1637,8 @@ fn the_card_streams_name_no_member_the_tv_lacks_but_the_wii_pair() {
 #[derive(Debug)]
 struct Played {
     games: Vec<Game>,
+    /// The VM's sliders running as each game ended (openspec AS.920).
+    sliders: Vec<usize>,
     picks: cards::Picks,
     stays: cards::Stays,
     stops: Vec<guac_script::Halt>,
@@ -1808,6 +1810,7 @@ fn dreadbeards_games_with(
     let before = cards::leftovers(&run);
     let (mut picks, mut stays) = (cards::Picks::default(), cards::Stays::default());
     let mut games: Vec<Game> = Vec::new();
+    let mut sliders = Vec::new();
     let mut player = cards::Player::new(cards::Policy::Naive);
     let (mut read, mut asked, mut quit_sent) = (0, false, false);
     let mut was_board: Option<String> = None;
@@ -2014,6 +2017,7 @@ fn dreadbeards_games_with(
                 }
             };
             if over {
+                sliders.push(run.vm.sliders_running());
                 let g = &mut games[i];
                 g.ended = run.steps;
                 last_end = run.steps;
@@ -2174,6 +2178,7 @@ fn dreadbeards_games_with(
     );
     Played {
         games,
+        sliders,
         picks,
         stays,
         stops,
@@ -2965,4 +2970,45 @@ fn the_card_games_sounds_look_up_on_the_tvs_book_by_their_stems() {
         started.elapsed().as_secs_f64(),
         load()
     );
+}
+
+/// The quit games of [`a_long_sitting_ends_every_game`] by default; its count
+/// by `AS920_GAMES`.
+const SITTING_GAMES: u32 = 30;
+
+/// openspec AS.920: a kid's long sitting at Dreadbeard, every game asked
+/// again after the last: [`SITTING_GAMES`] games in one run on hub stage 2,
+/// each quit at the first pick (its board set up and taken down, as a
+/// played game's is), the board's strings in as the TV's model holds them.
+/// Each ends, and the VM's sliders running as each ends stay far under the
+/// pool's 400 ([`guac_script::SLIDERS`]): the card game's looping glow
+/// pulses on its sprites outlived the board, about 19 sliders a game held
+/// for good, and with the pool full a slide the board waits on landed at
+/// once and skipped its block, so the 21st game here (the twelfth played one
+/// on the TV) stood at the opponent's first stone for good.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_long_sitting_ends_every_game() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    common::CARD_STRINGS.set(true);
+    let n: u32 = std::env::var("AS920_GAMES").map_or(SITTING_GAMES, |v| v.parse().unwrap());
+    let plans: Vec<(Plan, u32)> = (0..n).map(|i| (Plan::Quit, 1000 + i)).collect();
+    let p = dreadbeards_games(&plans, GAME_STEPS.saturating_mul(n));
+    let ended = p.games.iter().filter(|g| g.ended > 0).count() as u32;
+    println!(
+        "{ended} of {n} games ended; sliders as each ended {:?}; {} steps, {:.0} s",
+        p.sliders,
+        p.steps,
+        started.elapsed().as_secs_f64()
+    );
+    assert_eq!(ended, n, "{:?}", p.games.last());
+    let most = p.sliders.iter().copied().max().unwrap_or(0);
+    assert!(
+        most < guac_script::SLIDERS / 4,
+        "sliders held: {:?}",
+        p.sliders
+    );
+    assert!(p.stops.is_empty(), "{:#?}", p.stops);
+    println!("load at end: {}", load());
 }

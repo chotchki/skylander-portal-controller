@@ -2147,6 +2147,12 @@ impl Vm {
             {
                 continue;
             }
+            let (spot, placement) = (s.spot, s.placement);
+            if self.slid_gone(spot, placement, host) {
+                self.stop_slider(id);
+                continue;
+            }
+            let s = &mut self.sliders[i];
             s.elapsed += dt * s.rate / 100.0;
             let mut done = s.elapsed + 1e-6 >= s.time;
             // At a pass's end: a ping pong one out turns back, looping or
@@ -3958,6 +3964,38 @@ impl Vm {
         }
         let sliders = &self.sliders;
         self.live.retain(|&i| sliders[i as usize].running);
+    }
+
+    /// Whether what a slide eases has left play (crate docs, Slides): the
+    /// receiver of its member, an actor taken off or a sprite removed as the
+    /// host tells it, or a placement here taken off; or a local of its own
+    /// placement once that placement is taken off. Nothing reads such a
+    /// place again, and a looping slide on one would hold a slider of the
+    /// pool for good (openspec AS.920).
+    fn slid_gone(&self, spot: Spot, placement: Option<PlacementId>, host: &mut dyn Host) -> bool {
+        let receiver = match spot {
+            Spot::Member { receiver, .. }
+            | Spot::Packed {
+                base: Base::Member { receiver, .. },
+                ..
+            } => receiver,
+            Spot::Cell(c) => {
+                return placement
+                    .and_then(|p| self.placements.get(p as usize))
+                    .is_some_and(|p| p.removed && p.locals.values().any(|&l| l == c));
+            }
+            _ => None,
+        };
+        let Some(r) = receiver else {
+            return false;
+        };
+        if let Value::Entity(h) = r
+            && let Some(&id) = self.handles.get(&h)
+            && self.placements[id as usize].removed
+        {
+            return true;
+        }
+        host.left_play(r)
     }
 
     /// Ends slider `id` if it runs: off the running count and the index of

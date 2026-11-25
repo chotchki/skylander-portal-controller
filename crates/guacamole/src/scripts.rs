@@ -2508,6 +2508,17 @@ impl ScriptWorld {
         self.actors.get(&h).is_some_and(|k| k.removed)
     }
 
+    /// Whether `receiver` has left play for a slide easing one of its
+    /// members (openspec AS.920, guac-script's crate docs, Slides): an
+    /// actor of the world's taken off, or one of the interface's sprites
+    /// removed. A handle the world doesn't know stays in play.
+    pub fn slid_left_play(&self, receiver: Value) -> bool {
+        if self.sprite_removed(receiver) {
+            return true;
+        }
+        matches!(receiver, Value::Entity(h) if self.removed(h))
+    }
+
     /// Takes the file placement `obj` off, as a remove of it does (a
     /// recorded state's breakable already broken); false for none.
     pub fn take_off(&mut self, obj: Obj) -> bool {
@@ -3147,6 +3158,9 @@ impl Host for WorldHost<'_, '_> {
     }
     fn made_anew(&mut self, handle: Handle) {
         self.world.made_anew(handle);
+    }
+    fn left_play(&mut self, receiver: Value) -> bool {
+        self.world.slid_left_play(receiver)
     }
     fn answer(&mut self, name: &str, args: &[(&str, Value)]) -> bool {
         note_pause(self.world, name, args);
