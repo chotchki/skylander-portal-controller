@@ -1290,6 +1290,70 @@ fn board_holds(to: Res<Wander>, world: Option<ResMut<ScriptWorld>>) {
     }
 }
 
+/// openspec AS.878: the board torn down, his return asked and not answered
+/// yet (`Restore::Asked`: the pirate's loot and his win, loss or quit scene
+/// hold it), the scripts' view is still the one drawn, every step, where
+/// AH.227's hold kept the board's last view on the void under the level.
+#[cfg(feature = "card-game-seams")]
+#[test]
+fn the_pirates_scenes_are_drawn_until_he_is_given_back() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut app, _) = camera_app(tmp.path(), CameraFault::None);
+    app.init_resource::<Wander>()
+        .init_resource::<Steps>()
+        .add_systems(FixedUpdate, wander.in_set(Frame::Hands))
+        .add_systems(FixedUpdate, return_asked.in_set(Frame::Hands))
+        .add_systems(FixedUpdate, steps_seen.in_set(Frame::Record));
+    run_until(&mut app, "the scripts' view", 30, |s| {
+        s.hold == ViewHold::Scripts
+    });
+    frames(&mut app, 30);
+    let held = last(&app);
+    let minion = {
+        let e = hero_entity(&app);
+        match &app.world().get::<super::HeroRun>(e).unwrap().join {
+            super::Join::Joined(m) => *m,
+            other => panic!("joined: {other:?}"),
+        }
+    };
+    let off = held.eye + Vec3::new(4.0, 3.0, -9.0);
+    {
+        let w = app.world_mut();
+        let mut rt = w.resource_mut::<ScriptRuntime>();
+        let h = rt.vm.handle_of(minion).expect("his minion's handle");
+        assert!(rt.vm.remove(h), "his minion off with the board");
+        w.resource_mut::<Wander>().0 = Some(off);
+    }
+    frames(&mut app, 20);
+    let seen = app.world().resource::<Steps>().0.clone();
+    assert!(seen.len() >= 5, "{} steps", seen.len());
+    for (k, (_, t)) in seen.iter().enumerate() {
+        assert!(
+            t.translation.distance(off) < 1e-3,
+            "step {k} of {} with his return asked: {t:?}, the scene's view at {off}, the board's last at {:?}",
+            seen.len(),
+            held.eye
+        );
+    }
+}
+
+/// His return asked each step while [`Wander`] is set, as the board's
+/// teardown leaves it while the pirate's scene holds the players (openspec
+/// AS.878: `Cutscene State` up, so he isn't given back yet).
+#[cfg(feature = "card-game-seams")]
+fn return_asked(
+    to: Res<Wander>,
+    world: Option<ResMut<ScriptWorld>>,
+    runtime: Option<ResMut<ScriptRuntime>>,
+) {
+    if let (Some(_), Some(mut world), Some(mut rt)) = (to.0, world, runtime) {
+        world.card_streams.restore_asked();
+        if let Some(g) = rt.vm.program().global_named("Cutscene State") {
+            rt.vm.set_global(g, guac_script::Value::Int(1));
+        }
+    }
+}
+
 /// Eruptor in place of the hero on the portal (slot 0 cleared, Eruptor
 /// placed in slot 1), taken in and his scripts joined; the index of the
 /// first step recorded after the clear.
