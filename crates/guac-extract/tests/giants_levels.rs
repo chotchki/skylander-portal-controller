@@ -127,6 +127,17 @@ fn read_level(
             levels::PALETTES => encoded(levels::palettes(igz, level, id())),
             levels::NODES => encoded(levels::nodes(igz, level, id())),
             levels::PARTICLES => encoded(levels::particles(igz, level, id())),
+            levels::LIPS => {
+                let pack = guac_extract::interface::english_pack(archive).unwrap_or(None);
+                let pack = pack
+                    .as_deref()
+                    .map(guac_formats::igz::Igz::parse)
+                    .transpose();
+                match pack {
+                    Ok(pack) => encoded(levels::lips(igz, pack.as_ref(), &[], level, id())),
+                    Err(e) => Err(e.to_string()),
+                }
+            }
             levels::SPRITES => {
                 let name = format!("{}/{level}.bld", levels::LEVEL_FOLDER);
                 encoded(

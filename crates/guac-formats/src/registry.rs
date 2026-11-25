@@ -8,6 +8,7 @@ use crate::FormatError;
 use crate::{
     atmosphere, attachments, bink, edge, exports, fsb, havok, iga, igz, interface, language,
     material, model, mpeg, particle, progression, roster, script, sfo, sound, texture, toys,
+    viseme,
 };
 
 pub struct RegisteredParser {
@@ -243,6 +244,16 @@ pub const PARSERS: &[RegisteredParser] = &[
         // 220, from 0x80) held at once, and one embedded bank's parse at a
         // time (fsb5's).
         heap_budget: |len| 64 * len + 8 * len + 64 * len + (64 << 10),
+    },
+    RegisteredParser {
+        name: "viseme",
+        parse: |bytes| viseme::parse(bytes).map(drop),
+        seeds: viseme::builder::seeds,
+        // A block per 8 data bytes at most (24 each) and its start (8), a
+        // track per kind byte (56 each, the kind bytes of every block
+        // disjoint), each spline's knots and points (5 bytes per input
+        // byte): under 96x.
+        heap_budget: |len| 96 * len + 4096,
     },
 ];
 

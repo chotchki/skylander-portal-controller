@@ -2191,9 +2191,21 @@ fn write_level(dir: &mut guac_extract::IdentityDir, entry: LevelEntry) -> Result
     let rel = guac_extract::levels::part_path(ir, &level, guac_extract::levels::PARTICLES);
     dir.write_output(&rel, &ir.encode(&particles, dir, &rel)?)?;
     dir.record_level_part(&level, guac_extract::levels::PARTICLES, vec![rel])?;
+    // AS.820's lips: no line carries a stream and no model a viseme set.
+    let lips = guac_ir::lips::Lips {
+        identity: particles.identity,
+        level: level.clone(),
+        lines: Vec::new(),
+        global: Vec::new(),
+        faces: Vec::new(),
+        refused: Vec::new(),
+    };
+    let rel = guac_extract::levels::part_path(ir, &level, guac_extract::levels::LIPS);
+    dir.write_output(&rel, &ir.encode(&lips, dir, &rel)?)?;
+    dir.record_level_part(&level, guac_extract::levels::LIPS, vec![rel])?;
     // AT.8's sprites: no templates, fonts or text of the level's own.
     let sprites = guac_ir::interface::Interface {
-        identity: particles.identity,
+        identity: lips.identity,
         archive: format!("{}/{level}.bld", guac_extract::levels::LEVEL_FOLDER),
         templates: Vec::new(),
         fonts: Vec::new(),

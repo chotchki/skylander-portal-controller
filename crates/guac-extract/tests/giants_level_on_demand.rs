@@ -196,6 +196,13 @@ fn a_named_level_extracts_end_to_end_and_resumes() {
             (levels::NODES, ron(levels::nodes(&igz, name, id()))),
             // AS.17: its own emitters, with the level.
             (levels::PARTICLES, ron(levels::particles(&igz, name, id()))),
+            // AS.820: its lines' streams and its faces, with the level.
+            (levels::LIPS, {
+                let pack = guac_extract::interface::english_pack(&archive).unwrap();
+                let pack = pack.as_deref().map(|p| Igz::parse(p).unwrap());
+                let global = levels::global_lines(&usrdir).unwrap().0;
+                ron(levels::lips(&igz, pack.as_ref(), &global, name, id()))
+            }),
         ];
         let m = dir.manifest().clone();
         let mut checked = 0;

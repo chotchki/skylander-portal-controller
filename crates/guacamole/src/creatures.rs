@@ -238,6 +238,9 @@ impl Plugin for CreaturesPlugin {
 #[derive(Component, Debug)]
 pub(crate) struct DrawnCreature {
     pub(crate) actor: Handle,
+    /// Its model's path, as placements name it: its face's key (openspec
+    /// AS.820, [`guacamole::mouths::Mouths::face`]).
+    path: String,
     model: Arc<Model>,
     palette: Option<Arc<Palette>>,
     nodes: Option<Arc<AttachNodes>>,
@@ -636,6 +639,7 @@ fn draw_creatures(
                 Visibility::default(),
                 DrawnCreature {
                     actor: h,
+                    path: path.clone(),
                     model,
                     palette,
                     nodes,
@@ -705,14 +709,17 @@ pub(crate) struct CreatureWash {
 fn pose_creatures(
     world: Res<ScriptWorld>,
     time: Res<Time>,
+    level: Res<Level>,
     creatures: Query<&DrawnCreature>,
     mut transforms: Query<&mut Transform, Without<DrawnCreature>>,
 ) {
+    let mouths = level.mouths();
     for c in &creatures {
         let seconds = time.elapsed().saturating_sub(c.since).as_secs_f64();
         let over = playing_clips(c, &world);
         let base = base_clips(c, &world, seconds);
-        let pose = guacamole::character::mesh::blended_over(&c.model, &base, &over);
+        let mouth = mouths.map(|m| mouth_of(m, &world, c)).unwrap_or_default();
+        let pose = guacamole::character::mesh::blended_over_mouth(&c.model, &base, &over, &mouth);
         for (joint, p) in c.joints.iter().zip(pose) {
             if let Ok(mut t) = transforms.get_mut(*joint)
                 && *t != p
@@ -720,6 +727,23 @@ fn pose_creatures(
                 *t = p;
             }
         }
+    }
+}
+
+/// The mouth shapes `c` says its line with now (openspec AS.820), each by
+/// its weight: none when its model has no face or no line with a stream
+/// plays on it.
+fn mouth_of<'m>(
+    mouths: &'m guacamole::mouths::Mouths,
+    world: &ScriptWorld,
+    c: &DrawnCreature,
+) -> Vec<(&'m guac_ir::clip::Clip, f32)> {
+    let Some(face) = mouths.face(&c.path) else {
+        return Vec::new();
+    };
+    match mouths.speaking(world, c.actor) {
+        Some(s) => face.iter().zip(s.weights).collect(),
+        None => Vec::new(),
     }
 }
 
@@ -827,8 +851,36 @@ pub(crate) struct CreaturesReport {
     /// The people ([`ScriptWorld::people`]) whose script runs, each as a
     /// creature's reported, with whether it draws now (openspec AU.34).
     pub people: Vec<PersonShot>,
+    /// The other placements of a model and a script of their own that
+    /// runs, neither walked nor one of the people
+    /// ([`ScriptWorld::scripted_placements`], openspec AS.512), each with
+    /// whether it draws now: what a driver aims a pinned camera at.
+    pub placed: Vec<PersonShot>,
+    /// Each drawn creature a line with a stream plays on now (openspec
+    /// AS.820): the line, how far into it, its shapes' weights, the shape
+    /// weighed most and whether its model has a face to move.
+    pub mouths: Vec<MouthShot>,
     /// The cutscene up and its scene, by name (openspec AS.461).
     pub scene: Option<guacamole::level_end::SceneUp>,
+}
+
+/// A speaker as `/api/_test/tv` reports him (openspec AS.820).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct MouthShot {
+    pub name: String,
+    pub line: Option<String>,
+    pub seconds: f32,
+    pub weights: Vec<f32>,
+    /// The shape weighed most, by its place in the set (`_A`, `_E`, `_FV`,
+    /// `_L`, `_MBP`, `_O`, `_S`, `_TH`, `_UWQ`); none for a closed mouth.
+    pub shape: Option<usize>,
+    pub face: bool,
+    /// Where the first joint his face's shapes move stands (the jaw on the
+    /// disc's sets), metres: what a driver aims a pinned camera at.
+    pub jaw: Option<[f32; 3]>,
+    /// How far that joint is drawn turned off the pose his clips give him
+    /// with no line, degrees: the mouth on the TV's drawn model.
+    pub jaw_turn: Option<f32>,
 }
 
 /// One of the people as `/api/_test/tv` reports it.
@@ -870,6 +922,9 @@ pub(crate) struct CreatureShots<'w, 's> {
     creatures: Query<'w, 's, &'static DrawnCreature>,
     washes: Query<'w, 's, &'static CreatureWash>,
     time: Res<'w, Time>,
+    level: Option<Res<'w, Level>>,
+    globals: Query<'w, 's, &'static GlobalTransform>,
+    locals: Query<'w, 's, &'static Transform>,
 }
 
 impl CreatureShots<'_, '_> {
@@ -900,7 +955,47 @@ impl CreatureShots<'_, '_> {
                     .is_some_and(|(_, c)| c.draws);
             s.drawn = shows(s.parts, s.alpha, s.scale);
         }
-        for p in &mut out.people {
+        if let Some(m) = self.level.as_deref().and_then(Level::mouths) {
+            for c in &self.creatures {
+                if let Some(sp) = m.speaking(world, c.actor) {
+                    let face = m.face(&c.path);
+                    let joint = face
+                        .and_then(|f| f.first())
+                        .and_then(|shape| shape.tracks.first())
+                        .map(|t| usize::from(t.joint));
+                    let jaw = joint
+                        .and_then(|j| c.joints.get(j))
+                        .and_then(|&e| self.globals.get(e).ok())
+                        .map(|g| g.translation().to_array());
+                    let jaw_turn = joint.and_then(|j| {
+                        let drawn = self.locals.get(*c.joints.get(j)?).ok()?;
+                        let seconds = self.time.elapsed().saturating_sub(c.since).as_secs_f64();
+                        let base = base_clips(c, world, seconds);
+                        let over = playing_clips(c, world);
+                        let still =
+                            guacamole::character::mesh::blended_over(&c.model, &base, &over);
+                        Some(
+                            drawn
+                                .rotation
+                                .angle_between(still.get(j)?.rotation)
+                                .to_degrees(),
+                        )
+                    });
+                    out.mouths.push(MouthShot {
+                        name: world.name(c.actor),
+                        line: sp.line.clone(),
+                        seconds: sp.seconds,
+                        shape: sp.shape(),
+                        weights: sp.weights,
+                        face: face.is_some(),
+                        jaw,
+                        jaw_turn,
+                    });
+                }
+            }
+            out.mouths.sort_by(|a, b| a.name.cmp(&b.name));
+        }
+        for p in out.people.iter_mut().chain(out.placed.iter_mut()) {
             let drawn = self
                 .drawn
                 .as_ref()
@@ -950,19 +1045,34 @@ pub(crate) fn report(vm: &guac_script::Vm, world: &ScriptWorld) -> CreaturesRepo
     };
     let creatures = world.creatures().into_iter().filter_map(shot).collect();
     let inert = vm.inert();
+    let person = |handle: Handle| {
+        Some(PersonShot {
+            at: shot(handle)?,
+            drawn: false,
+            posed: Vec::new(),
+            clips: world.clips_on(handle),
+            handle,
+        })
+    };
+    let runs = |h: &Handle| vm.placement_of(*h).is_some() && !inert.contains(h);
     let people = world
         .people()
         .into_iter()
-        .filter(|h| vm.placement_of(*h).is_some() && !inert.contains(h))
-        .filter_map(|handle| {
-            Some(PersonShot {
-                at: shot(handle)?,
-                drawn: false,
-                posed: Vec::new(),
-                clips: world.clips_on(handle),
-                handle,
-            })
+        .filter(runs)
+        .filter_map(person)
+        .collect();
+    let placed = world
+        .scripted_placements()
+        .into_iter()
+        .filter(runs)
+        .filter(|h| {
+            world
+                .actor(*h)
+                .and_then(|a| a.obj)
+                .and_then(|o| world.template(o))
+                .is_some_and(|p| p.model.is_some())
         })
+        .filter_map(person)
         .collect();
     let woken = world
         .woken
@@ -1027,6 +1137,8 @@ pub(crate) fn report(vm: &guac_script::Vm, world: &ScriptWorld) -> CreaturesRepo
         orbs_drawn: 0,
         drawn: 0,
         people,
+        placed,
+        mouths: Vec::new(),
         scene: guacamole::level_end::scene_up(vm),
     }
 }
@@ -1780,6 +1892,266 @@ mod tests {
             wanted(&world, |_| true, |_| false).is_empty(),
             "no skinned model held"
         );
+    }
+
+    /// openspec AS.857: the TV's posing step moves a speaker's mouth. A line
+    /// whose stream weighs a one-shape face (its jaw, the creature's `top`
+    /// joint, turned a quarter about x) plays on the drawn creature: while
+    /// it plays the drawn jaw turns off the pose his clips give him, by the
+    /// stream's weight at the line's own time; under Start's pause the
+    /// line's time and the jaw hold; once the line is over the jaw is back
+    /// where his clips put it, and a creature with no line never moves.
+    #[test]
+    fn a_line_turns_its_speakers_jaw_and_none_leaves_it() {
+        use guac_ir::clip::{Clip, RotationTrack, Track, VecTrack};
+        use guac_ir::lips::{Face, Line, Lips, Track as Weight, Visemes};
+        use guac_ir::sound::{Audio, DataHome, DataRef, Sound, SoundData, Sounds};
+        use guac_script::Obj;
+        const STEM: &str = "level_mouth";
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, pad) = fight_app(tmp.path(), Some(start()));
+        let c = creature(&app);
+        until(&mut app, "the creature drawn", |a| {
+            a.world().resource::<DrawnCreatures>().0.contains_key(&c)
+        });
+        let root = app.world().resource::<DrawnCreatures>().0[&c];
+        let (path, jaw) = {
+            let d = app.world().get::<DrawnCreature>(root).unwrap();
+            (d.path.clone(), d.joints[1])
+        };
+        let identity = guac_ir::DumpIdentity {
+            title_id: "BLUS30968".into(),
+            app_ver: "01.00".into(),
+            manifest_hash: guac_ir::Sha256([0; 32]),
+        };
+        let h = std::f32::consts::FRAC_1_SQRT_2;
+        let open = Clip {
+            name: "Test_A.ma".into(),
+            duration: 0.0,
+            frame_duration: 1.0 / 30.0,
+            frames: 1,
+            tracks: vec![Track {
+                joint: 1,
+                translation: VecTrack {
+                    constant: [0.0, 1.0, 0.0],
+                    spline: None,
+                },
+                rotation: RotationTrack::Constant([h, 0.0, 0.0, h]),
+                scale: VecTrack {
+                    constant: [1.0; 3],
+                    spline: None,
+                },
+            }],
+        };
+        // Two seconds, its one shape's weight rising from 0 to 1.
+        let lips = Lips {
+            identity: identity.clone(),
+            level: STEM.into(),
+            lines: vec![Line {
+                home: DataHome::Pack,
+                object: 5,
+                name: Some("vo_test_001".into()),
+                visemes: Visemes {
+                    frames: 49,
+                    frame_time: 1.0 / 24.0,
+                    blocks: vec![vec![Weight::Spline {
+                        degree: 1,
+                        knots: vec![0, 0, 48, 48],
+                        points: vec![0.0, 1.0],
+                    }]],
+                },
+            }],
+            global: Vec::new(),
+            faces: vec![Face {
+                owner: path,
+                shapes: vec![open],
+            }],
+            refused: Vec::new(),
+        };
+        app.world_mut()
+            .resource_mut::<Level>()
+            .set_mouths(Some(Arc::new(guacamole::mouths::Mouths::new(lips))));
+        let sound = Sound {
+            object: 900,
+            name: Some("vo_test_001".into()),
+            data: DataRef::Here(DataHome::Pack, 5),
+            flags: 0x4000_0000,
+            properties: 0,
+            playback_mode: 0,
+            playback_percent: 100.0,
+            volume_percent: 80.0,
+            volume_randomness_percent: 0.0,
+            pitch_randomness_percent: 0.0,
+            pan_percent: 0.0,
+            attenuation_distance_full: 1.0,
+            attenuation_distance_silent: 150.0,
+            rumble_duration: 2.0,
+            reverb_amount: 0.0,
+            reverb_randomness_percent: 0.0,
+            filter_percent: 0.0,
+            filter_randomness_percent: 0.0,
+            filter_attenuation_distance_minimum: 1.0,
+            filter_attenuation_distance_maximum: 200.0,
+            filter_maximum_percent: 100.0,
+            sample_rate_reduction: 0.0,
+        };
+        let book = guac_sound::SoundBook::new([Sounds {
+            identity,
+            archive: format!("level/{STEM}.bld"),
+            sounds: vec![sound],
+            data: vec![SoundData {
+                home: DataHome::Pack,
+                object: 5,
+                name: Some("vo_test_001.wav".into()),
+                raw_duration: 2.0,
+                streamed: None,
+                lip_sync: true,
+                audio: Some(Audio {
+                    file: "audio/sounds/0011223344556677.mp3".into(),
+                    rate: 48_000,
+                    channels: 1,
+                    samples: 96_000,
+                    loop_points: None,
+                }),
+            }],
+            refused: Vec::new(),
+        }]);
+        let unit = app.world().resource::<ScriptSource>().level_unit().unwrap();
+        app.world_mut()
+            .resource_mut::<ScriptWorld>()
+            .set_sounds(Arc::new(book), HashMap::from([(unit, STEM.to_owned())]));
+        // How far the drawn jaw stands off the pose his clips give him now,
+        // degrees, and the line's time on him.
+        let turn = |app: &mut App| {
+            app.update();
+            let w = app.world();
+            let d = w.get::<DrawnCreature>(root).unwrap();
+            let world = w.resource::<ScriptWorld>();
+            let seconds = w
+                .resource::<Time>()
+                .elapsed()
+                .saturating_sub(d.since)
+                .as_secs_f64();
+            let still = guacamole::character::mesh::blended_over(
+                &d.model,
+                &base_clips(d, world, seconds),
+                &playing_clips(d, world),
+            );
+            let drawn = w.get::<Transform>(jaw).unwrap().rotation;
+            let said = w
+                .resource::<Level>()
+                .mouths()
+                .and_then(|m| m.speaking(world, c))
+                .map(|s| s.seconds);
+            (drawn.angle_between(still[1].rotation).to_degrees(), said)
+        };
+        for _ in 0..5 {
+            assert!(turn(&mut app).0 < 0.01, "no line, no turn");
+        }
+        let copy = app
+            .world_mut()
+            .resource_mut::<ScriptWorld>()
+            .play_sound_on(Obj { unit, index: 900 }, c);
+        assert!(copy.is_some(), "the line starts on him");
+        let mut most = 0.0f32;
+        let (mut said, mut tries) = (None, 0);
+        while said.is_none_or(|t: f32| t < 1.0) {
+            tries += 1;
+            assert!(tries < 2_000, "the line never got a second in");
+            let (deg, t) = turn(&mut app);
+            assert!(t.is_some(), "he speaks until the line's end");
+            most = most.max(deg);
+            said = t;
+        }
+        // A second in, the shape weighs about half: about 45 degrees.
+        assert!(
+            (30.0..60.0).contains(&most),
+            "the jaw turned {most} degrees by a second into the line"
+        );
+        test_pad::press(&mut app, pad, GamepadButton::Start);
+        let (held, at) = turn(&mut app);
+        for _ in 0..10 {
+            let (deg, t) = turn(&mut app);
+            assert_eq!(t, at, "Start's pause holds the line's time");
+            assert!((deg - held).abs() < 1e-3, "and the jaw: {deg} {held}");
+        }
+        test_pad::press(&mut app, pad, GamepadButton::Start);
+        let mut tries = 0;
+        loop {
+            tries += 1;
+            assert!(tries < 4_000, "the line never ended");
+            if turn(&mut app).1.is_none() {
+                break;
+            }
+        }
+        for _ in 0..5 {
+            assert!(turn(&mut app).0 < 0.01, "the line over, the jaw is back");
+        }
+        // Said again and stopped halfway, as a scene's skip stops its
+        // lines: the jaw is back on the next frame.
+        let again = app
+            .world_mut()
+            .resource_mut::<ScriptWorld>()
+            .play_sound_on(Obj { unit, index: 900 }, c);
+        assert!(again.is_some());
+        let mut tries = 0;
+        while turn(&mut app).1.is_none_or(|t| t < 0.5) {
+            tries += 1;
+            assert!(tries < 2_000, "the second line never got going");
+        }
+        assert!(turn(&mut app).0 > 10.0, "his mouth open again");
+        for s in app
+            .world_mut()
+            .resource_mut::<ScriptWorld>()
+            .sequences_mut()
+            .iter_mut()
+            .filter(|s| s.actor == c && s.plays() && s.length > 1.9)
+        {
+            s.stopped = true;
+        }
+        let (deg, said) = turn(&mut app);
+        assert_eq!(said, None, "a stopped line says nothing");
+        assert!(deg < 0.01, "and leaves his jaw at once: {deg}");
+    }
+
+    /// openspec AS.512 (the as-mouths lane): `placed` reports the drawing
+    /// rule's other placements, a model's whose script runs, and never a
+    /// walked creature or a scriptless or modelless placement.
+    #[test]
+    fn the_report_lists_a_scripted_placement_of_a_model_with_its_place() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _) = fight_app(tmp.path(), Some(start()));
+        until(&mut app, "the creature walked", |a| {
+            !shot(a).creatures.is_empty()
+        });
+        let c = creature(&app);
+        let r = shot(&app);
+        let w = app.world().resource::<ScriptWorld>();
+        assert!(
+            r.placed.iter().all(|p| p.handle != c),
+            "a walker isn't placed"
+        );
+        for p in &r.placed {
+            let a = w.actor(p.handle).unwrap();
+            assert_eq!(p.at.position, a.position.to_array());
+            assert!(w.template(a.obj.unwrap()).unwrap().model.is_some());
+        }
+        let runs = |h: &Handle| {
+            let vm = &app.world().resource::<ScriptRuntime>().vm;
+            vm.placement_of(*h).is_some() && !vm.inert().contains(h)
+        };
+        let want: Vec<Handle> = w
+            .scripted_placements()
+            .into_iter()
+            .filter(runs)
+            .filter(|h| {
+                w.template(w.actor(*h).unwrap().obj.unwrap())
+                    .unwrap()
+                    .model
+                    .is_some()
+            })
+            .collect();
+        assert_eq!(r.placed.iter().map(|p| p.handle).collect::<Vec<_>>(), want);
     }
 
     /// openspec AS.180: a person is reported posed by the clips the TV

@@ -1060,6 +1060,22 @@ pub fn skinned_models_of(level: &str) -> Vec<(String, guac_ir::Model)> {
     guacamole::creature_models::skinned_models(&placements, &props, &identity())
 }
 
+/// Level `level`'s lips part as the TV reads it (openspec AS.820), read
+/// off the dump: its lines' viseme streams and its faces.
+pub fn mouths_of(level: &str) -> guacamole::mouths::Mouths {
+    let usr = dump().join("PS3_GAME/USRDIR");
+    let bytes = guac_extract::scripts::entry(&usr, &format!("level/{level}.bld")).unwrap();
+    let igz = Igz::parse(&bytes).unwrap();
+    let archive = std::fs::read(levels::archive_path(&usr, level)).unwrap();
+    let pack = guac_extract::interface::english_pack(&archive).unwrap();
+    let pack = pack.as_deref().map(|p| Igz::parse(p).unwrap());
+    let global = levels::global_lines(&usr).unwrap().0;
+    let lips = levels::lips(&igz, pack.as_ref(), &global, level, identity())
+        .expect("the lips")
+        .ir;
+    guacamole::mouths::Mouths::new(lips)
+}
+
 /// Whether the TV draws the clones of the level placement `name` (openspec
 /// AS.63's rule, `props::clones_draw`): its static model among the props'
 /// spawn models (`run` stands the level's props, `Setup::props`), or its

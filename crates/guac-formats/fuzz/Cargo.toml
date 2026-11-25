@@ -160,3 +160,10 @@ path = "fuzz_targets/interface.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "viseme"
+path = "fuzz_targets/viseme.rs"
+test = false
+doc = false
+bench = false

@@ -200,7 +200,8 @@ fn the_fights_parts_extract_whole_and_resume() {
     // Chapter 1's ten parts since AS.17 read its own emitters (the count
     // stayed at AG's nine until AU.1's run found it); the script stage's
     // four since AS.661's spawn nodes joined the scripts, spawns and rigs.
-    assert_eq!((p.palettes, lv.parts_read, sc.parts_read), (67, 10, 4));
+    // Eleven level parts since AS.820's lips.
+    assert_eq!((p.palettes, lv.parts_read, sc.parts_read), (67, 11, 4));
     // The fighter's archive and the three base ones, then AG.27's 66 walkers.
     assert_eq!((sc.entries, sc.walkers), (4 + 66, 66));
     let m = opened.dir.manifest().clone();
@@ -580,8 +581,8 @@ fn the_fights_parts_extract_whole_and_resume() {
         "  RON and postcard agree byte for byte: {agreed} palettes, the creatures', the spawn models'"
     );
     // Chapter 1's parts but its entry (one file for either format): ten
-    // since AS.17's emitters.
-    assert_eq!((lp.parts_read, lp.parts_kept), (10, 1));
+    // since AS.17's emitters, eleven since AS.820's lips.
+    assert_eq!((lp.parts_read, lp.parts_kept), (11, 1));
     // The script stage's postcard: the spawns, rigs and spawn nodes read in
     // it, the scripts (one file for either format) kept.
     assert_eq!((sp.parts_read, sp.parts_kept), (3, 1));

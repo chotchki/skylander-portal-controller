@@ -298,6 +298,9 @@ struct Built {
     placed: Vec<(Arc<guac_ir::particle::Placed>, Vec<Option<usize>>)>,
     placed_refused: Vec<(String, String)>,
     placed_unread: Option<String>,
+    /// The level's lips part (openspec AS.820), looked up; none when it
+    /// doesn't read, so no mouth moves.
+    mouths: Option<Arc<guacamole::mouths::Mouths>>,
     /// The first fight's creatures' models (openspec AH.25) and the skinned
     /// templates' (AG.150, AS.63's `props::clones_draw`), by path, with each
     /// one's palette off the level's palettes part: their textures among
@@ -610,6 +613,28 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         placed_refused.clone_from(&level_emitters.refused);
     }
     let placed_unread = placed_part.err();
+    // Its mouths (openspec AS.820): a part that doesn't read (an extract
+    // made before it, until it resumes) moves none.
+    let mouths = match read_ir::<guac_ir::lips::Lips>(
+        source.ir,
+        &source.dir.join(guac_extract::levels::part_path(
+            source.ir,
+            &source.level,
+            guac_extract::levels::LIPS,
+        )),
+    )
+    .and_then(|p| {
+        if p.identity != source.identity || p.level != source.level {
+            return Err("the lips part is another dump's or level's".to_owned());
+        }
+        Ok(p)
+    }) {
+        Ok(p) => Some(Arc::new(guacamole::mouths::Mouths::new(p))),
+        Err(why) => {
+            warn!(reason = %why, "the level's lips didn't read: no mouth moves");
+            None
+        }
+    };
     // The first fight's creatures (AH.25) and the skinned templates' clones
     // (AG.150): their models with their palettes, their textures read with
     // the level's. A palettes part that doesn't read leaves each holding its
@@ -744,6 +769,7 @@ fn read_level(source: &LevelSource, formats: CompressedImageFormats) -> Result<B
         placed,
         placed_refused,
         placed_unread,
+        mouths,
         creatures,
         read,
         took: started.elapsed(),
@@ -1699,6 +1725,8 @@ pub(crate) struct Loaded {
     /// didn't read, if it didn't.
     placed_refused: Vec<(String, String)>,
     placed_unread: Option<String>,
+    /// The level's mouths (openspec AS.820).
+    pub(crate) mouths: Option<Arc<guacamole::mouths::Mouths>>,
     /// The first fight's creatures' models (AH.25) and the skinned
     /// templates' (AG.150), and every texture the level read, by its view,
     /// for their materials.
@@ -1957,6 +1985,14 @@ impl Level {
         self.stage.loaded()
     }
 
+    /// A test's lips part in place of the level's (openspec AS.857).
+    #[cfg(test)]
+    pub(crate) fn set_mouths(&mut self, mouths: Option<Arc<guacamole::mouths::Mouths>>) {
+        if let Some(l) = self.stage.loaded_mut() {
+            l.mouths = mouths;
+        }
+    }
+
     fn ms(&self) -> Option<u64> {
         self.since.map(|t| t.elapsed().as_millis() as u64)
     }
@@ -2091,6 +2127,12 @@ impl Level {
             .find(|((_, srgb, _), _)| *srgb)
             .map(|(_, h)| h.clone())
             .or(first)
+    }
+
+    /// The level's mouths (openspec AS.820), once it's loaded and its lips
+    /// part read.
+    pub(crate) fn mouths(&self) -> Option<&guacamole::mouths::Mouths> {
+        self.stage.loaded()?.mouths.as_deref()
     }
 
     /// The creature model at `path` (AH.25) and a lookup of the level's
@@ -3318,6 +3360,7 @@ fn spawn_level(up: Uploading, s: &mut LevelSpawner) -> Loaded {
         placed_by_object,
         placed_refused: std::mem::take(&mut built.placed_refused),
         placed_unread: built.placed_unread.take(),
+        mouths: built.mouths.take(),
         creatures: std::mem::take(&mut built.creatures),
         images: image_handles,
         hero_bodies: Vec::new(),

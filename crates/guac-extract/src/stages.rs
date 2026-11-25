@@ -610,6 +610,9 @@ fn levels_stage(
     let started = Instant::now();
     let usrdir = PathBuf::from(&dir.manifest().source_dir).join("PS3_GAME/USRDIR");
     let identity = dir.manifest().identity.clone();
+    // global.bld's lines (openspec AS.820), read once for every level's
+    // lips part.
+    let mut global_lines: Option<levels::GlobalLines> = None;
     let store: HashSet<String> = dir
         .manifest()
         .outputs
@@ -751,6 +754,26 @@ fn levels_stage(
                     levels::PARTICLES => {
                         levels::particles(igz, level, id).and_then(|r| encoded(ir, dir, &rel, r))
                     }
+                    levels::LIPS => bytes
+                        .as_ref()
+                        .map_err(Clone::clone)
+                        .and_then(|b| crate::interface::english_pack(b))
+                        .and_then(|pack| {
+                            let pack = pack
+                                .as_deref()
+                                .map(guac_formats::igz::Igz::parse)
+                                .transpose()
+                                .map_err(|e| format!("{}: {e}", crate::sounds::ENGLISH_PACK))?;
+                            let global = global_lines
+                                .get_or_insert_with(|| levels::GlobalLines::read(&usrdir));
+                            levels::lips(igz, pack.as_ref(), &global.lines, level, id).map(
+                                |mut r| {
+                                    r.ir.refused.extend(global.refused.iter().cloned());
+                                    r
+                                },
+                            )
+                        })
+                        .and_then(|r| encoded(ir, dir, &rel, r)),
                     levels::SPRITES => {
                         let archive = format!("{}/{level}.bld", levels::LEVEL_FOLDER);
                         bytes
