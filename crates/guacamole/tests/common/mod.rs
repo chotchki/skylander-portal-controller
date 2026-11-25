@@ -1366,6 +1366,13 @@ pub fn interface_records_of(archives: &[String]) -> Vec<guac_ir::interface::Inte
         .collect()
 }
 
+thread_local! {
+    /// The run's interface model holds the card archives' strings the TV's
+    /// holds (openspec AS.877): what a tutorial stop's line reads. Off by
+    /// default (AS.913); a test sets it before its run is made.
+    pub static CARD_STRINGS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// The interface's model over the script part's files (`igzs`, by unit) and
 /// [`interface_records`], as the TV's install loads it.
 pub fn interface_part(igzs: &[Igz<'_>]) -> guac_interface::load::Loaded {
@@ -1641,11 +1648,11 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
         let mut keeper = interface_part_with(&igzs, records).keeper;
         // The card archives' strings the TV's model holds (openspec AS.877):
         // the ones the interface part reads (`card_interface_held`, the
-        // board's among them); the strings alone here. The others' strings
-        // aren't in the TV's model, and held here they move the scripts'
-        // text measures and a seeded game with them.
+        // board's among them); the strings alone here. Asked by a test
+        // ([`CARD_STRINGS`]): the hub's seeded games were picked without
+        // them and play differently with them (AS.913).
         for (&u, archive) in card_units.iter().zip(&card_archives) {
-            if !guac_extract::screens::card_interface_held(archive) {
+            if !CARD_STRINGS.get() || !guac_extract::screens::card_interface_held(archive) {
                 continue;
             }
             let bld = std::fs::read(usr.join(archive)).unwrap_or_else(|e| panic!("{archive}: {e}"));
