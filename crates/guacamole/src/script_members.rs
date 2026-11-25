@@ -5399,6 +5399,9 @@ mod tests {
             up
         ));
         assert!(!lands_on(Vec3::new(0.0, -0.5, 20.0), up));
+        // Down along it: falling, but no part of it into the face.
+        let down = Vec3::new(0.0, -21f32.to_radians().sin(), -21f32.to_radians().cos());
+        assert!(!lands_on(down * 20.0, up));
         assert!(lands_on(Vec3::new(0.0, -15.0, 10.0), up));
         assert!(lands_on(Vec3::new(0.0, 0.0, 20.0), Vec3::NEG_Z));
     }
