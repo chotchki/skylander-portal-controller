@@ -3626,3 +3626,140 @@ fn cynders_breath_lands_on_a_foe_in_play_on_the_banks_top() {
     assert!(over.iter().all(|&h| h > 1.0), "above her: {over:?}");
     assert_eq!(landed, 6, "every breath hurts it");
 }
+
+/// openspec AS.891, AS.892: the crane's two push blocks landed by a kid's
+/// pushes, then a hero walked across both tops and back. `Shutdown_zone_1`
+/// by the practice pit brings both blocks in (2_b one step along its track,
+/// on the spot behind 2_a), so the hero is set down there off the landing
+/// pod rather than walked, then by the crane: 2_b pushed back north-west,
+/// 2_a north-east into its pit, 2_b south-east from behind and north-east
+/// three times, over 2_a into its own pit. Then Eruptor's sphere and Ninjini's
+/// TV capsule (her solid, his scripts: their walkable-surface look-ahead is
+/// 4 ft whoever walks) cross from the stone floor to the round platform and
+/// back at full stick, and never drop under half speed once at speed: the
+/// walkable-surface check asks each push block whether a short ray down
+/// past the seam between them touches it, which the host answered "no" for
+/// every target, stopping him dead at the seam.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_201s_crane_blocks_land_by_pushes_and_a_hero_crosses_them() {
+    use guac_motion::seam::Vec3;
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    const A: &str = "Push_Block_Template_2_a";
+    const B: &str = "Push_Block_Template_2_b";
+    let behaviour = |w: &Walker, n: &str| {
+        let (h, _) = w.run.placed(n);
+        w.run
+            .vm
+            .placement_of(h)
+            .and_then(|i| w.run.vm.behaviour(i))
+            .unwrap_or("-")
+            .to_owned()
+    };
+    let at = |w: &Walker, n: &str| {
+        let (h, _) = w.run.placed(n);
+        w.run.world.actor(h).map(|a| a.position).expect(n)
+    };
+    let mut w = fresh();
+    assert!(w.stretch("w 157 -168; s 60"), "off the landing pod");
+    w.run.put(Vec3::new(6.8, 40.0, -139.2), 90.0);
+    assert!(w.stretch("w 10.8 -139.2; s 120"), "onto the shutdown zone");
+    for n in [A, B] {
+        assert_eq!(behaviour(&w, n), "1. wait for push", "{n} brought in");
+    }
+    w.run.put(Vec3::new(-74.8, 26.0, -128.7), 330.0);
+    w.rest(30);
+    let push = |w: &mut Walker, n: &str, heading: f32| {
+        let from = at(w, n);
+        let (s, c) = heading.to_radians().sin_cos();
+        let ok = w.kid_push([from.x + 10.0 * s, from.z + 10.0 * c], n, 1);
+        println!("{n} pushed at {heading}: {ok}, now at {}", at(w, n));
+        w.rest(60);
+        ok
+    };
+    assert!(push(&mut w, B, 330.0), "2_b back to its start");
+    assert!(push(&mut w, A, 60.0), "2_a into its pit");
+    // Round behind 2_b, then south-east: its one step that way.
+    assert!(w.walk([-77.77, -120.57]), "behind 2_b");
+    for _ in 0..240 {
+        let stick = w.toward([-73.5, -127.9], 1.0);
+        w.step(stick, [false; 4]);
+    }
+    w.rest(60);
+    println!("{B} pushed south-east: now at {}", at(&w, B));
+    for k in 0..3 {
+        assert!(push(&mut w, B, 60.0), "2_b's push {k} north-east");
+    }
+    for (n, pit) in [
+        (A, Vec3::new(-65.841, 20.685, -123.148)),
+        (B, Vec3::new(-61.858, 20.685, -120.694)),
+    ] {
+        assert_eq!(behaviour(&w, n), "special - push block inactive", "{n}");
+        assert!(at(&w, n).distance(pit) < 0.05, "{n} at {}", at(&w, n));
+    }
+    // The crossings: from the stone floor west, from the round platform east.
+    let eruptor = *w.run.hero().solid();
+    let ninjini = guac_motion::solid::SolidInfo {
+        kind: guac_motion::solid::SolidKind::Capsule,
+        offset: [0.0; 3],
+        rotation: [0.0; 3],
+        width: 14.0,
+        height: 20.0,
+        length: 3.0,
+    }
+    .havok([100.0; 3])
+    .unwrap();
+    for (who, solid) in [("eruptor", eruptor), ("ninjini", ninjini)] {
+        w.run
+            .bench
+            .heroes
+            .get_mut(&w.run.hero)
+            .unwrap()
+            .set_solid(solid);
+        for (leg, from, heading, past) in [
+            ("west", [-57.2f32, -118.2f32], 238.4f32, -70.7f32),
+            ("east", [-71.5, -126.3], 58.4, -58.0),
+        ] {
+            w.run.put(Vec3::new(from[0], 26.0, from[1]), heading);
+            w.rest(30);
+            let mut last = w.run.hero().pivot;
+            let (mut top, mut slowest, mut crossed) = (0.0f32, f32::MAX, None);
+            for k in 0..300u32 {
+                let d = (heading - w.run.bench.view).to_radians();
+                w.step(Stick::new(-d.sin(), d.cos()), [false; 4]);
+                let me = w.run.hero().pivot;
+                let speed = (me.x - last.x).hypot(me.z - last.z) * 60.0;
+                last = me;
+                top = top.max(speed);
+                if top > 5.0 {
+                    slowest = slowest.min(speed);
+                }
+                let over = if leg == "west" {
+                    me.x < past
+                } else {
+                    me.x > past
+                };
+                if over {
+                    crossed = Some(k);
+                    break;
+                }
+                // Stopped for good: no point holding on.
+                if top > 5.0 && speed < 0.1 {
+                    println!("{who} {leg}: stopped at {me} step {k}");
+                    break;
+                }
+            }
+            println!(
+                "{who} {leg}: crossed at step {crossed:?}, top {top:.2} m/s, slowest at speed {slowest:.2} m/s, at {}",
+                w.run.hero().pivot
+            );
+            assert!(crossed.is_some(), "{who} crosses {leg}");
+            assert!(
+                slowest > top / 2.0,
+                "{who} {leg}: {slowest:.2} m/s of {top:.2}"
+            );
+        }
+    }
+    println!("took {:.1?}, load at end: {}", started.elapsed(), load());
+}
