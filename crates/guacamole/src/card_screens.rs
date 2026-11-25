@@ -111,6 +111,8 @@ const SCORE_TILE: &str = "ScoreBox_Tile";
 const TUTORIAL_LEFT: f32 = 32.0;
 const TUTORIAL_TOP: f32 = 220.0;
 const TUTORIAL_WIDTH: f32 = 340.0;
+// Short of the board's left edge, a fifth of the screen's 1920.
+const _: () = assert!(TUTORIAL_LEFT + TUTORIAL_WIDTH < 1920.0 / 5.0);
 
 /// A stone's picture in the hand select's record, by its index.
 fn stone_sprite(stone: u16) -> String {
@@ -620,7 +622,7 @@ fn show(
         (None, None, None) => read.pick.as_ref().and_then(|p| {
             let strip = game_over(p.behaviour.as_deref());
             let line = read.tutorial.clone();
-            (strip.is_some() || line.is_some()).then(|| Drawn::Over(strip, line, labels))
+            (strip.is_some() || line.is_some()).then_some(Drawn::Over(strip, line, labels))
         }),
     };
     let score_want = read.score.filter(|_| read.board);

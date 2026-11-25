@@ -248,10 +248,6 @@ fn a_tutorial_stops_line_draws_at_the_screens_left() {
         (line.2.left, line.2.top),
         (px(TUTORIAL_LEFT), px(TUTORIAL_TOP))
     );
-    assert!(
-        TUTORIAL_LEFT + TUTORIAL_WIDTH < 1920.0 / 5.0,
-        "short of the board"
-    );
     let mut texts = world.query::<&Text>();
     assert!(
         texts.iter(world).any(|t| t.0 == "Stones go on squares"),
