@@ -26,7 +26,7 @@
 //!
 //! None of it shows on a run that plays no game: the hand select's page and
 //! the board come up only where a yes at a pirate plays the game, which only
-//! a lane's build does (`played-card-games`).
+//! a build with `played-card-games` does (off by default, with `test-hooks`).
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -348,7 +348,7 @@ fn answer_and_read(
     mut ask: ResMut<CardAsk>,
     mut read: ResMut<CardRead>,
 ) {
-    // A run that plays no game (every landed build) reads nothing: the
+    // A run that plays no game (every build without the feature) reads nothing: the
     // board's read walks every placement, three times a step.
     if !world.card_streams.plays_games() {
         return;

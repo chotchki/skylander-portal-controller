@@ -36,7 +36,8 @@
 //!   a screen on the update macros the TV doesn't run, and every dialogue
 //!   refuses its talk button from then on, Flynn's way on among them. The
 //!   macro is answered with nothing shown ([`answer_screen`]; stand-in
-//!   ledger: `hub-screens`). Only a card pirate (Dreadbeard on the hub,
+//!   ledger: `hub-screens`). In a build that doesn't play the card game
+//!   (`played-card-games` off, the default), only a card pirate (Dreadbeard on the hub,
 //!   Fangs and the others on 205, 211's and 215's) waits on what his screen
 //!   would have done, his game's end: he's told it's quit
 //!   ([`quit_card_game`]), which plays his quit scene and gives his talk
@@ -271,8 +272,9 @@ fn is_screen(name: &str) -> bool {
 /// game's left for [`quit_card_game`].
 pub fn answer_screen(world: &mut ScriptWorld, name: &str) -> bool {
     let card_game = name.eq_ignore_ascii_case(CARD_GAME);
-    // A headless run playing the game (openspec AS.366) runs the original's
-    // own start; every TV run answers it here.
+    // A run playing the game (openspec AS.366: headless, or a TV build with
+    // `played-card-games`) runs the original's own start; every other run
+    // answers it here.
     if card_game && world.card_streams.plays_games() {
         return false;
     }

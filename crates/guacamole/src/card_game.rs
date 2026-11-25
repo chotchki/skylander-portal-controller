@@ -28,11 +28,12 @@
 //!   ([`join_asked`]), as the ship parts' join theirs at the run's start; one
 //!   asked again after its placements went (the hand select's starter takes
 //!   its stream down as its menu closes) joins again.
-//! - **What it leaves.** The game itself: the TV still answers `Card Game -
-//!   Start Card Game` with nothing shown and tells the pirate it was quit
-//!   ([`crate::prompt::quit_card_game`]), so in play only a test reaches the
-//!   pirate's win; nothing draws the streams' sprites or the board (AS.365 to
-//!   AS.368).
+//! - **What it leaves.** A build without `played-card-games` still answers
+//!   `Card Game - Start Card Game` with nothing shown and tells the pirate it
+//!   was quit ([`crate::prompt::quit_card_game`]); one with it (off by
+//!   default, with `test-hooks`: the landing script's playtest build) plays
+//!   the game, its hand select, board and loot drawn by the binary's
+//!   `card_screens` (AS.365 to AS.368).
 
 use guac_script::{Halt, Handle, PlacementId, Program, Value, Vm};
 use tracing::info;
@@ -319,15 +320,15 @@ impl CardStreams {
     /// `Card Game - Start Card Game` runs as the original's script, the hand
     /// select and board join as asked and the host answers what they wait on
     /// ([`step`]). Behind `card-game-seams`, which the tests turn on; the
-    /// only caller outside a test is the TV's, behind `played-card-games`,
-    /// which only a lane's build names (AS.367's first rung).
+    /// only caller outside a test is the TV's, behind `played-card-games`
+    /// (AS.367's first rung: off by default, with `test-hooks`).
     #[cfg(feature = "card-game-seams")]
     pub fn play_games(&mut self) {
         self.played = true;
     }
 
     /// The played game quit through the board's own confirm at the next step
-    /// ([`step`], [`quit`]): the lane build's test hook (openspec AS.367's
+    /// ([`step`], [`quit`]): the played build's test hook (openspec AS.367's
     /// first rung), as a player's pause menu would. Feature-gated as
     /// [`CardStreams::play_games`] is.
     #[cfg(feature = "card-game-seams")]

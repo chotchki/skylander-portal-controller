@@ -1290,7 +1290,7 @@ fn board_holds(to: Res<Wander>, world: Option<ResMut<ScriptWorld>>) {
     }
 }
 
-/// openspec AS.878: the board torn down, his return asked and not answered
+/// openspec AS.876: the board torn down, his return asked and not answered
 /// yet (`Restore::Asked`: the pirate's loot and his win, loss or quit scene
 /// hold it), the scripts' view is still the one drawn, every step, where
 /// AH.227's hold kept the board's last view on the void under the level.
@@ -1339,7 +1339,7 @@ fn the_pirates_scenes_are_drawn_until_he_is_given_back() {
 
 /// His return asked each step while [`Wander`] is set, as the board's
 /// teardown leaves it while the pirate's scene holds the players (openspec
-/// AS.878: `Cutscene State` up, so he isn't given back yet).
+/// AS.876: `Cutscene State` up, so he isn't given back yet).
 #[cfg(feature = "card-game-seams")]
 fn return_asked(
     to: Res<Wander>,

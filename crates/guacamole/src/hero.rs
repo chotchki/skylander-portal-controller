@@ -494,7 +494,7 @@ pub(crate) fn step_cameras(
     // `card_game::Restore::Replaced`): its manager aims the gameplay
     // viewport at the board each step with his minion off, so its view is
     // drawn, not held. Until he's given back (`Restore::Asked`, openspec
-    // AS.878) the pirate's loot, win, loss and quit scenes aim that viewport
+    // AS.876) the pirate's loot, win, loss and quit scenes aim that viewport
     // too: held, the board's place drew the void under the level for 15 s.
     // Only a run that plays the game ever sets it.
     let board_holds = world

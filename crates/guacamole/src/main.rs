@@ -7,8 +7,9 @@
 //! Threading: the main thread runs Bevy; `guac_server::boot` runs the server
 //! and driver worker on its own tokio thread.
 // The TV that plays the card game on a yes (openspec AS.367's first rung) is
-// a lane's build, with its quit route; a dependency turning the feature on
-// would put it in the binary `cargo test --workspace` leaves behind.
+// a build named for it with `test-hooks` (the landing script's playtest
+// build), with its quit route; a dependency turning the feature on would put
+// it in the binary `cargo test --workspace` leaves behind.
 #[cfg(all(feature = "played-card-games", not(feature = "test-hooks")))]
 compile_error!("`played-card-games` is a lane's TV build: name it with `test-hooks`");
 
@@ -502,8 +503,9 @@ fn test_routes(
         // AS.805's capture note: the hand's press, the typing and the read.
         #[cfg(feature = "test-hooks")]
         let routes = routes.merge(capture_note::routes(flag_asks));
-        // A lane's build that plays the card game (openspec AS.367's first
-        // rung) quits it over a route of its own; no landed build has it.
+        // A build that plays the card game (openspec AS.367's first rung)
+        // quits it over a route of its own; a build without the feature has
+        // none.
         #[cfg(all(feature = "test-hooks", feature = "played-card-games"))]
         let routes = routes
             .merge(hero_scripts::card_quit_routes())

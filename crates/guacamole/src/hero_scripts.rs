@@ -550,8 +550,9 @@ fn install_from(world: &mut World, source: &ScriptSource) {
     // The card game's streams, each joining as a script asks for it
     // (openspec AS.364).
     script_world.card_streams = guacamole::card_game::CardStreams::fresh(&source.card_streams);
-    // A lane's build plays the game on the TV (openspec AS.367's first rung):
-    // never a landed build, which leaves the feature to the disc tests.
+    // A build named for it plays the game on the TV (openspec AS.367's first
+    // rung, off by default, with `test-hooks`); one without answers a yes as a
+    // quit.
     #[cfg(feature = "played-card-games")]
     script_world.card_streams.play_games();
     // The hand select's page waits for the TV's own (openspec AS.555,
@@ -1257,8 +1258,8 @@ pub(crate) fn health_routes<S: Clone + Send + Sync + 'static>(
 }
 
 /// A played card game's quit asked over `POST /api/_test/tv/card_quit`
-/// (openspec AS.367's first rung): a lane's build with `test-hooks` and
-/// `played-card-games` alone, never a landed one.
+/// (openspec AS.367's first rung): a build with `test-hooks` and
+/// `played-card-games` alone.
 #[cfg(all(feature = "test-hooks", feature = "played-card-games"))]
 static CARD_QUIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -1285,8 +1286,8 @@ fn ask_card_quit(mut world: ResMut<ScriptWorld>) {
 }
 
 /// The starter stones asked over `POST /api/_test/tv/card_starters`
-/// (openspec AS.675): a lane's build with `test-hooks` and
-/// `played-card-games` alone, never a landed one.
+/// (openspec AS.675): a build with `test-hooks` and
+/// `played-card-games` alone.
 #[cfg(all(feature = "test-hooks", feature = "played-card-games"))]
 static CARD_STARTERS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
