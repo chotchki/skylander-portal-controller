@@ -67,6 +67,14 @@
 //!   on them (its controller, Setup_005's and the way on read none of it),
 //!   so from there on the level is as a walk leaves it, bar his health and
 //!   experience.
+//! - Crane (openspec AS.891): level 201's crane push blocks, unpushed:
+//!   once he's settled, set down on `Shutdown_zone_1` by the practice pit
+//!   ([`ON_THE_SHUTDOWN_ZONE`]), which brings both blocks in as a walk past
+//!   it does (`2_b` one step along its track), then [`CRANE_BROUGHT_IN`]
+//!   steps on by the blocks south-east of `2_b` ([`BY_THE_CRANE`]). What
+//!   it fakes: the way there (the practice pit's waves, the house's key,
+//!   the first door, Setup_004) unwalked and its fights unfought; the
+//!   blocks and the floor round them are the level's own.
 //! - Interior (openspec AS.96): any level's interior by its controller's
 //!   name (`{"anchor": "interior", "interior": "<name>"}`, or
 //!   `GUAC_DEV_ENTRY=interior:<name>`): once he's settled, set down at the
@@ -142,6 +150,9 @@ pub(crate) enum Anchor {
     /// Level 214 past its second locked door (openspec AS.97): set down
     /// short of Setup_004B's trigger.
     Door2,
+    /// Level 201's crane push blocks (openspec AS.891): set down on the
+    /// shutdown zone that brings them in, then by them.
+    Crane,
     /// Any level's interior, by its controller's name (openspec AS.96):
     /// set down outside its door ([`guacamole::interiors::door`]).
     Interior,
@@ -170,6 +181,7 @@ impl Anchor {
             "part" => Some(Anchor::Part),
             "part2" => Some(Anchor::Part2),
             "door2" => Some(Anchor::Door2),
+            "crane" => Some(Anchor::Crane),
             "interior" => Some(Anchor::Interior),
             "by" => Some(Anchor::By),
             "finale" => Some(Anchor::Finale),
@@ -259,6 +271,17 @@ pub(crate) const BY_THE_PART: ([f32; 3], f32) = ([29.45, -6.92, 56.37], 0.0);
 /// Past level 214's second locked door, short of `Setup_004B_Trigger`
 /// (metres), facing it.
 pub(crate) const PAST_THE_SECOND_DOOR: ([f32; 3], f32) = ([-242.0, -22.3, 722.4], 90.0);
+/// On level 201's `Shutdown_zone_1` by the practice pit (metres), where the
+/// 201 walk's step onto it resets the crane's two push blocks into the
+/// level (openspec AS.892).
+pub(crate) const ON_THE_SHUTDOWN_ZONE: [f32; 3] = [10.8, 31.1, -139.2];
+/// Steps from the zone's set-down to the crane's: the blocks brought in
+/// and woken (they're in by 120 headless).
+pub(crate) const CRANE_BROUGHT_IN: u32 = 240;
+/// By level 201's crane push blocks (metres): south-east of `2_b` where the
+/// zone leaves it, facing back along its track (a push there sends it to
+/// its start).
+pub(crate) const BY_THE_CRANE: ([f32; 3], f32) = ([-74.8, 24.5, -128.7], 330.0);
 
 impl Plan {
     pub(crate) fn of(anchor: Anchor) -> Self {
@@ -380,6 +403,25 @@ impl Plan {
                 loot: None,
                 view: None,
                 wake: SECOND_PART_WAKES.to_vec(),
+            },
+            Anchor::Crane => Plan {
+                anchor,
+                settle: SETTLE,
+                set_downs: vec![
+                    (0, Vec3::from_array(ON_THE_SHUTDOWN_ZONE), 90.0),
+                    (
+                        CRANE_BROUGHT_IN,
+                        Vec3::from_array(BY_THE_CRANE.0),
+                        BY_THE_CRANE.1,
+                    ),
+                ],
+                creatures_at: u32::MAX,
+                creatures: Vec::new(),
+                f0: CRANE_BROUGHT_IN + 1,
+                first_alert: None,
+                loot: None,
+                view: None,
+                wake: Vec::new(),
             },
             Anchor::Door2 => Plan {
                 anchor,
@@ -603,7 +645,7 @@ impl Plugin for DevEntryPlugin {
         if env.is_some() && at_start.is_none() {
             warn!(
                 value = ?env,
-                "GUAC_DEV_ENTRY isn't `b`, `start`, `end`, `pods`, `elves`, `part`, `part2`, `door2`, `by:<placement>` or `interior:<name>`: no entry"
+                "GUAC_DEV_ENTRY isn't `b`, `start`, `end`, `pods`, `elves`, `part`, `part2`, `door2`, `crane`, `by:<placement>` or `interior:<name>`: no entry"
             );
         }
         if let Some(a) = &at_start {
@@ -1133,6 +1175,22 @@ mod tests {
         );
         assert_eq!((door2.settle, door2.f0), (SETTLE, 1));
         assert!(door2.creatures.is_empty() && door2.wake.is_empty());
+        // Level 201's crane blocks (openspec AS.891): the shutdown zone,
+        // then by the blocks once it has brought them in.
+        assert_eq!(anchor("crane"), Some(Anchor::Crane));
+        let crane = Plan::of(Anchor::Crane);
+        assert_eq!(
+            crane.set_downs,
+            [
+                (0, Vec3::new(10.8, 31.1, -139.2), 90.0),
+                (CRANE_BROUGHT_IN, Vec3::new(-74.8, 24.5, -128.7), 330.0)
+            ]
+        );
+        assert_eq!((crane.settle, crane.f0), (SETTLE, 241));
+        assert_eq!(CRANE_BROUGHT_IN, 240, "past the 120 steps the zone takes");
+        assert!(crane.creatures.is_empty() && crane.wake.is_empty());
+        assert_eq!(crane.creatures_at, u32::MAX);
+        assert!(crane.first_alert.is_none() && crane.loot.is_none() && crane.view.is_none());
         // Any placement by name (openspec AU.39): `by:<name>` asks it, a
         // bare `by` names none; off its own facing, turned back on it.
         let by = asked_at_start(true, Some("by: Chest(1)")).unwrap();
