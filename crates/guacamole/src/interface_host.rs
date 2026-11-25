@@ -149,21 +149,6 @@ pub fn record_path(ir: IrFormat, unit: &str) -> Option<String> {
         .then(|| guac_extract::interface::level_path(ir, level))
 }
 
-/// The card art part's interface record of a linked unit
-/// (`scripts/<stem>.igz`), where the part writes one (openspec AS.365's
-/// [`guac_extract::screens::card_interface_path`]): the card archives the
-/// interface part doesn't read. None for a unit that isn't a script entry.
-pub fn card_record_path(ir: IrFormat, unit: &str) -> Option<String> {
-    let stem = unit
-        .strip_prefix(&format!("{}/", guac_extract::scripts::SCRIPT_DIR))?
-        .strip_suffix(".igz")
-        .filter(|s| !s.is_empty() && !s.contains('/'))?;
-    Some(guac_extract::screens::card_interface_path(
-        ir,
-        &format!("{stem}.bld"),
-    ))
-}
-
 /// One interface record off the extract at `dir`, in `ir`'s format.
 pub fn read_record(dir: &Path, ir: IrFormat, rel: &str) -> Result<Interface, String> {
     let bytes = std::fs::read(dir.join(rel)).map_err(|e| format!("{rel}: {e}"))?;
@@ -191,9 +176,6 @@ pub fn load(
     let started = Instant::now();
     let mut records = Vec::new();
     let mut missing = Vec::new();
-    // A card archive the interface part doesn't hold: its strings alone,
-    // off the card art part's record (openspec AS.877).
-    let mut card_strings = Vec::new();
     for k in keys {
         let Some(name) = units.get(usize::from(k.unit)) else {
             continue;
@@ -202,15 +184,6 @@ pub fn load(
             continue;
         };
         if !dir.join(&rel).is_file() {
-            if let Some(card) = card_record_path(ir, name)
-                && dir.join(&card).is_file()
-            {
-                match read_record(dir, ir, &card) {
-                    Ok(r) => card_strings.push((k, r)),
-                    Err(why) => missing.push((name.clone(), why)),
-                }
-                continue;
-            }
             missing.push((name.clone(), format!("{rel}: not in the extract")));
             continue;
         }
@@ -226,10 +199,7 @@ pub fn load(
         return None;
     }
     let pairs: Vec<(&Keys, &Interface)> = records.iter().map(|(k, r)| (*k, r)).collect();
-    let mut loaded = load::load(&pairs, imports);
-    for (k, r) in &card_strings {
-        add_strings(&mut loaded.keeper, k, r);
-    }
+    let loaded = load::load(&pairs, imports);
     Some(InterfacePart {
         keeper: loaded.keeper,
         read: records
@@ -243,10 +213,11 @@ pub fn load(
 }
 
 /// A record's strings into the model, nothing else of it (openspec AS.877):
-/// a card archive's, whose templates the TV doesn't load (the card art
-/// part keeps its records apart, AS.365), so a card script's message box
-/// shows its string's words. Each `StringInfo` of `keys` paired with the
-/// record's string at its place; none when the counts differ. How many.
+/// what the disc harness gives a card archive's strings by (the TV's load
+/// has the board's off the interface part, which holds
+/// `character/cardgame_streaming.bld`). Each `StringInfo` of `keys` paired
+/// with the record's string at its place; none when the counts differ. How
+/// many.
 pub fn add_strings(keeper: &mut Keeper, keys: &Keys, record: &Interface) -> usize {
     if keys.strings.len() != record.strings.len() {
         return 0;

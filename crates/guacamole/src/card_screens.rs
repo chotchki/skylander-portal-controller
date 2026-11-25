@@ -968,47 +968,59 @@ fn spawn_over(
     let root = commands
         .spawn((
             CardScreenRoot("over"),
+            // The whole screen, so the strip (at the bottom) and the line (at
+            // the left) each sit where they're put.
             Node {
+                position_type: PositionType::Absolute,
+                left: px(0),
+                top: px(0),
+                width: percent(100),
+                height: percent(100),
+                ..default()
+            },
+            GlobalZIndex(SCORE_Z),
+        ))
+        .with_children(|screen| {
+            if choices.is_empty() {
+                return;
+            }
+            let mut row = screen.spawn(Node {
                 position_type: PositionType::Absolute,
                 left: px(0),
                 bottom: px(48),
                 width: percent(100),
                 justify_content: JustifyContent::Center,
                 ..default()
-            },
-            GlobalZIndex(SCORE_Z),
-        ))
-        .with_children(|root| {
-            if choices.is_empty() {
-                return;
-            }
-            root.spawn((
-                Node {
-                    flex_direction: FlexDirection::Row,
-                    align_items: AlignItems::Center,
-                    column_gap: px(64),
-                    padding: UiRect::axes(px(48), px(20)),
-                    border: UiRect::all(px(3)),
-                    border_radius: BorderRadius::all(px(28)),
-                    ..default()
-                },
-                BackgroundColor(BOX_FILL),
-                BorderColor::all(pen.theme.gold),
-            ))
-            .with_children(|strip| {
-                for (face, word) in choices {
-                    strip
-                        .spawn(Node {
-                            flex_direction: FlexDirection::Row,
-                            align_items: AlignItems::Center,
-                            column_gap: px(16),
-                            ..default()
-                        })
-                        .with_children(|line| {
-                            crate::pause::glyph(line, pen, crate::pad::prompt(labels, *face));
-                            label(line, pen, a, word, LABEL_SIZE);
-                        });
-                }
+            });
+            row.with_children(|root| {
+                root.spawn((
+                    Node {
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: px(64),
+                        padding: UiRect::axes(px(48), px(20)),
+                        border: UiRect::all(px(3)),
+                        border_radius: BorderRadius::all(px(28)),
+                        ..default()
+                    },
+                    BackgroundColor(BOX_FILL),
+                    BorderColor::all(pen.theme.gold),
+                ))
+                .with_children(|strip| {
+                    for (face, word) in choices {
+                        strip
+                            .spawn(Node {
+                                flex_direction: FlexDirection::Row,
+                                align_items: AlignItems::Center,
+                                column_gap: px(16),
+                                ..default()
+                            })
+                            .with_children(|line| {
+                                crate::pause::glyph(line, pen, crate::pad::prompt(labels, *face));
+                                label(line, pen, a, word, LABEL_SIZE);
+                            });
+                    }
+                });
             });
         })
         .id();
