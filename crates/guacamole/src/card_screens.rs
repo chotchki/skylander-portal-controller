@@ -93,17 +93,24 @@ pub(crate) enum Strip {
 }
 
 /// The strip the board asks for, by its behaviour (openspec AS.875,
-/// AS.879): over a finished game, or at a stop of the tutorial's, each of
-/// which the manager names `wait for tutorial - ...`. None mid-game.
+/// AS.879): over a finished game, or at a stop of the tutorial's that waits
+/// on the accept ([`card_game::tutorial_waits_on_accept`]). None mid-game.
 pub(crate) fn game_over(board: Option<&str>) -> Option<Strip> {
     match board {
         Some("lost") => Some(Strip::Lost),
         Some("won") => Some(Strip::Won),
-        Some(b) if b.starts_with("wait for tutorial") => Some(Strip::Tutorial),
+        Some(b) if card_game::tutorial_waits_on_accept(b) => Some(Strip::Tutorial),
         _ => None,
     }
 }
 const SCORE_TILE: &str = "ScoreBox_Tile";
+/// A tutorial stop's line box (openspec AS.877), in design px: a column at
+/// the left, under the score header's height, its width short of where the
+/// board and the hand start (a fifth of the 1920), so it never covers the
+/// stones a stop talks about (as-cards-first `look/f1-b-tutorial.jpg`).
+const TUTORIAL_LEFT: f32 = 32.0;
+const TUTORIAL_TOP: f32 = 220.0;
+const TUTORIAL_WIDTH: f32 = 340.0;
 
 /// A stone's picture in the hand select's record, by its index.
 fn stone_sprite(stone: u16) -> String {
@@ -259,6 +266,8 @@ pub(crate) struct CardRead {
     pub(crate) board: bool,
     /// A pirate's loot reports up (openspec AS.673), their words read.
     pub(crate) loot: Option<LootShown>,
+    /// A tutorial stop's line, the disc's words read (openspec AS.877).
+    pub(crate) tutorial: Option<String>,
 }
 
 /// A pirate's loot as the TV draws it (openspec AS.673): the reward card's
@@ -385,6 +394,7 @@ fn answer_and_read(
         score: card_game::score(vm, &world),
         board: card_game::manager(vm, &world).is_some(),
         loot: card_game::loot_up(vm, &world).map(|l| LootShown::of(&l, &world)),
+        tutorial: card_game::tutorial_line(vm, &world),
     };
     if *read != now {
         *read = now;
@@ -570,8 +580,9 @@ enum Drawn {
     Quit(QuitFocus),
     Loot(LootShown, crate::pad::Labels),
     /// The strip at the bottom: a game's end (lost: A again, B leave; won:
-    /// A on) or a tutorial stop (A on).
-    Over(Strip, crate::pad::Labels),
+    /// A on) or a tutorial stop (A on); and the tutorial's line while its
+    /// box is up. One or both.
+    Over(Option<Strip>, Option<String>, crate::pad::Labels),
 }
 
 /// A drawn card screen's root, for the shots.
@@ -606,11 +617,11 @@ fn show(
         (Some(q), _, _) => Some(Drawn::Quit(*q)),
         (None, Some(e), _) => Some(Drawn::Hand(e.hand.clone(), e.focus, e.can_custom())),
         (None, None, Some(l)) => Some(Drawn::Loot(l.clone(), labels)),
-        (None, None, None) => read
-            .pick
-            .as_ref()
-            .and_then(|p| game_over(p.behaviour.as_deref()))
-            .map(|strip| Drawn::Over(strip, labels)),
+        (None, None, None) => read.pick.as_ref().and_then(|p| {
+            let strip = game_over(p.behaviour.as_deref());
+            let line = read.tutorial.clone();
+            (strip.is_some() || line.is_some()).then(|| Drawn::Over(strip, line, labels))
+        }),
     };
     let score_want = read.score.filter(|_| read.board);
     let modal_same = shown.as_ref().map(|(d, _)| d) == want.as_ref();
@@ -637,7 +648,9 @@ fn show(
                 }
                 Drawn::Quit(focus) => spawn_quit(&mut commands, &pen, art, *focus),
                 Drawn::Loot(loot, labels) => spawn_loot(&mut commands, &pen, art, loot, *labels),
-                Drawn::Over(strip, labels) => spawn_over(&mut commands, &pen, art, *strip, *labels),
+                Drawn::Over(strip, line, labels) => {
+                    spawn_over(&mut commands, &pen, art, *strip, line.as_deref(), *labels)
+                }
             };
             *shown = Some((w, e));
         }
@@ -938,17 +951,21 @@ pub(crate) fn choices(strip: Strip) -> &'static [(crate::pad::Face, &'static str
 }
 
 /// The strip at the bottom over the board (openspec AS.875, AS.879): each
-/// choice its pad glyph and our word.
+/// choice its pad glyph and our word; at a tutorial stop its line (the
+/// disc's words, read at run time) in a column at the left, in the TV's own
+/// type, clear of the board and the stones the stop shows (openspec
+/// AS.877).
 fn spawn_over(
     commands: &mut Commands,
     pen: &Pen,
     art: &CardArt,
-    strip: Strip,
+    strip: Option<Strip>,
+    line: Option<&str>,
     labels: crate::pad::Labels,
 ) -> Entity {
     let a = art.prompt.as_ref();
-    let choices = choices(strip);
-    commands
+    let choices = strip.map_or(&[][..], choices);
+    let root = commands
         .spawn((
             CardScreenRoot("over"),
             Node {
@@ -962,6 +979,9 @@ fn spawn_over(
             GlobalZIndex(SCORE_Z),
         ))
         .with_children(|root| {
+            if choices.is_empty() {
+                return;
+            }
             root.spawn((
                 Node {
                     flex_direction: FlexDirection::Row,
@@ -991,7 +1011,39 @@ fn spawn_over(
                 }
             });
         })
-        .id()
+        .id();
+    if let Some(line) = line {
+        let boxed = commands
+            .spawn((
+                CardScreenRoot("tutorial line"),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(TUTORIAL_LEFT),
+                    top: px(TUTORIAL_TOP),
+                    ..default()
+                },
+            ))
+            .with_children(|top| {
+                top.spawn((
+                    Node {
+                        width: px(TUTORIAL_WIDTH),
+                        padding: UiRect::axes(px(28), px(24)),
+                        border: UiRect::all(px(3)),
+                        border_radius: BorderRadius::all(px(28)),
+                        justify_content: JustifyContent::Center,
+                        ..default()
+                    },
+                    BackgroundColor(BOX_FILL),
+                    BorderColor::all(pen.theme.gold),
+                ))
+                .with_children(|b| {
+                    b.spawn(pen.text(line, Step::Md, Role::Primary));
+                });
+            })
+            .id();
+        commands.entity(root).add_child(boxed);
+    }
+    root
 }
 
 fn spawn_score(
@@ -1083,6 +1135,8 @@ pub struct CardScreensShot {
     pub quit: Option<QuitFocus>,
     /// A pirate's loot up, as drawn (openspec AS.673).
     pub loot: Option<LootShown>,
+    /// A tutorial stop's line as read off the disc (openspec AS.877).
+    pub tutorial: Option<String>,
     /// What the screens answered this session, in order.
     pub answered: Vec<String>,
     /// Which screens are drawn now, by name.
@@ -1122,6 +1176,7 @@ impl CardShots<'_, '_> {
             pick: read.pick.clone(),
             quit: screens.quit,
             loot: read.loot.clone(),
+            tutorial: read.tutorial.clone(),
             answered: screens.answered.clone(),
             drawn: self.roots.iter().map(|r| r.0).collect(),
         };

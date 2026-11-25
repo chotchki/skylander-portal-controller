@@ -4593,7 +4593,22 @@ struct FangsPlayed {
     /// Each hand the hand select offered, in order, a story run's (it
     /// answers the page as the TV does; openspec AS.555).
     offers: Vec<guacamole::card_game::HandOffer>,
+    /// Each tutorial stop the board's manager took (openspec AS.877), in
+    /// order: its behaviour, the length in characters of the line its box
+    /// showed as the TV reads it (`card_game::tutorial_line`; the words
+    /// never printed), the step it came, and the step it went with whether
+    /// the player's accept was down on that step.
+    lines: Vec<TutorialStop>,
     run: Run,
+}
+
+/// One tutorial stop as [`FangsPlayed::lines`] keeps it.
+#[derive(Debug, Clone)]
+struct TutorialStop {
+    stop: String,
+    line_chars: Option<usize>,
+    came: u32,
+    went: Option<(u32, bool)>,
 }
 
 /// Fangs' behaviours while his loot's reports are up (openspec AS.368).
@@ -4672,6 +4687,7 @@ fn fangs_games_with(
     let mut boards = std::collections::BTreeSet::new();
     let (mut stones_before, mut stones_at_board) = (None, None);
     let mut offers: Vec<guacamole::card_game::HandOffer> = Vec::new();
+    let mut lines: Vec<TutorialStop> = Vec::new();
     for _ in 0..600 {
         if run.hero().pivot.y < -300.0 {
             break;
@@ -4722,7 +4738,15 @@ fn fangs_games_with(
         if board.is_some() {
             player.policy = plan.and_then(|p| p.0).unwrap_or(cards::Policy::Naive);
             run.bench.pads[0] = player.pad(&run);
+            let accept = run.bench.pads[0].actions[0];
             stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+            let after = cards::board(&run);
+            if let Some(open) = lines.last_mut()
+                && open.went.is_none()
+                && after.as_deref() != Some(open.stop.as_str())
+            {
+                open.went = Some((run.steps, accept));
+            }
         } else if LOOT_WAITS
             .contains(&behaviour(&run, guacamole::level_205::CARD_HOUSE_PIRATE).as_str())
         {
@@ -4763,6 +4787,21 @@ fn fangs_games_with(
         let now = cards::board(&run);
         if let Some(b) = &now {
             boards.insert(b.clone());
+            if guacamole::card_game::is_tutorial_stop(b) {
+                let chars = guacamole::card_game::tutorial_line(&run.vm, &run.world)
+                    .map(|l| l.chars().count());
+                match lines.last_mut() {
+                    Some(open) if open.went.is_none() && open.stop == *b => {
+                        open.line_chars = open.line_chars.or(chars);
+                    }
+                    _ => lines.push(TutorialStop {
+                        stop: b.clone(),
+                        line_chars: chars,
+                        came: run.steps,
+                        went: None,
+                    }),
+                }
+            }
             if stones_at_board.is_none() {
                 stones_at_board = stones_collected(&run);
             }
@@ -4875,6 +4914,7 @@ fn fangs_games_with(
         stones_at_board,
         writes,
         offers,
+        lines,
         run,
     }
 }
@@ -4915,6 +4955,28 @@ fn fangs_first_game_on_a_fresh_save_is_the_tutorial_and_its_win_collects_stones(
         .collect();
     println!("the tutorial's behaviours: {tutorial:?}");
     assert!(tutorial.len() >= 5, "the tutorial ran: {:?}", p.boards);
+    // openspec AS.877: each stop's line read off the disc by the TV's own
+    // read, of a phrase's length or more (its words never printed); a stop
+    // that waits on the accept passed by it, the two timed ones on their own.
+    for s in &p.lines {
+        println!(
+            "tutorial stop {:?}: line {:?} chars, came at step {}, went {:?} (step, accept down)",
+            s.stop, s.line_chars, s.came, s.went
+        );
+    }
+    assert_eq!(p.lines.len(), tutorial.len(), "{:?}", p.lines);
+    for s in &p.lines {
+        let n = s.line_chars.unwrap_or_else(|| panic!("no line at {s:?}"));
+        assert!((8..=400).contains(&n), "a line's length at {s:?}");
+        if guacamole::card_game::tutorial_waits_on_accept(&s.stop) {
+            assert!(
+                matches!(s.went, Some((_, true))),
+                "passed by the accept: {s:?}"
+            );
+        } else {
+            assert!(s.went.is_some(), "went on by itself: {s:?}");
+        }
+    }
     let pirate = p.run.placement(guacamole::level_205::CARD_HOUSE_PIRATE);
     assert_eq!(
         p.run.vm.local(pirate, "tutorial?"),

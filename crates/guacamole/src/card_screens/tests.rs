@@ -141,8 +141,9 @@ fn the_buttons_and_score_caps_draw_upright() {
 }
 
 /// openspec AS.875, AS.879: the strip asks over a finished board and at a
-/// tutorial stop: after a loss its two choices (A again, B leave), after a
-/// win and at each tutorial stop A alone; nothing mid-game or with no board.
+/// tutorial stop that waits on the accept: after a loss its two choices (A
+/// again, B leave), after a win and at each such stop A alone; nothing
+/// mid-game, at a timed stop or with no board.
 #[test]
 fn the_end_of_game_strip_asks_only_over_a_finished_board() {
     use crate::pad::Face;
@@ -152,7 +153,8 @@ fn the_end_of_game_strip_asks_only_over_a_finished_board() {
     for b in [
         "wait for tutorial - board intro",
         "wait for tutorial - explain strengths",
-        "wait for tutorial - wait for turn intro",
+        "tutorial 2 - explain board blockers",
+        "tutorial 3 - explain elemental spaces",
     ] {
         assert_eq!(game_over(Some(b)), Some(Strip::Tutorial), "{b}");
     }
@@ -165,6 +167,10 @@ fn the_end_of_game_strip_asks_only_over_a_finished_board() {
         Some("player turn - wait for player card selection"),
         Some("check for winner"),
         Some("delay after updating score header"),
+        Some("tutorial setup"),
+        // The two stops that go on by themselves ask nothing (as-cards-first).
+        Some("wait for tutorial - wait for turn intro"),
+        Some("wait for tutorial - wait for hand explanation"),
     ] {
         assert_eq!(game_over(b), None, "{b:?}");
     }

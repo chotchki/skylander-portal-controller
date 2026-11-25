@@ -149,6 +149,21 @@ pub fn record_path(ir: IrFormat, unit: &str) -> Option<String> {
         .then(|| guac_extract::interface::level_path(ir, level))
 }
 
+/// The card art part's interface record of a linked unit
+/// (`scripts/<stem>.igz`), where the part writes one (openspec AS.365's
+/// [`guac_extract::screens::card_interface_path`]): the card archives the
+/// interface part doesn't read. None for a unit that isn't a script entry.
+pub fn card_record_path(ir: IrFormat, unit: &str) -> Option<String> {
+    let stem = unit
+        .strip_prefix(&format!("{}/", guac_extract::scripts::SCRIPT_DIR))?
+        .strip_suffix(".igz")
+        .filter(|s| !s.is_empty() && !s.contains('/'))?;
+    Some(guac_extract::screens::card_interface_path(
+        ir,
+        &format!("{stem}.bld"),
+    ))
+}
+
 /// One interface record off the extract at `dir`, in `ir`'s format.
 pub fn read_record(dir: &Path, ir: IrFormat, rel: &str) -> Result<Interface, String> {
     let bytes = std::fs::read(dir.join(rel)).map_err(|e| format!("{rel}: {e}"))?;
@@ -176,6 +191,9 @@ pub fn load(
     let started = Instant::now();
     let mut records = Vec::new();
     let mut missing = Vec::new();
+    // A card archive the interface part doesn't hold: its strings alone,
+    // off the card art part's record (openspec AS.877).
+    let mut card_strings = Vec::new();
     for k in keys {
         let Some(name) = units.get(usize::from(k.unit)) else {
             continue;
@@ -184,6 +202,15 @@ pub fn load(
             continue;
         };
         if !dir.join(&rel).is_file() {
+            if let Some(card) = card_record_path(ir, name)
+                && dir.join(&card).is_file()
+            {
+                match read_record(dir, ir, &card) {
+                    Ok(r) => card_strings.push((k, r)),
+                    Err(why) => missing.push((name.clone(), why)),
+                }
+                continue;
+            }
             missing.push((name.clone(), format!("{rel}: not in the extract")));
             continue;
         }
@@ -199,7 +226,10 @@ pub fn load(
         return None;
     }
     let pairs: Vec<(&Keys, &Interface)> = records.iter().map(|(k, r)| (*k, r)).collect();
-    let loaded = load::load(&pairs, imports);
+    let mut loaded = load::load(&pairs, imports);
+    for (k, r) in &card_strings {
+        add_strings(&mut loaded.keeper, k, r);
+    }
     Some(InterfacePart {
         keeper: loaded.keeper,
         read: records
@@ -210,6 +240,33 @@ pub fn load(
         refused: loaded.refused,
         took: started.elapsed(),
     })
+}
+
+/// A record's strings into the model, nothing else of it (openspec AS.877):
+/// a card archive's, whose templates the TV doesn't load (the card art
+/// part keeps its records apart, AS.365), so a card script's message box
+/// shows its string's words. Each `StringInfo` of `keys` paired with the
+/// record's string at its place; none when the counts differ. How many.
+pub fn add_strings(keeper: &mut Keeper, keys: &Keys, record: &Interface) -> usize {
+    if keys.strings.len() != record.strings.len() {
+        return 0;
+    }
+    for (&object, s) in keys.strings.iter().zip(&record.strings) {
+        keeper.model_mut().add_file_string(
+            guac_script::Obj {
+                unit: keys.unit,
+                index: object,
+            },
+            &s.text,
+            guac_interface::Str {
+                units: Vec::new(),
+                flags: s.flags as u32,
+                integer_digits: s.integer_digits,
+                decimal_digits: s.decimal_digits,
+            },
+        );
+    }
+    keys.strings.len()
 }
 
 /// The English text of the file string `obj` (a `StringInfo` of one of
@@ -404,6 +461,45 @@ impl ScriptWorld {
             .or_else(|| self.program.as_ref()?.name_of(obj).map(str::to_owned))
     }
 
+    /// The words of every text sprite the model holds at or under
+    /// `container`, in the model's order, blank ones left out (openspec
+    /// AS.877): what a script's message box shows, its string the disc's,
+    /// read here and never kept. A sprite whose string the model doesn't
+    /// hold reads none (never its object's name). Empty with no model or no
+    /// such sprite.
+    pub fn texts_under(&self, container: Value) -> Vec<String> {
+        let Some(model) = self.interface.as_ref().map(Keeper::model) else {
+            return Vec::new();
+        };
+        let Some(root) = model.sprite_of(container) else {
+            return Vec::new();
+        };
+        let under = |mut id: guac_interface::SpriteId| {
+            // The model's tree is shallow; the cap only guards a loop.
+            for _ in 0..64 {
+                if id == root {
+                    return true;
+                }
+                match model.sprite(id).parent {
+                    Some(p) => id = p,
+                    None => return false,
+                }
+            }
+            false
+        };
+        model
+            .active()
+            .iter()
+            .filter(|&&id| {
+                let s = model.sprite(id);
+                s.has_text() && model.string(s.text).is_some() && under(id)
+            })
+            .filter_map(|&id| model.text_units(id, &Names(self)))
+            .map(|u| String::from_utf16_lossy(&u))
+            .filter(|s| !s.trim().is_empty())
+            .collect()
+    }
+
     /// Hands the world the linked program, whose names the extractor reads.
     pub fn set_program(&mut self, program: std::sync::Arc<guac_script::Program>) {
         self.program = Some(program);
@@ -564,6 +660,115 @@ mod tests {
             w.set_interface(Keeper::new(m));
         }
         (w, 0x20)
+    }
+
+    /// AS.877: a message box's words are its text sprites' under it, read
+    /// off the model: a text clone attached under the box's clone (at any
+    /// depth) is read, one elsewhere or blank isn't, and a value that names
+    /// no sprite, or a world with no model, reads none.
+    #[test]
+    fn a_boxs_words_are_its_text_sprites_under_it() {
+        let text = |name: &str| Template {
+            name: name.into(),
+            properties: guac_interface::sprite::props::VISIBLE
+                | (1 << 3)
+                | guac_interface::sprite::kind::TEXT,
+            content: Content::Container,
+            ..container()
+        };
+        let (mut w, _) = world(true);
+        let k = w.interface.as_mut().unwrap();
+        let m = k.model_mut();
+        let line = m.add_file_string(
+            Obj { unit: 1, index: 50 },
+            "Stones go on squares",
+            guac_interface::Str::default(),
+        );
+        let elsewhere = m.add_file_string(
+            Obj { unit: 1, index: 51 },
+            "Not in the box",
+            guac_interface::Str::default(),
+        );
+        let blank = m.add_file_string(
+            Obj { unit: 1, index: 52 },
+            "  ",
+            guac_interface::Str::default(),
+        );
+        let boxed = m.sprite_of(Value::Object(BOX)).unwrap();
+        let in_box = m.add_template(None, &text("Line"), line);
+        let out = m.add_template(None, &text("Other"), elsewhere);
+        let empty = m.add_template(None, &text("Blank"), blank);
+        let frame = m.add_template(None, &container(), Value::Null);
+        let b = m.spawn(boxed);
+        let f = m.spawn(frame);
+        let t = m.spawn(in_box);
+        let o = m.spawn(out);
+        let e = m.spawn(empty);
+        m.attach(f, Some(b));
+        m.attach(t, Some(f));
+        m.attach(e, Some(b));
+        let _ = o;
+        // A text sprite whose string the model doesn't hold (a card
+        // archive's, before its strings are in) reads none, not its name.
+        let unheld = m.add_template(None, &text("Unheld"), Value::Object(GRUNT));
+        let u = m.spawn(unheld);
+        m.attach(u, Some(b));
+        let bv = m.value_of(b);
+        assert_eq!(w.texts_under(bv), vec!["Stones go on squares".to_owned()]);
+        let fv = w.interface.as_ref().unwrap().model().value_of(f);
+        assert_eq!(w.texts_under(fv), vec!["Stones go on squares".to_owned()]);
+        assert!(w.texts_under(Value::Int(3)).is_empty());
+        let (bare, _) = world(false);
+        assert!(bare.texts_under(bv).is_empty());
+    }
+
+    /// AS.877: a record's strings go into the model paired with its file's
+    /// `StringInfo`s, and none when the counts differ.
+    #[test]
+    fn a_records_strings_pair_with_its_files_strings() {
+        let s = |text: &str| guac_ir::interface::Str {
+            text: text.into(),
+            flags: 0,
+            integer_digits: 0,
+            decimal_digits: 0,
+        };
+        let record = Interface {
+            identity: guac_ir::DumpIdentity {
+                title_id: "BLUS30968".into(),
+                app_ver: "01.00".into(),
+                manifest_hash: guac_ir::Sha256([1; 32]),
+            },
+            archive: "card.bld".into(),
+            templates: Vec::new(),
+            fonts: Vec::new(),
+            strings: vec![s("First"), s("Second")],
+            refused: Vec::new(),
+        };
+        let keys = Keys {
+            unit: 9,
+            strings: vec![40, 41],
+            ..Keys::default()
+        };
+        let (mut w, _) = world(true);
+        let k = w.interface.as_mut().unwrap();
+        assert_eq!(add_strings(k, &keys, &record), 2);
+        let at = |index| Value::Object(Obj { unit: 9, index });
+        assert_eq!(w.text_of(at(41)).as_deref(), Some("Second"));
+        assert_eq!(w.text_of(at(40)).as_deref(), Some("First"));
+        let short = Keys {
+            unit: 10,
+            strings: vec![40],
+            ..Keys::default()
+        };
+        let k = w.interface.as_mut().unwrap();
+        assert_eq!(add_strings(k, &short, &record), 0);
+        assert_eq!(
+            w.text_of(Value::Object(Obj {
+                unit: 10,
+                index: 40
+            })),
+            None
+        );
     }
 
     fn at(receiver: Option<Value>, ns: &str, name: &str) -> Access {

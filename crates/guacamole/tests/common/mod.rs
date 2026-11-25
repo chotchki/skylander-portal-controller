@@ -1638,7 +1638,20 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
             true => interface_records(),
             false => interface_records_of(&archives[..ARCHIVES.len()]),
         };
-        world.set_interface(interface_part_with(&igzs, records).keeper);
+        let mut keeper = interface_part_with(&igzs, records).keeper;
+        // The card archives' strings (openspec AS.877): the TV's load has
+        // them off the interface part (the ones it holds) or the card art
+        // part's records; the strings alone here.
+        for (&u, archive) in card_units.iter().zip(&card_archives) {
+            let bld = std::fs::read(usr.join(archive)).unwrap_or_else(|e| panic!("{archive}: {e}"));
+            let arc = std::fs::read(usr.join(archive).with_extension("arc")).ok();
+            let record = guac_extract::interface::read(archive, &bld, arc.as_deref(), identity())
+                .unwrap_or_else(|e| panic!("{archive}'s interface: {e}"))
+                .ir;
+            let keys = guac_interface::load::Keys::read(u, &igzs[u as usize]);
+            guacamole::interface_host::add_strings(&mut keeper, &keys, &record);
+        }
+        world.set_interface(keeper);
         world.set_program(vm.program_arc());
     }
     world.set_levels(Arc::new(on_disc.into_iter().collect()));

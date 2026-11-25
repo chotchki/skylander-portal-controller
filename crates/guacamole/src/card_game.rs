@@ -740,6 +740,48 @@ pub fn manager(vm: &Vm, world: &ScriptWorld) -> Option<PlacementId> {
     found
 }
 
+/// Whether a board manager's behaviour is one of the tutorial's stops
+/// (openspec AS.877, AS.879): the first game's `wait for tutorial - ...`
+/// and the later lessons' `tutorial N - ...`, each of which puts its line
+/// in a message box.
+pub fn is_tutorial_stop(behaviour: &str) -> bool {
+    behaviour.starts_with("wait for tutorial")
+        || behaviour
+            .strip_prefix("tutorial ")
+            .and_then(|r| r.chars().next())
+            .is_some_and(|c| c.is_ascii_digit())
+}
+
+/// The tutorial's stops that go on by themselves (as-cards-first, off the
+/// board's script): the turn's intro once its voice line has played, the
+/// hand's explanation once its footer is up. Every other stop waits on the
+/// player's accept.
+pub const TIMED_TUTORIAL_STOPS: [&str; 2] = [
+    "wait for tutorial - wait for turn intro",
+    "wait for tutorial - wait for hand explanation",
+];
+
+/// Whether a tutorial stop waits on the player's accept (openspec AS.879).
+pub fn tutorial_waits_on_accept(behaviour: &str) -> bool {
+    is_tutorial_stop(behaviour) && !TIMED_TUTORIAL_STOPS.contains(&behaviour)
+}
+
+/// The line the tutorial's message box shows (openspec AS.877): the text
+/// sprites in the board manager's `tutorial container` (`MainUI - Message
+/// Box Text Create`), their strings the disc's, read off the interface
+/// model at run time and joined. Up as long as the scripts keep the box
+/// (the hand's explanation stays into the card's pick); none with no box,
+/// or before its line is in.
+pub fn tutorial_line(vm: &Vm, world: &ScriptWorld) -> Option<String> {
+    let m = manager(vm, world)?;
+    let container = vm.local(m, "tutorial container").map(|v| vm.value(v))?;
+    if container == Value::Null {
+        return None;
+    }
+    let lines = world.texts_under(container);
+    (!lines.is_empty()).then(|| lines.join(" "))
+}
+
 /// Both scores as the board's script holds them (openspec AS.556): the
 /// manager's game data's `remembered player score` and `remembered
 /// opponent score`, which `CardGame - Update Score Header` sets from the
