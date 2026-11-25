@@ -151,7 +151,10 @@ fn the_end_of_game_strip_asks_only_over_a_finished_board() {
     assert_eq!(game_over(Some("won")), Some(Strip::Won));
     // The tutorial's stops by the names its manager gives them.
     for b in [
+        "wait for tutorial - stone intro",
         "wait for tutorial - board intro",
+        "wait for tutorial - goal of game",
+        "wait for tutorial - opponent plays first",
         "wait for tutorial - explain strengths",
         "tutorial 2 - explain board blockers",
         "tutorial 3 - explain elemental spaces",

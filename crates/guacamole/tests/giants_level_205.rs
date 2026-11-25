@@ -4976,7 +4976,12 @@ fn fangs_first_game_on_a_fresh_save_is_the_tutorial_and_its_win_collects_stones(
                 "passed by the accept: {s:?}"
             );
         } else {
-            assert!(s.went.is_some(), "went on by itself: {s:?}");
+            // A timed stop went with the accept up (the player presses one
+            // 10 steps into a stop, `cards::Player`): by itself, not by A.
+            assert!(
+                matches!(s.went, Some((_, false))),
+                "went on by itself: {s:?}"
+            );
         }
     }
     let pirate = p.run.placement(guacamole::level_205::CARD_HOUSE_PIRATE);
