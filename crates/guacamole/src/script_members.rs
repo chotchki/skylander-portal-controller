@@ -1142,6 +1142,49 @@ impl ScriptWorld {
     }
 
     /// The ray caster's contact between its two points, through the seam.
+    /// Whether the ray caster's segment meets the solid of `a`, a prop a
+    /// hero stands on (a shape, solid to actors, an actor surface, no
+    /// creature the engine walks), at its outer size (AG.70: the original's
+    /// rays meet a solid with its convex radius). False for anything else,
+    /// which keeps `ray-touch`'s answer.
+    fn stands_on_the_ray(&self, a: Handle, engine: &mut dyn Engine) -> bool {
+        let Some(k) = self.actors.get(&a) else {
+            return false;
+        };
+        if k.walker.is_some()
+            || k.removed
+            || !(1..=4).contains(&k.solid.shape)
+            || k.solid.interacts_with_actors == 0
+            || k.solid.acts_as_actor_surface == 0
+        {
+            return false;
+        }
+        let Some(body) = engine.body(a) else {
+            return false;
+        };
+        let d = self.ray.end - self.ray.start;
+        let len = d.length();
+        if len <= 0.0 {
+            return false;
+        }
+        let mut past = Vec::new();
+        // Each pass leaves one more body out, so it ends.
+        while let Some(hit) = guac_motion::ground::ray_seeing(
+            engine.seam(),
+            self.ray.start,
+            d,
+            len,
+            guac_motion::solid::CONVEX_RADIUS,
+            &past,
+        ) {
+            if hit.body == body {
+                return true;
+            }
+            past.push(hit.body);
+        }
+        false
+    }
+
     fn ray_contact(&self, engine: &mut dyn Engine) -> Option<(Vec3, Vec3)> {
         self.ray_contact_full(engine).map(|(p, n, _)| (p, n))
     }
@@ -2043,6 +2086,16 @@ impl ScriptWorld {
                     // AS.76) asks it of its targets along the ray through
                     // where it points: yes for one the ray passes within its
                     // reach of (stand-in ledger: `turret-pick`).
+                    //
+                    // A prop a hero stands on (a push block) answers by the
+                    // seam (openspec AS.891): the walkable-surface check
+                    // (`Combat.ai`) asks each push block whether a short
+                    // ray down past the seam between two touches it, so a
+                    // hero walks across landed blocks; answered "no", he
+                    // stopped dead at the seam.
+                    if self.stands_on_the_ray(a, engine) {
+                        return Ok(Value::Int(1));
+                    }
                     if self.ray_picks {
                         let p = self.position(a, engine).ok_or(HostFault::Nothing)?;
                         let (start, end) = (self.ray.start, self.ray.end);
@@ -6614,6 +6667,123 @@ mod tests {
             Ok(Value::Int(1)),
             "another's doesn't"
         );
+    }
+
+    /// openspec AS.891: two push blocks side by side, 0.15 m apart, their
+    /// tops at y = 0 over nothing. The walkable-surface check's short ray
+    /// down ahead of a hero touches a block it passes over, out to the
+    /// block's convex radius, and neither in the seam between them; a
+    /// creature's solid or a prop that isn't an actor surface keeps no
+    /// touch (`ray-touch`).
+    #[test]
+    fn a_ray_down_touches_a_push_block_it_passes_over() {
+        const NEAR: Handle = 0x6000_0041;
+        const FAR: Handle = 0x6000_0042;
+        struct Blocks(ParryWorld);
+        impl Engine for Blocks {
+            fn hero(&mut self, _: Handle) -> Option<&mut Hero> {
+                None
+            }
+            fn heroes(&self) -> Vec<Handle> {
+                Vec::new()
+            }
+            fn seam(&self) -> &dyn PhysicsSeam {
+                &self.0
+            }
+            fn view_heading(&self) -> f32 {
+                0.0
+            }
+            fn pad(&self, _: usize) -> Pad {
+                Pad::default()
+            }
+            fn body(&self, actor: Handle) -> Option<BodyId> {
+                match actor {
+                    NEAR => Some(BodyId(1)),
+                    FAR => Some(BodyId(2)),
+                    _ => None,
+                }
+            }
+            fn actor_of(&self, body: BodyId) -> Option<Handle> {
+                match body {
+                    BodyId(1) => Some(NEAR),
+                    BodyId(2) => Some(FAR),
+                    _ => None,
+                }
+            }
+        }
+        // 15 ft square, 12 ft high; the world holds each 0.05 m in.
+        let half = Vec3::new(2.236, 1.779, 2.236);
+        let block = |id, x: f32| Body {
+            id: BodyId(id),
+            kind: BodyKind::Kinematic,
+            pose: Pose::at(Vec3::new(x, -1.779, 0.0)),
+            collider: Collider::Convex(Shape::Box {
+                half_extents: half,
+                margin: 0.0,
+            }),
+        };
+        // Faces at x = -0.075 and 0.075.
+        let mut e =
+            Blocks(ParryWorld::new(&[block(1, -0.075 - 2.236), block(2, 0.075 + 2.236)]).unwrap());
+        let mut w = world();
+        let solid = Solid {
+            width: 15.0,
+            length: 15.0,
+            height: 12.0,
+            interacts_with_level_mesh: 1,
+            interacts_with_actors: 1,
+            acts_as_actor_surface: 1,
+            shape: 1,
+            ..Solid::default()
+        };
+        for h in [NEAR, FAR] {
+            let mut a = Actor::blank();
+            a.solid = solid;
+            w.actors.insert(h, a);
+        }
+        let ray = w.objs.value(Object::RayCast);
+        let touch = |w: &mut ScriptWorld, e: &mut Blocks, h: Handle, x: f32| {
+            w.ray.start = Vec3::new(x, 1.5, 0.0);
+            w.ray.end = Vec3::new(x, -1.5, 0.0);
+            let a = at(
+                "positionmeasurement",
+                "collision",
+                Some(Value::Entity(h)),
+                Some(ray),
+            );
+            w.get_member(&a, Member::Collision, e).unwrap()
+        };
+        assert_eq!(touch(&mut w, &mut e, FAR, 1.0), Value::Int(1), "over it");
+        assert_eq!(
+            touch(&mut w, &mut e, NEAR, 1.0),
+            Value::Int(0),
+            "over the other"
+        );
+        assert_eq!(
+            touch(&mut w, &mut e, NEAR, -1.0),
+            Value::Int(1),
+            "the near one"
+        );
+        for h in [NEAR, FAR] {
+            assert_eq!(touch(&mut w, &mut e, h, 0.0), Value::Int(0), "the seam");
+        }
+        // 0.035 m off its held face, inside its 0.05 m radius.
+        assert_eq!(
+            touch(&mut w, &mut e, FAR, 0.04),
+            Value::Int(1),
+            "its convex radius"
+        );
+        // A creature the engine walks keeps no touch, as does a solid that
+        // isn't an actor surface.
+        w.actors.get_mut(&FAR).unwrap().walker = Some(Box::new(crate::script_engine::Walker {
+            body: None,
+            aim: guac_motion::steer::Aim::Still,
+            along: 0,
+        }));
+        assert_eq!(touch(&mut w, &mut e, FAR, 1.0), Value::Int(0), "a creature");
+        w.actors.get_mut(&FAR).unwrap().walker = None;
+        w.actors.get_mut(&FAR).unwrap().solid.acts_as_actor_surface = 0;
+        assert_eq!(touch(&mut w, &mut e, FAR, 1.0), Value::Int(0), "no surface");
     }
 
     /// openspec AS.76: a point put at a place on the screen lands there, on
