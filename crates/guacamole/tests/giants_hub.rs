@@ -2245,8 +2245,12 @@ const STALL: u32 = 20_000;
 /// The seeds of [`dreadbeards_game_quit_lost_and_won_each_end_in_his_own_next_behaviour`]'s
 /// three games: the quit's, the naive player's loss and the strong
 /// player's win (each found by playing; a seed's game is the same to the
-/// step from the same start).
-const DREADBEARDS_SEEDS: [u32; 3] = [1, 2, 4];
+/// step from the same start). The win's seed was 4 until the runs held the
+/// board's strings as the TV does (openspec AS.913): a UI animation timed by
+/// its text then starts the board 10 steps later, the level's own draws (the
+/// music controller's rolls) land elsewhere in the game off the one
+/// generator, and seed 4's strong game is lost; seed 3's is won.
+const DREADBEARDS_SEEDS: [u32; 3] = [1, 2, 3];
 
 /// openspec AS.366: Dreadbeard's card game played on the VM, headless, on
 /// hub stage 2 (3 by 3, his call's chances), three games in one run: quit
