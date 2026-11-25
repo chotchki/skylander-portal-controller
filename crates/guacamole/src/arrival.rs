@@ -7,7 +7,8 @@
 //!   coming in as the hero comes off), and a magic item or a sidekick placed
 //!   while the level has started, alone of its kind (a second holds under
 //!   the too-many-items alert instead). None at the first entry: his intro
-//!   stands in for it.
+//!   stands in for it; none for the hero a played card game gives back
+//!   (openspec AS.910: his figure never left the portal).
 //! - When ([`Arrivals`]): each in the order asked, the level held from the
 //!   ask; a lead-in of [`LEAD`] (the original's element burst in the level
 //!   comes first: its arrival is on screen by 1.4-1.5 s, AG.6), then the

@@ -688,6 +688,10 @@ pub(crate) struct Play {
     /// (openspec AS.112): he stays in the level until it's back or the scene
     /// lets go.
     lifted: Option<Duration>,
+    /// The slot a played card game just gave its hero back on (openspec
+    /// AS.910): his figure never left the portal, so his coming in again
+    /// asks no arrival.
+    card_back: Option<SlotIndex>,
 }
 
 /// How far above the last hero's place a replacement comes in, metres
@@ -1640,6 +1644,7 @@ fn card_hero_back(
     };
     world.card_streams.hero_returned();
     info!(figure = %c.placement.name, "the card game gave the hero back: he comes in again where he stood");
+    play.card_back = Some(c.slot);
     if let Some(inside) = play.inside.as_mut() {
         take_off(inside, &mut level, &mut commands, &bodies, c.slot);
     }
@@ -1817,8 +1822,11 @@ fn choose_hero(
             "the hero, once his model is ready"
         );
         // A character becoming the hero after the level has started arrives
-        // first (AG.72); the first one in has his intro instead.
-        if play.inside.is_some() {
+        // first (AG.72); the first one in has his intro instead, and one a
+        // played card game gave back on the slot he stood in comes straight
+        // in (AS.910: his figure never left the portal).
+        let card_back = play.card_back.take() == Some(c.slot);
+        if play.inside.is_some() && !card_back {
             let asked = arrival::asked(c.slot, &c.placement, arrival::Kind::Hero, real.elapsed());
             play.arrivals.ask(asked);
         }
@@ -2055,6 +2063,7 @@ fn end_level(
     play.dying = None;
     play.beaten_at = None;
     play.lifted = None;
+    play.card_back = None;
     play.arrivals.clear();
     // The scripts start over with the level's next entry (AH.24).
     commands.queue(hero_scripts::reinstall);
@@ -6158,6 +6167,13 @@ mod tests {
             (pivot - at).xz().length() < 0.15,
             "in where he stood: {pivot} against {at}"
         );
+        // openspec AS.910: his figure never left the portal, so no arrival
+        // holds the level on his way back in.
+        let play = app.world().resource::<Play>();
+        assert_eq!(play.arrivals.waiting(), 0, "no arrival asked");
+        assert!(!play.arrivals.holding(), "no arrival holding the level");
+        assert_eq!(play.arrivals.done().count(), 0, "no arrival shown");
+        assert_eq!(play.card_back, None, "the come-back answered");
         assert!(app.world().resource::<Play>().beaten().is_empty());
         assert_eq!(
             app.world().resource::<ScriptWorld>().card_streams.restore(),
