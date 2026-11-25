@@ -7169,6 +7169,13 @@ mod tests {
             if let Some(name) = reader {
                 reader_named(&mut w, name);
             }
+            // A board up beside it changes nothing (openspec AS.875's
+            // review): its manager and every other reader keep cancel
+            // released, the report alone takes it.
+            if reader == Some("Macros_UI") {
+                w.card_streams
+                    .set_restore(crate::card_game::Restore::Replaced);
+            }
             let button = w.objs.value(Object::Button(0, Button::Cancel));
             let mut seen = Vec::new();
             for held in [false, true, true, false, false] {

@@ -238,6 +238,29 @@ pub fn hold_card_question(
     up.is_some_and(|p| p.question == quit.question)
 }
 
+/// What the TV puts up of `now`, the question the run asks after its step
+/// (openspec AS.822): a card pirate's question held by
+/// [`hold_card_question`] is answered with his own no and none is put up;
+/// any other is put up as asked. `heroes` are the joined heroes across the
+/// ground.
+pub fn ask_or_hold(
+    vm: &mut Vm,
+    host: &mut WorldHost<'_, '_>,
+    now: Option<Prompt>,
+    heroes: &[(f32, f32)],
+) -> Result<Option<Prompt>, Halt> {
+    let Some(p) = now else {
+        hold_card_question(host.world, None, heroes);
+        return Ok(None);
+    };
+    if !hold_card_question(host.world, Some(&p), heroes) {
+        return Ok(Some(p));
+    }
+    answer(vm, host, &p, false)?;
+    tracing::debug!("a card pirate asks again where his yes was quit: answered no");
+    Ok(None)
+}
+
 /// Whether `name` is one of [`SCREENS`].
 fn is_screen(name: &str) -> bool {
     SCREENS.iter().any(|s| name.eq_ignore_ascii_case(s))
@@ -882,6 +905,74 @@ mod tests {
         });
         assert!(!hold_card_question(&mut world, Some(&his), &[]));
         assert_eq!(world.card_quit, None);
+    }
+
+    /// openspec AS.822, the TV's call ([`ask_or_hold`], what `yes_no.rs`
+    /// puts up after each step): the question a quit card game holds is
+    /// answered with the run's own no through its page and none is put up;
+    /// another question, or the same once the hero has walked off, is put up
+    /// and left waiting; with nothing up the walk still frees the hold.
+    #[test]
+    fn the_tv_answers_a_held_card_question_no_and_puts_none_up() {
+        let program = asking(ASKING, WAITING, true);
+        let files = Files {
+            placed: vec![Placed::named(FILE, "Macros_GameSystems", Some(PATH), 4)],
+            ..Files::default()
+        };
+        let handles = HashMap::from([(FILE, HANDLE)]);
+        let status_of = |vm: &mut Vm| {
+            let g = |name| vm.program().global_named(name).unwrap();
+            let systems = vm.global(g("UI Systems")).unwrap();
+            let ui = vm.field(systems, "current dialogue ui").unwrap();
+            vm.field(ui, "control - yes_no prompt status")
+                .and_then(|v| v.as_i32())
+                .unwrap()
+        };
+        // (what's held, where the hero stands) -> (put up, status after)
+        let held = |q: Option<Value>, at: (f32, f32)| {
+            let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+            let mut config = Config::new(Mode::Strict);
+            config.whitelist = Whitelist::only(&[], &["GameSystems.ai"]);
+            let sid = program.script_named("GameSystems.ai").unwrap();
+            let mut vm = Vm::new(program.clone(), config);
+            vm.add_at(HANDLE, "Macros_GameSystems", sid, FILE);
+            let (mut generator, mut engine) = (Generator::seeded(1), NoEngine);
+            let mut spawn = headless_spawner(0x1000);
+            let mut host = WorldHost {
+                world: &mut world,
+                engine: &mut engine,
+                generator: &mut generator,
+                spawn: &mut spawn,
+            };
+            vm.step(&mut host).unwrap();
+            let now = up(&vm, host.world).expect("a question");
+            host.world.card_quit = q.map(|question| CardQuit {
+                question: if question == Value::Null {
+                    now.question
+                } else {
+                    question
+                },
+                hero_at: Some((0.0, 0.0)),
+            });
+            let put = ask_or_hold(&mut vm, &mut host, Some(now.clone()), &[at]).unwrap();
+            let kept = host.world.card_quit.is_some();
+            (put.map(|p| p == now), status_of(&mut vm), kept)
+        };
+        // His own question, the hero still by him: answered no, none up.
+        assert_eq!(held(Some(Value::Null), (1.0, 1.0)), (None, NO, true));
+        // Nothing held: put up, still waiting.
+        assert_eq!(held(None, (1.0, 1.0)), (Some(true), WAITING, false));
+        // Another question held: this one put up.
+        assert_eq!(
+            held(Some(Value::Int(9)), (1.0, 1.0)),
+            (Some(true), WAITING, true)
+        );
+        // Walked off past the reach: forgotten, and his question put up.
+        let far = LEFT_A_CARD_PIRATE + 0.5;
+        assert_eq!(
+            held(Some(Value::Null), (far, 0.0)),
+            (Some(true), WAITING, false)
+        );
     }
 
     /// openspec AS.822: the card game's not-built line at INFO once a run,

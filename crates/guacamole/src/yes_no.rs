@@ -133,24 +133,31 @@ fn ask_and_answer(
     mut answered: ResMut<Answered>,
     heroes: Query<&crate::hero::HeroBody>,
 ) {
-    let mut run_answer = |runtime: &mut ScriptRuntime, world: &mut ScriptWorld, p: &Prompt, yes| {
-        let ScriptRuntime { vm, generator, .. } = runtime;
-        let mut spawn = |template: guac_script::Value| -> guac_script::Handle {
-            commands.spawn(ScriptClone(template)).id().to_bits()
+    let mut with_host =
+        |runtime: &mut ScriptRuntime,
+         world: &mut ScriptWorld,
+         f: &mut dyn FnMut(&mut guac_script::Vm, &mut WorldHost<'_, '_>)| {
+            let ScriptRuntime { vm, generator, .. } = runtime;
+            let mut spawn = |template: guac_script::Value| -> guac_script::Handle {
+                commands.spawn(ScriptClone(template)).id().to_bits()
+            };
+            let mut engine = guacamole::script_engine::NoEngine;
+            let mut host = WorldHost {
+                world,
+                engine: &mut engine,
+                generator,
+                spawn: &mut spawn,
+            };
+            f(vm, &mut host);
         };
-        let mut engine = guacamole::script_engine::NoEngine;
-        let mut host = WorldHost {
-            world,
-            engine: &mut engine,
-            generator,
-            spawn: &mut spawn,
-        };
-        prompt::answer(vm, &mut host, p, yes)
-    };
     if let Some((chosen, yes)) = answer.0.take()
         && let Some(p) = asked.0.clone().filter(|p| prompt::same(p, &chosen))
     {
-        match run_answer(&mut runtime, &mut world, &p, yes) {
+        let mut done = Ok(false);
+        with_host(&mut runtime, &mut world, &mut |vm, host| {
+            done = prompt::answer(vm, host, &p, yes);
+        });
+        match done {
             Ok(true) => {
                 info!(question = ?p.text, yes, "the dialogue's question answered");
                 answered.0.push((p.text.clone(), yes));
@@ -159,26 +166,22 @@ fn ask_and_answer(
             Err(h) => warn!(%h, "the question's answer stopped"),
         }
     }
-    let mut now = prompt::up(&runtime.vm, &world);
     // A card pirate asking again while the hero stays where his yes was
     // quit (openspec AS.822): his own no, never put up.
     let at: Vec<(f32, f32)> = heroes
         .iter()
         .map(|b| (b.hero.pivot.x, b.hero.pivot.z))
         .collect();
-    if let Some(p) = now.clone()
-        && prompt::hold_card_question(&mut world, Some(&p), &at)
-    {
-        match run_answer(&mut runtime, &mut world, &p, false) {
-            Ok(_) => {
-                tracing::debug!("a card pirate asks again where his yes was quit: answered no");
-                now = None;
-            }
+    let mut now = prompt::up(&runtime.vm, &world);
+    let asks = now.clone();
+    with_host(
+        &mut runtime,
+        &mut world,
+        &mut |vm, host| match prompt::ask_or_hold(vm, host, asks.clone(), &at) {
+            Ok(n) => now = n,
             Err(h) => warn!(%h, "the card pirate's question's no stopped"),
-        }
-    } else if now.is_none() {
-        prompt::hold_card_question(&mut world, None, &at);
-    }
+        },
+    );
     if asked.0 != now {
         if let Some(p) = &now {
             info!(question = ?p.text, yes_first = p.yes_first, "a dialogue asks yes or no");
