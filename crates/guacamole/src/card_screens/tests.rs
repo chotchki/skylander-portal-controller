@@ -176,3 +176,115 @@ fn the_end_of_game_strip_asks_only_over_a_finished_board() {
     }
     assert_ne!(PLAY_AGAIN, LEAVE);
 }
+
+/// An app over the screens' `show`, the TV's pen with no disc art.
+fn show_app() -> App {
+    let mut app = App::new();
+    app.add_plugins((
+        MinimalPlugins,
+        bevy::asset::AssetPlugin::default(),
+        bevy::image::ImagePlugin::default(),
+    ));
+    let stars =
+        crate::starfield::Sprites::new(&mut app.world_mut().resource_mut::<Assets<Image>>());
+    app.insert_resource(TvAssets {
+        font: Handle::default(),
+        qr: None,
+        stars,
+    })
+    .insert_resource(TvTheme::default())
+    .init_resource::<CardScreens>()
+    .init_resource::<CardRead>()
+    .add_message::<Redrawn>()
+    .add_systems(Update, show);
+    app
+}
+
+/// The board's read at `behaviour` with the tutorial's line `line` up.
+fn at_stop(app: &mut App, behaviour: &str, line: Option<&str>) {
+    let mut read = app.world_mut().resource_mut::<CardRead>();
+    read.board = true;
+    read.pick = Some(card_game::BoardRead {
+        behaviour: Some(behaviour.to_owned()),
+        ..Default::default()
+    });
+    read.tutorial = line.map(str::to_owned);
+}
+
+/// openspec AS.877: a tutorial stop's line is drawn on the screen's own
+/// root at the left, clear of the board (as-cards-first's f4: a child of the
+/// strip's root at the bottom put it under the screen); a timed stop draws
+/// the line with no strip; no line, no box.
+#[test]
+fn a_tutorial_stops_line_draws_at_the_screens_left() {
+    let mut app = show_app();
+    at_stop(
+        &mut app,
+        "wait for tutorial - board intro",
+        Some("Stones go on squares"),
+    );
+    app.update();
+    let world = app.world_mut();
+    let mut q = world.query::<(Entity, &CardScreenRoot, &Node, Option<&ChildOf>)>();
+    let all: Vec<(Entity, &'static str, Node, Option<Entity>)> = q
+        .iter(world)
+        .map(|(e, r, n, p)| (e, r.0, n.clone(), p.map(ChildOf::parent)))
+        .collect();
+    let over = all
+        .iter()
+        .find(|r| r.1 == "over")
+        .expect("the strip's root");
+    assert_eq!(
+        (over.2.top, over.2.height),
+        (px(0), percent(100)),
+        "the whole screen"
+    );
+    let line = all
+        .iter()
+        .find(|r| r.1 == "tutorial line")
+        .expect("the line's box");
+    assert_eq!(line.3, Some(over.0), "on the screen's root");
+    assert_eq!(
+        (line.2.left, line.2.top),
+        (px(TUTORIAL_LEFT), px(TUTORIAL_TOP))
+    );
+    assert!(
+        TUTORIAL_LEFT + TUTORIAL_WIDTH < 1920.0 / 5.0,
+        "short of the board"
+    );
+    let mut texts = world.query::<&Text>();
+    assert!(
+        texts.iter(world).any(|t| t.0 == "Stones go on squares"),
+        "its words"
+    );
+    // A timed stop: the line, no strip's choices.
+    at_stop(
+        &mut app,
+        "wait for tutorial - wait for hand explanation",
+        Some("Pick one"),
+    );
+    app.update();
+    let world = app.world_mut();
+    let mut texts = world.query::<&Text>();
+    let words: Vec<String> = texts.iter(world).map(|t| t.0.clone()).collect();
+    assert!(words.iter().any(|w| w == "Pick one"), "{words:?}");
+    assert!(
+        !words.iter().any(|w| w == crate::collected_box::CONTINUE),
+        "{words:?}"
+    );
+    // Mid-turn with no box up: nothing.
+    at_stop(
+        &mut app,
+        "player turn - wait for player card selection",
+        None,
+    );
+    app.update();
+    let world = app.world_mut();
+    let mut roots = world.query::<&CardScreenRoot>();
+    assert!(
+        !roots
+            .iter(world)
+            .any(|r| r.0 == "tutorial line" || r.0 == "over"),
+        "nothing drawn"
+    );
+}
