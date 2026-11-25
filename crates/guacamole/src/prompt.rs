@@ -526,7 +526,14 @@ mod tests {
         status: i32,
         held: bool,
         answer_yes: Option<bool>,
-    ) -> (Option<Prompt>, Option<bool>, Option<Prompt>, i32, i32) {
+    ) -> (
+        Option<Prompt>,
+        Option<bool>,
+        Option<Prompt>,
+        i32,
+        i32,
+        Option<Value>,
+    ) {
         run_asking(state, status, held, answer_yes, |p| p.clone())
     }
 
@@ -536,7 +543,14 @@ mod tests {
         held: bool,
         answer_yes: Option<bool>,
         asked: impl Fn(&Prompt) -> Prompt,
-    ) -> (Option<Prompt>, Option<bool>, Option<Prompt>, i32, i32) {
+    ) -> (
+        Option<Prompt>,
+        Option<bool>,
+        Option<Prompt>,
+        i32,
+        i32,
+        Option<Value>,
+    ) {
         let program = asking(state, status, held);
         let files = Files {
             placed: vec![Placed::named(FILE, "Macros_GameSystems", Some(PATH), 4)],
@@ -578,7 +592,8 @@ mod tests {
             .field(page, "closed")
             .and_then(|v| v.as_i32())
             .unwrap_or(0);
-        (before, answered, after, status, closed)
+        let last_yes = host.world.last_yes;
+        (before, answered, after, status, closed, last_yes)
     }
 
     /// A cutscene's control in the original's shape, our ops, as the game
@@ -967,17 +982,22 @@ mod tests {
     /// other state, a status off waiting, or a page not holding it isn't one.
     #[test]
     fn a_dialogues_question_is_read_off_its_ui_and_answered_through_its_page() {
-        let (before, answered, after, status, closed) = run(ASKING, WAITING, true, Some(true));
+        let (before, answered, after, status, closed, last_yes) =
+            run(ASKING, WAITING, true, Some(true));
         let p = before.expect("a question");
+        // openspec AS.822: a yes keeps the question it answered.
+        assert_eq!(last_yes, Some(p.question));
         assert!(p.yes_first);
         assert_eq!(p.text, None, "no interface to read it by");
         assert!(matches!(p.question, Value::Object(_)), "{:?}", p.question);
         assert_eq!(answered, Some(true));
         assert_eq!((status, closed), (YES, 1));
         assert_eq!(after, None, "answered, it's gone");
-        let (_, answered, after, status, closed) = run(ASKING, WAITING, true, Some(false));
+        let (_, answered, after, status, closed, last_yes) =
+            run(ASKING, WAITING, true, Some(false));
         assert_eq!(answered, Some(true));
         assert_eq!((status, closed), (NO, 1));
+        assert_eq!(last_yes, None, "a no keeps none");
         assert_eq!(after, None);
         for (state, status, held) in [
             (ASKING - 1, WAITING, true),
@@ -1000,8 +1020,9 @@ mod tests {
                 ..p.clone()
             },
         ] {
-            let (_, answered, after, status, closed) =
+            let (_, answered, after, status, closed, last_yes) =
                 run_asking(ASKING, WAITING, true, Some(true), other);
+            assert_eq!(last_yes, None, "nothing answered, nothing kept");
             assert_eq!(answered, Some(false));
             assert!(after.is_some(), "still asking");
             assert_eq!((status, closed), (WAITING, 0));
