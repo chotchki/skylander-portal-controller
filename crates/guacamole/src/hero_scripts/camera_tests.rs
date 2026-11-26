@@ -1396,17 +1396,7 @@ fn the_boards_empty_place_is_never_drawn_after_its_teardown() {
         app.world_mut().resource_mut::<GamePhase>().0 = phase;
         frames(&mut app, 20);
         if phase == 3 {
-            let eases = app.world().resource::<EasesSeen>().0.clone();
-            assert!(
-                eases
-                    .first()
-                    .copied()
-                    .flatten()
-                    .is_some_and(|e| e.distance(before.eye) < 1e-3),
-                "the cut's step eases from where it's drawn: {:?}, the view before the game at {:?}",
-                eases.first(),
-                before.eye
-            );
+            cut_not_eased(&app, 0, "the cut to the view before the game");
         }
         let seen = std::mem::take(&mut app.world_mut().resource_mut::<Steps>().0);
         assert!(seen.len() >= 5, "{} steps", seen.len());
@@ -1425,6 +1415,7 @@ fn the_boards_empty_place_is_never_drawn_after_its_teardown() {
     app.world_mut().resource_mut::<GamePhase>().0 = 1;
     frames(&mut app, 10);
     app.world_mut().resource_mut::<Steps>().0.clear();
+    app.world_mut().resource_mut::<EasesSeen>().0.clear();
     let restored = before.eye + Vec3::new(-7.0, 2.0, 5.0);
     app.world_mut().resource_mut::<GamePhase>().0 = 3;
     app.world_mut().resource_mut::<Wander>().0 = Some(restored);
@@ -1443,8 +1434,21 @@ fn the_boards_empty_place_is_never_drawn_after_its_teardown() {
             "step {k} after it: {t:?}, the viewport's own at {restored}"
         );
     }
+    // Both cuts of the quit's step, to the view before the game and off it
+    // the next step, are drawn as cuts.
+    cut_not_eased(&app, 0, "the quit's step's cut to the view before the game");
+    cut_not_eased(&app, 1, "the cut off it the step after the quit's");
     // His scene's camera moves the viewport: its view is drawn.
     let scene = before.eye + Vec3::new(4.0, 3.0, -9.0);
+    app.world_mut().resource_mut::<Wander>().0 = Some(board);
+    frames(&mut app, 5);
+    assert!(
+        last_step(&app).translation.distance(before.eye) < 1e-3,
+        "the viewport back on the board's last aim, the board gone: the view before the game"
+    );
+    // Then his scene moves it: cut to, not eased.
+    app.world_mut().resource_mut::<Steps>().0.clear();
+    app.world_mut().resource_mut::<EasesSeen>().0.clear();
     app.world_mut().resource_mut::<Wander>().0 = Some(scene);
     frames(&mut app, 20);
     let seen = std::mem::take(&mut app.world_mut().resource_mut::<Steps>().0);
@@ -1455,24 +1459,59 @@ fn the_boards_empty_place_is_never_drawn_after_its_teardown() {
             "step {k} in his scene: {t:?}, the scene's view at {scene}"
         );
     }
+    cut_not_eased(&app, 0, "the cut to his scene");
+}
+
+/// The camera's place the last step recorded.
+#[cfg(feature = "card-game-seams")]
+fn last_step(app: &App) -> Transform {
+    app.world().resource::<Steps>().0.last().expect("a step").1
+}
+
+/// The step `k` of [`EasesSeen`] since its last clear is a cut (openspec
+/// AS.876): both its translation's and its rotation's easing start where the
+/// camera is drawn that step, so no frame between passes through the sky.
+#[cfg(feature = "card-game-seams")]
+fn cut_not_eased(app: &App, k: usize, what: &str) {
+    let eases = &app.world().resource::<EasesSeen>().0;
+    let Some((moved, turned, drawn)) = eases.get(k).copied() else {
+        panic!("{what}: no step {k} recorded ({} steps)", eases.len());
+    };
+    assert!(
+        moved.is_some_and(|m| m.distance(drawn.translation) < 1e-3),
+        "{what}: its translation eases from {moved:?}, drawn at {:?}",
+        drawn.translation
+    );
+    assert!(
+        turned.is_some_and(|r| r.dot(drawn.rotation).abs() > 1.0 - 1e-5),
+        "{what}: its rotation eases from {turned:?}, drawn turned {:?}",
+        drawn.rotation
+    );
 }
 
 /// Each step's camera easing start as the step left it (openspec AS.876: a
 /// cut eases from where it's drawn), while [`Wander`] is set.
 #[cfg(feature = "card-game-seams")]
 #[derive(Resource, Default)]
-struct EasesSeen(Vec<Option<Vec3>>);
+struct EasesSeen(Vec<(Option<Vec3>, Option<Quat>, Transform)>);
 
 #[cfg(feature = "card-game-seams")]
 fn eases_seen(
     to: Res<Wander>,
-    cameras: Query<&bevy_transform_interpolation::TranslationEasingState, With<FollowCamera>>,
+    cameras: Query<
+        (
+            &bevy_transform_interpolation::TranslationEasingState,
+            &bevy_transform_interpolation::RotationEasingState,
+            &Transform,
+        ),
+        With<FollowCamera>,
+    >,
     mut out: ResMut<EasesSeen>,
 ) {
     if to.0.is_some()
-        && let Ok(e) = cameras.single()
+        && let Ok((moved, turned, t)) = cameras.single()
     {
-        out.0.push(e.start);
+        out.0.push((moved.start, turned.start, *t));
     }
 }
 
