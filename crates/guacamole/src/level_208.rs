@@ -260,6 +260,45 @@ pub fn way_down(level: &str) -> impl Iterator<Item = &'static str> {
     WAY_DOWN.iter().copied().filter(move |_| on)
 }
 
+/// Level 208's snowmen, by name (openspec AS.1021): the nine placed
+/// `Snowman_Whole.ai`s, each a capsule 8 ft wide and 12 ft high solid to
+/// actors. Its script waits until a player's minion runs into it or hurts
+/// it by more than 5, then bursts into its parts and loot and takes itself
+/// off. Unlisted each stood for good: `Snowman(7)` beside Setup_004's
+/// second trigger walled the yard off from a Giant at the 14 ft his own
+/// scripts set his solid to, and `Snowman(9)` stands in Setup_002's fight.
+pub const SNOWMEN: [&str; 9] = [
+    "Snowman(1)",
+    "Snowman(2)",
+    "Snowman(3)",
+    "Snowman(4)",
+    "Snowman(5)",
+    "Snowman(6)",
+    "Snowman(7)",
+    "Snowman(8)",
+    "Snowman(9)",
+];
+
+/// [`SNOWMEN`] on 208 alone.
+pub fn snowmen(level: &str) -> impl Iterator<Item = &'static str> {
+    let on = level == LEVEL;
+    SNOWMEN.iter().copied().filter(move |_| on)
+}
+
+/// The scripts a burst snowman's parts run (openspec AS.1021): its carrot
+/// and pipe, its arms and its hat bounce off and go.
+pub const SNOWMAN_PARTS: [&str; 3] = [
+    "/Level_208/Scripts/Snowman_carrot_bounce.ai",
+    "/Level_208/Scripts/Snowman_arm_bounce.ai",
+    "/Level_208/Scripts/Snowman_hat.ai",
+];
+
+/// [`SNOWMAN_PARTS`] on 208 alone.
+pub fn snowman_parts(level: &str) -> impl Iterator<Item = &'static str> {
+    let on = level == LEVEL;
+    SNOWMAN_PARTS.iter().copied().filter(move |_| on)
+}
+
 /// What fights on level 208 (openspec AS.345), walked as creatures: the
 /// reveal's five Ice Chompies, then Setup_002's controller, its six foes
 /// (`Setup_002_Enemies`) and Noodles' scene at its first gate; then
@@ -555,6 +594,28 @@ mod tests {
                 "{other}"
             );
             assert_eq!(way_down(other).count(), 0);
+        }
+    }
+
+    /// openspec AS.1021: 208's snowmen and their parts' scripts are on its
+    /// listing and on no other level's.
+    #[test]
+    fn level_208s_snowmen_are_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        let whole = "C:/tfb/Content/Levels/Level_208/Scripts/Snowman_Whole.ai";
+        for n in SNOWMEN {
+            assert!(on.whitelist.lists(n, whole), "{n}");
+        }
+        assert!(!on.whitelist.lists("Snowman", whole), "the template");
+        for part in ["Snowman_carrot_bounce", "Snowman_arm_bounce", "Snowman_hat"] {
+            let path = format!("C:/tfb/Content/Levels/Level_208/Scripts/{part}.ai");
+            assert!(on.whitelist.lists("Snowman_Carrot", &path), "{part}");
+        }
+        for other in ["level_202", "level_205_piratecards"] {
+            let off = level_config(Mode::Play, &files, 5, other);
+            assert!(!off.whitelist.lists("Snowman(7)", whole), "{other}");
+            assert_eq!(snowmen(other).count() + snowman_parts(other).count(), 0);
         }
     }
 

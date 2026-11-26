@@ -4892,6 +4892,8 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
         placements.extend(crate::level_208::set_4(name).map(str::to_owned));
         // The way down to Setup_004's second trigger (openspec AS.798).
         placements.extend(crate::level_208::way_down(name).map(str::to_owned));
+        // Level 208's snowmen (openspec AS.1021).
+        placements.extend(crate::level_208::snowmen(name).map(str::to_owned));
         // Level 203's start area (openspec AS.704).
         placements.extend(crate::level_203::start(name).map(str::to_owned));
     }
@@ -4904,6 +4906,8 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
                 .chain(crate::level_201::shared_scripts(name))
                 .map(|s| (*s).to_owned()),
         );
+        // Level 208's snowmen's parts (openspec AS.1021).
+        scripts.extend(crate::level_208::snowman_parts(name).map(str::to_owned));
         // Level 205's music (openspec AS.289).
         scripts.extend(
             crate::level_205::music(name)

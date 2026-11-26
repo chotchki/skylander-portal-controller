@@ -1839,6 +1839,69 @@ fn level_208s_setup_004_by_its_own_triggers() {
     println!("load at end: {}", load());
 }
 
+/// openspec AS.1021: the snowman by Setup_004's second trigger bursts as a
+/// kid runs into it: set down 5 m west of it, the stick held at it until
+/// it's taken off, and its parts (carrot, pipe, arms, hat) off after it.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_208s_snowman_bursts_as_he_runs_into_it() {
+    println!("load at start: {}", load());
+    let mut stops = Vec::new();
+    let mut run = joined_208(&mut stops);
+    for k in 0..6000u32 {
+        still(&mut run, &mut stops, [false; 4]);
+        if k > 200 && scene_of(&run).is_none() && !guacamole::anchors::scene_holds(&run.vm) {
+            break;
+        }
+    }
+    let man = run.at(SNOWMAN);
+    assert_ne!(behaviour(&run, SNOWMAN), "-", "listed");
+    run.put(Vec3::new(man.x - 5.0, man.y + 1.0, man.z), 90.0);
+    let parts = |run: &Run| {
+        run.world
+            .clones()
+            .into_iter()
+            .filter(|h| {
+                let n = run.world.name(*h);
+                (n.starts_with("Snowman_") || n == "TopHat")
+                    && run.world.actor(*h).is_some_and(|a| !a.removed)
+            })
+            .count()
+    };
+    let (mut burst, mut most) = (None, 0);
+    for _ in 0..1200 {
+        let me = run.hero().pivot;
+        run.bench.view = (man.x - me.x).atan2(man.z - me.z).to_degrees();
+        run.bench.hold_view = true;
+        step(&mut run, &mut stops, Stick::new(0.0, 1.0), [false; 4]);
+        most = most.max(parts(&run));
+        if removed(&run, SNOWMAN) {
+            burst = Some(run.steps);
+            break;
+        }
+    }
+    run.bench.hold_view = false;
+    println!("the snowman burst at step {burst:?}, its parts {most}");
+    assert!(burst.is_some(), "the snowman stood: {}", behaviour(&run, SNOWMAN));
+    let mut left = parts(&run);
+    for _ in 0..1200 {
+        still(&mut run, &mut stops, [false; 4]);
+        most = most.max(parts(&run));
+        left = parts(&run);
+        if left == 0 && most > 0 {
+            break;
+        }
+    }
+    println!("its parts: {most} at most, {left} left at step {}", run.steps);
+    assert!(most > 0, "no parts flew");
+    assert_eq!(left, 0, "parts left");
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
+}
+
+/// The snowman beside Setup_004's second trigger (openspec AS.1021).
+const SNOWMAN: &str = "Snowman(7)";
+
 /// A creature's armour level as its own script holds it (`armorlevel`, the
 /// Cyclopes' local), while it's run.
 fn armour_of(run: &Run, name: &str) -> Option<i64> {
