@@ -1357,14 +1357,21 @@ mod tests {
         until(&mut app, "its body", |a| {
             a.world().get::<SeamBody>(e).is_some()
         });
+        // Drawn at its scale first, so its `GlobalTransform` is scaled by the
+        // time its scripts' scale makes its body again (a clone's order).
+        app.world_mut()
+            .entity_mut(e)
+            .insert(Transform::from_scale(Vec3::splat(2.5)));
+        until(&mut app, "its entity scaled", |a| {
+            a.world()
+                .get::<GlobalTransform>(e)
+                .is_some_and(|g| (g.scale().x - 2.5).abs() < 1e-4)
+        });
         assert!(
             app.world_mut()
                 .resource_mut::<ScriptWorld>()
                 .set_scale(c, [250.0; 3])
         );
-        app.world_mut()
-            .entity_mut(e)
-            .insert(Transform::from_scale(Vec3::splat(2.5)));
         let own = app
             .world()
             .resource::<ScriptWorld>()
