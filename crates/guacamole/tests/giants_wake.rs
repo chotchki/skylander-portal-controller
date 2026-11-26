@@ -81,6 +81,14 @@ fn stand(level: &str, wake: Wake) -> Stood {
         interface: true,
         props: true,
         sounds: true,
+        // Each static prop's attach nodes where the TV's install sets them
+        // (openspec AS.991): without them a prop's nodes stand at its
+        // pivot, and level 203's Chompy pipe `GasJet_Pipe(14)` threw
+        // Setup_002's Chompies from 5.6 m east of its mouth, over no floor;
+        // they fell out of the level and died there at steps the wake rule's
+        // draws moved, so the end states differed by what a placement taken
+        // off last ran.
+        static_nodes: true,
         wake,
         ..Setup::default()
     };
