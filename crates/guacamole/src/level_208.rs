@@ -266,9 +266,13 @@ pub fn way_down(level: &str) -> impl Iterator<Item = &'static str> {
 /// Setup_003's controller (openspec AS.402), the nine foes its script
 /// names (`enemy a` to `enemy i`: the bomb thrower and eight Cyclopes) and
 /// the bomber's reveal by the fourth ice block; then Setup_004's
-/// controller (openspec AS.403, AS.798) and the fifteen its script names
+/// controller (openspec AS.403, AS.798), the fifteen its script names
 /// (`enemy a` to `enemy o`: seven Ice Chompies, two heavy Biclopes, two
-/// bomb throwers, four Cyclopes). Woken on its first trigger, it circles
+/// bomb throwers, four Cyclopes) and the two Ice Chompies it doesn't name,
+/// (8) and (9): the level's `Setup_004_Enemies` holds all seventeen, its
+/// `First Chompies` holds (8) and (9) with (11) to (13) (the count its
+/// circling Chompies wait on), and the controller's group comes off only
+/// once every one of `Setup_004_Enemies` is (openspec AS.1020). Woken on its first trigger, it circles
 /// four of the Chompies round `Setup_004_Anchor` until a player reaches
 /// its second trigger down the slope ([`WAY_DOWN`]), then sends them, the
 /// Cyclopes, the Biclopes and the bombers in.
@@ -315,6 +319,8 @@ pub const WAY: Encounter = Encounter {
         "Enemy_Cyclops_Near(2)",
         "Enemy_Cyclops_Near(3)",
         "Enemy_Cyclops_Near(6)",
+        "Enemy_Chompy_Ice(8)",
+        "Enemy_Chompy_Ice(9)",
     ],
     clones: &[],
     steered: &[],
@@ -353,11 +359,13 @@ mod tests {
             assert!(!crate::scripts::is_level_person(LEVEL, name), "{name}");
         }
         // The Ice Chompies' own script stays off for the level's others
-        // (AS.345's): the big battle's, still unlisted; Setup_004's
-        // (AS.403) are walked by name.
+        // (AS.345's): the big battle's, still unlisted, on its ledge;
+        // Setup_004's (AS.403, AS.1020) are walked by name.
         let ice = "C:/tfb/Content/Levels/_Enemies/Chompy_Ice/scripts/S2_Enemy_IceChompy.ai";
-        assert!(!on.whitelist.lists("Enemy_Chompy_Ice(8)", ice));
-        assert!(WAY.placements.contains(&"Enemy_Chompy_Ice(1)"));
+        assert!(!on.whitelist.lists("Enemy_Chompy_Ice(25)", ice));
+        for n in ["Enemy_Chompy_Ice(1)", "Enemy_Chompy_Ice(8)", "Enemy_Chompy_Ice(9)"] {
+            assert!(WAY.placements.contains(&n), "{n}");
+        }
     }
 
     /// openspec AS.406: the AI's hint is on 208's listing and on no other

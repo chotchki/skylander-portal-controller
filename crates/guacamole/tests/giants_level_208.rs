@@ -1697,7 +1697,7 @@ fn level_208s_setup_003_walked_from_the_fourth_ice_block() {
 /// scene, circling four Ice Chompies round its anchor; the stick down the
 /// slope past the `Blocker`, which turns its box off as he comes in front
 /// of it, to the second trigger, where the scene goes on; then the stick
-/// and the attack at the thirteen of its foes a walked hero reaches, in
+/// and the attack at the fifteen of its foes a walked hero reaches, in
 /// 600-step rounds with his health set back each round, until each is
 /// beaten and the controller is in its last behaviour. Its two bomb
 /// throwers stand on ledges above the yard no walk reaches (AS.1010), so
@@ -1715,6 +1715,18 @@ fn level_208s_setup_004_by_its_own_triggers() {
         }
     }
     assert_eq!(behaviour(&run, SETUP_004_CONTROLLER), "asleep");
+    // The foes are the level's own group, which the controller's end waits
+    // on whole (AS.1020), each one walked.
+    let mut group = group_of(&mut run, "Setup_004_Enemies");
+    let mut foes = SETUP_004_FOES.map(str::to_owned).to_vec();
+    group.sort();
+    foes.sort();
+    assert_eq!(group, foes, "Setup_004_Enemies");
+    for n in SETUP_004_FOES {
+        let p = run.files.placed.iter().find(|p| p.name == n).expect(n);
+        let script = p.script.as_deref().expect(n);
+        assert!(run.vm.config().whitelist.lists(n, script), "{n} listed");
+    }
     let first = run.at("Setup_004_Trigger(1)");
     run.put(first, 0.0);
     for _ in 0..120 {
@@ -1836,6 +1848,22 @@ fn armour_of(run: &Run, name: &str) -> Option<i64> {
     }
 }
 
+/// The names in a level set (a file variable holding placements), as the
+/// scripts read it.
+fn group_of(run: &mut Run, name: &str) -> Vec<String> {
+    let g = run.vm.program().global_named(name).expect(name);
+    let v = run.vm.global(g).expect(name);
+    let v = run.vm.value(v);
+    let members = run.vm.set(v).expect(name).to_vec();
+    members
+        .into_iter()
+        .filter_map(|m| match m {
+            guac_script::Value::Entity(h) => Some(run.world.name(h)),
+            _ => None,
+        })
+        .collect()
+}
+
 /// His health set as his scripts hold it.
 fn set_health(run: &mut Run, hp: f32) {
     let m = run.minion.expect("joined");
@@ -1953,10 +1981,12 @@ const ICE_BLOCK_4: &str = "Melting_Ice_blocks_reflect_4";
 const PIVOT_3: &str = "Reflect_Pivot_Round(3)";
 const POST: &str = "Reflect_Post(1)";
 
-/// Setup_004's controller and the foes its script names (openspec AS.403);
-/// its two bomb throwers walk onto ledges above the yard (AS.1010).
+/// Setup_004's controller and its foes, the level's `Setup_004_Enemies`
+/// (openspec AS.403, AS.1020): the fifteen its script names and Ice
+/// Chompies (8) and (9); its two bomb throwers walk onto ledges above the
+/// yard (AS.1010).
 const SETUP_004_CONTROLLER: &str = "Setup_004_Controller";
-const SETUP_004_FOES: [&str; 15] = [
+const SETUP_004_FOES: [&str; 17] = [
     "Enemy_Chompy_Ice(1)",
     "Enemy_Chompy_Ice(11)",
     "Enemy_Chompy_Ice(12)",
@@ -1972,6 +2002,8 @@ const SETUP_004_FOES: [&str; 15] = [
     "Enemy_Cyclops_Near(2)",
     "Enemy_Cyclops_Near(3)",
     "Enemy_Cyclops_Near(6)",
+    "Enemy_Chompy_Ice(8)",
+    "Enemy_Chompy_Ice(9)",
 ];
 const SETUP_004_LEDGE: [&str; 2] = ["Enemy_BombThrower(1)", "Enemy_BombThrower(2)"];
 
