@@ -1403,6 +1403,31 @@ fn the_boards_empty_place_is_never_drawn_after_its_teardown() {
             );
         }
     }
+    // A quit's step: the board goes down as the viewport moves off its aim
+    // (its `Game - Cutscene` restores the gameplay camera onto no one): the
+    // view from before the game that step, the viewport's own view from the
+    // next step on, wherever it stands then.
+    app.world_mut().resource_mut::<GamePhase>().0 = 1;
+    frames(&mut app, 10);
+    app.world_mut().resource_mut::<Steps>().0.clear();
+    let restored = before.eye + Vec3::new(-7.0, 2.0, 5.0);
+    app.world_mut().resource_mut::<GamePhase>().0 = 3;
+    app.world_mut().resource_mut::<Wander>().0 = Some(restored);
+    frames(&mut app, 20);
+    let seen = std::mem::take(&mut app.world_mut().resource_mut::<Steps>().0);
+    assert!(seen.len() >= 5, "{} steps", seen.len());
+    assert!(
+        seen[0].1.translation.distance(before.eye) < 1e-3,
+        "the step the board went down: {:?}, the view before the game at {:?}",
+        seen[0].1,
+        before.eye
+    );
+    for (k, (_, t)) in seen.iter().enumerate().skip(1) {
+        assert!(
+            t.translation.distance(restored) < 1e-3,
+            "step {k} after it: {t:?}, the viewport's own at {restored}"
+        );
+    }
     // His scene's camera moves the viewport: its view is drawn.
     let scene = before.eye + Vec3::new(4.0, 3.0, -9.0);
     app.world_mut().resource_mut::<Wander>().0 = Some(scene);

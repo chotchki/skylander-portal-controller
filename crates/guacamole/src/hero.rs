@@ -468,44 +468,58 @@ pub(crate) fn step_gaits(time: Res<Time>, mut heroes: Query<(&HeroBody, &mut Her
 pub(crate) struct CardViews {
     before: Option<View>,
     board: Option<(Vec3, guacamole::script_engine::Angles)>,
+    /// The board stood at the last step's note.
+    up: bool,
+    /// The board went down at this step's note.
+    fell: bool,
 }
 
 impl CardViews {
-    /// One step's note: the board holding the slot keeps its view (and,
-    /// the first step, the TV's view before it); no game, nothing kept.
+    /// One step's note: while the board stands and holds the slot, its view
+    /// (and, the first step, the TV's view before it); whether it went down
+    /// this step; no game, nothing kept.
     pub(crate) fn note(
         &mut self,
         restore: guacamole::card_game::Restore,
+        board_up: bool,
         drawn: &View,
         now: (Vec3, guacamole::script_engine::Angles),
     ) {
         use guacamole::card_game::Restore;
-        match restore {
-            Restore::Replaced => {
-                self.before.get_or_insert(*drawn);
+        if restore == Restore::Idle {
+            *self = Self::default();
+            return;
+        }
+        if restore == Restore::Replaced {
+            self.before.get_or_insert(*drawn);
+            if board_up {
                 self.board = Some(now);
             }
-            Restore::Idle => *self = Self::default(),
-            Restore::Asked => {}
         }
+        self.fell = self.up && !board_up;
+        self.up = board_up;
     }
 
     /// The view to draw in place of the scripts' (openspec AS.876): with the
     /// board gone (its controller out of play: a quit takes it before the
-    /// slot reads free) and he not given back, while the scripts' viewport
-    /// still stands where the board last aimed it, nothing of the level is
-    /// there: the view from before the game. The pirate's loot aims
-    /// nothing; his scene's camera, once it moves the viewport, is drawn
-    /// again.
+    /// slot reads free) and he not given back, nothing of the level is where
+    /// the board's manager last aimed the viewport: the view from before the
+    /// game, while the viewport still stands there, and on the step the
+    /// board goes down wherever it stands (a quit's `Game - Cutscene`
+    /// restores the gameplay camera onto no one that step). The pirate's
+    /// loot aims nothing; his scene's camera, once it moves the viewport, is
+    /// drawn again.
     pub(crate) fn instead(
         &self,
         restore: guacamole::card_game::Restore,
         board_up: bool,
         now: (Vec3, guacamole::script_engine::Angles),
     ) -> Option<View> {
-        (restore != guacamole::card_game::Restore::Idle && !board_up && self.board == Some(now))
-            .then_some(self.before)
-            .flatten()
+        (restore != guacamole::card_game::Restore::Idle
+            && !board_up
+            && (self.fell || self.board == Some(now)))
+        .then_some(self.before)
+        .flatten()
     }
 }
 
@@ -568,8 +582,8 @@ pub(crate) fn step_cameras(
                 follow.hold = ViewHold::Scripts;
                 let v = world.viewport();
                 let restore = world.card_streams.restore();
-                card_views.note(restore, &follow.drawn, (v.eye, v.angles));
                 let board_up = world.card_streams.board_up();
+                card_views.note(restore, board_up, &follow.drawn, (v.eye, v.angles));
                 match card_views.instead(restore, board_up, (v.eye, v.angles)) {
                     Some(before) => {
                         follow.drawn = before;
