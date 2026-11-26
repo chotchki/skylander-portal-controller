@@ -785,3 +785,10 @@ A creature, clone or surface SHALL stand in the TV's world at its solid's size a
 #### Scenario: A melee hero closes on a casting mage
 - **WHEN** Ninjini walks straight at a 250 % life mage casting by the arena's ring wall
 - **THEN** she comes within her reach of it, about 4 m from its pivot, and her hits land
+
+### Requirement: A lobber's sticky bomb blows up or is thrown back
+A Pandoran lobber's bomb that meets a hero SHALL stick to him and blow up on its timer, hurting him and whoever stands within 10 ft by the lobber's own damage, unless he shakes it off by the gesture its prompt asks, when it SHALL be thrown back at a foe in front of him. Level 203's lobber on its ledge past the lower gate is beaten that way from the trench below it.
+
+#### Scenario: Eruptor opens 203's lower gate from the trench
+- **WHEN** Eruptor stands at the trench's end under the lobber's ledge, lets one bomb blow and mashes the top face button while the next is on him
+- **THEN** the first takes 55-62 off him, the second kills the lobber and the gate lowers its spikes
