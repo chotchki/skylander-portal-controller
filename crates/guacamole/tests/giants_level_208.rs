@@ -1615,9 +1615,9 @@ fn level_208s_setup_003_walked_from_the_fourth_ice_block() {
         removed(run, SETUP_003_CONTROLLER)
     };
     let (mut log, mut last, mut scenes) = (Vec::new(), HashMap::new(), Vec::new());
-    let (mut lowest, mut ended, mut quiet) = (full, false, 0);
+    let (mut lowest, mut ended, mut quiet, mut top_ups) = (full, false, 0, 0u32);
     for _ in 0..40 {
-        set_health(&mut run, full);
+        top_ups += u32::from(top_up(&mut run, full));
         let f = fight_to(
             &mut run,
             &mut stops,
@@ -1654,9 +1654,12 @@ fn level_208s_setup_003_walked_from_the_fourth_ice_block() {
     }
     let armour = armour.into_inner();
     println!(
-        "setup_003 walked: ended {ended} at step {}, health {full} lowest {lowest}, scenes {scenes:?}, armour {armour:?}",
+        "setup_003 walked: ended {ended} at step {}, health {full} lowest {lowest}, {top_ups} top-ups, scenes {scenes:?}, armour {armour:?}",
         run.steps
     );
+    // The top-up stands in for the dodging and the food the bench doesn't
+    // do: how many it took is held, so a harder fight shows.
+    assert!(top_ups <= TOP_UPS_003, "{top_ups} top-ups");
     assert!(ended, "Setup_003's controller off: {log:?}");
     for n in SETUP_003_FOES {
         assert!(first_in(&log, n, &["removed"]).is_some(), "{n} beaten");
@@ -1778,10 +1781,10 @@ fn level_208s_setup_004_by_its_own_triggers() {
         .filter(|n| !SETUP_004_LEDGE.contains(n))
         .collect();
     let (mut log, mut last) = (Vec::new(), HashMap::new());
-    let (mut lowest, mut quiet) = (full, 0);
+    let (mut lowest, mut quiet, mut top_ups) = (full, 0, 0u32);
     let beaten = |run: &Run| walked.iter().all(|n| removed(run, n));
     for _ in 0..30 {
-        set_health(&mut run, full);
+        top_ups += u32::from(top_up(&mut run, full));
         let f = fight_to(
             &mut run,
             &mut stops,
@@ -1823,9 +1826,10 @@ fn level_208s_setup_004_by_its_own_triggers() {
         .map(|n| (*n, behaviour(&run, n), run.at(n)))
         .collect();
     println!(
-        "setup_004: step {}, health {full} lowest {lowest}, controller {end}, the ledge's {ledge:?}",
+        "setup_004: step {}, health {full} lowest {lowest}, {top_ups} top-ups, controller {end}, the ledge's {ledge:?}",
         run.steps
     );
+    assert!(top_ups <= TOP_UPS_004, "{top_ups} top-ups");
     for n in &walked {
         assert!(first_in(&log, n, &["removed"]).is_some(), "{n} beaten");
     }
@@ -1863,6 +1867,21 @@ fn group_of(run: &mut Run, name: &str) -> Vec<String> {
         })
         .collect()
 }
+
+/// His health set back to `full` at a fight round's start (the walked fights'
+/// stand-in for a kid's dodging and food, which the bench doesn't do):
+/// whether he'd lost any.
+fn top_up(run: &mut Run, full: f32) -> bool {
+    let lost = run.health().is_some_and(|h| h < full - 0.5);
+    set_health(run, full);
+    lost
+}
+
+/// The most top-ups the walked Setup_003 and Setup_004 fights take
+/// (openspec AS.402, AS.403): as-208-reflect-review measured 5 and 4
+/// headless with Eruptor, 2026-11-26.
+const TOP_UPS_003: u32 = 8;
+const TOP_UPS_004: u32 = 7;
 
 /// His health set as his scripts hold it.
 fn set_health(run: &mut Run, hp: f32) {
