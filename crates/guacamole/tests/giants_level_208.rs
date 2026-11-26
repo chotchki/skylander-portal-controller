@@ -1882,7 +1882,11 @@ fn level_208s_snowman_bursts_as_he_runs_into_it() {
     }
     run.bench.hold_view = false;
     println!("the snowman burst at step {burst:?}, its parts {most}");
-    assert!(burst.is_some(), "the snowman stood: {}", behaviour(&run, SNOWMAN));
+    assert!(
+        burst.is_some(),
+        "the snowman stood: {}",
+        behaviour(&run, SNOWMAN)
+    );
     let mut left = parts(&run);
     for _ in 0..1200 {
         still(&mut run, &mut stops, [false; 4]);
@@ -1892,7 +1896,10 @@ fn level_208s_snowman_bursts_as_he_runs_into_it() {
             break;
         }
     }
-    println!("its parts: {most} at most, {left} left at step {}", run.steps);
+    println!(
+        "its parts: {most} at most, {left} left at step {}",
+        run.steps
+    );
     assert!(most > 0, "no parts flew");
     assert_eq!(left, 0, "parts left");
     assert!(stops.is_empty(), "{stops:#?}");

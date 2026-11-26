@@ -402,7 +402,11 @@ mod tests {
         // Setup_004's (AS.403, AS.1020) are walked by name.
         let ice = "C:/tfb/Content/Levels/_Enemies/Chompy_Ice/scripts/S2_Enemy_IceChompy.ai";
         assert!(!on.whitelist.lists("Enemy_Chompy_Ice(25)", ice));
-        for n in ["Enemy_Chompy_Ice(1)", "Enemy_Chompy_Ice(8)", "Enemy_Chompy_Ice(9)"] {
+        for n in [
+            "Enemy_Chompy_Ice(1)",
+            "Enemy_Chompy_Ice(8)",
+            "Enemy_Chompy_Ice(9)",
+        ] {
             assert!(WAY.placements.contains(&n), "{n}");
         }
     }
