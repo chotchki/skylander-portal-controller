@@ -1287,6 +1287,7 @@ fn the_boards_view_is_drawn_while_it_holds_his_slot() {
 fn board_holds(to: Res<Wander>, world: Option<ResMut<ScriptWorld>>) {
     if let (Some(_), Some(mut world)) = (to.0, world) {
         world.card_streams.restore_replaced();
+        world.card_streams.set_board_up(true);
     }
 }
 
@@ -1334,6 +1335,241 @@ fn the_pirates_scenes_are_drawn_until_he_is_given_back() {
             seen.len(),
             held.eye
         );
+    }
+}
+
+/// openspec AS.876: after the board's teardown, his return asked and not
+/// answered, the scripts' viewport stands where the board's manager last
+/// aimed it, on the board's place with the board gone (the pirate's loot
+/// aims nothing): the TV draws the view it drew as the board took his slot
+/// there, every step, until the pirate's scene moves the viewport, whose
+/// view is drawn from then on. So it does with the board gone before the
+/// slot reads free (a quit removes its controller first).
+#[cfg(feature = "card-game-seams")]
+#[test]
+fn the_boards_empty_place_is_never_drawn_after_its_teardown() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (mut app, _) = camera_app(tmp.path(), CameraFault::None);
+    app.init_resource::<Wander>()
+        .init_resource::<Steps>()
+        .init_resource::<GamePhase>()
+        .init_resource::<EasesSeen>()
+        .init_resource::<Tilt>()
+        .add_systems(FixedUpdate, (wander, tilt).in_set(Frame::Hands))
+        .add_systems(FixedUpdate, game_phase.in_set(Frame::Hands))
+        .add_systems(FixedUpdate, (steps_seen, eases_seen).in_set(Frame::Record));
+    run_until(&mut app, "the scripts' view", 30, |s| {
+        s.hold == ViewHold::Scripts
+    });
+    frames(&mut app, 30);
+    let before = last(&app);
+    let minion = {
+        let e = hero_entity(&app);
+        match &app.world().get::<super::HeroRun>(e).unwrap().join {
+            super::Join::Joined(m) => *m,
+            other => panic!("joined: {other:?}"),
+        }
+    };
+    // The board: his minion off, its view drawn, looking further down than
+    // the room's (as the board's framings do), so an eased turn shows.
+    let board = before.eye + Vec3::new(0.0, 6.0, 8.0);
+    let room_tilt = app.world().resource::<ScriptWorld>().viewport().angles.tilt;
+    app.world_mut().resource_mut::<Tilt>().0 = Some(room_tilt - 30.0);
+    {
+        let w = app.world_mut();
+        let mut rt = w.resource_mut::<ScriptRuntime>();
+        let h = rt.vm.handle_of(minion).expect("his minion's handle");
+        assert!(rt.vm.remove(h), "his minion taken off by the board");
+        w.resource_mut::<Wander>().0 = Some(board);
+        w.resource_mut::<GamePhase>().0 = 1;
+    }
+    frames(&mut app, 20);
+    let seen = std::mem::take(&mut app.world_mut().resource_mut::<Steps>().0);
+    assert!(seen.len() >= 5, "{} steps", seen.len());
+    for (k, (_, t)) in seen.iter().enumerate() {
+        assert!(
+            t.translation.distance(board) < 1e-3,
+            "step {k} with the board up: {t:?}, the board's view at {board}"
+        );
+    }
+    // Torn down (the controller gone, the slot not read free yet; then his
+    // return asked), the viewport left where the board aimed it: the view
+    // from before the game, cut to, not eased across the sky between.
+    for phase in [3, 2] {
+        app.world_mut().resource_mut::<EasesSeen>().0.clear();
+        app.world_mut().resource_mut::<GamePhase>().0 = phase;
+        frames(&mut app, 20);
+        if phase == 3 {
+            cut_not_eased(&app, 0, "the cut to the view before the game");
+        }
+        let seen = std::mem::take(&mut app.world_mut().resource_mut::<Steps>().0);
+        assert!(seen.len() >= 5, "{} steps", seen.len());
+        for (k, (_, t)) in seen.iter().enumerate() {
+            assert!(
+                t.translation.distance(before.eye) < 1e-3,
+                "phase {phase}, step {k} after the teardown: {t:?}, the view before the game at {:?}, the board's place at {board}",
+                before.eye
+            );
+        }
+    }
+    // A quit's step: the board goes down as the viewport moves off its aim
+    // (its `Game - Cutscene` restores the gameplay camera onto no one): the
+    // view from before the game that step, the viewport's own view from the
+    // next step on, wherever it stands then.
+    app.world_mut().resource_mut::<GamePhase>().0 = 1;
+    frames(&mut app, 10);
+    app.world_mut().resource_mut::<Steps>().0.clear();
+    app.world_mut().resource_mut::<EasesSeen>().0.clear();
+    let restored = before.eye + Vec3::new(-7.0, 2.0, 5.0);
+    app.world_mut().resource_mut::<Tilt>().0 = Some(room_tilt);
+    app.world_mut().resource_mut::<GamePhase>().0 = 3;
+    app.world_mut().resource_mut::<Wander>().0 = Some(restored);
+    frames(&mut app, 20);
+    let seen = std::mem::take(&mut app.world_mut().resource_mut::<Steps>().0);
+    assert!(seen.len() >= 5, "{} steps", seen.len());
+    assert!(
+        seen[0].1.translation.distance(before.eye) < 1e-3,
+        "the step the board went down: {:?}, the view before the game at {:?}",
+        seen[0].1,
+        before.eye
+    );
+    for (k, (_, t)) in seen.iter().enumerate().skip(1) {
+        assert!(
+            t.translation.distance(restored) < 1e-3,
+            "step {k} after it: {t:?}, the viewport's own at {restored}"
+        );
+    }
+    // Both cuts of the quit's step, to the view before the game and off it
+    // the next step, are drawn as cuts.
+    cut_not_eased(&app, 0, "the quit's step's cut to the view before the game");
+    cut_not_eased(&app, 1, "the cut off it the step after the quit's");
+    // His scene's camera moves the viewport: its view is drawn.
+    let scene = before.eye + Vec3::new(4.0, 3.0, -9.0);
+    app.world_mut().resource_mut::<Wander>().0 = Some(board);
+    app.world_mut().resource_mut::<Tilt>().0 = Some(room_tilt - 30.0);
+    frames(&mut app, 5);
+    assert!(
+        last_step(&app).translation.distance(before.eye) < 1e-3,
+        "the viewport back on the board's last aim, the board gone: the view before the game"
+    );
+    // Then his scene moves it: cut to, not eased.
+    app.world_mut().resource_mut::<Steps>().0.clear();
+    app.world_mut().resource_mut::<EasesSeen>().0.clear();
+    app.world_mut().resource_mut::<Wander>().0 = Some(scene);
+    app.world_mut().resource_mut::<Tilt>().0 = Some(room_tilt);
+    frames(&mut app, 20);
+    let seen = std::mem::take(&mut app.world_mut().resource_mut::<Steps>().0);
+    assert!(seen.len() >= 5, "{} steps", seen.len());
+    for (k, (_, t)) in seen.iter().enumerate() {
+        assert!(
+            t.translation.distance(scene) < 1e-3,
+            "step {k} in his scene: {t:?}, the scene's view at {scene}"
+        );
+    }
+    cut_not_eased(&app, 0, "the cut to his scene");
+}
+
+/// The camera's place the last step recorded.
+#[cfg(feature = "card-game-seams")]
+fn last_step(app: &App) -> Transform {
+    app.world().resource::<Steps>().0.last().expect("a step").1
+}
+
+/// The step `k` of [`EasesSeen`] since its last clear is a cut (openspec
+/// AS.876): both its translation's and its rotation's easing start where the
+/// camera is drawn that step, so no frame between passes through the sky.
+#[cfg(feature = "card-game-seams")]
+fn cut_not_eased(app: &App, k: usize, what: &str) {
+    let eases = &app.world().resource::<EasesSeen>().0;
+    let Some((moved, turned, drawn)) = eases.get(k).copied() else {
+        panic!("{what}: no step {k} recorded ({} steps)", eases.len());
+    };
+    assert!(
+        moved.is_some_and(|m| m.distance(drawn.translation) < 1e-3),
+        "{what}: its translation eases from {moved:?}, drawn at {:?}",
+        drawn.translation
+    );
+    assert!(
+        turned.is_some_and(|r| r.dot(drawn.rotation).abs() > 1.0 - 1e-5),
+        "{what}: its rotation eases from {turned:?}, drawn turned {:?}",
+        drawn.rotation
+    );
+}
+
+/// The scripts' viewport's tilt, set each step while some (openspec
+/// AS.876's teardown test: the board's view looks further down).
+#[cfg(feature = "card-game-seams")]
+#[derive(Resource, Default)]
+struct Tilt(Option<f32>);
+
+#[cfg(feature = "card-game-seams")]
+fn tilt(to: Res<Tilt>, world: Option<ResMut<ScriptWorld>>) {
+    if let (Some(t), Some(mut world)) = (to.0, world) {
+        world.viewport_mut().angles.tilt = t;
+    }
+}
+
+/// Each step's camera easing start as the step left it (openspec AS.876: a
+/// cut eases from where it's drawn), while [`Wander`] is set.
+#[cfg(feature = "card-game-seams")]
+#[derive(Resource, Default)]
+struct EasesSeen(Vec<(Option<Vec3>, Option<Quat>, Transform)>);
+
+#[cfg(feature = "card-game-seams")]
+fn eases_seen(
+    to: Res<Wander>,
+    cameras: Query<
+        (
+            &bevy_transform_interpolation::TranslationEasingState,
+            &bevy_transform_interpolation::RotationEasingState,
+            &Transform,
+        ),
+        With<FollowCamera>,
+    >,
+    mut out: ResMut<EasesSeen>,
+) {
+    if to.0.is_some()
+        && let Ok((moved, turned, t)) = cameras.single()
+    {
+        out.0.push((moved.start, turned.start, *t));
+    }
+}
+
+/// A played game's state each step while [`Wander`] is set: 1 the board
+/// holds his slot, 2 the board torn down and his return asked under the
+/// pirate's scene (`Cutscene State` up, so he isn't given back), 3 the board
+/// gone with his slot not read free yet.
+#[cfg(feature = "card-game-seams")]
+#[derive(Resource, Default)]
+struct GamePhase(u8);
+
+#[cfg(feature = "card-game-seams")]
+fn game_phase(
+    to: Res<Wander>,
+    phase: Res<GamePhase>,
+    world: Option<ResMut<ScriptWorld>>,
+    runtime: Option<ResMut<ScriptRuntime>>,
+) {
+    let (Some(_), Some(mut world), Some(mut rt)) = (to.0, world, runtime) else {
+        return;
+    };
+    match phase.0 {
+        1 => {
+            world.card_streams.restore_replaced();
+            world.card_streams.set_board_up(true);
+        }
+        3 => {
+            world.card_streams.restore_replaced();
+            world.card_streams.set_board_up(false);
+        }
+        2 => {
+            world.card_streams.restore_asked();
+            world.card_streams.set_board_up(false);
+            if let Some(g) = rt.vm.program().global_named("Cutscene State") {
+                rt.vm.set_global(g, guac_script::Value::Int(1));
+            }
+        }
+        _ => {}
     }
 }
 

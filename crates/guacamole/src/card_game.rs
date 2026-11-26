@@ -237,6 +237,11 @@ pub struct CardStreams {
     /// A quit asked of a played game ([`CardStreams::ask_quit`]), answered
     /// by the next step's [`quit`].
     quit_asked: bool,
+    /// Whether the board stands, its controller (`CardGame_Setup.ai`) and
+    /// its manager in play, read after each step of a played run
+    /// ([`note_board`]) and as a quit removes the controller (openspec
+    /// AS.876).
+    board: bool,
     /// Whether the TV's hand select answers the hand select's page
     /// ([`CardStreams::answer_hands_on_screen`]); headless it's answered by
     /// Play.
@@ -368,6 +373,20 @@ impl CardStreams {
     #[cfg(feature = "card-game-seams")]
     pub fn restore_replaced(&mut self) {
         self.restore = Restore::Replaced;
+    }
+
+    /// Whether the board stands ([`CardStreams::board`]): its place drawn
+    /// with it.
+    pub fn board_up(&self) -> bool {
+        self.board
+    }
+
+    /// The board standing or not, set by hand: the TV's camera tests'
+    /// stand-in for the controller in play (openspec AS.876).
+    /// Feature-gated as [`CardStreams::play_games`] is.
+    #[cfg(feature = "card-game-seams")]
+    pub fn set_board_up(&mut self, up: bool) {
+        self.board = up;
     }
 
     /// The restore answered: his character joined again.
@@ -773,13 +792,40 @@ pub fn tutorial_waits_on_accept(behaviour: &str) -> bool {
 /// (the hand's explanation stays into the card's pick); none with no box,
 /// or before its line is in.
 pub fn tutorial_line(vm: &Vm, world: &ScriptWorld) -> Option<String> {
+    manager_box_text(vm, world, "tutorial container")
+}
+
+/// The words of the box the board manager keeps in its local `local`: its
+/// text sprites' strings off the interface model, joined; none with no box
+/// or no words in it yet.
+fn manager_box_text(vm: &Vm, world: &ScriptWorld, local: &str) -> Option<String> {
     let m = manager(vm, world)?;
-    let container = vm.local(m, "tutorial container").map(|v| vm.value(v))?;
+    let container = vm.local(m, local).map(|v| vm.value(v))?;
     if container == Value::Null {
         return None;
     }
     let lines = world.texts_under(container);
     (!lines.is_empty()).then(|| lines.join(" "))
+}
+
+/// The name of the stone landing on the board (openspec AS.911): as a
+/// stone is placed (either player's, `general turn - wait for card
+/// placement`) the board manager puts a title-bar box up with the stone's
+/// `card name`, keeps it in its local `card name intro` while the name's
+/// voice plays, then fades it and takes it down. Its words are the disc's,
+/// read off the interface model at run time; none while no box is up.
+pub fn placed_stone_name(vm: &Vm, world: &ScriptWorld) -> Option<String> {
+    manager_box_text(vm, world, "card name intro")
+}
+
+/// A stone's name as the interface reads it (openspec AS.911): its
+/// `Card_Name_(NNN)` string, the one the hand select's name sprite and the
+/// loot's report show. None where the program or the model doesn't hold it.
+pub fn stone_name(vm: &Vm, world: &ScriptWorld, stone: u16) -> Option<String> {
+    let o = vm
+        .program()
+        .object_named(&format!("Card_Name_({stone:03})"))?;
+    world.text_of(Value::Object(o))
 }
 
 /// Both scores as the board's script holds them (openspec AS.556): the
@@ -1237,7 +1283,31 @@ pub fn quit(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<bool, Halt> {
     };
     info!("a played card game quit through the board's own confirm");
     vm.call_for(controller, QUIT_YES, &[], &[], host)?;
+    // The TV answers the quit after the step that read the board (openspec
+    // AS.876): `Quit - Yes` removes the controller there and then, so the
+    // board is read again now, as the next step would, and the camera this
+    // frame knows its place is empty.
+    host.world.card_streams.board = board_standing(vm, host.world);
     Ok(true)
+}
+
+/// Whether the board stands (openspec AS.876): its controller in play
+/// (a quit removes it first) and its manager too (a won or lost game's end
+/// takes the manager, the stones with it, a step before the controller).
+fn board_standing(vm: &Vm, world: &ScriptWorld) -> bool {
+    running(vm, world, BOARD_CONTROLLER).is_some_and(|c| !vm.removed(c))
+        && manager(vm, world).is_some()
+}
+
+/// The board read once the step's requests are taken (openspec AS.876):
+/// what the step's own ticks took down (a won or lost game's end takes the
+/// manager, then the controller) reads gone before the TV's camera draws
+/// that frame. [`step`] runs before the host takes them, so it doesn't read
+/// it. Nothing on a run that doesn't play the game.
+pub fn note_board(vm: &Vm, world: &mut ScriptWorld) {
+    if world.card_streams.played {
+        world.card_streams.board = board_standing(vm, world);
+    }
 }
 
 /// The stones a fresh save's first win at Fangs (205's tutorial) collects,

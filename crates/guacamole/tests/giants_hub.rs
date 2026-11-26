@@ -2075,10 +2075,36 @@ fn dreadbeards_games_with(
             && now.as_deref() == Some(cards::PICK_STONE)
             && !quit_sent
         {
+            assert!(
+                run.world.card_streams.board_up(),
+                "the board reads up at its pick, step {}",
+                run.steps
+            );
             hands.push(cards::hand(&run));
             quit_sent = run
                 .with_host(guacamole::card_game::quit)
                 .unwrap_or_else(|h| panic!("the quit: {h}"));
+            // openspec AS.876: the quit removes the board's controller there
+            // and then, and the board reads down at once, so the TV's camera
+            // that frame knows its place is empty; it stood until the quit.
+            if quit_sent {
+                assert!(
+                    !run.world.card_streams.board_up(),
+                    "the board read down as the quit takes it, step {}",
+                    run.steps
+                );
+            }
+        }
+        // openspec AS.876: read again after the step as the TV reads it, the
+        // board stands only while its manager does (a game's end takes the
+        // manager, the stones with it, a step before the controller).
+        guacamole::card_game::note_board(&run.vm, &mut run.world);
+        if guacamole::card_game::manager(&run.vm, &run.world).is_none() {
+            assert!(
+                !run.world.card_streams.board_up(),
+                "no manager, the board reads down, step {}",
+                run.steps
+            );
         }
         if now.is_some() {
             last_board.clone_from(&now);

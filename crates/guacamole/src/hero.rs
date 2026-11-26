@@ -41,8 +41,8 @@
 
 use bevy::camera::{PerspectiveProjection, Projection};
 use bevy::prelude::*;
-use bevy_transform_interpolation::TranslationEasingState;
 use bevy_transform_interpolation::prelude::{TransformInterpolation, TransformInterpolationPlugin};
+use bevy_transform_interpolation::{RotationEasingState, TranslationEasingState};
 use guac_motion::camera::{GameCamera, NEAR, TransitionPlane, View};
 use guac_motion::hero::{Hero, Input};
 use guac_motion::locomotion::{Frame, Locomotion};
@@ -460,6 +460,71 @@ pub(crate) fn step_gaits(time: Res<Time>, mut heroes: Query<(&HeroBody, &mut Her
     }
 }
 
+/// What the TV keeps of a played card game's views (openspec AS.876): the
+/// view it drew as the board took the hero's slot (the room by the pirate,
+/// as the kid saw it at his yes) and the scripts' viewport as the board's
+/// manager last aimed it.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub(crate) struct CardViews {
+    before: Option<View>,
+    board: Option<(Vec3, guacamole::script_engine::Angles)>,
+    /// The board stood at the last step's note.
+    up: bool,
+    /// The board went down at this step's note.
+    fell: bool,
+    /// The view from before the game was drawn the step before.
+    drew: bool,
+}
+
+impl CardViews {
+    /// One step's note: while the board stands and holds the slot, its view
+    /// (and, the first step, the TV's view before it); whether it went down
+    /// this step; no game, nothing kept.
+    pub(crate) fn note(
+        &mut self,
+        restore: guacamole::card_game::Restore,
+        board_up: bool,
+        drawn: &View,
+        now: (Vec3, guacamole::script_engine::Angles),
+    ) {
+        use guacamole::card_game::Restore;
+        if restore == Restore::Idle {
+            *self = Self::default();
+            return;
+        }
+        if restore == Restore::Replaced {
+            self.before.get_or_insert(*drawn);
+            if board_up {
+                self.board = Some(now);
+            }
+        }
+        self.fell = self.up && !board_up;
+        self.up = board_up;
+    }
+
+    /// The view to draw in place of the scripts' (openspec AS.876): with the
+    /// board gone (its controller out of play: a quit takes it before the
+    /// slot reads free) and he not given back, nothing of the level is where
+    /// the board's manager last aimed the viewport: the view from before the
+    /// game, while the viewport still stands there, and on the step the
+    /// board goes down wherever it stands (a quit's `Game - Cutscene`
+    /// restores the gameplay camera onto no one that step). The pirate's
+    /// loot aims nothing; his scene's camera, once it moves the viewport, is
+    /// drawn again.
+    pub(crate) fn instead(
+        &self,
+        restore: guacamole::card_game::Restore,
+        board_up: bool,
+        now: (Vec3, guacamole::script_engine::Angles),
+    ) -> Option<View> {
+        (restore != guacamole::card_game::Restore::Idle
+            && !board_up
+            && (self.fell || self.board == Some(now)))
+        .then_some(self.before)
+        .flatten()
+    }
+}
+
 /// One game frame of the gameplay camera: the view the camera's scripts
 /// left this step while they drive (openspec AG.28), else the chain on the
 /// hero's pivot as his step began. One hero walks (pad-input's One pad walks
@@ -473,9 +538,15 @@ pub(crate) fn step_cameras(
     world: Option<Res<ScriptWorld>>,
     runtime: Option<Res<guacamole::scripts::ScriptRuntime>>,
     mut cameras: Query<
-        (&mut FollowCamera, &mut Transform, Option<&mut Projection>),
+        (
+            &mut FollowCamera,
+            &mut Transform,
+            Option<&mut Projection>,
+            Option<(&mut TranslationEasingState, &mut RotationEasingState)>,
+        ),
         Without<HeroBody>,
     >,
+    mut card_views: Local<CardViews>,
 ) {
     let (hero, run) = match heroes.single() {
         Ok((h, r)) => (Some(h), r),
@@ -496,6 +567,8 @@ pub(crate) fn step_cameras(
     // drawn, not held. Until he's given back (`Restore::Asked`, openspec
     // AS.876) the pirate's loot, win, loss and quit scenes aim that viewport
     // too: held, the board's place drew the void under the level for 15 s.
+    // Between the board's teardown and his scene's first aim nothing aims
+    // it, and the view from before the game is drawn there ([`CardViews`]).
     // Only a run that plays the game ever sets it.
     let board_holds = world
         .as_deref()
@@ -505,8 +578,13 @@ pub(crate) fn step_cameras(
             (Some(crate::hero_scripts::Join::Joined(m)), Some(rt)) => !rt.vm.removed(*m),
             _ => false,
         };
-    for (mut follow, mut transform, drawn) in &mut cameras {
+    for (mut follow, mut transform, drawn, easing) in &mut cameras {
         let follow = &mut *follow;
+        // A cut between the scripts' view and the view from before a card
+        // game (openspec AS.876) is drawn as one: eased across a step, the
+        // frames between pass through the sky between the board under the
+        // level and the room.
+        let mut cut = false;
         let place = match (&state, world.as_deref()) {
             (CameraScripts::On, Some(_)) if !in_run => continue,
             (CameraScripts::On, Some(world)) => {
@@ -515,8 +593,22 @@ pub(crate) fn step_cameras(
                 }
                 follow.hold = ViewHold::Scripts;
                 let v = world.viewport();
-                follow.drawn = scripts_view(v, feet);
-                v.transform()
+                let restore = world.card_streams.restore();
+                let board_up = world.card_streams.board_up();
+                card_views.note(restore, board_up, &follow.drawn, (v.eye, v.angles));
+                let instead = card_views.instead(restore, board_up, (v.eye, v.angles));
+                cut = instead.is_some() != card_views.drew;
+                card_views.drew = instead.is_some();
+                match instead {
+                    Some(before) => {
+                        follow.drawn = before;
+                        viewed(&follow.drawn)
+                    }
+                    None => {
+                        follow.drawn = scripts_view(v, feet);
+                        v.transform()
+                    }
+                }
             }
             _ => {
                 match &state {
@@ -549,6 +641,10 @@ pub(crate) fn step_cameras(
             }
         };
         *transform = place;
+        if cut && let Some((mut moved, mut turned)) = easing {
+            moved.start = Some(transform.translation);
+            turned.start = Some(transform.rotation);
+        }
         // The far clip moves through a plane's blend and a switch.
         if let Some(mut drawn) = drawn {
             let want = projection(&follow.drawn);

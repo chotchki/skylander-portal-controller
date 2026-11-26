@@ -4599,6 +4599,12 @@ struct FangsPlayed {
     /// never printed), the step it came, and the step it went with whether
     /// the player's accept was down on that step.
     lines: Vec<TutorialStop>,
+    /// Each name box the board put up over a landing stone (openspec
+    /// AS.911), as it came: the step, the board's behaviour, its words'
+    /// length in characters as the TV reads them
+    /// (`card_game::placed_stone_name`; the words never printed) and whether
+    /// they're the placed stone's own `card name` as the interface reads it.
+    names: Vec<(u32, Option<String>, usize, bool)>,
     run: Run,
 }
 
@@ -4688,6 +4694,8 @@ fn fangs_games_with(
     let (mut stones_before, mut stones_at_board) = (None, None);
     let mut offers: Vec<guacamole::card_game::HandOffer> = Vec::new();
     let mut lines: Vec<TutorialStop> = Vec::new();
+    let mut names: Vec<(u32, Option<String>, usize, bool)> = Vec::new();
+    let mut name_up = false;
     for _ in 0..600 {
         if run.hero().pivot.y < -300.0 {
             break;
@@ -4785,6 +4793,24 @@ fn fangs_games_with(
         }
         serve(&mut run, &mut writes);
         let now = cards::board(&run);
+        // openspec AS.911: the landing stone's name box, read as it comes.
+        let name = guacamole::card_game::placed_stone_name(&run.vm, &run.world);
+        if let Some(n) = &name
+            && !name_up
+        {
+            let placed = guacamole::card_game::manager(&run.vm, &run.world)
+                .and_then(|m| run.vm.local(m, "card being placed"))
+                .map(|v| run.vm.value(v))
+                .and_then(|c| run.vm.field(c, "card name"))
+                .and_then(|f| run.world.text_of(run.vm.value(f)));
+            names.push((
+                run.steps,
+                now.clone(),
+                n.chars().count(),
+                placed.as_deref() == Some(n.as_str()),
+            ));
+        }
+        name_up = name.is_some();
         if let Some(b) = &now {
             boards.insert(b.clone());
             if guacamole::card_game::is_tutorial_stop(b) {
@@ -4915,6 +4941,7 @@ fn fangs_games_with(
         writes,
         offers,
         lines,
+        names,
         run,
     }
 }
@@ -4984,6 +5011,29 @@ fn fangs_first_game_on_a_fresh_save_is_the_tutorial_and_its_win_collects_stones(
                 "went on by itself: {s:?}"
             );
         }
+    }
+    // openspec AS.911: a name box over each stone as it lands, its words the
+    // placed stone's own name read off the disc (their length printed, never
+    // the words), at the board's placement behaviour.
+    for n in &p.names {
+        println!(
+            "a stone's name box at step {}, board {:?}: {} chars, the placed stone's own {}",
+            n.0, n.1, n.2, n.3
+        );
+    }
+    assert!(
+        p.names.len() >= 4,
+        "a name over each stone placed: {:?}",
+        p.names
+    );
+    for n in &p.names {
+        assert!((2..=40).contains(&n.2), "a name's length: {n:?}");
+        assert!(n.3, "the placed stone's own name: {n:?}");
+        assert_eq!(
+            n.1.as_deref(),
+            Some("general turn - wait for card placement"),
+            "{n:?}"
+        );
     }
     let pirate = p.run.placement(guacamole::level_205::CARD_HOUSE_PIRATE);
     assert_eq!(

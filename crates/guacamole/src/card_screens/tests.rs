@@ -304,3 +304,194 @@ fn a_tutorial_stops_line_draws_at_the_screens_left() {
         "nothing drawn"
     );
 }
+
+/// openspec AS.934: B at the card game's quit confirm is No, the board
+/// player's alone (the confirm is the walking pad's, AS.930): another pad's
+/// B leaves it up; the walking pad's B (or a Back no pad made: Esc, a
+/// posted press) answers No, the level going on.
+#[test]
+fn the_quit_confirm_takes_the_board_players_b_as_no() {
+    assert!(back_is_walkers(Some(1), &[1]));
+    assert!(back_is_walkers(Some(1), &[2, 1]), "both at once");
+    assert!(!back_is_walkers(Some(1), &[2]), "another pad's");
+    assert!(back_is_walkers(Some(1u8), &[]), "Esc or a posted press");
+    assert!(!back_is_walkers(None, &[2u8]), "no walker");
+
+    let mut app = App::new();
+    app.init_resource::<CardScreensOpen>()
+        .init_resource::<CardScreens>()
+        .init_resource::<CardAsk>()
+        .init_resource::<LevelPads>()
+        .init_resource::<Time<Real>>()
+        .add_message::<TvInput>()
+        .add_systems(Update, presses);
+    let walker = app.world_mut().spawn(Gamepad::default()).id();
+    let other = app.world_mut().spawn(Gamepad::default()).id();
+    {
+        let mut pads = app.world_mut().resource_mut::<LevelPads>();
+        pads.show();
+        let frame = |id| crate::pad::PadFrame {
+            id,
+            stick: Vec2::ZERO,
+            pressed: Vec::new(),
+            held: [false; 4],
+            shoulders: [false; 4],
+        };
+        pads.seat_mut()
+            .unwrap()
+            .step(&[frame(walker), frame(other)]);
+        assert_eq!(pads.seat().unwrap().walking(), Some(walker));
+    }
+    app.world_mut().resource_mut::<CardScreensOpen>().0 = true;
+    app.world_mut().resource_mut::<CardScreens>().quit = Some(QuitFocus::No);
+    let back_by = |app: &mut App, pad: Entity| {
+        for e in [walker, other] {
+            app.world_mut()
+                .get_mut::<Gamepad>(e)
+                .unwrap()
+                .digital_mut()
+                .clear();
+        }
+        app.world_mut()
+            .get_mut::<Gamepad>(pad)
+            .unwrap()
+            .digital_mut()
+            .press(GamepadButton::East);
+        app.world_mut().write_message(TvInput::Back);
+        app.update();
+    };
+    back_by(&mut app, other);
+    assert_eq!(
+        app.world().resource::<CardScreens>().quit,
+        Some(QuitFocus::No),
+        "another pad's B leaves it up"
+    );
+    assert!(app.world().resource::<CardScreens>().answered.is_empty());
+    back_by(&mut app, walker);
+    assert_eq!(app.world().resource::<CardScreens>().quit, None);
+    assert!(!app.world().resource::<CardAsk>().quit, "no, not quit");
+    assert_eq!(app.world().resource::<CardScreens>().answered, ["quit: no"]);
+}
+
+/// openspec AS.911: the hand select's names are read once an offer, each
+/// stone it can deal once (the recommended hand first, then the
+/// collection), an unread name left out; the focused slot's stone is named
+/// while the hand is being changed, nothing on Play or Custom.
+#[test]
+fn the_hand_select_names_the_focused_slots_stone() {
+    let o = offer(&[3, 1, 2, 4, 5], &[1, 2, 3, 4, 5, 6, 6]);
+    let names = offer_names(Some(&o), |s| (s != 4).then(|| format!("stone {s}")));
+    let read: Vec<u16> = names.iter().map(|(s, _)| *s).collect();
+    assert_eq!(read, [3, 1, 2, 5, 6], "each once, the unread one out");
+    assert!(offer_names(None, |s| Some(s.to_string())).is_empty());
+    let read = CardRead {
+        names,
+        ..Default::default()
+    };
+    let mut edit = HandEdit::new(o);
+    assert_eq!(focused_name(&edit, &read), None, "on Play");
+    edit.focus = HandFocus::Custom;
+    assert_eq!(focused_name(&edit, &read), None, "on Custom");
+    edit.focus = HandFocus::Slot(1);
+    assert_eq!(focused_name(&edit, &read).as_deref(), Some("stone 1"));
+    edit.focus = HandFocus::Slot(3);
+    assert_eq!(focused_name(&edit, &read), None, "its name unread");
+    edit.focus = HandFocus::Slot(0);
+    assert_eq!(focused_name(&edit, &read).as_deref(), Some("stone 3"));
+}
+
+/// openspec AS.911: while the board's name box is up over a landing stone,
+/// its words are drawn in a box at the top of the screen, mid-turn, with
+/// no strip; with no box up, none.
+#[test]
+fn a_landing_stones_name_draws_at_the_top() {
+    let mut app = show_app();
+    at_stop(&mut app, "general turn - wait for card placement", None);
+    app.world_mut().resource_mut::<CardRead>().stone_name = Some("The test's stone".into());
+    app.update();
+    let world = app.world_mut();
+    let mut q = world.query::<(&CardScreenRoot, &Node)>();
+    let boxes: Vec<(&'static str, Node)> = q.iter(world).map(|(r, n)| (r.0, n.clone())).collect();
+    let name = boxes
+        .iter()
+        .find(|b| b.0 == "stone name")
+        .expect("the name's box");
+    assert_eq!((name.1.top, name.1.width), (px(NAME_TOP), percent(100)));
+    let mut texts = world.query::<&Text>();
+    let words: Vec<String> = texts.iter(world).map(|t| t.0.clone()).collect();
+    assert!(words.iter().any(|w| w == "The test's stone"), "{words:?}");
+    assert!(
+        !words.iter().any(|w| w == crate::collected_box::CONTINUE),
+        "no strip mid-turn: {words:?}"
+    );
+    app.world_mut().resource_mut::<CardRead>().stone_name = None;
+    app.update();
+    let world = app.world_mut();
+    let mut roots = world.query::<&CardScreenRoot>();
+    assert!(
+        roots.iter(world).all(|r| r.0 != "stone name"),
+        "gone with its box"
+    );
+}
+
+/// A run of no scripts of its own (`yes_no`'s tests' run): no board's
+/// controller anywhere.
+fn a_run() -> ScriptRuntime {
+    use std::sync::Arc;
+
+    use guac_formats::igz::Igz;
+    use guac_formats::script::{Graph, builder};
+    use guac_script::{Config, Generator, Mode, Program, Role, Unit, Vm};
+    let bytes = builder::ui_containers();
+    let igz = Igz::parse(&bytes).unwrap();
+    let graph = Graph::read(&igz).unwrap();
+    let unit = Unit {
+        name: "global",
+        role: Role::Other,
+        igz: &igz,
+        graph: &graph,
+    };
+    let program = Arc::new(Program::link(&[unit]).unwrap());
+    ScriptRuntime {
+        vm: Vm::new(program, Config::new(Mode::Strict)),
+        generator: Generator::seeded(1),
+        player_loop: Default::default(),
+        steps: 0,
+        stopped: Vec::new(),
+        entry_stopped: None,
+    }
+}
+
+/// openspec AS.876: after the scripts' step the screens' read takes the
+/// board again, so a board its own step took down (its controller out of
+/// play) reads down before the camera draws the frame; a run that plays no
+/// game is left alone.
+#[test]
+fn the_board_is_read_again_after_the_step() {
+    for plays in [true, false] {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<CardAsk>()
+            .init_resource::<CardRead>()
+            .add_systems(Update, answer_and_read);
+        let mut world = ScriptWorld::new(
+            &guacamole::scripts::Files::default(),
+            &std::collections::HashMap::new(),
+            [1, 2, 3, 4, 5, 6, 7],
+        );
+        if plays {
+            world.card_streams.play_games();
+        }
+        world.card_streams.set_board_up(true);
+        app.insert_resource(world).insert_resource(a_run());
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<ScriptWorld>()
+                .card_streams
+                .board_up(),
+            !plays,
+            "plays games: {plays}"
+        );
+    }
+}

@@ -11,7 +11,8 @@
 //!   it doesn't read), then Yes and No, the focus on Yes when the original's
 //!   prompt starts there. It's a modal as Restart chapter's is: the router
 //!   hands it the pads, a move left or right goes between the two, South
-//!   presses the focused one. In the disc's art where the extract's
+//!   presses the focused one, and Back (B, Esc) answers No as the original
+//!   prompt's back actions do (openspec AS.934). In the disc's art where the extract's
 //!   interface part holds it, as AU.5's screen takes the objectives screen's
 //!   (openspec AU.29, AU design decision 2): `global.bld`'s yes and no
 //!   backdrops, desaturated off the focus, and its bitmap font on a box of
@@ -220,15 +221,36 @@ fn open(
     }
 }
 
-/// Left or right goes between Yes and No.
+/// The answer a press gives the question up with no button pressed: Back is
+/// No (openspec AS.934). The original's prompt page lists `Dialogue - No
+/// Action` and `Menu - Close Menu Immediately` as its back actions
+/// (`Dialogue - Show Yes/No Prompt`), which the menu system runs on the
+/// controller's cancel button: what its No button runs.
+pub(crate) fn back_answer(input: TvInput, asked: Option<&Prompt>) -> Option<(Prompt, bool)> {
+    match input {
+        TvInput::Back => asked.map(|p| (p.clone(), false)),
+        _ => None,
+    }
+}
+
+/// Left or right goes between Yes and No; Back answers No ([`back_answer`]).
 fn moves(
     mut inputs: MessageReader<TvInput>,
     open: Res<PromptOpen>,
     focus: Option<ResMut<InputFocus>>,
     choices: Query<(Entity, &FocusId)>,
+    asked: Res<Asked>,
+    mut answer: ResMut<Answer>,
 ) {
     let read: Vec<TvInput> = inputs.read().copied().collect();
     if !open.0 {
+        return;
+    }
+    if answer.0.is_none()
+        && let Some(no) = read.iter().find_map(|i| back_answer(*i, asked.0.as_ref()))
+    {
+        info!(question = ?no.0.text, "the question answered no by back");
+        answer.0 = Some(no);
         return;
     }
     let Some(mut focus) = focus else {
@@ -816,6 +838,51 @@ mod tests {
                 .map(|(p, yes)| (p.ui, *yes)),
             Some((Value::Entity(0x50), false))
         );
+    }
+
+    /// openspec AS.934: B (Back) at a question answers it No, whichever
+    /// button the focus is on, and the modal closes with it, as the
+    /// original prompt's back actions run its No; with no question up a
+    /// Back answers nothing, and only Back does.
+    #[test]
+    fn back_at_a_question_answers_no() {
+        for yes_first in [true, false] {
+            let (mut app, presses) = asking_app();
+            app.world_mut().resource_mut::<Asked>().0 = Some(question(0x80, yes_first));
+            let on = if yes_first { PROMPT_YES } else { PROMPT_NO };
+            shows(&mut app, Value::Entity(0x80), on);
+            presses.push(TestPress::East);
+            for _ in 0..3 {
+                app.update();
+            }
+            assert_eq!(
+                app.world().resource::<Answer>().0,
+                Some((question(0x80, yes_first), false)),
+                "Back answers no, the focus on {on}"
+            );
+            assert!(!app.world().resource::<PromptOpen>().0, "closed on it");
+            assert_eq!(drawn(&mut app), None);
+        }
+        // No question: Back answers nothing.
+        let (mut app, presses) = asking_app();
+        presses.push(TestPress::East);
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(app.world().resource::<Answer>().0, None);
+        let p = question(0x90, true);
+        assert_eq!(back_answer(TvInput::Back, None), None);
+        assert_eq!(
+            back_answer(TvInput::Back, Some(&p)),
+            Some((p.clone(), false))
+        );
+        for other in [
+            TvInput::Activate,
+            TvInput::Home,
+            TvInput::Move(CompassOctant::West),
+        ] {
+            assert_eq!(back_answer(other, Some(&p)), None, "{other:?}");
+        }
     }
 
     /// A run of no scripts of its own, as the TV installs one: what the
