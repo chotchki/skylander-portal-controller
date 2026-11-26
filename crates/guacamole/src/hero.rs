@@ -490,18 +490,20 @@ impl CardViews {
         }
     }
 
-    /// The view to draw in place of the scripts' (openspec AS.876): after the
-    /// board's teardown, while he isn't given back yet and the scripts'
-    /// viewport still stands where the board left it, the board is gone
-    /// from there and nothing of the level is: the view from before the
-    /// game. The pirate's loot aims nothing; his scene's camera, once it
-    /// moves the viewport, is drawn again.
+    /// The view to draw in place of the scripts' (openspec AS.876): with the
+    /// board gone (its controller out of play: a quit takes it before the
+    /// slot reads free) and he not given back, while the scripts' viewport
+    /// still stands where the board last aimed it, nothing of the level is
+    /// there: the view from before the game. The pirate's loot aims
+    /// nothing; his scene's camera, once it moves the viewport, is drawn
+    /// again.
     pub(crate) fn instead(
         &self,
         restore: guacamole::card_game::Restore,
+        board_up: bool,
         now: (Vec3, guacamole::script_engine::Angles),
     ) -> Option<View> {
-        (restore == guacamole::card_game::Restore::Asked && self.board == Some(now))
+        (restore != guacamole::card_game::Restore::Idle && !board_up && self.board == Some(now))
             .then_some(self.before)
             .flatten()
     }
@@ -567,7 +569,8 @@ pub(crate) fn step_cameras(
                 let v = world.viewport();
                 let restore = world.card_streams.restore();
                 card_views.note(restore, &follow.drawn, (v.eye, v.angles));
-                match card_views.instead(restore, (v.eye, v.angles)) {
+                let board_up = world.card_streams.board_up();
+                match card_views.instead(restore, board_up, (v.eye, v.angles)) {
                     Some(before) => {
                         follow.drawn = before;
                         viewed(&follow.drawn)

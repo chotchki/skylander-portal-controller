@@ -1287,6 +1287,7 @@ fn the_boards_view_is_drawn_while_it_holds_his_slot() {
 fn board_holds(to: Res<Wander>, world: Option<ResMut<ScriptWorld>>) {
     if let (Some(_), Some(mut world)) = (to.0, world) {
         world.card_streams.restore_replaced();
+        world.card_streams.set_board_up(true);
     }
 }
 
@@ -1342,7 +1343,8 @@ fn the_pirates_scenes_are_drawn_until_he_is_given_back() {
 /// aimed it, on the board's place with the board gone (the pirate's loot
 /// aims nothing): the TV draws the view it drew as the board took his slot
 /// there, every step, until the pirate's scene moves the viewport, whose
-/// view is drawn from then on.
+/// view is drawn from then on. So it does with the board gone before the
+/// slot reads free (a quit removes its controller first).
 #[cfg(feature = "card-game-seams")]
 #[test]
 fn the_boards_empty_place_is_never_drawn_after_its_teardown() {
@@ -1385,18 +1387,21 @@ fn the_boards_empty_place_is_never_drawn_after_its_teardown() {
             "step {k} with the board up: {t:?}, the board's view at {board}"
         );
     }
-    // Torn down, his return asked, the viewport left where the board aimed
-    // it: the view from before the game.
-    app.world_mut().resource_mut::<GamePhase>().0 = 2;
-    frames(&mut app, 20);
-    let seen = std::mem::take(&mut app.world_mut().resource_mut::<Steps>().0);
-    assert!(seen.len() >= 5, "{} steps", seen.len());
-    for (k, (_, t)) in seen.iter().enumerate() {
-        assert!(
-            t.translation.distance(before.eye) < 1e-3,
-            "step {k} after the teardown: {t:?}, the view before the game at {:?}, the board's place at {board}",
-            before.eye
-        );
+    // Torn down (the controller gone, the slot not read free yet; then his
+    // return asked), the viewport left where the board aimed it: the view
+    // from before the game.
+    for phase in [3, 2] {
+        app.world_mut().resource_mut::<GamePhase>().0 = phase;
+        frames(&mut app, 20);
+        let seen = std::mem::take(&mut app.world_mut().resource_mut::<Steps>().0);
+        assert!(seen.len() >= 5, "{} steps", seen.len());
+        for (k, (_, t)) in seen.iter().enumerate() {
+            assert!(
+                t.translation.distance(before.eye) < 1e-3,
+                "phase {phase}, step {k} after the teardown: {t:?}, the view before the game at {:?}, the board's place at {board}",
+                before.eye
+            );
+        }
     }
     // His scene's camera moves the viewport: its view is drawn.
     let scene = before.eye + Vec3::new(4.0, 3.0, -9.0);
@@ -1414,7 +1419,8 @@ fn the_boards_empty_place_is_never_drawn_after_its_teardown() {
 
 /// A played game's state each step while [`Wander`] is set: 1 the board
 /// holds his slot, 2 the board torn down and his return asked under the
-/// pirate's scene (`Cutscene State` up, so he isn't given back).
+/// pirate's scene (`Cutscene State` up, so he isn't given back), 3 the board
+/// gone with his slot not read free yet.
 #[cfg(feature = "card-game-seams")]
 #[derive(Resource, Default)]
 struct GamePhase(u8);
@@ -1430,9 +1436,17 @@ fn game_phase(
         return;
     };
     match phase.0 {
-        1 => world.card_streams.restore_replaced(),
+        1 => {
+            world.card_streams.restore_replaced();
+            world.card_streams.set_board_up(true);
+        }
+        3 => {
+            world.card_streams.restore_replaced();
+            world.card_streams.set_board_up(false);
+        }
         2 => {
             world.card_streams.restore_asked();
+            world.card_streams.set_board_up(false);
             if let Some(g) = rt.vm.program().global_named("Cutscene State") {
                 rt.vm.set_global(g, guac_script::Value::Int(1));
             }

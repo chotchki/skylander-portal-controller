@@ -237,6 +237,10 @@ pub struct CardStreams {
     /// A quit asked of a played game ([`CardStreams::ask_quit`]), answered
     /// by the next step's [`quit`].
     quit_asked: bool,
+    /// Whether the board's controller (`CardGame_Setup.ai`) is in play, read
+    /// each step of a played run and again as a quit removes it (openspec
+    /// AS.876): the board stands while it does.
+    board: bool,
     /// Whether the TV's hand select answers the hand select's page
     /// ([`CardStreams::answer_hands_on_screen`]); headless it's answered by
     /// Play.
@@ -368,6 +372,20 @@ impl CardStreams {
     #[cfg(feature = "card-game-seams")]
     pub fn restore_replaced(&mut self) {
         self.restore = Restore::Replaced;
+    }
+
+    /// Whether the board's controller is in play ([`CardStreams::board`]):
+    /// the board stands, its place drawn with it.
+    pub fn board_up(&self) -> bool {
+        self.board
+    }
+
+    /// The board standing or not, set by hand: the TV's camera tests'
+    /// stand-in for the controller in play (openspec AS.876).
+    /// Feature-gated as [`CardStreams::play_games`] is.
+    #[cfg(feature = "card-game-seams")]
+    pub fn set_board_up(&mut self, up: bool) {
+        self.board = up;
     }
 
     /// The restore answered: his character joined again.
@@ -1237,6 +1255,7 @@ pub fn step(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<bool, Halt> {
     let now = replaced(vm);
     let restore = &mut host.world.card_streams.restore;
     *restore = restore.next(now);
+    host.world.card_streams.board = board_standing(vm, host.world);
     hold_card_particles(vm, host.world);
     pass_loot_reports(vm, host.world);
     // The TV's hand select answers the page itself ([`hand_offer`],
@@ -1264,7 +1283,17 @@ pub fn quit(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<bool, Halt> {
     };
     info!("a played card game quit through the board's own confirm");
     vm.call_for(controller, QUIT_YES, &[], &[], host)?;
+    // The TV answers the quit after the step that read the board (openspec
+    // AS.876): `Quit - Yes` removes the controller there and then, so the
+    // board is read again now, as the next step would, and the camera this
+    // frame knows its place is empty.
+    host.world.card_streams.board = board_standing(vm, host.world);
     Ok(true)
+}
+
+/// Whether the board's controller is in play (openspec AS.876).
+fn board_standing(vm: &Vm, world: &ScriptWorld) -> bool {
+    running(vm, world, BOARD_CONTROLLER).is_some_and(|c| !vm.removed(c))
 }
 
 /// The stones a fresh save's first win at Fangs (205's tutorial) collects,
