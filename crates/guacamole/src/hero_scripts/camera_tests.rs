@@ -1354,7 +1354,8 @@ fn the_boards_empty_place_is_never_drawn_after_its_teardown() {
         .init_resource::<Steps>()
         .init_resource::<GamePhase>()
         .init_resource::<EasesSeen>()
-        .add_systems(FixedUpdate, wander.in_set(Frame::Hands))
+        .init_resource::<Tilt>()
+        .add_systems(FixedUpdate, (wander, tilt).in_set(Frame::Hands))
         .add_systems(FixedUpdate, game_phase.in_set(Frame::Hands))
         .add_systems(FixedUpdate, (steps_seen, eases_seen).in_set(Frame::Record));
     run_until(&mut app, "the scripts' view", 30, |s| {
@@ -1369,8 +1370,11 @@ fn the_boards_empty_place_is_never_drawn_after_its_teardown() {
             other => panic!("joined: {other:?}"),
         }
     };
-    // The board: his minion off, its view drawn.
+    // The board: his minion off, its view drawn, looking further down than
+    // the room's (as the board's framings do), so an eased turn shows.
     let board = before.eye + Vec3::new(0.0, 6.0, 8.0);
+    let room_tilt = app.world().resource::<ScriptWorld>().viewport().angles.tilt;
+    app.world_mut().resource_mut::<Tilt>().0 = Some(room_tilt - 30.0);
     {
         let w = app.world_mut();
         let mut rt = w.resource_mut::<ScriptRuntime>();
@@ -1417,6 +1421,7 @@ fn the_boards_empty_place_is_never_drawn_after_its_teardown() {
     app.world_mut().resource_mut::<Steps>().0.clear();
     app.world_mut().resource_mut::<EasesSeen>().0.clear();
     let restored = before.eye + Vec3::new(-7.0, 2.0, 5.0);
+    app.world_mut().resource_mut::<Tilt>().0 = Some(room_tilt);
     app.world_mut().resource_mut::<GamePhase>().0 = 3;
     app.world_mut().resource_mut::<Wander>().0 = Some(restored);
     frames(&mut app, 20);
@@ -1441,6 +1446,7 @@ fn the_boards_empty_place_is_never_drawn_after_its_teardown() {
     // His scene's camera moves the viewport: its view is drawn.
     let scene = before.eye + Vec3::new(4.0, 3.0, -9.0);
     app.world_mut().resource_mut::<Wander>().0 = Some(board);
+    app.world_mut().resource_mut::<Tilt>().0 = Some(room_tilt - 30.0);
     frames(&mut app, 5);
     assert!(
         last_step(&app).translation.distance(before.eye) < 1e-3,
@@ -1450,6 +1456,7 @@ fn the_boards_empty_place_is_never_drawn_after_its_teardown() {
     app.world_mut().resource_mut::<Steps>().0.clear();
     app.world_mut().resource_mut::<EasesSeen>().0.clear();
     app.world_mut().resource_mut::<Wander>().0 = Some(scene);
+    app.world_mut().resource_mut::<Tilt>().0 = Some(room_tilt);
     frames(&mut app, 20);
     let seen = std::mem::take(&mut app.world_mut().resource_mut::<Steps>().0);
     assert!(seen.len() >= 5, "{} steps", seen.len());
@@ -1487,6 +1494,19 @@ fn cut_not_eased(app: &App, k: usize, what: &str) {
         "{what}: its rotation eases from {turned:?}, drawn turned {:?}",
         drawn.rotation
     );
+}
+
+/// The scripts' viewport's tilt, set each step while some (openspec
+/// AS.876's teardown test: the board's view looks further down).
+#[cfg(feature = "card-game-seams")]
+#[derive(Resource, Default)]
+struct Tilt(Option<f32>);
+
+#[cfg(feature = "card-game-seams")]
+fn tilt(to: Res<Tilt>, world: Option<ResMut<ScriptWorld>>) {
+    if let (Some(t), Some(mut world)) = (to.0, world) {
+        world.viewport_mut().angles.tilt = t;
+    }
 }
 
 /// Each step's camera easing start as the step left it (openspec AS.876: a
