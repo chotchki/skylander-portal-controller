@@ -31,6 +31,7 @@ use bevy::camera::{Projection, RenderTarget};
 use bevy::input::gamepad::GamepadButton;
 use bevy::prelude::*;
 use bevy::render::view::window::screenshot::{Screenshot, ScreenshotCaptured};
+use guacamole::aim::{AIM_MACROS, aim_of, state_of};
 use guacamole::scripts::{ScriptRuntime, ScriptWorld};
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
@@ -81,7 +82,8 @@ const REACH_M: f32 = 15.0;
 /// An actor in the camera's picture counts out to this far from it, m.
 const VIEW_M: f32 = 80.0;
 
-/// The most actors a capture lists, nearest the hero first.
+/// The most actors a capture lists: live ones first, nearest the hero
+/// first, gone ones after them and dropped past the cap.
 const ACTORS_MAX: usize = 400;
 
 /// A note's longest, in bytes.
@@ -421,7 +423,8 @@ impl Plugin for Flags {
             PreUpdate,
             feed_posted_keys.before(bevy::input::InputSystems),
         )
-        .add_systems(Last, take_flags.in_set(TakeFlags));
+        .add_systems(Last, take_flags.in_set(TakeFlags))
+        .add_systems(First, watch_aim);
         #[cfg(any(feature = "test-hooks", test))]
         app.insert_resource(self.asks.note.clone())
             .add_plugins(crate::capture_note::NotePlugin);
@@ -513,13 +516,7 @@ pub(crate) fn actors_near(
                     .or(a.template)
                     .and_then(|o| world.template(o))
                     .and_then(|p| p.script.clone()),
-                state: if a.removed {
-                    "gone"
-                } else if a.active {
-                    "awake"
-                } else {
-                    "asleep"
-                },
+                state: state_of(a),
                 behaviour: vm
                     .zip(id)
                     .and_then(|(vm, id)| vm.behaviour(id))
@@ -549,12 +546,35 @@ pub(crate) fn actors_near(
             })
         })
         .collect();
+    nearest_live_first(&mut out, ACTORS_MAX);
+    out
+}
+
+/// Live actors first, then gone ones, each nearest the hero first, `cap` at
+/// most: a level's gone clones (chotchki's capture of 2026-11-23 held 387
+/// of its 400) never push a foe in front of him off the list.
+fn nearest_live_first(out: &mut Vec<ActorShot>, cap: usize) {
     out.sort_by(|a, b| {
         let d = |s: &ActorShot| s.distance.unwrap_or(f32::INFINITY);
-        d(a).total_cmp(&d(b)).then(a.handle.cmp(&b.handle))
+        (a.state == "gone")
+            .cmp(&(b.state == "gone"))
+            .then(d(a).total_cmp(&d(b)))
+            .then(a.handle.cmp(&b.handle))
     });
-    out.truncate(ACTORS_MAX);
-    out
+    out.truncate(cap);
+}
+
+/// Has each new VM read its hero's autoaims as they close (openspec
+/// AS.1042): what a capture's `aim` shows.
+fn watch_aim(runtime: Option<ResMut<ScriptRuntime>>) {
+    let Some(mut rt) = runtime else {
+        return;
+    };
+    if rt.vm.watching() == 0 {
+        for m in AIM_MACROS {
+            rt.vm.watch_call(m);
+        }
+    }
 }
 
 /// The log's last `lines` lines: the newest `server.log*` in `dir`, its
@@ -759,6 +779,19 @@ impl CaptureReads<'_, '_> {
                 |h| self.drawn(h, &draws),
             )
         });
+        let aim = match (self.runtime.as_deref(), self.world.as_deref()) {
+            (Some(rt), Some(w)) => self
+                .play
+                .as_deref()
+                .and_then(Play::hero)
+                .and_then(|e| self.heroes.get(e).ok())
+                .and_then(|(r, _)| match r.join {
+                    Join::Joined(id) => rt.vm.handle_of(id),
+                    _ => None,
+                })
+                .and_then(|h| aim_of(&rt.vm, w, h, hero)),
+            _ => None,
+        };
         let scene = match (self.runtime.as_deref(), self.world.as_deref()) {
             (Some(rt), Some(w)) => {
                 self.source
@@ -835,6 +868,7 @@ impl CaptureReads<'_, '_> {
             "camera": camera,
             "scene": scene,
             "actors": actors,
+            "aim": aim,
             "tv": tv,
             "scripts_recent": steps,
             "drawn_recent": drawn,
@@ -1359,6 +1393,40 @@ mod tests {
         }
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+    }
+
+    /// openspec AS.1042: a capture lists live actors before gone ones, each
+    /// nearest first, and drops gone ones past the cap: a level's gone
+    /// clones nearer the hero than a live foe no longer push it off.
+    #[test]
+    fn a_capture_lists_live_actors_before_gone_ones() {
+        let shot = |handle: u64, state: &'static str, d: f32| ActorShot {
+            handle,
+            name: format!("a{handle}"),
+            clone: state == "gone",
+            script: None,
+            state,
+            behaviour: None,
+            at: [0.0; 3],
+            facing: 0.0,
+            distance: Some(d),
+            in_reach: true,
+            in_view: false,
+            shown: None,
+            drawn: None,
+            clips: Vec::new(),
+        };
+        let mut out = vec![
+            shot(1, "gone", 1.0),
+            shot(2, "gone", 2.0),
+            shot(3, "awake", 12.0),
+            shot(4, "gone", 0.5),
+            shot(5, "asleep", 9.0),
+            shot(6, "gone", 3.0),
+        ];
+        nearest_live_first(&mut out, 4);
+        let got: Vec<(u64, &str)> = out.iter().map(|s| (s.handle, s.state)).collect();
+        assert_eq!(got, [(5, "asleep"), (3, "awake"), (4, "gone"), (1, "gone")]);
     }
 
     /// A capture's actors: the fight's creature in reach, read off the

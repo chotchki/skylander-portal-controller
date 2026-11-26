@@ -1848,7 +1848,8 @@ const ORACLE_SHOTS: [([f32; 3], f32, &str, f32, f32); 3] = [
 /// centre-to-centre one at these three shots. Spyro put where the oracle's
 /// stood, facing as it faced, breaks the same three breakables in turn
 /// and keeps each shot's pitch and heading within 0.05 degree of the
-/// oracle's.
+/// oracle's; a capture's `aim` record (openspec AS.1042) names each
+/// target and the same pitch.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
 fn a_heros_autoaim_pitches_from_his_feet_as_the_oracles() {
@@ -1875,6 +1876,10 @@ fn a_heros_autoaim_pitches_from_his_feet_as_the_oracles() {
     for _ in 0..120 {
         run.bench.pads[0] = idle;
         let _ = run.step_play();
+    }
+    // The capture's record of each (openspec AS.1042), read beside.
+    for m in guacamole::aim::AIM_MACROS {
+        assert!(run.vm.watch_call(m), "{m}");
     }
     let me = run.vm.placement_of(run.hero).expect("his placement");
     let kept = |run: &Run, name: &str| {
@@ -1914,6 +1919,13 @@ fn a_heros_autoaim_pitches_from_his_feet_as_the_oracles() {
             run.world.actor(foe).is_none_or(|a| a.removed),
             "{target} broken"
         );
+        let aim = guacamole::aim::aim_of(&run.vm, &run.world, run.hero, Some(run.hero().pivot))
+            .expect("his autoaim recorded");
+        println!("  recorded: {aim:?}");
+        assert_eq!(aim.call, "Combat - Autoaim At Targets");
+        assert_eq!(aim.target.as_ref().map(|t| t.name.as_str()), Some(target));
+        assert_eq!(aim.pitch, Some(p), "the record's pitch is the one he kept");
+        assert!(aim.candidates.is_some_and(|n| n >= 1), "{aim:?}");
     }
     println!("{:.2?}; load after: {}", started.elapsed(), load());
 }

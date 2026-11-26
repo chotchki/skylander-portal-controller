@@ -7,6 +7,7 @@
 //! binary's own modules (the TV, the driver, the extraction) stay in
 //! `main.rs`.
 
+pub mod aim;
 pub mod anchors;
 pub mod announcements;
 pub mod atmospherics;

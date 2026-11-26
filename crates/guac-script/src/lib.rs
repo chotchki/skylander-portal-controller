@@ -390,7 +390,13 @@
 //!   own, every lob's speed came out wrong; read so, AH.10's 20 lobs are the
 //!   oracle's within 1 %).
 //! - When the use block itself closes, every variable in the callee's frame
-//!   goes back to its default and the definition is no longer busy.
+//!   goes back to its default and the definition is no longer busy. (The
+//!   oracle's do too: at every flip pause, the frame after a hero's autoaim
+//!   ran included, its macros' variables read their defaults, as-aim-ref.)
+//!   An embedder can have a macro's frame read just before that
+//!   ([`Vm::watch_call`], [`Vm::watched_calls`]): each variable as the call
+//!   left it, a structure's fields and a set's members with it, the scripts
+//!   none the wiser.
 //! - A specialization is a definition with an INTERFACE and body of its own;
 //!   calling it runs it. A parameter that names its base's definition reads
 //!   the specialization's frame while the specialization runs. A reading:
@@ -931,7 +937,7 @@ pub use value::{
     ArithFault, Value, arith, arith_in, compare, convert, random_colour, random_literal,
 };
 pub use vm::{
-    AnewOnWake, Config, DEFAULT_BUDGET, Halt, Handle, LogLine, Mode, Native, PlacementId,
-    Precision, Reason, SLIDERS, StepReport, TICK_SECONDS, Vm,
+    AnewOnWake, CALLS_KEPT, CallRecord, Config, DEFAULT_BUDGET, Halt, Handle, LogLine, Mode,
+    Native, PlacementId, Precision, Reason, Recorded, SLIDERS, StepReport, TICK_SECONDS, Vm,
 };
 pub use whitelist::{Listed, Whitelist};

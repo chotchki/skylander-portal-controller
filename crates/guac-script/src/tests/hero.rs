@@ -328,6 +328,73 @@ fn a_native_call_passes_arguments_and_reads_returns() {
     );
 }
 
+/// A watched macro's frame is read as its use block closes, before it goes
+/// back to its defaults (as-aim-ref: a capture's record of a hero's last
+/// autoaim), and the read changes nothing the scripts see: each call's
+/// return as unwatched, the next call's frame fresh, an unwatched macro and
+/// an unknown name not recorded.
+#[test]
+fn a_watched_calls_frame_is_read_as_it_closes() {
+    let p = program(|w| {
+        let def = w.op(Class::DefineMacro, "Add One");
+        let zero = w.int(0);
+        let a = parameter_of(w, def, "a", zero);
+        let zero = w.int(0);
+        let out = parameter_of(w, def, "out", zero);
+        frame(
+            w,
+            |_| {},
+            |_| {},
+            |w| {
+                let at = w.push(def);
+                interface_of(w, &[a, out]);
+                let x = w.rhs(INT, &[El::Local(a)]);
+                let one = w.int(1);
+                let sum = w.expr(x, Some((0, one)));
+                w.set(&[El::Local(out)], sum);
+                w.end_block(at);
+            },
+            |_| {},
+            |w| {
+                let b = w.behaviour("idle");
+                w.end_block(b);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, config());
+    let mut host = Members::default();
+    let call = |vm: &mut Vm, host: &mut Members, a: i32| {
+        vm.call_with(None, "Add One", &[("a", Value::Int(a))], &["out"], host)
+            .unwrap_or_else(|h| panic!("{h}"))
+            .1
+    };
+    assert_eq!(call(&mut vm, &mut host, 1), [Some(Value::Int(2))]);
+    assert_eq!(vm.watched_calls().count(), 0, "unwatched");
+    assert!(!vm.watch_call("No Such Macro"));
+    assert!(vm.watch_call(" Add One "));
+    assert_eq!(call(&mut vm, &mut host, 4), [Some(Value::Int(5))]);
+    assert_eq!(call(&mut vm, &mut host, 9), [Some(Value::Int(10))]);
+    let got: Vec<_> = vm
+        .watched_calls()
+        .map(|c| (c.def.clone(), c.var("A").cloned(), c.var("out").cloned()))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (
+                "Add One".to_owned(),
+                Some(Recorded::Value(Value::Int(4))),
+                Some(Recorded::Value(Value::Int(5)))
+            ),
+            (
+                "Add One".to_owned(),
+                Some(Recorded::Value(Value::Int(9))),
+                Some(Recorded::Value(Value::Int(10)))
+            ),
+        ]
+    );
+}
+
 /// The portal manager's script for
 /// [`an_embedders_call_in_a_placements_name_stops_nothing`]: each tick
 /// counts, and its macro `Shut Down` writes a member nothing models, as a
