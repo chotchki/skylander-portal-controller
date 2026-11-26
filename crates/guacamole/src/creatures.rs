@@ -862,6 +862,71 @@ pub(crate) struct CreaturesReport {
     pub mouths: Vec<MouthShot>,
     /// The cutscene up and its scene, by name (openspec AS.461).
     pub scene: Option<guacamole::level_end::SceneUp>,
+    /// Every body in Avian's world within [`BODIES_NEAR`] of a hero but
+    /// the level's own (openspec AS.901), nearest first: what a driver
+    /// reads when something unseen holds him off.
+    pub bodies: Vec<BodyShot>,
+}
+
+/// How far from a hero [`CreaturesReport::bodies`] reaches, metres, from
+/// his pivot to the nearest point of a body's box.
+const BODIES_NEAR: f32 = 8.0;
+
+/// A body in Avian's world as `/api/_test/tv` reports it (openspec
+/// AS.901): its seam id and kind, the actor it rides on by name (none for a
+/// prop's own entity), the box Avian's queries see it in (centre and full
+/// size, metres) and its entity's scale.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct BodyShot {
+    pub id: u32,
+    pub kind: String,
+    pub actor: Option<String>,
+    pub centre: [f32; 3],
+    pub size: [f32; 3],
+    pub scale: Option<[f32; 3]>,
+}
+
+/// One body as [`bodies_near`] reads it: its entity, seam body, the box
+/// Avian holds it in and its entity's scale.
+type BodyRead<'a> = (
+    Entity,
+    &'a SeamBody,
+    &'a avian3d::prelude::ColliderAabb,
+    Option<Vec3>,
+);
+
+/// [`CreaturesReport::bodies`] off `bodies`: each not static within
+/// [`BODIES_NEAR`] of one of `heroes`, nearest first.
+fn bodies_near<'a>(
+    heroes: &[Vec3],
+    bodies: impl Iterator<Item = BodyRead<'a>>,
+    world: &ScriptWorld,
+) -> Vec<BodyShot> {
+    let mut out: Vec<(f32, BodyShot)> = bodies
+        .filter(|(_, b, ..)| b.kind != BodyKind::Static)
+        .filter_map(|(e, b, aabb, scale)| {
+            let near = heroes
+                .iter()
+                .map(|h| h.clamp(aabb.min, aabb.max).distance(*h))
+                .fold(f32::INFINITY, f32::min);
+            let h = e.to_bits();
+            (near <= BODIES_NEAR).then(|| {
+                (
+                    near,
+                    BodyShot {
+                        id: b.id.0,
+                        kind: format!("{:?}", b.kind),
+                        actor: world.actor(h).map(|_| world.name(h)),
+                        centre: aabb.center().to_array(),
+                        size: aabb.size().to_array(),
+                        scale: scale.map(|s| s.to_array()),
+                    },
+                )
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.total_cmp(&b.0));
+    out.into_iter().map(|(_, s)| s).collect()
 }
 
 /// A speaker as `/api/_test/tv` reports him (openspec AS.820).
@@ -925,6 +990,16 @@ pub(crate) struct CreatureShots<'w, 's> {
     level: Option<Res<'w, Level>>,
     globals: Query<'w, 's, &'static GlobalTransform>,
     locals: Query<'w, 's, &'static Transform>,
+    heroes: Query<'w, 's, &'static HeroBody>,
+    bodies: Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static SeamBody,
+            &'static avian3d::prelude::ColliderAabb,
+        ),
+    >,
 }
 
 impl CreatureShots<'_, '_> {
@@ -936,6 +1011,14 @@ impl CreatureShots<'_, '_> {
             drawn: self.drawn.as_ref().map_or(0, |d| d.0.len()),
             ..report(&rt.vm, world)
         };
+        let heroes: Vec<Vec3> = self.heroes.iter().map(|h| h.hero.pivot).collect();
+        out.bodies = bodies_near(
+            &heroes,
+            self.bodies
+                .iter()
+                .map(|(e, b, aabb)| (e, b, aabb, self.locals.get(e).ok().map(|t| t.scale))),
+            world,
+        );
         for c in &mut out.creatures {
             let laid = self
                 .drawn
@@ -1140,6 +1223,7 @@ pub(crate) fn report(vm: &guac_script::Vm, world: &ScriptWorld) -> CreaturesRepo
         placed,
         mouths: Vec::new(),
         scene: guacamole::level_end::scene_up(vm),
+        bodies: Vec::new(),
     }
 }
 
@@ -1818,6 +1902,70 @@ mod tests {
             t.translation.distance(Vec3::from_array(ART_AT)) < 1e-4,
             "{t:?}"
         );
+    }
+
+    /// openspec AS.901: the test hooks' bodies round a hero: each body that
+    /// isn't static within 8 m of his pivot (to its box's nearest point),
+    /// nearest first, with its kind, its box as Avian's queries see it and
+    /// its entity's scale; a farther one and the level's static ones left
+    /// out.
+    #[test]
+    fn the_bodies_near_a_hero_are_read_at_the_size_avians_queries_see() {
+        use bevy::ecs::system::SystemState;
+        use bevy::time::TimeUpdateStrategy;
+        use guac_motion::seam::{Body, Shape};
+        use guacamole::scripts::{Files, headless_handles, headless_objects};
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, crate::physics::SeamPlugin))
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
+                1.0 / 64.0,
+            )));
+        app.finish();
+        app.cleanup();
+        let ball = |id, kind, x: f32| Body {
+            id: BodyId(id),
+            kind,
+            pose: Pose::at(Vec3::new(x, 1.0, 0.0)),
+            collider: SeamCollider::Convex(Shape::Sphere { radius: 1.0 }),
+        };
+        let mut commands = app.world_mut().commands();
+        let spawn = crate::test_support::physics::spawn_body;
+        let near = spawn(&mut commands, &ball(1, BodyKind::Kinematic, 3.0)).unwrap();
+        commands
+            .entity(near)
+            .insert(Transform::from_scale(Vec3::splat(2.5)));
+        spawn(&mut commands, &ball(2, BodyKind::Sensor, -6.0)).unwrap();
+        spawn(&mut commands, &ball(3, BodyKind::Kinematic, 20.0)).unwrap();
+        spawn(&mut commands, &ball(4, BodyKind::Static, 2.0)).unwrap();
+        app.world_mut().flush();
+        app.update();
+        app.update();
+        let files = Files::default();
+        let handles = headless_handles(&files);
+        let world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        let mut state = SystemState::<(
+            Query<(Entity, &SeamBody, &avian3d::prelude::ColliderAabb)>,
+            Query<&Transform>,
+        )>::new(app.world_mut());
+        let (bodies, locals) = state.get(app.world()).unwrap();
+        let read = bodies_near(
+            &[Vec3::ZERO],
+            bodies
+                .iter()
+                .map(|(e, b, aabb)| (e, b, aabb, locals.get(e).ok().map(|t| t.scale))),
+            &world,
+        );
+        let ids: Vec<u32> = read.iter().map(|b| b.id).collect();
+        assert_eq!(ids, [1, 2], "{read:?}");
+        assert_eq!(read[0].kind, "Kinematic");
+        assert_eq!(read[1].kind, "Sensor");
+        assert_eq!(read[0].scale, Some([2.5; 3]));
+        assert_eq!(read[0].actor, None);
+        // Its own 2 m across, its entity's scale not laid on it.
+        for k in 0..3 {
+            assert!((read[0].size[k] - 2.0).abs() < 0.05, "{:?}", read[0]);
+        }
+        assert!((read[0].centre[0] - 3.0).abs() < 1e-3, "{:?}", read[0]);
     }
 
     /// openspec AS.371: a placement with no script something hangs on (the
