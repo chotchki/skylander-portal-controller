@@ -238,8 +238,9 @@ pub struct CardStreams {
     /// by the next step's [`quit`].
     quit_asked: bool,
     /// Whether the board stands, its controller (`CardGame_Setup.ai`) and
-    /// its manager in play, read each step of a played run and again after
-    /// it and as a quit removes the controller (openspec AS.876).
+    /// its manager in play, read after each step of a played run
+    /// ([`note_board`]) and as a quit removes the controller (openspec
+    /// AS.876).
     board: bool,
     /// Whether the TV's hand select answers the hand select's page
     /// ([`CardStreams::answer_hands_on_screen`]); headless it's answered by
@@ -1255,7 +1256,6 @@ pub fn step(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<bool, Halt> {
     let now = replaced(vm);
     let restore = &mut host.world.card_streams.restore;
     *restore = restore.next(now);
-    host.world.card_streams.board = board_standing(vm, host.world);
     hold_card_particles(vm, host.world);
     pass_loot_reports(vm, host.world);
     // The TV's hand select answers the page itself ([`hand_offer`],
@@ -1299,11 +1299,11 @@ fn board_standing(vm: &Vm, world: &ScriptWorld) -> bool {
         && manager(vm, world).is_some()
 }
 
-/// The board read again once the step's requests are taken (openspec
-/// AS.876): [`step`] reads it before the host takes them, so a controller
-/// removed by the step's own ticks (a won or lost game's end) reads gone
-/// only here; the TV's camera that frame then knows the board's place is
-/// empty. Nothing on a run that doesn't play the game.
+/// The board read once the step's requests are taken (openspec AS.876):
+/// what the step's own ticks took down (a won or lost game's end takes the
+/// manager, then the controller) reads gone before the TV's camera draws
+/// that frame. [`step`] runs before the host takes them, so it doesn't read
+/// it. Nothing on a run that doesn't play the game.
 pub fn note_board(vm: &Vm, world: &mut ScriptWorld) {
     if world.card_streams.played {
         world.card_streams.board = board_standing(vm, world);

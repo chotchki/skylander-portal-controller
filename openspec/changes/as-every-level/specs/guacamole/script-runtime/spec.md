@@ -57,7 +57,7 @@ A slide SHALL end where it stands once what it eases has left play: its receiver
 - **THEN** each ends, the sliders running as each ends 6 to 35 of the pool's 400
 
 ### Requirement: The board's player alone steers and quits it
-While a played card game's board holds the hero's slot, the stick SHALL steer the board's cursor and walk no one, and only the walking pad's Start SHALL ask the quit; another pad's Start pauses the level as anywhere.
+While a played card game's board holds the hero's slot, the stick SHALL steer the board's cursor and walk no one, and only the walking pad's Start SHALL ask the quit; another pad's Start pauses the level as anywhere. At the quit's question the walking pad's B SHALL go back to the board, another pad's B leaving it up.
 
 #### Scenario: Thirty played games on the TV
 - **WHEN** thirty games at Dreadbeard are played to their ends by posted pads
@@ -94,3 +94,24 @@ A reference bound to one part of a packed colour or screen position that the eng
 #### Scenario: Sprocket's turret fades in
 - **WHEN** Sprocket builds her turret, each piece cloned at alpha 0 and its alpha handed by reference to her slide macro
 - **THEN** each piece's tint alpha rises to 255 within a second of its spawn (5-11 steps measured) and the pieces are drawn
+
+### Requirement: B at a question says no
+At a dialogue's yes-or-no question B SHALL answer no, as the original prompt page's own back actions do, closing the question with no attack fired by that press.
+
+#### Scenario: B at Dreadbeard's question
+- **WHEN** B is pressed at Dreadbeard's question on hub stage 2
+- **THEN** the question goes down unanswered yes, the hero attacks nothing on that press, and his next talk asks it again
+
+### Requirement: A stone's name shows where the scripts show it
+A card game's board SHALL show the name of each stone as it lands, while the board keeps its name box up, and the hand select SHALL name the stone a slot is set to while a hand is changed, each name the disc's string read at run time.
+
+#### Scenario: Fangs' tutorial
+- **WHEN** Fangs' first game on a fresh save is played to its win
+- **THEN** a name shows over each of the nine stones placed, each the placed stone's own
+
+### Requirement: The board's empty place is never drawn
+From the step a card game's board goes until the pirate's scene aims the view, the TV SHALL draw the view from before the game in place of the board's empty place, cut to without easing.
+
+#### Scenario: A game quit, lost and won
+- **WHEN** a game is quit, one lost and one won, and their ends filmed at 60 frames a second
+- **THEN** no frame between the board and the pirate's scene or loot shows the board's empty place
