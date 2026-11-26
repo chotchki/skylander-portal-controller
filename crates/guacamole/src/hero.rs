@@ -460,6 +460,53 @@ pub(crate) fn step_gaits(time: Res<Time>, mut heroes: Query<(&HeroBody, &mut Her
     }
 }
 
+/// What the TV keeps of a played card game's views (openspec AS.876): the
+/// view it drew as the board took the hero's slot (the room by the pirate,
+/// as the kid saw it at his yes) and the scripts' viewport as the board's
+/// manager last aimed it.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub(crate) struct CardViews {
+    before: Option<View>,
+    board: Option<(Vec3, guacamole::script_engine::Angles)>,
+}
+
+impl CardViews {
+    /// One step's note: the board holding the slot keeps its view (and,
+    /// the first step, the TV's view before it); no game, nothing kept.
+    pub(crate) fn note(
+        &mut self,
+        restore: guacamole::card_game::Restore,
+        drawn: &View,
+        now: (Vec3, guacamole::script_engine::Angles),
+    ) {
+        use guacamole::card_game::Restore;
+        match restore {
+            Restore::Replaced => {
+                self.before.get_or_insert(*drawn);
+                self.board = Some(now);
+            }
+            Restore::Idle => *self = Self::default(),
+            Restore::Asked => {}
+        }
+    }
+
+    /// The view to draw in place of the scripts' (openspec AS.876): after the
+    /// board's teardown, while he isn't given back yet and the scripts'
+    /// viewport still stands where the board left it, the board is gone
+    /// from there and nothing of the level is: the view from before the
+    /// game. The pirate's loot aims nothing; his scene's camera, once it
+    /// moves the viewport, is drawn again.
+    pub(crate) fn instead(
+        &self,
+        restore: guacamole::card_game::Restore,
+        now: (Vec3, guacamole::script_engine::Angles),
+    ) -> Option<View> {
+        (restore == guacamole::card_game::Restore::Asked && self.board == Some(now))
+            .then_some(self.before)
+            .flatten()
+    }
+}
+
 /// One game frame of the gameplay camera: the view the camera's scripts
 /// left this step while they drive (openspec AG.28), else the chain on the
 /// hero's pivot as his step began. One hero walks (pad-input's One pad walks
@@ -476,6 +523,7 @@ pub(crate) fn step_cameras(
         (&mut FollowCamera, &mut Transform, Option<&mut Projection>),
         Without<HeroBody>,
     >,
+    mut card_views: Local<CardViews>,
 ) {
     let (hero, run) = match heroes.single() {
         Ok((h, r)) => (Some(h), r),
@@ -496,6 +544,8 @@ pub(crate) fn step_cameras(
     // drawn, not held. Until he's given back (`Restore::Asked`, openspec
     // AS.876) the pirate's loot, win, loss and quit scenes aim that viewport
     // too: held, the board's place drew the void under the level for 15 s.
+    // Between the board's teardown and his scene's first aim nothing aims
+    // it, and the view from before the game is drawn there ([`CardViews`]).
     // Only a run that plays the game ever sets it.
     let board_holds = world
         .as_deref()
@@ -515,8 +565,18 @@ pub(crate) fn step_cameras(
                 }
                 follow.hold = ViewHold::Scripts;
                 let v = world.viewport();
-                follow.drawn = scripts_view(v, feet);
-                v.transform()
+                let restore = world.card_streams.restore();
+                card_views.note(restore, &follow.drawn, (v.eye, v.angles));
+                match card_views.instead(restore, (v.eye, v.angles)) {
+                    Some(before) => {
+                        follow.drawn = before;
+                        viewed(&follow.drawn)
+                    }
+                    None => {
+                        follow.drawn = scripts_view(v, feet);
+                        v.transform()
+                    }
+                }
             }
             _ => {
                 match &state {
