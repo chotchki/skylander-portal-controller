@@ -221,14 +221,17 @@ pub fn west(level: &str) -> impl Iterator<Item = &'static str> {
     WEST.iter().copied().filter(move |_| on)
 }
 
-/// The fourth beam set, by name (openspec AS.776): its ice block
+/// The fourth beam set, by name (openspec AS.776, AS.796): its ice block
 /// (`Melting_Ice_blocks_reflect_4`, `Ice_Cube.ai`) stands across the way
 /// to Setup_003's first trigger, unlisted an invisible wall. Listed it
 /// stands as an ice block, its start (`Reflect_Start(4)`) beams to the
 /// pivot (`Reflect_Pivot_Round(3)`), whose switch turns it 45° a press, and
-/// the post (`Reflect_Post(1)`) faces the block. What powers the post is
-/// unread (AS.796): no pivot facing points at it, so the block doesn't melt
-/// yet.
+/// the post (`Reflect_Post(1)`) faces the block. The post is fed by
+/// [`WEST`]'s push block taken back: its script snaps its track to 15 ft
+/// steps from its own placed spot and starts it two steps west, so after
+/// the third block melts it goes back north and east to that spot, where
+/// the pivot's first turn lights its crystal and the crystal beams south
+/// to the post.
 pub const SET_4: [&str; 4] = [
     "Reflect_Start(4)",
     "Reflect_Pivot_Round(3)",
