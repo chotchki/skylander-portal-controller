@@ -236,6 +236,46 @@ fn a_measurement_reads_from_its_paths_other_point() {
     assert_eq!(vm.local(id, "got"), Some(Value::Float(7.0)));
 }
 
+/// A placement reference as a measurement's other point is the actor it
+/// names (as-aim-ref, the oracle's read: `Calc - Autoaim At Actors` puts
+/// its `from` at distance 0 from the centre macro's `actor` and pitches
+/// from the aimer's feet), so the host is told the referent, never the
+/// reference's own point.
+#[test]
+fn a_reference_as_the_other_point_is_the_actor_it_names() {
+    let p = program(|w| {
+        let got = w.variable("got", "ValueInfo", Some(FLOAT));
+        let r = w.variable("r", "PlacementReference", None);
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let l = w.value(&[El::Local(r)]);
+                let rhs = w.reference(&[El::Member("optoplevelbehavior", "my")], None);
+                let o = w.op(Class::SetReference, "set reference");
+                w.refer(o, 0x1C, l);
+                w.refer(o, 0x20, rhs);
+                w.push(o);
+                let v = w.rhs(
+                    FLOAT,
+                    &[
+                        El::Member("optoplevelbehavior", "my"),
+                        El::Member("test", "distance"),
+                    ],
+                );
+                let from = w.reference(&[El::Local(r)], None);
+                w.refer(v, 0x18, from);
+                w.set(&[El::Local(got)], v);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, config());
+    let id = vm.add(HANDLE, "Hero", 0);
+    let mut host = Members::default();
+    vm.tick(id, &mut host).unwrap_or_else(|h| panic!("{h}"));
+    assert_eq!(vm.local(id, "got"), Some(Value::Float(7.0)));
+}
+
 /// A native call binds each argument to the parameter the macro's own
 /// INTERFACE names (any case) and reads what it asks back from the callee's
 /// frame as the body returns; a parameter the macro doesn't declare stops.

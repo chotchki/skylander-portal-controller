@@ -1804,3 +1804,116 @@ fn ag39s_falls_land_as_theirs_with_his_scripts_driving() {
     assert!(near >= 37, "{near} of {falls} within a record of theirs");
     assert!(never <= 2, "{never} never landing");
 }
+
+/// Spyro, whose fireball keeps its autoaim's pitch (`missile pitch`).
+const SPYRO: Character = Character {
+    archive: "character/016_spyro.bld",
+    load_file: "016_Spyro",
+    toy: 16,
+};
+
+/// The oracle's three shots from beside anchor A (as-aim-ref, 2026-11-26:
+/// Spyro swapped in at anchor A, turned toward `barrel_b_intact(1)`, the
+/// first button tapped three times): where he stood, his facing, what each
+/// shot broke and the pitch and heading his fireball kept, degrees.
+const ORACLE_SHOTS: [([f32; 3], f32, &str, f32, f32); 3] = [
+    (
+        [31.136, 51.454, -73.002],
+        253.3,
+        "pottery_2(5)",
+        11.5778,
+        -149.9774,
+    ),
+    (
+        [31.206, 51.439, -73.048],
+        254.4,
+        "barrel_b_intact(1)",
+        26.8912,
+        -105.4595,
+    ),
+    (
+        [31.229, 51.434, -73.057],
+        261.0,
+        "barrel_b_intact(4)",
+        21.3296,
+        -98.8711,
+    ),
+];
+
+/// as-aim-ref: a hero's autoaim pitches from his feet to his target's
+/// centre, as the oracle's does. `Calc - Autoaim At Actors` lifts its
+/// `from` to the aimer's centre and then sets it back onto where he stands
+/// (a reference as the other point is where its actor stands), so every
+/// pitch it keeps is from the ground he stands on: 7-11 degrees over the
+/// centre-to-centre one at these three shots. Spyro put where the oracle's
+/// stood, facing as it faced, breaks the same three breakables in turn
+/// and keeps each shot's pitch and heading within 0.05 degree of the
+/// oracle's.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn a_heros_autoaim_pitches_from_his_feet_as_the_oracles() {
+    let started = Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, _) = run_on_level(
+        Mode::Play,
+        "level_213_tutotial",
+        Setup {
+            character: Some(SPYRO),
+            lightning: true,
+            props: true,
+            interface: true,
+            posed_rigs: true,
+            ..Setup::default()
+        },
+    );
+    run.world.skip_cutscenes = true;
+    for _ in 0..2 {
+        let _ = run.step_play();
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    let idle = pad([false; 4], Stick::CENTRED);
+    for _ in 0..120 {
+        run.bench.pads[0] = idle;
+        let _ = run.step_play();
+    }
+    let me = run.vm.placement_of(run.hero).expect("his placement");
+    let kept = |run: &Run, name: &str| {
+        run.vm
+            .local(me, name)
+            .and_then(|v| run.vm.value(v).as_f32())
+    };
+    for (at, facing, target, pitch, heading) in ORACLE_SHOTS {
+        let (foe, _) = run.placed(target);
+        assert!(
+            run.world.actor(foe).is_some_and(|a| !a.removed),
+            "{target} stands"
+        );
+        let spot = Vec3::from_array(at);
+        for _ in 0..10 {
+            run.put(spot, facing);
+            run.bench.pads[0] = idle;
+            let _ = run.step_play();
+        }
+        for k in 0..60 {
+            run.bench.pads[0] = press(0, 0, k);
+            let _ = run.step_play();
+        }
+        let (p, h) = (kept(&run, "missile pitch"), kept(&run, "missile heading"));
+        println!("{target}: pitch {p:?} (oracle {pitch}), heading {h:?} (oracle {heading})");
+        let p = p.expect("a pitch kept");
+        let h = h.expect("a heading kept");
+        assert!(
+            (p - pitch).abs() < 0.05,
+            "{target}: pitch {p} against {pitch}"
+        );
+        assert!(
+            (h - heading).abs() < 0.05,
+            "{target}: heading {h} against {heading}"
+        );
+        assert!(
+            run.world.actor(foe).is_none_or(|a| a.removed),
+            "{target} broken"
+        );
+    }
+    println!("{:.2?}; load after: {}", started.elapsed(), load());
+}

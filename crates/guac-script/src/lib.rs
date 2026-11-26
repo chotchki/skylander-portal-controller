@@ -602,7 +602,13 @@
 //!   the chest sets `chest reference` to itself again once it has risen and
 //!   then shakes about that point, `Calc - Get Center Point` sets one to
 //!   the same actor twice running. A copied structure's references carry
-//!   none.
+//!   none. As a measurement's other point (`@[r]`) a reference is the actor
+//!   it names, where he stands; its own point is reached only through
+//!   `r/remembered` (read on the oracle, as-aim-ref 2026-11-26: `Calc -
+//!   Autoaim At Actors` lifts the centre macro's `actor` to the aimer's
+//!   centre, then puts its `from` at distance 0 from `[actor]`, and the
+//!   pitch Spyro's fireball keeps is the one from his feet to the target's
+//!   centre on three shots, to 0.01 degree).
 //! - Every member the host answers comes with the op that reads or writes
 //!   it ([`Access::op`]), so the host can answer one asker apart from
 //!   another (openspec AH.150: a point against the gameplay camera, on

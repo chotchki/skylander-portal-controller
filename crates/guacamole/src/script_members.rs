@@ -6165,6 +6165,61 @@ mod tests {
         assert!((p - (pivot + Vec3::Y * up)).length() < 1e-5, "him: {p:?}");
     }
 
+    /// as-aim-ref (the oracle's read, 2026-11-26): `Calc - Autoaim At
+    /// Actors` lifts the centre macro's `actor` over the aimer and then puts
+    /// its own `from` at distance 0 from `[actor]`; the original pitches from
+    /// the aimer's feet, so a placement reference as the other point is where
+    /// its actor stands, and its own lifted point is reached only through
+    /// `/remembered`.
+    #[test]
+    fn a_point_put_at_distance_0_from_a_reference_lands_where_its_actor_stands() {
+        const ACTOR: u32 = 15;
+        const FROM: u32 = 16;
+        let mut e = bench();
+        let mut w = world();
+        let solid = guac_motion::tuning::eruptor_solid();
+        let pivot = Vec3::new(2.0, 1.5, -3.0);
+        e.hero = Some(Hero::actor(solid, pivot, 0.0));
+        w.actors.insert(HERO, Actor::blank());
+        let own = |w: &mut ScriptWorld, e: &mut Bench, cell: u32| {
+            w.referenced(cell, Value::Entity(HERO), e);
+            let mut a = at(
+                "placementreference",
+                "remembered",
+                Some(Value::Entity(HERO)),
+                None,
+            );
+            a.via = Some(cell);
+            w.get_member(&a, Member::Remembered, e).unwrap()
+        };
+        let actor = own(&mut w, &mut e, ACTOR);
+        let from = own(&mut w, &mut e, FROM);
+        let mut lift = at(
+            "positionmeasurement",
+            "vertical offset",
+            Some(actor),
+            Some(Value::Entity(HERO)),
+        );
+        lift.placement = HERO;
+        w.set_member(&lift, Member::VerticalOffset, Value::Float(3.0), &mut e)
+            .unwrap();
+        let centre = pivot + Vec3::Y * (3.0 * METRES_PER_FOOT);
+        assert!((w.point(actor, &mut e).unwrap() - centre).length() < 1e-5);
+        let put = |w: &mut ScriptWorld, e: &mut Bench, other: Value| {
+            let mut a = at("positionmeasurement", "distance", Some(from), Some(other));
+            a.placement = HERO;
+            w.set_member(&a, Member::Distance, Value::Float(0.0), e)
+                .unwrap();
+            w.point(from, e).unwrap()
+        };
+        // `@[actor]`: the reference read is the actor, at his feet.
+        let p = put(&mut w, &mut e, Value::Entity(HERO));
+        assert!((p - pivot).length() < 1e-5, "at his feet: {p:?}");
+        // `@[actor/remembered]`: the reference's own point, his centre.
+        let p = put(&mut w, &mut e, actor);
+        assert!((p - centre).length() < 1e-5, "at his centre: {p:?}");
+    }
+
     /// openspec AS.431: a reference's point a script has put somewhere
     /// itself (a beam emitter's ray end, displaced 1000 ft along its facing
     /// at its start) keeps its place across the ground when its height is
