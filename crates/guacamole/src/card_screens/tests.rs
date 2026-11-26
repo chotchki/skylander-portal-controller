@@ -304,3 +304,64 @@ fn a_tutorial_stops_line_draws_at_the_screens_left() {
         "nothing drawn"
     );
 }
+
+/// openspec AS.911: the hand select's names are read once an offer, each
+/// stone it can deal once (the recommended hand first, then the
+/// collection), an unread name left out; the focused slot's stone is named
+/// while the hand is being changed, nothing on Play or Custom.
+#[test]
+fn the_hand_select_names_the_focused_slots_stone() {
+    let o = offer(&[3, 1, 2, 4, 5], &[1, 2, 3, 4, 5, 6, 6]);
+    let names = offer_names(Some(&o), |s| (s != 4).then(|| format!("stone {s}")));
+    let read: Vec<u16> = names.iter().map(|(s, _)| *s).collect();
+    assert_eq!(read, [3, 1, 2, 5, 6], "each once, the unread one out");
+    assert!(offer_names(None, |s| Some(s.to_string())).is_empty());
+    let read = CardRead {
+        names,
+        ..Default::default()
+    };
+    let mut edit = HandEdit::new(o);
+    assert_eq!(focused_name(&edit, &read), None, "on Play");
+    edit.focus = HandFocus::Custom;
+    assert_eq!(focused_name(&edit, &read), None, "on Custom");
+    edit.focus = HandFocus::Slot(1);
+    assert_eq!(focused_name(&edit, &read).as_deref(), Some("stone 1"));
+    edit.focus = HandFocus::Slot(3);
+    assert_eq!(focused_name(&edit, &read), None, "its name unread");
+    edit.focus = HandFocus::Slot(0);
+    assert_eq!(focused_name(&edit, &read).as_deref(), Some("stone 3"));
+}
+
+/// openspec AS.911: while the board's name box is up over a landing stone,
+/// its words are drawn in a box at the top of the screen, mid-turn, with
+/// no strip; with no box up, none.
+#[test]
+fn a_landing_stones_name_draws_at_the_top() {
+    let mut app = show_app();
+    at_stop(&mut app, "general turn - wait for card placement", None);
+    app.world_mut().resource_mut::<CardRead>().stone_name = Some("The test's stone".into());
+    app.update();
+    let world = app.world_mut();
+    let mut q = world.query::<(&CardScreenRoot, &Node)>();
+    let boxes: Vec<(&'static str, Node)> = q.iter(world).map(|(r, n)| (r.0, n.clone())).collect();
+    let name = boxes
+        .iter()
+        .find(|b| b.0 == "stone name")
+        .expect("the name's box");
+    assert_eq!((name.1.top, name.1.width), (px(NAME_TOP), percent(100)));
+    let mut texts = world.query::<&Text>();
+    let words: Vec<String> = texts.iter(world).map(|t| t.0.clone()).collect();
+    assert!(words.iter().any(|w| w == "The test's stone"), "{words:?}");
+    assert!(
+        !words.iter().any(|w| w == crate::collected_box::CONTINUE),
+        "no strip mid-turn: {words:?}"
+    );
+    app.world_mut().resource_mut::<CardRead>().stone_name = None;
+    app.update();
+    let world = app.world_mut();
+    let mut roots = world.query::<&CardScreenRoot>();
+    assert!(
+        roots.iter(world).all(|r| r.0 != "stone name"),
+        "gone with its box"
+    );
+}

@@ -272,6 +272,40 @@ pub(crate) struct CardRead {
     pub(crate) loot: Option<LootShown>,
     /// A tutorial stop's line, the disc's words read (openspec AS.877).
     pub(crate) tutorial: Option<String>,
+    /// The name of the stone landing on the board while its box is up, the
+    /// disc's words read (openspec AS.911).
+    pub(crate) stone_name: Option<String>,
+    /// The hand select's stones' names, read once an offer (openspec AS.911).
+    pub(crate) names: Vec<(u16, String)>,
+}
+
+impl CardRead {
+    /// A stone's name as read for the hand select.
+    pub(crate) fn name_of(&self, stone: u16) -> Option<&str> {
+        self.names
+            .iter()
+            .find(|(s, _)| *s == stone)
+            .map(|(_, n)| n.as_str())
+    }
+}
+
+/// Each stone an offer can deal, its name read ([`card_game::stone_name`]).
+fn offer_names(
+    offer: Option<&HandOffer>,
+    name: impl Fn(u16) -> Option<String>,
+) -> Vec<(u16, String)> {
+    let mut out: Vec<(u16, String)> = Vec::new();
+    for s in offer
+        .into_iter()
+        .flat_map(|o| o.recommended.iter().chain(&o.collection))
+    {
+        if !out.iter().any(|(k, _)| k == s)
+            && let Some(n) = name(*s)
+        {
+            out.push((*s, n));
+        }
+    }
+    out
 }
 
 /// A pirate's loot as the TV draws it (openspec AS.673): the reward card's
@@ -392,13 +426,22 @@ fn answer_and_read(
         }
     }
     let vm = &runtime.vm;
+    let offer = card_game::hand_offer(vm);
+    // The names a scan of the program's objects each: read once an offer.
+    let names = if offer == read.offer {
+        read.names.clone()
+    } else {
+        offer_names(offer.as_ref(), |s| card_game::stone_name(vm, &world, s))
+    };
     let now = CardRead {
-        offer: card_game::hand_offer(vm),
+        offer,
         pick: card_game::board_read(vm, &world),
         score: card_game::score(vm, &world),
         board: card_game::manager(vm, &world).is_some(),
         loot: card_game::loot_up(vm, &world).map(|l| LootShown::of(&l, &world)),
         tutorial: card_game::tutorial_line(vm, &world),
+        stone_name: card_game::placed_stone_name(vm, &world),
+        names,
     };
     if *read != now {
         *read = now;
@@ -590,13 +633,21 @@ fn load_card_art(
 /// What's drawn now, to redraw on a change.
 #[derive(Debug, Clone, PartialEq)]
 enum Drawn {
-    Hand(Vec<u16>, HandFocus, bool),
+    /// The hand, the focus, Custom offered, and the focused slot's stone's
+    /// name (openspec AS.911).
+    Hand(Vec<u16>, HandFocus, bool, Option<String>),
     Quit(QuitFocus),
     Loot(LootShown, crate::pad::Labels),
     /// The strip at the bottom: a game's end (lost: A again, B leave; won:
-    /// A on) or a tutorial stop (A on); and the tutorial's line while its
-    /// box is up. One or both.
-    Over(Option<Strip>, Option<String>, crate::pad::Labels),
+    /// A on) or a tutorial stop (A on); the tutorial's line while its box is
+    /// up; the landing stone's name while its box is up (openspec AS.911).
+    /// Any of them.
+    Over(
+        Option<Strip>,
+        Option<String>,
+        Option<String>,
+        crate::pad::Labels,
+    ),
 }
 
 /// A drawn card screen's root, for the shots.
@@ -629,12 +680,19 @@ fn show(
     });
     let want = match (&screens.quit, &screens.hand, &read.loot) {
         (Some(q), _, _) => Some(Drawn::Quit(*q)),
-        (None, Some(e), _) => Some(Drawn::Hand(e.hand.clone(), e.focus, e.can_custom())),
+        (None, Some(e), _) => Some(Drawn::Hand(
+            e.hand.clone(),
+            e.focus,
+            e.can_custom(),
+            focused_name(e, &read),
+        )),
         (None, None, Some(l)) => Some(Drawn::Loot(l.clone(), labels)),
         (None, None, None) => read.pick.as_ref().and_then(|p| {
             let strip = game_over(p.behaviour.as_deref());
             let line = read.tutorial.clone();
-            (strip.is_some() || line.is_some()).then_some(Drawn::Over(strip, line, labels))
+            let name = read.stone_name.clone();
+            (strip.is_some() || line.is_some() || name.is_some())
+                .then_some(Drawn::Over(strip, line, name, labels))
         }),
     };
     let score_want = read.score.filter(|_| read.board);
@@ -657,14 +715,24 @@ fn show(
         }
         if let Some(w) = want {
             let e = match &w {
-                Drawn::Hand(hand, focus, custom) => {
-                    spawn_hand(&mut commands, &pen, art, hand, *focus, *custom)
-                }
+                Drawn::Hand(hand, focus, custom, name) => spawn_hand(
+                    &mut commands,
+                    &pen,
+                    art,
+                    hand,
+                    *focus,
+                    (*custom, name.as_deref()),
+                ),
                 Drawn::Quit(focus) => spawn_quit(&mut commands, &pen, art, *focus),
                 Drawn::Loot(loot, labels) => spawn_loot(&mut commands, &pen, art, loot, *labels),
-                Drawn::Over(strip, line, labels) => {
-                    spawn_over(&mut commands, &pen, art, *strip, line.as_deref(), *labels)
-                }
+                Drawn::Over(strip, line, name, labels) => spawn_over(
+                    &mut commands,
+                    &pen,
+                    art,
+                    *strip,
+                    (line.as_deref(), name.as_deref()),
+                    *labels,
+                ),
             };
             *shown = Some((w, e));
         }
@@ -682,6 +750,22 @@ fn show(
         redrawn.write(Redrawn::Text);
     }
 }
+
+/// The name the hand select shows (openspec AS.911): the focused slot's
+/// stone's while the hand is being changed, as the original's hand select
+/// names the stone a slot is set to (`CardGame Menu - Create Card Name
+/// Sprite`); none on Play or Custom.
+pub(crate) fn focused_name(edit: &HandEdit, read: &CardRead) -> Option<String> {
+    let HandFocus::Slot(k) = edit.focus else {
+        return None;
+    };
+    read.name_of(*edit.hand.get(k)?).map(str::to_owned)
+}
+
+/// Where the landing stone's name box sits, design px from the top: under
+/// the score header, clear of the board (ours; the original's title bar
+/// hangs off its gameplay container, its place unread).
+const NAME_TOP: f32 = 150.0;
 
 fn full_screen(name: &'static str, z: i32) -> impl Bundle {
     (
@@ -731,7 +815,7 @@ fn spawn_hand(
     art: &CardArt,
     hand: &[u16],
     focus: HandFocus,
-    custom: bool,
+    (custom, name): (bool, Option<&str>),
 ) -> Entity {
     let a = art.hand.as_ref();
     commands
@@ -777,6 +861,12 @@ fn spawn_hand(
                             });
                         }
                     });
+                if let Some(name) = name {
+                    panel.spawn((
+                        CardScreenRoot("stone name"),
+                        pen.text(name, Step::Md, Role::Primary),
+                    ));
+                }
                 panel
                     .spawn(Node {
                         flex_direction: FlexDirection::Row,
@@ -974,7 +1064,7 @@ fn spawn_over(
     pen: &Pen,
     art: &CardArt,
     strip: Option<Strip>,
-    line: Option<&str>,
+    (line, name): (Option<&str>, Option<&str>),
     labels: crate::pad::Labels,
 ) -> Entity {
     let a = art.prompt.as_ref();
@@ -1064,6 +1154,37 @@ fn spawn_over(
                 ))
                 .with_children(|b| {
                     b.spawn(pen.text(line, Step::Md, Role::Primary));
+                });
+            })
+            .id();
+        commands.entity(root).add_child(boxed);
+    }
+    if let Some(name) = name {
+        let boxed = commands
+            .spawn((
+                CardScreenRoot("stone name"),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(0),
+                    top: px(NAME_TOP),
+                    width: percent(100),
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+            ))
+            .with_children(|top| {
+                top.spawn((
+                    Node {
+                        padding: UiRect::axes(px(40), px(16)),
+                        border: UiRect::all(px(3)),
+                        border_radius: BorderRadius::all(px(24)),
+                        ..default()
+                    },
+                    BackgroundColor(BOX_FILL),
+                    BorderColor::all(pen.theme.gold),
+                ))
+                .with_children(|b| {
+                    b.spawn(pen.text(name, Step::Lg, Role::Primary));
                 });
             })
             .id();

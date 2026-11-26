@@ -773,13 +773,40 @@ pub fn tutorial_waits_on_accept(behaviour: &str) -> bool {
 /// (the hand's explanation stays into the card's pick); none with no box,
 /// or before its line is in.
 pub fn tutorial_line(vm: &Vm, world: &ScriptWorld) -> Option<String> {
+    manager_box_text(vm, world, "tutorial container")
+}
+
+/// The words of the box the board manager keeps in its local `local`: its
+/// text sprites' strings off the interface model, joined; none with no box
+/// or no words in it yet.
+fn manager_box_text(vm: &Vm, world: &ScriptWorld, local: &str) -> Option<String> {
     let m = manager(vm, world)?;
-    let container = vm.local(m, "tutorial container").map(|v| vm.value(v))?;
+    let container = vm.local(m, local).map(|v| vm.value(v))?;
     if container == Value::Null {
         return None;
     }
     let lines = world.texts_under(container);
     (!lines.is_empty()).then(|| lines.join(" "))
+}
+
+/// The name of the stone landing on the board (openspec AS.911): as a
+/// stone is placed (either player's, `general turn - wait for card
+/// placement`) the board manager puts a title-bar box up with the stone's
+/// `card name`, keeps it in its local `card name intro` while the name's
+/// voice plays, then fades it and takes it down. Its words are the disc's,
+/// read off the interface model at run time; none while no box is up.
+pub fn placed_stone_name(vm: &Vm, world: &ScriptWorld) -> Option<String> {
+    manager_box_text(vm, world, "card name intro")
+}
+
+/// A stone's name as the interface reads it (openspec AS.911): its
+/// `Card_Name_(NNN)` string, the one the hand select's name sprite and the
+/// loot's report show. None where the program or the model doesn't hold it.
+pub fn stone_name(vm: &Vm, world: &ScriptWorld, stone: u16) -> Option<String> {
+    let o = vm
+        .program()
+        .object_named(&format!("Card_Name_({stone:03})"))?;
+    world.text_of(Value::Object(o))
 }
 
 /// Both scores as the board's script holds them (openspec AS.556): the
