@@ -548,6 +548,62 @@ mod tests {
         assert!(failures.is_empty(), "{}", failures.join("\n\n"));
     }
 
+    /// The table through Avian with every body's entity drawn at a turned,
+    /// unevenly scaled `Transform` (the as-201-yard review, openspec
+    /// AS.901): scaled once each body's in (Avian's per-change rescale), and
+    /// each kinematic one's scaled before it goes in (its insert hook, as a
+    /// clone's body is made again on its drawn entity). Every answer stays
+    /// parry's, boxes turned, meshes and sensors too: a seam body's size is
+    /// its own on every entity, not only a capsule's at a uniform scale.
+    #[test]
+    fn the_table_through_avian_on_scaled_entities_agrees_with_parry() {
+        let drawn = Transform {
+            translation: Vec3::new(3.0, -1.0, 2.0),
+            rotation: Quat::from_euler(EulerRot::YXZ, 0.7, 0.3, -0.2),
+            // Narrower than drawn on one axis, wider on two.
+            scale: Vec3::new(0.6, 2.5, 1.7),
+        };
+        let mut failures = Vec::new();
+        for case in conformance::cases() {
+            let mut app = headless();
+            let mut commands = app.world_mut().commands();
+            for body in &case.bodies {
+                let mut e = if body.kind == BodyKind::Kinematic {
+                    let mut e = commands.spawn((drawn, GlobalTransform::from(drawn)));
+                    PreparedBody::new(body).expect(case.name).insert_on(&mut e);
+                    e
+                } else {
+                    let e = spawn_body(&mut commands, body).expect(case.name);
+                    commands.entity(e)
+                };
+                e.insert((drawn, GlobalTransform::from(drawn)));
+            }
+            app.world_mut().flush();
+            app.update();
+            if !case.moves.is_empty() {
+                let mut state = SystemState::<Query<(&SeamBody, &mut Position, &mut Rotation)>>::new(
+                    app.world_mut(),
+                );
+                let mut bodies = state.get_mut(app.world_mut()).unwrap();
+                for &(id, pose) in &case.moves {
+                    set_pose(&mut bodies, id, pose).expect(case.name);
+                }
+            }
+            app.update();
+            let mut state = SystemState::<AvianSeam>::new(app.world_mut());
+            let seam = state.get(app.world()).unwrap();
+            match conformance::run(&seam, &case) {
+                Err(e) => failures.push(format!("{}: avian: {e}", case.name)),
+                Ok(avian) => {
+                    if let Err(e) = conformance::agree(&avian, &parry_answers(&case)) {
+                        failures.push(format!("{}: avian on scaled entities: {e}", case.name));
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+    }
+
     /// AS.901: a body on an entity whose `Transform` is scaled (a script
     /// clone's, drawn at its scale) answers as parry's, at its own size: a
     /// ray past its side misses, one through it meets its face where parry
