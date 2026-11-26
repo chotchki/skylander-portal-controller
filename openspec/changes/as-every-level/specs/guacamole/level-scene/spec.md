@@ -334,6 +334,13 @@ Level 208's second and third ice blocks SHALL melt by their own beam sets, a con
 - **WHEN** a hero pushes the second push block to its track's end and presses △ at the pivot's switch, then walks west attacking the walls and pushes the third push block south
 - **THEN** the second block melts, both walls fall and the third block melts, with nothing stopped
 
+### Requirement: Level 208's fourth ice block and the fights past it
+Level 208's fourth ice block SHALL melt by set 3's push block taken back to its placed spot (two pushes north, two east) and a press at the fourth pivot's switch; past it Setup_003's nine foes and Setup_004's seventeen fight on their own triggers, armour taking a Cyclops's hits first, the slope's blocker solid until a player stands before it and each snowman bursting as a player runs into it (headless the block gone at step 6142, Setup_003 over at 9673).
+
+#### Scenario: The fourth block and on
+- **WHEN** a hero pushes the third push block back north twice and east twice, presses △ at the fourth pivot's switch and walks on to Setup_003 and Setup_004
+- **THEN** the fourth block melts, both fights' foes fall to his attacks and a Giant walks into Setup_004's yard, with nothing stopped
+
 ### Requirement: Level 208's river edge
 Level 208 SHALL bring a hero who goes over the frozen river's north edge back up: the level's mesh leaves a 4 m gap where the river's floor runs to a 20 m drop, and the jump pad at the drop's foot carries him back onto the river (headless 25 s from the edge; on the Mac he was back up 5 s after reaching the pad).
 
