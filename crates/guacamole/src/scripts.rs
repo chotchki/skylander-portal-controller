@@ -4890,6 +4890,8 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
         placements.extend(crate::level_208::west(name).map(str::to_owned));
         // The fourth beam set (openspec AS.776).
         placements.extend(crate::level_208::set_4(name).map(str::to_owned));
+        // The way down to Setup_004's second trigger (openspec AS.798).
+        placements.extend(crate::level_208::way_down(name).map(str::to_owned));
         // Level 203's start area (openspec AS.704).
         placements.extend(crate::level_203::start(name).map(str::to_owned));
     }

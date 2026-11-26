@@ -245,12 +245,33 @@ pub fn set_4(level: &str) -> impl Iterator<Item = &'static str> {
     SET_4.iter().copied().filter(move |_| on)
 }
 
+/// The way down to Setup_004's second trigger, by name (openspec AS.798):
+/// the `Blocker` (`Blocker_minions.ai`, a box 35 by 35 ft on the slope
+/// below Setup_004's first trigger). Each step its script asks whether a
+/// player stands within its 70 ft on its facing side: none, its box is
+/// solid to actors; one, it's off. Unlisted its box stood solid always, an
+/// invisible wall that held him at (-170.7, 5.9, 39.3) and with him
+/// Setup_004's circling Chompies, which wait on that trigger.
+pub const WAY_DOWN: [&str; 1] = ["Blocker"];
+
+/// [`WAY_DOWN`] on 208 alone.
+pub fn way_down(level: &str) -> impl Iterator<Item = &'static str> {
+    let on = level == LEVEL;
+    WAY_DOWN.iter().copied().filter(move |_| on)
+}
+
 /// What fights on level 208 (openspec AS.345), walked as creatures: the
 /// reveal's five Ice Chompies, then Setup_002's controller, its six foes
 /// (`Setup_002_Enemies`) and Noodles' scene at its first gate; then
 /// Setup_003's controller (openspec AS.402), the nine foes its script
 /// names (`enemy a` to `enemy i`: the bomb thrower and eight Cyclopes) and
-/// the bomber's reveal by the fourth ice block.
+/// the bomber's reveal by the fourth ice block; then Setup_004's
+/// controller (openspec AS.403, AS.798) and the fifteen its script names
+/// (`enemy a` to `enemy o`: seven Ice Chompies, two heavy Biclopes, two
+/// bomb throwers, four Cyclopes). Woken on its first trigger, it circles
+/// four of the Chompies round `Setup_004_Anchor` until a player reaches
+/// its second trigger down the slope ([`WAY_DOWN`]), then sends them, the
+/// Cyclopes, the Biclopes and the bombers in.
 pub const WAY: Encounter = Encounter {
     level: LEVEL,
     placements: &[
@@ -278,6 +299,22 @@ pub const WAY: Encounter = Encounter {
         "Enemy_Cyclops_Near(25)",
         "Enemy_Cyclops_Near(26)",
         "Cyclops_Bomber_IGC_Trigger",
+        "Setup_004_Controller",
+        "Enemy_Chompy_Ice(1)",
+        "Enemy_Chompy_Ice(11)",
+        "Enemy_Chompy_Ice(12)",
+        "Enemy_Chompy_Ice(13)",
+        "Enemy_Chompy_Ice(14)",
+        "Enemy_Chompy_Ice(15)",
+        "Enemy_Chompy_Ice(16)",
+        "Enemy_Biclops_Heavy_S2(3)",
+        "Enemy_Biclops_Heavy_S2(4)",
+        "Enemy_BombThrower(1)",
+        "Enemy_BombThrower(2)",
+        "Enemy_Cyclops_Near(1)",
+        "Enemy_Cyclops_Near(2)",
+        "Enemy_Cyclops_Near(3)",
+        "Enemy_Cyclops_Near(6)",
     ],
     clones: &[],
     steered: &[],
@@ -490,6 +527,24 @@ mod tests {
                 );
             }
             assert_eq!(set_4(other).count(), 0);
+        }
+    }
+
+    /// openspec AS.798: the way down to Setup_004's second trigger is on
+    /// 208's listing and on no other level's.
+    #[test]
+    fn level_208s_way_down_to_setup_004_is_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        assert_eq!(way_down(LEVEL).collect::<Vec<_>>(), WAY_DOWN);
+        assert!(on.whitelist.lists("Blocker", "C:/l/Unlisted.ai"));
+        for other in ["level_202", "level_205_piratecards"] {
+            let off = level_config(Mode::Play, &files, 5, other);
+            assert!(
+                !off.whitelist.lists("Blocker", "C:/l/Unlisted.ai"),
+                "{other}"
+            );
+            assert_eq!(way_down(other).count(), 0);
         }
     }
 

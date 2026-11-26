@@ -1692,6 +1692,137 @@ fn level_208s_setup_003_walked_from_the_fourth_ice_block() {
     println!("load at end: {}", load());
 }
 
+/// openspec AS.403 and AS.798: Setup_004 on its own triggers, set down on
+/// its first (past Setup_003's gate). The controller wakes into its set-up
+/// scene, circling four Ice Chompies round its anchor; the stick down the
+/// slope past the `Blocker`, which turns its box off as he comes in front
+/// of it, to the second trigger, where the scene goes on; then the stick
+/// and the attack at the thirteen of its foes a walked hero reaches, in
+/// 600-step rounds with his health set back each round, until each is
+/// beaten and the controller is in its last behaviour. Its two bomb
+/// throwers stand on ledges above the yard no walk reaches (AS.1010), so
+/// the controller's end isn't asserted. Four rounds with no change end it.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_208s_setup_004_by_its_own_triggers() {
+    println!("load at start: {}", load());
+    let mut stops = Vec::new();
+    let mut run = joined_208(&mut stops);
+    for k in 0..6000u32 {
+        still(&mut run, &mut stops, [false; 4]);
+        if k > 200 && scene_of(&run).is_none() && !guacamole::anchors::scene_holds(&run.vm) {
+            break;
+        }
+    }
+    assert_eq!(behaviour(&run, SETUP_004_CONTROLLER), "asleep");
+    let first = run.at("Setup_004_Trigger(1)");
+    run.put(first, 0.0);
+    for _ in 0..120 {
+        still(&mut run, &mut stops, [false; 4]);
+    }
+    assert_eq!(
+        behaviour(&run, SETUP_004_CONTROLLER),
+        "circling chompies - set up scene"
+    );
+    // Down the slope: the blocker's box solid until he's in front of it.
+    let blocker = run.placed("Blocker").0;
+    let solid = |run: &Run| {
+        run.world
+            .actor(blocker)
+            .unwrap()
+            .solid
+            .interacts_with_actors
+            != 0
+    };
+    assert!(solid(&run), "the blocker stands before he comes");
+    let second = run.at("Setup_004_Trigger(2)");
+    let opened = std::cell::Cell::new(None);
+    let down = fight_to(
+        &mut run,
+        &mut stops,
+        &[],
+        &[],
+        second,
+        4000,
+        &|run: &Run| {
+            if opened.get().is_none() && !solid(run) {
+                opened.set(Some(run.steps));
+            }
+            flat(run.hero().pivot, second) < 2.0
+        },
+    );
+    println!(
+        "down to the second trigger: {} at step {}, the blocker off at {:?}",
+        down.ended,
+        run.steps,
+        opened.get()
+    );
+    assert!(down.ended, "held on the way down at {}", run.hero().pivot);
+    assert!(opened.get().is_some(), "the blocker never opened");
+    let full = run.health().expect("his health");
+    let walked: Vec<&str> = SETUP_004_FOES
+        .iter()
+        .copied()
+        .filter(|n| !SETUP_004_LEDGE.contains(n))
+        .collect();
+    let (mut log, mut last) = (Vec::new(), HashMap::new());
+    let (mut lowest, mut quiet) = (full, 0);
+    let beaten = |run: &Run| walked.iter().all(|n| removed(run, n));
+    for _ in 0..30 {
+        set_health(&mut run, full);
+        let f = fight_to(
+            &mut run,
+            &mut stops,
+            &walked,
+            &[SETUP_004_CONTROLLER],
+            second,
+            600,
+            &beaten,
+        );
+        lowest = lowest.min(f.health.1);
+        let mut changed = false;
+        for (step, n, b) in f.log {
+            if last.get(&n) != Some(&b) {
+                last.insert(n.clone(), b.clone());
+                log.push((step, n, b));
+                changed = true;
+            }
+        }
+        if f.ended {
+            break;
+        }
+        assert!(
+            run.health().is_some_and(|h| h > 0.0),
+            "he fell at {}",
+            run.steps
+        );
+        quiet = if changed { 0 } else { quiet + 1 };
+        assert!(quiet < 4, "Setup_004 stalled: {log:?}");
+    }
+    for (step, n, b) in &log {
+        println!("  {step} {n} {b}");
+    }
+    for _ in 0..120 {
+        still(&mut run, &mut stops, [false; 4]);
+    }
+    let end = behaviour(&run, SETUP_004_CONTROLLER);
+    let ledge: Vec<_> = SETUP_004_LEDGE
+        .iter()
+        .map(|n| (*n, behaviour(&run, n), run.at(n)))
+        .collect();
+    println!(
+        "setup_004: step {}, health {full} lowest {lowest}, controller {end}, the ledge's {ledge:?}",
+        run.steps
+    );
+    for n in &walked {
+        assert!(first_in(&log, n, &["removed"]).is_some(), "{n} beaten");
+    }
+    assert!(lowest < full, "never hurt: {lowest}");
+    assert_eq!(end, "in which you triumph and the script ends");
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
+}
+
 /// A creature's armour level as its own script holds it (`armorlevel`, the
 /// Cyclopes' local), while it's run.
 fn armour_of(run: &Run, name: &str) -> Option<i64> {
@@ -1821,6 +1952,28 @@ const ICE_BLOCK_3: &str = "Melting_Ice_blocks_reflect_3";
 const ICE_BLOCK_4: &str = "Melting_Ice_blocks_reflect_4";
 const PIVOT_3: &str = "Reflect_Pivot_Round(3)";
 const POST: &str = "Reflect_Post(1)";
+
+/// Setup_004's controller and the foes its script names (openspec AS.403);
+/// its two bomb throwers walk onto ledges above the yard (AS.1010).
+const SETUP_004_CONTROLLER: &str = "Setup_004_Controller";
+const SETUP_004_FOES: [&str; 15] = [
+    "Enemy_Chompy_Ice(1)",
+    "Enemy_Chompy_Ice(11)",
+    "Enemy_Chompy_Ice(12)",
+    "Enemy_Chompy_Ice(13)",
+    "Enemy_Chompy_Ice(14)",
+    "Enemy_Chompy_Ice(15)",
+    "Enemy_Chompy_Ice(16)",
+    "Enemy_Biclops_Heavy_S2(3)",
+    "Enemy_Biclops_Heavy_S2(4)",
+    "Enemy_BombThrower(1)",
+    "Enemy_BombThrower(2)",
+    "Enemy_Cyclops_Near(1)",
+    "Enemy_Cyclops_Near(2)",
+    "Enemy_Cyclops_Near(3)",
+    "Enemy_Cyclops_Near(6)",
+];
+const SETUP_004_LEDGE: [&str; 2] = ["Enemy_BombThrower(1)", "Enemy_BombThrower(2)"];
 
 /// The spike gate past Setup_003 (openspec AS.402).
 const GATE_3: &str = "Spike_Gate_Metal_Template(3)";
