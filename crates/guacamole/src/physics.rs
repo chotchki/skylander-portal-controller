@@ -581,9 +581,10 @@ mod tests {
             app.world_mut().flush();
             app.update();
             if !case.moves.is_empty() {
-                let mut state = SystemState::<Query<(&SeamBody, &mut Position, &mut Rotation)>>::new(
-                    app.world_mut(),
-                );
+                let mut state =
+                    SystemState::<Query<(&SeamBody, &mut Position, &mut Rotation)>>::new(
+                        app.world_mut(),
+                    );
                 let mut bodies = state.get_mut(app.world_mut()).unwrap();
                 for &(id, pose) in &case.moves {
                     set_pose(&mut bodies, id, pose).expect(case.name);
