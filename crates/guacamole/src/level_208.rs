@@ -353,9 +353,11 @@ mod tests {
             assert!(!crate::scripts::is_level_person(LEVEL, name), "{name}");
         }
         // The Ice Chompies' own script stays off for the level's others
-        // (AS.345's).
+        // (AS.345's): the big battle's, still unlisted; Setup_004's
+        // (AS.403) are walked by name.
         let ice = "C:/tfb/Content/Levels/_Enemies/Chompy_Ice/scripts/S2_Enemy_IceChompy.ai";
-        assert!(!on.whitelist.lists("Enemy_Chompy_Ice(1)", ice));
+        assert!(!on.whitelist.lists("Enemy_Chompy_Ice(8)", ice));
+        assert!(WAY.placements.contains(&"Enemy_Chompy_Ice(1)"));
     }
 
     /// openspec AS.406: the AI's hint is on 208's listing and on no other
