@@ -305,6 +305,74 @@ fn a_tutorial_stops_line_draws_at_the_screens_left() {
     );
 }
 
+/// openspec AS.934: B at the card game's quit confirm is No, the board
+/// player's alone (the confirm is the walking pad's, AS.930): another pad's
+/// B leaves it up; the walking pad's B (or a Back no pad made: Esc, a
+/// posted press) answers No, the level going on.
+#[test]
+fn the_quit_confirm_takes_the_board_players_b_as_no() {
+    assert!(back_is_walkers(Some(1), &[1]));
+    assert!(back_is_walkers(Some(1), &[2, 1]), "both at once");
+    assert!(!back_is_walkers(Some(1), &[2]), "another pad's");
+    assert!(back_is_walkers(Some(1u8), &[]), "Esc or a posted press");
+    assert!(!back_is_walkers(None, &[2u8]), "no walker");
+
+    let mut app = App::new();
+    app.init_resource::<CardScreensOpen>()
+        .init_resource::<CardScreens>()
+        .init_resource::<CardAsk>()
+        .init_resource::<LevelPads>()
+        .init_resource::<Time<Real>>()
+        .add_message::<TvInput>()
+        .add_systems(Update, presses);
+    let walker = app.world_mut().spawn(Gamepad::default()).id();
+    let other = app.world_mut().spawn(Gamepad::default()).id();
+    {
+        let mut pads = app.world_mut().resource_mut::<LevelPads>();
+        pads.show();
+        let frame = |id| crate::pad::PadFrame {
+            id,
+            stick: Vec2::ZERO,
+            pressed: Vec::new(),
+            held: [false; 4],
+            shoulders: [false; 4],
+        };
+        pads.seat_mut()
+            .unwrap()
+            .step(&[frame(walker), frame(other)]);
+        assert_eq!(pads.seat().unwrap().walking(), Some(walker));
+    }
+    app.world_mut().resource_mut::<CardScreensOpen>().0 = true;
+    app.world_mut().resource_mut::<CardScreens>().quit = Some(QuitFocus::No);
+    let back_by = |app: &mut App, pad: Entity| {
+        for e in [walker, other] {
+            app.world_mut()
+                .get_mut::<Gamepad>(e)
+                .unwrap()
+                .digital_mut()
+                .clear();
+        }
+        app.world_mut()
+            .get_mut::<Gamepad>(pad)
+            .unwrap()
+            .digital_mut()
+            .press(GamepadButton::East);
+        app.world_mut().write_message(TvInput::Back);
+        app.update();
+    };
+    back_by(&mut app, other);
+    assert_eq!(
+        app.world().resource::<CardScreens>().quit,
+        Some(QuitFocus::No),
+        "another pad's B leaves it up"
+    );
+    assert!(app.world().resource::<CardScreens>().answered.is_empty());
+    back_by(&mut app, walker);
+    assert_eq!(app.world().resource::<CardScreens>().quit, None);
+    assert!(!app.world().resource::<CardAsk>().quit, "no, not quit");
+    assert_eq!(app.world().resource::<CardScreens>().answered, ["quit: no"]);
+}
+
 /// openspec AS.911: the hand select's names are read once an offer, each
 /// stone it can deal once (the recommended hand first, then the
 /// collection), an unread name left out; the focused slot's stone is named

@@ -24,7 +24,8 @@
 //!   quit the game, the focus on No; Yes runs the board's own `Quit - Yes`
 //!   ([`card_game::quit`]), which tells the pirate and takes the board
 //!   down, and the hero comes back through the TV's swap (AS.553); No goes
-//!   back to the board. Either answer lets the level go on.
+//!   back to the board, and so does the board player's B (AS.934: another
+//!   pad's B leaves the question up). Either answer lets the level go on.
 //!
 //! None of it shows on a run that plays no game: the hand select's page and
 //! the board come up only where a yes at a pirate plays the game, which only
@@ -519,6 +520,14 @@ pub(crate) fn asks_quit<Id: PartialEq>(
     matches!((pause, walking), (Some(crate::pad::Pause::Start { by }), Some(w)) if by == w)
 }
 
+/// Whether a Back this frame is the board player's (openspec AS.934): the
+/// quit confirm is the walking pad's (AS.930), so another pad's B leaves it
+/// up. `east_down` are the pads whose East went down this frame; a Back no
+/// pad's East made (Esc, a posted press) is the board player's.
+pub(crate) fn back_is_walkers<Id: PartialEq>(walking: Option<Id>, east_down: &[Id]) -> bool {
+    east_down.is_empty() || walking.is_some_and(|w| east_down.contains(&w))
+}
+
 /// The quit confirm as it stands next: up (focus on No) once Start waits
 /// the level over a board, kept as it was while both hold, gone when
 /// either ends.
@@ -538,11 +547,18 @@ fn presses(
     mut ask: ResMut<CardAsk>,
     mut pads: ResMut<LevelPads>,
     time: Res<Time<Real>>,
+    gamepads: Query<(Entity, &Gamepad)>,
 ) {
     let read: Vec<TvInput> = inputs.read().copied().collect();
     if !open.0 {
         return;
     }
+    let east_down: Vec<Entity> = gamepads
+        .iter()
+        .filter(|(_, g)| g.just_pressed(GamepadButton::East))
+        .map(|(e, _)| e)
+        .collect();
+    let walkers_back = back_is_walkers(pads.seat().and_then(|s| s.walking()), &east_down);
     for input in read {
         if let Some(focus) = screens.quit {
             let answer = match input {
@@ -554,7 +570,7 @@ fn presses(
                     None
                 }
                 TvInput::Activate => Some(focus == QuitFocus::Yes),
-                TvInput::Back => Some(false),
+                TvInput::Back if walkers_back => Some(false),
                 _ => None,
             };
             if let Some(yes) = answer {
