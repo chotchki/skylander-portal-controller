@@ -49,6 +49,20 @@ Once a card game's teardown asks for the hero's character again and no scene hol
 - **WHEN** a game on hub stage 2 is quit at its first pick and his quit scene ends
 - **THEN** the hero is back, put back after the scene, and a full stick walks him over 3 units in 150 steps, nothing stopped
 
+### Requirement: A long card sitting ends every game
+A slide SHALL end where it stands once what it eases has left play: its receiver taken off or a sprite removed, or the placement whose own local it eases taken off. A looping slide on a board's sprite then holds no slider past the board, and every game of a long sitting ends.
+
+#### Scenario: Thirty games at Dreadbeard in one run
+- **WHEN** thirty games on hub stage 2 are quit at their first pick in one run
+- **THEN** each ends, the sliders running as each ends 6 to 35 of the pool's 400
+
+### Requirement: The board's player alone steers and quits it
+While a played card game's board holds the hero's slot, the stick SHALL steer the board's cursor and walk no one, and only the walking pad's Start SHALL ask the quit; another pad's Start pauses the level as anywhere.
+
+#### Scenario: Thirty played games on the TV
+- **WHEN** thirty games at Dreadbeard are played to their ends by posted pads
+- **THEN** each ends, and the hero stands where the board found him, 0.000 units off, until it lets him go
+
 ### Requirement: The card game's templates play their clips
 The extract SHALL hold the card game's streams' and stones' templates' palettes, read by the levels' palettes rule, and a level that links the card game SHALL give those templates their clips' lengths, kinds, loops and names, so the board's flips time by them.
 
