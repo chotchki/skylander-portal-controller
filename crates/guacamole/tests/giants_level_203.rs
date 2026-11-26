@@ -289,7 +289,7 @@ fn level_203s_start_area_runs_and_he_walks_to_its_gate() {
         GATE,
     ];
     let mut ran = std::collections::HashSet::new();
-    walk(&mut run, &mut stops, &ALONG, &mut |run| {
+    let mut watch = |run: &Run| {
         for n in guacamole::level_203::START {
             if !matches!(behaviour(run, n).as_str(), "-" | "asleep" | "removed") {
                 ran.insert(n);
@@ -307,7 +307,13 @@ fn level_203s_start_area_runs_and_he_walks_to_its_gate() {
             let e = heights.entry(c).or_insert((y, y));
             *e = (e.0.min(y), e.1.max(y));
         }
-    });
+    };
+    walk(&mut run, &mut stops, &ALONG[..2], &mut watch);
+    // Down both conveyors unhurt; the yard past the second's foot is in
+    // the riveter Troll's sight (he wakes by his own range and, seeing him
+    // there, shoots: `lifted-reference` on 203, as-203-walkway).
+    let conveyors = run.health();
+    walk(&mut run, &mut stops, &ALONG[2..], &mut watch);
     println!("behaviours {seen:#?} crushers' heights {heights:?}");
     assert!(
         seen["molekin_at_start"]
@@ -334,7 +340,8 @@ fn level_203s_start_area_runs_and_he_walks_to_its_gate() {
         }
         assert!(ran.contains(n), "{n} listed and idle");
     }
-    assert_eq!(run.health(), Some(290.0), "unhurt");
+    assert_eq!(conveyors, Some(290.0), "unhurt down the conveyors");
+    println!("health at the gate {:?}", run.health());
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
 }
@@ -380,9 +387,12 @@ struct Fought {
 /// near, on to `goal`. His health topped up below a third (a kid's food;
 /// the fight's foes outlast a level-1 hero who only swings). Over once
 /// `done` holds or after `cap` steps.
+#[allow(clippy::too_many_arguments)]
 fn fight_to(
     run: &mut Run,
     stops: &mut Vec<String>,
+    foes: &[&str],
+    watched: &[&str],
     goal: Vec3,
     cap: u32,
     done: &dyn Fn(&Run) -> bool,
@@ -396,7 +406,7 @@ fn fight_to(
     let (mut route, mut routed, mut next): (Vec<Vec3>, u32, usize) = (Vec::new(), 0, 0);
     let flat = |a: Vec3, b: Vec3| Vec3::new(a.x - b.x, 0.0, a.z - b.z).length();
     loop {
-        for n in FOES.iter().chain(&FIGHT_WATCH) {
+        for n in foes.iter().chain(watched) {
             let b = behaviour(run, n);
             if last.get(*n) != Some(&b) {
                 fought.log.push((run.steps, (*n).to_owned(), b.clone()));
@@ -427,7 +437,7 @@ fn fight_to(
             continue;
         }
         let me = run.hero().pivot;
-        let near = FOES
+        let near = foes
             .iter()
             .map(|n| run.placed(n).0)
             .filter(|h| {
@@ -512,6 +522,8 @@ fn fought_open(stops: &mut Vec<String>) -> (Run, Fought) {
     let out = fight_to(
         &mut run,
         stops,
+        &FOES,
+        &FIGHT_WATCH,
         Vec3::new(-100.0, 7.7, -238.0),
         12000,
         &gate,
@@ -600,7 +612,9 @@ fn level_203s_introduction_teleporter_takes_him_on() {
     }
     let start = run.steps;
     let mut arrived = None;
-    for _ in 0..600u32 {
+    // 300 steps: Setup_002's first Fire Chompy reaches him after that
+    // (AS.765) and its blast moves him.
+    for _ in 0..300u32 {
         still(&mut run, &mut stops, [false; 4]);
         if arrived.is_none() && run.hero().pivot.distance(TELEPORTER_END) < 1.0 {
             arrived = Some(run.steps - start);
@@ -611,6 +625,291 @@ fn level_203s_introduction_teleporter_takes_him_on() {
     assert!(arrived.is_some(), "carried to its end");
     assert!(at.distance(TELEPORTER_END) < 1.0, "stays there: {at}");
     assert!(run.hero().footing.supported, "on the ground");
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
+}
+
+/// The name of the template `h` was cloned from, `""` for none.
+fn template_of(run: &Run, h: guac_script::Handle) -> String {
+    run.world
+        .actor(h)
+        .and_then(|a| a.template)
+        .and_then(|t| run.vm.program().name_of(t).map(str::to_owned))
+        .unwrap_or_default()
+}
+
+/// His health topped up to 270 below 90 (a kid's food: a level-1 hero
+/// standing in a fight outlasts none of it); true when it did.
+fn top_up(run: &mut Run) -> bool {
+    match run.minion {
+        Some(m) if run.health().is_some_and(|h| h > 0.0 && h < 90.0) => {
+            guacamole::scripts::set_health(&mut run.vm, m, 270)
+        }
+        _ => false,
+    }
+}
+
+/// In the yard in the riveter Troll's line, past Setup_001's trigger.
+const IN_THE_YARD: (f32, f32) = (-101.0, -234.0);
+
+/// openspec AS.766, AS.787: Setup_001's fight with him standing in the
+/// yard in the riveter Troll's line. The Chompy pipe by the gate launches
+/// the controller's five, two flame clones at its node each time; each of
+/// the Troll's bullets runs its own STARTUP (its glow clone) and flies on
+/// the scripts' projectile manager, which hurts him with one that meets
+/// him and takes every bullet off once it's done.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_203s_first_fights_pipe_flames_and_the_trolls_shots_land() {
+    println!("load at start: {}", load());
+    let mut stops = Vec::new();
+    let mut run = past_intro(&mut stops);
+    walk(
+        &mut run,
+        &mut stops,
+        &[ALONG[0], ALONG[1], TRIGGER, IN_THE_YARD],
+        &mut |_| {},
+    );
+    let pipe = run.placement("GasJet_Pipe(13)");
+    let mut seen = std::collections::HashSet::new();
+    let mut bullets: Vec<(guac_script::Handle, u32)> = Vec::new();
+    let (mut glows, mut flames, mut launches, mut hits, mut topups) = (0, 0, 0, 0, 0);
+    let mut was_launching = false;
+    let mut hp = run.health();
+    let mut flying: Vec<guac_script::Handle> = Vec::new();
+    for _ in 0..2400u32 {
+        still(&mut run, &mut stops, [false; 4]);
+        for h in run.world.clones() {
+            if !seen.insert(h) {
+                continue;
+            }
+            let t = template_of(&run, h);
+            match t.as_str() {
+                "Troll_BFG_Bullet" => {
+                    bullets.push((h, run.steps));
+                    flying.push(h);
+                }
+                "Troll_BFG_BulletGlow" => glows += 1,
+                t if t.starts_with("203_Chompy_Pipe_Fire") => flames += 1,
+                _ => {}
+            }
+        }
+        let launching = run.vm.local(pipe, "state") == Some(guac_script::Value::Int(1));
+        launches += u32::from(launching && !was_launching);
+        was_launching = launching;
+        // A bullet taken off this step within reach of him as his health
+        // falls is a shot that met him.
+        let now = run.health();
+        let fell = now.zip(hp).is_some_and(|(n, h)| n < h);
+        let me = run.hero().pivot;
+        flying.retain(|h| {
+            let a = run.world.actor(*h);
+            let gone = a.is_none_or(|a| a.removed);
+            if gone && fell && a.is_some_and(|a| a.position.distance(me) < 2.5) {
+                hits += 1;
+            }
+            !gone
+        });
+        hp = now;
+        if top_up(&mut run) {
+            topups += 1;
+            hp = run.health();
+        }
+        if launches >= 5 && hits >= 1 && run.vm.removed(run.placement("Setup_001_Controller")) {
+            break;
+        }
+    }
+    // Every bullet out 2 s or more is off: none left in the world.
+    for _ in 0..150u32 {
+        still(&mut run, &mut stops, [false; 4]);
+    }
+    let left = bullets
+        .iter()
+        .filter(|(h, _)| run.world.actor(*h).is_some_and(|a| !a.removed))
+        .count();
+    println!(
+        "launches {launches}, flames {flames}, bullets {}, glows {glows}, shots that met him {hits}, left {left}, top-ups {topups}, step {}",
+        bullets.len(),
+        run.steps
+    );
+    assert_eq!(launches, 5, "the pipe's five");
+    assert!(flames >= 2 * launches, "two flames a launch: {flames}");
+    assert!(!bullets.is_empty(), "the Troll shoots");
+    assert_eq!(glows, bullets.len(), "each bullet's own STARTUP");
+    assert!(hits >= 1, "a shot hurts him");
+    assert_eq!(left, 0, "every bullet taken off");
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
+}
+
+/// Setup_002's fight (`level_203::WAY_2`): the nine Fire Chompies.
+const CHOMPIES_2: [&str; 9] = [
+    "Enemy_Chompy_Fire(70)",
+    "Enemy_Chompy_Fire(71)",
+    "Enemy_Chompy_Fire(72)",
+    "Enemy_Chompy_Fire(18)",
+    "Enemy_Chompy_Fire(19)",
+    "Enemy_Chompy_Fire(20)",
+    "Enemy_Chompy_Fire(21)",
+    "Enemy_Chompy_Fire(22)",
+    "Enemy_Chompy_Fire(23)",
+];
+
+/// Setup_002's lobber, on the ledge past the lower gate's side ramp.
+const LOBBER: &str = "Enemy_PandoranLobber(1)";
+
+/// The lower walkway's gate.
+const GATE_2: &str = "enemy_gate_lower_conveyor_01";
+
+/// Down the side ramp west of the gate into the trench below the lobber's
+/// ledge, where its sight clears the ledge's lip.
+const DOWN_THE_RAMP: [(f32, f32); 3] = [(-15.0, -256.0), (-15.0, -266.0), (-15.0, -272.0)];
+
+/// The lobber's ledge: where a stand-in sets him (the way onto it before the
+/// gate opens is unread, AS.990).
+const ON_THE_LEDGE: Vec3 = Vec3::new(-12.0, -1.9, -289.0);
+
+/// Back from the trench up the ramp and through the opened gate onto the
+/// conveyor under the lower crushers.
+const THROUGH_THE_GATE: [(f32, f32); 5] = [
+    (-15.0, -280.0),
+    (-15.0, -262.0),
+    (-12.0, -256.0),
+    (-4.3, -255.5),
+    (-4.3, -261.5),
+];
+
+/// openspec AS.765: the lower walkway past the introduction teleporter. As
+/// he lands the start's sets are taken off, the lower crushers are back on
+/// their timer and the Molekin by the first crusher talks; Setup_002's
+/// controller sends its nine Fire Chompies out of its pipe (two flames a
+/// launch) and they're fought down; its lobber, woken, throws its bombs at
+/// him once he's down the side ramp in its sight (thrown, not hurting him:
+/// headless none lands, where the TV's run lost 56-60 a bomb, AS.1001); its
+/// gate waits on it. Then the stand-in the name says: PUT on the lobber's
+/// ledge (`ON_THE_LEDGE`, AS.990; no kid walks there), he beats it, the
+/// controller ends and the gate lowers its spikes, and he walks back up and
+/// through it. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_203s_lower_walkways_fight_then_its_gate_with_him_put_on_the_ledge() {
+    println!("load at start: {}", load());
+    let mut stops = Vec::new();
+    let (mut run, out) = fought_open(&mut stops);
+    assert!(out.ended, "the first gate opened");
+    walk(&mut run, &mut stops, &PAST_GATE, &mut |_| {});
+    for _ in 0..60u32 {
+        still(&mut run, &mut stops, [false; 4]);
+    }
+    assert!(run.hero().pivot.distance(TELEPORTER_END) < 1.5, "landed");
+    // The start's clean-up: its conveyors and crushers off.
+    for n in ["new_conveyor", "203_Crusher_begining_a", "molekin_at_start"] {
+        assert_eq!(behaviour(&run, n), "removed", "{n} taken off");
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut flames = 0;
+    let watched = ["Setup_002_Controller", "GasJet_Pipe(14)", GATE_2, LOBBER];
+    let chompies_gone = |run: &Run| CHOMPIES_2.iter().all(|n| behaviour(run, n) == "removed");
+    let fight = fight_to(
+        &mut run,
+        &mut stops,
+        &CHOMPIES_2,
+        &watched,
+        TELEPORTER_END,
+        6000,
+        &|run| chompies_gone(run),
+    );
+    for e in &fight.log {
+        println!("  {e:?}");
+    }
+    for h in run.world.clones() {
+        if seen.insert(h) && template_of(&run, h).starts_with("203_Chompy_Pipe_Fire") {
+            flames += 1;
+        }
+    }
+    println!(
+        "Chompies beaten {} at step {}, health {:?}, pipe flames {flames}",
+        fight.ended, run.steps, fight.health
+    );
+    assert!(fight.ended, "the nine beaten");
+    assert!(flames >= 18, "two flames a launch: {flames}");
+    assert!(
+        first_in(&fight.log, LOBBER, &["idle"]).is_some(),
+        "the lobber woken"
+    );
+    assert_eq!(
+        behaviour(&run, GATE_2),
+        "wait to be opened",
+        "it waits on the lobber"
+    );
+    // Down the side ramp into the lobber's sight: it throws its bombs at him.
+    let seen_lobber: std::cell::RefCell<Vec<String>> = Default::default();
+    let (talked, dropped) = (std::cell::Cell::new(false), std::cell::Cell::new(false));
+    let mut each = |run: &Run| {
+        if behaviour(run, "molekin_first_crusher") == "norticus end talker" {
+            talked.set(true);
+        }
+        if behaviour(run, "203_Crusher_lower_a") == "drop" {
+            dropped.set(true);
+        }
+        let b = behaviour(run, LOBBER);
+        let mut s = seen_lobber.borrow_mut();
+        if s.last() != Some(&b) {
+            s.push(b);
+        }
+    };
+    walk(&mut run, &mut stops, &DOWN_THE_RAMP, &mut each);
+    let before = run.health();
+    for _ in 0..600u32 {
+        still(&mut run, &mut stops, [false; 4]);
+        each(&run);
+        top_up(&mut run);
+    }
+    println!(
+        "the lobber {:?}, him {before:?} -> {:?}",
+        seen_lobber.borrow(),
+        run.health()
+    );
+    assert!(
+        seen_lobber.borrow().iter().any(|b| b == "throwbomb"),
+        "it throws its bombs at him"
+    );
+    assert_eq!(behaviour(&run, GATE_2), "wait to be opened");
+    // The stand-in (AS.990): on its ledge, he beats it and the gate opens.
+    run.put(ON_THE_LEDGE, 180.0);
+    let opened = |run: &Run| behaviour(run, GATE_2) != "wait to be opened";
+    let fight = fight_to(
+        &mut run,
+        &mut stops,
+        &[LOBBER],
+        &watched,
+        ON_THE_LEDGE,
+        6000,
+        &opened,
+    );
+    for e in &fight.log {
+        println!("  {e:?}");
+    }
+    assert!(fight.ended, "the gate opened");
+    assert!(
+        first_in(&fight.log, LOBBER, &["removed"]).is_some(),
+        "the lobber beaten"
+    );
+    assert!(
+        first_in(&fight.log, "Setup_002_Controller", &["removed"]).is_some(),
+        "the controller off"
+    );
+    assert_eq!(behaviour(&run, GATE_2), "lower spikes");
+    walk(&mut run, &mut stops, &THROUGH_THE_GATE, &mut each);
+    let (molekin, crushed) = (talked.get(), dropped.get());
+    println!(
+        "through at {} step {}, molekin talked {molekin}, crusher dropped {crushed}",
+        run.hero().pivot,
+        run.steps
+    );
+    assert!(run.hero().pivot.z < -260.0, "past the gate");
+    assert!(molekin, "the Molekin by the first crusher talks");
+    assert!(crushed, "the lower crushers on their timer");
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
 }

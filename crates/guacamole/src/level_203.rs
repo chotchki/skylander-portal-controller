@@ -25,7 +25,9 @@
 //!   helper): past Setup_001's gate the next two conveyors lead onto it,
 //!   and it carries him to the lower walkway, the only way on.
 //!
-//! Setup_001's fight before the gate is [`WAY`].
+//! Setup_001's fight before the gate is [`WAY`]; the lower walkway past the
+//! teleporter to its gate is [`WALKWAY`] and Setup_002's fight there
+//! [`WAY_2`] (openspec AS.765).
 
 /// The archive the story reaches after 202.
 pub const LEVEL: &str = "level_203_the_machine";
@@ -53,11 +55,76 @@ pub const START: [&str; 16] = [
     "TeleporterHelper",
 ];
 
-/// [`START`] on 203 alone.
+/// [`START`] on 203 alone, with [`FIRST_FIGHT_PARTS`] and [`WALKWAY`].
 pub fn start(level: &str) -> impl Iterator<Item = &'static str> {
     let on = level == LEVEL;
-    START.iter().copied().filter(move |_| on)
+    START
+        .iter()
+        .chain(&FIRST_FIGHT_PARTS)
+        .chain(&WALKWAY)
+        .copied()
+        .filter(move |_| on)
 }
+
+/// What Setup_001's fight runs that isn't a creature (openspec AS.766,
+/// AS.787): the Chompy pipe by the first gate, whose trigger and launch
+/// both run inside its `wait for trigger` as the controller hands it each
+/// Chompy (so the behaviour's name never changes) and which makes its two
+/// flame clones at its node at each launch; and the riveter Troll's
+/// bullet, a clone that runs under its template's name, whose STARTUP
+/// spins it and hangs its glow clone on it (off the listing it flew,
+/// hit and was taken off by the scripts' projectile manager all the same,
+/// undrawn of either).
+pub const FIRST_FIGHT_PARTS: [&str; 2] = ["GasJet_Pipe(13)", "Troll_BFG_Bullet"];
+
+/// The lower walkway from the introduction teleporter's end to its gate
+/// (openspec AS.765), what runs a script, in the order he meets it: the
+/// teleporter's start pad brings the lower crushers back
+/// (`trigger_lower_crushers`, a reset of the set the start area's control
+/// took off); by the end pad the start area's sets are taken off
+/// (`_KILL_start_stuff`); the Molekin by the first crusher talks on the
+/// talk button; the reset point before the gate (`reset_point_ON_3`) and
+/// past it (`reset_point_OFF_3`); Setup_002's Chompy pipe ([`WAY_2`]'s
+/// fight); the two crushers over the conveyor past the gate and that
+/// conveyor. The gate (`enemy_gate_lower_conveyor_01`) is on the generic
+/// listing.
+pub const WALKWAY: [&str; 9] = [
+    "trigger_lower_crushers",
+    "_KILL_start_stuff",
+    "molekin_first_crusher",
+    "reset_point_ON_3",
+    "GasJet_Pipe(14)",
+    "203_Crusher_lower_a",
+    "203_Crusher_lower_b",
+    "new_conveyor(4)",
+    "reset_point_OFF_3",
+];
+
+/// Setup_002's fight at the lower walkway's gate (openspec AS.765): its
+/// controller wakes by its own range as he lands, sends three Fire
+/// Chompies out of `GasJet_Pipe(14)`, wakes its lobber on the ledge past
+/// the gate's side ramp and sends six more; with all ten gone it pans to
+/// the gate and takes its opener off, which lowers the gate's spikes. The
+/// lobber sees him only where its sight ray clears its ledge's lip
+/// (`lifted-reference` on 203), and bombs him from there.
+pub const WAY_2: crate::scripts::Encounter = crate::scripts::Encounter {
+    level: LEVEL,
+    placements: &[
+        "Setup_002_Controller",
+        "Enemy_PandoranLobber(1)",
+        "Enemy_Chompy_Fire(70)",
+        "Enemy_Chompy_Fire(71)",
+        "Enemy_Chompy_Fire(72)",
+        "Enemy_Chompy_Fire(18)",
+        "Enemy_Chompy_Fire(19)",
+        "Enemy_Chompy_Fire(20)",
+        "Enemy_Chompy_Fire(21)",
+        "Enemy_Chompy_Fire(22)",
+        "Enemy_Chompy_Fire(23)",
+    ],
+    clones: &[],
+    steered: &[],
+};
 
 /// The first fight, before the start area's gate (openspec AS.705), each
 /// placement that runs a script (its trigger volume and the Troll's path are
@@ -69,8 +136,8 @@ pub fn start(level: &str) -> impl Iterator<Item = &'static str> {
 /// the controller moves him along his path and the three Fire Chompies in
 /// the yard wake to the hero (each attaches to him and explodes); with all
 /// three gone it launches five more one at a time by the Chompy pipe
-/// (`GasJet_Pipe(13)`, off the listing: its own script waits all fight for
-/// a trigger that never comes, AS.787), then takes itself off. The gate
+/// (`GasJet_Pipe(13)`, listed in [`FIRST_FIGHT_PARTS`]), then takes itself
+/// off. The gate
 /// (`enemy_gate_start_area`, on the generic listing) lowers its spikes once
 /// the yard's foes are gone.
 pub const WAY: crate::scripts::Encounter = crate::scripts::Encounter {
@@ -103,11 +170,17 @@ mod tests {
     fn level_203s_start_area_is_on_its_listing_alone() {
         let files = Files::default();
         let on = level_config(Mode::Play, &files, 5, LEVEL);
-        assert_eq!(start(LEVEL).collect::<Vec<_>>(), START);
+        let all: Vec<&str> = START
+            .iter()
+            .chain(&FIRST_FIGHT_PARTS)
+            .chain(&WALKWAY)
+            .copied()
+            .collect();
+        assert_eq!(start(LEVEL).collect::<Vec<_>>(), all);
         for other in ["level_201", "level_205_piratecards", "level_208_ice"] {
             let off = level_config(Mode::Play, &files, 5, other);
             assert_eq!(start(other).count(), 0);
-            for name in START {
+            for &name in &all {
                 assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
                 // 201 places its own teleporter helper by the same name.
                 if name == "TeleporterHelper" && other == "level_201" {
@@ -127,14 +200,24 @@ mod tests {
     fn level_203s_first_fight_is_on_its_listing_alone() {
         let files = Files::default();
         let on = level_config(Mode::Play, &files, 5, LEVEL);
-        assert_eq!(encounters(LEVEL).collect::<Vec<_>>(), vec![&WAY]);
-        for name in WAY.placements.iter().chain(WAY.clones) {
+        assert_eq!(encounters(LEVEL).collect::<Vec<_>>(), vec![&WAY, &WAY_2]);
+        for name in [WAY, WAY_2]
+            .iter()
+            .flat_map(|w| w.placements.iter().chain(w.clones))
+        {
             assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
         }
         for other in ["level_202", "level_208_ice"] {
-            assert!(encounters(other).all(|e| *e != WAY), "{other}");
+            assert!(
+                encounters(other).all(|e| *e != WAY && *e != WAY_2),
+                "{other}"
+            );
             let off = level_config(Mode::Play, &files, 5, other);
-            for name in ["Enemy_Troll_BFG(1)", "GasJet_Pipe(13)"] {
+            for name in [
+                "Enemy_Troll_BFG(1)",
+                "GasJet_Pipe(13)",
+                "Enemy_PandoranLobber(1)",
+            ] {
                 assert!(
                     !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
                     "{name} on {other}"

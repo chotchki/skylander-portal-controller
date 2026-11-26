@@ -3795,6 +3795,7 @@ pub fn encounters(level: &str) -> impl Iterator<Item = &'static Encounter> {
         .chain(std::iter::once(&crate::level_205::WAY))
         .chain(std::iter::once(&crate::level_208::WAY))
         .chain(std::iter::once(&crate::level_203::WAY))
+        .chain(std::iter::once(&crate::level_203::WAY_2))
         .filter(move |e| e.level == level)
 }
 
