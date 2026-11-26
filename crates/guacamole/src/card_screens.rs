@@ -426,6 +426,9 @@ fn answer_and_read(
             Err(h) => warn!(%h, "the card game's screen's answer stopped"),
         }
     }
+    // The board read again after the whole step (openspec AS.876): one its
+    // own ticks took down reads gone before the camera draws this frame.
+    card_game::note_board(&runtime.vm, &mut world);
     let vm = &runtime.vm;
     let offer = card_game::hand_offer(vm);
     // The names a scan of the program's objects each: read once an offer.

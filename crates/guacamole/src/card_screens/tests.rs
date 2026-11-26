@@ -433,3 +433,65 @@ fn a_landing_stones_name_draws_at_the_top() {
         "gone with its box"
     );
 }
+
+/// A run of no scripts of its own (`yes_no`'s tests' run): no board's
+/// controller anywhere.
+fn a_run() -> ScriptRuntime {
+    use std::sync::Arc;
+
+    use guac_formats::igz::Igz;
+    use guac_formats::script::{Graph, builder};
+    use guac_script::{Config, Generator, Mode, Program, Role, Unit, Vm};
+    let bytes = builder::ui_containers();
+    let igz = Igz::parse(&bytes).unwrap();
+    let graph = Graph::read(&igz).unwrap();
+    let unit = Unit {
+        name: "global",
+        role: Role::Other,
+        igz: &igz,
+        graph: &graph,
+    };
+    let program = Arc::new(Program::link(&[unit]).unwrap());
+    ScriptRuntime {
+        vm: Vm::new(program, Config::new(Mode::Strict)),
+        generator: Generator::seeded(1),
+        player_loop: Default::default(),
+        steps: 0,
+        stopped: Vec::new(),
+        entry_stopped: None,
+    }
+}
+
+/// openspec AS.876: after the scripts' step the screens' read takes the
+/// board again, so a board its own step took down (its controller out of
+/// play) reads down before the camera draws the frame; a run that plays no
+/// game is left alone.
+#[test]
+fn the_board_is_read_again_after_the_step() {
+    for plays in [true, false] {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .init_resource::<CardAsk>()
+            .init_resource::<CardRead>()
+            .add_systems(Update, answer_and_read);
+        let mut world = ScriptWorld::new(
+            &guacamole::scripts::Files::default(),
+            &std::collections::HashMap::new(),
+            [1, 2, 3, 4, 5, 6, 7],
+        );
+        if plays {
+            world.card_streams.play_games();
+        }
+        world.card_streams.set_board_up(true);
+        app.insert_resource(world).insert_resource(a_run());
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<ScriptWorld>()
+                .card_streams
+                .board_up(),
+            !plays,
+            "plays games: {plays}"
+        );
+    }
+}

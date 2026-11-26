@@ -1296,6 +1296,17 @@ fn board_standing(vm: &Vm, world: &ScriptWorld) -> bool {
     running(vm, world, BOARD_CONTROLLER).is_some_and(|c| !vm.removed(c))
 }
 
+/// The board read again once the step's requests are taken (openspec
+/// AS.876): [`step`] reads it before the host takes them, so a controller
+/// removed by the step's own ticks (a won or lost game's end) reads gone
+/// only here; the TV's camera that frame then knows the board's place is
+/// empty. Nothing on a run that doesn't play the game.
+pub fn note_board(vm: &Vm, world: &mut ScriptWorld) {
+    if world.card_streams.played {
+        world.card_streams.board = board_standing(vm, world);
+    }
+}
+
 /// The stones a fresh save's first win at Fangs (205's tutorial) collects,
 /// as `giants_level_205`'s first-game test reads them off the save after it
 /// (openspec AS.367, AS.675).
