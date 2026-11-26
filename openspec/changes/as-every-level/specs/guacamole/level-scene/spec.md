@@ -778,3 +778,10 @@ While a voice line whose sound carries a viseme stream plays on a drawn speaker 
 #### Scenario: The arena's commander speaks
 - **WHEN** level 201's arena commander says his first line on the TV, muted
 - **THEN** his jaw turns through two or more of his shapes while it plays and stands still once it ends
+
+### Requirement: A creature drawn big is solid at its own size once
+A creature, clone or surface SHALL stand in the TV's world at its solid's size at its scale, once, whatever its drawing is scaled by, as the headless bench holds it. Level 201's 250 % wave life mage SHALL be 3.6 m across on the TV, not 9.1 m, and a 120 % elf 1.67 m, not 1.99 m.
+
+#### Scenario: A melee hero closes on a casting mage
+- **WHEN** Ninjini walks straight at a 250 % life mage casting by the arena's ring wall
+- **THEN** she comes within her reach of it, about 4 m from its pivot, and her hits land

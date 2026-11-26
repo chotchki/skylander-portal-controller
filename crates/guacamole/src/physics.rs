@@ -26,6 +26,7 @@ use std::sync::Arc;
 use avian3d::parry::bounding_volume::BoundingVolume;
 use avian3d::parry::query::Ray;
 use avian3d::parry::shape::SharedShape;
+use avian3d::physics_transform::PhysicsTransformConfig;
 use avian3d::prelude::{
     BroadPhaseCorePlugin, Collider, ColliderAabb, ColliderBackendPlugin, ColliderHierarchyPlugin,
     ColliderTreePlugin, PhysicsSchedule, PhysicsSchedulePlugin, PhysicsStepSystems, Position,
@@ -66,7 +67,33 @@ impl Plugin for SeamPlugin {
         .configure_sets(
             PhysicsSchedule,
             SolverSystems::Finalize.in_set(PhysicsStepSystems::Solver),
-        );
+        )
+        // A seam body is sized by its own numbers (an actor's solid at its
+        // scale, as parry's side holds it), never by its entity: a script
+        // clone's entity carries its drawing's scale, and Avian scaled the
+        // scaled solid again, so 201's 250 % wave mage stood 2.5 times as
+        // wide on the TV as on the bench (openspec AS.901). Off here for
+        // a `Transform` that changes (the collider backend's own
+        // `init_resource` keeps this), and [`own_size`] for a collider
+        // going in, which the backend's insert hook scales whatever this
+        // says.
+        .insert_resource(PhysicsTransformConfig {
+            transform_to_collider_scale: false,
+            ..default()
+        })
+        .add_observer(own_size);
+    }
+}
+
+/// A seam body's collider back at its own size as it goes in: Avian's
+/// insert hook has just scaled it by its entity's `GlobalTransform`
+/// ([`SeamPlugin`], openspec AS.901). Observers run after a component's
+/// hooks, so this has the last word.
+fn own_size(insert: On<Insert<Collider>>, mut colliders: Query<&mut Collider, With<SeamBody>>) {
+    if let Ok(mut c) = colliders.get_mut(insert.event().entity)
+        && c.scale() != Vec3::ONE
+    {
+        c.set_scale(Vec3::ONE, 10);
     }
 }
 
@@ -177,8 +204,8 @@ impl PreparedBody {
 
     /// Makes `entity` this kinematic body (openspec AH.25: a hero's and a
     /// creature's ride on their own entities, so a body goes with what it's
-    /// the body of). The entity's `Transform`, if any, must be unscaled:
-    /// Avian reads a collider's scale off it.
+    /// the body of). The entity's `Transform` may carry a drawing's scale:
+    /// [`SeamPlugin`] keeps Avian from reading a collider's scale off it.
     pub(crate) fn insert_on(self, entity: &mut EntityCommands) {
         entity.insert((
             self.body,
@@ -519,6 +546,152 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+    }
+
+    /// The table through Avian with every body's entity drawn at a turned,
+    /// unevenly scaled `Transform` (the as-201-yard review, openspec
+    /// AS.901): scaled once each body's in (Avian's per-change rescale), and
+    /// each kinematic one's scaled before it goes in (its insert hook, as a
+    /// clone's body is made again on its drawn entity). Every answer stays
+    /// parry's, boxes turned, meshes and sensors too: a seam body's size is
+    /// its own on every entity, not only a capsule's at a uniform scale.
+    #[test]
+    fn the_table_through_avian_on_scaled_entities_agrees_with_parry() {
+        let drawn = Transform {
+            translation: Vec3::new(3.0, -1.0, 2.0),
+            rotation: Quat::from_euler(EulerRot::YXZ, 0.7, 0.3, -0.2),
+            // Narrower than drawn on one axis, wider on two.
+            scale: Vec3::new(0.6, 2.5, 1.7),
+        };
+        let mut failures = Vec::new();
+        for case in conformance::cases() {
+            let mut app = headless();
+            let mut commands = app.world_mut().commands();
+            for body in &case.bodies {
+                let mut e = if body.kind == BodyKind::Kinematic {
+                    let mut e = commands.spawn((drawn, GlobalTransform::from(drawn)));
+                    PreparedBody::new(body).expect(case.name).insert_on(&mut e);
+                    e
+                } else {
+                    let e = spawn_body(&mut commands, body).expect(case.name);
+                    commands.entity(e)
+                };
+                e.insert((drawn, GlobalTransform::from(drawn)));
+            }
+            app.world_mut().flush();
+            app.update();
+            if !case.moves.is_empty() {
+                let mut state =
+                    SystemState::<Query<(&SeamBody, &mut Position, &mut Rotation)>>::new(
+                        app.world_mut(),
+                    );
+                let mut bodies = state.get_mut(app.world_mut()).unwrap();
+                for &(id, pose) in &case.moves {
+                    set_pose(&mut bodies, id, pose).expect(case.name);
+                }
+            }
+            app.update();
+            let mut state = SystemState::<AvianSeam>::new(app.world_mut());
+            let seam = state.get(app.world()).unwrap();
+            match conformance::run(&seam, &case) {
+                Err(e) => failures.push(format!("{}: avian: {e}", case.name)),
+                Ok(avian) => {
+                    if let Err(e) = conformance::agree(&avian, &parry_answers(&case)) {
+                        failures.push(format!("{}: avian on scaled entities: {e}", case.name));
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+    }
+
+    /// AS.901: a body on an entity whose `Transform` is scaled (a script
+    /// clone's, drawn at its scale) answers as parry's, at its own size: a
+    /// ray past its side misses, one through it meets its face where parry
+    /// does, and a hero's sweep stops where parry's does. With Avian reading
+    /// the entity's scale, 201's 250 % wave mage stood 2.5 times as wide.
+    #[test]
+    fn a_body_on_a_scaled_entity_keeps_its_own_size() {
+        let capsule = Shape::Capsule {
+            radius: 1.0,
+            half_segment: 0.5,
+        };
+        let body = Body {
+            id: BodyId(7),
+            kind: BodyKind::Kinematic,
+            pose: Pose::at(Vec3::new(0.0, 1.5, 0.0)),
+            collider: SeamCollider::Convex(capsule),
+        };
+        let scaled = Transform::from_scale(Vec3::splat(2.5));
+        // Its entity scaled once it's in, and (as a clone's, drawn before its
+        // body's made again) scaled before it goes in.
+        let mut after = headless();
+        let mut commands = after.world_mut().commands();
+        let e = spawn_body(&mut commands, &body).unwrap();
+        commands.entity(e).insert(scaled);
+        after.world_mut().flush();
+        let mut before = headless();
+        let mut commands = before.world_mut().commands();
+        let mut e = commands.spawn((scaled, GlobalTransform::from(scaled)));
+        PreparedBody::new(&body).unwrap().insert_on(&mut e);
+        before.world_mut().flush();
+        for (way, mut app) in [("scaled after", after), ("scaled before", before)] {
+            app.update();
+            app.update();
+            answers_at_own_size(way, &mut app, &body);
+        }
+    }
+
+    /// [`a_body_on_a_scaled_entity_keeps_its_own_size`]'s queries in `app`.
+    fn answers_at_own_size(way: &str, app: &mut App, body: &Body) {
+        use guac_motion::conformance::Query;
+        let case = Case {
+            name: "scaled entity",
+            bodies: vec![body.clone()],
+            moves: Vec::new(),
+            queries: vec![
+                // 1.5 m off its axis: past its 1 m side, inside 2.5 m.
+                Query::Ray {
+                    origin: Vec3::new(1.5, 1.5, -5.0),
+                    direction: Vec3::Z,
+                    max_distance: 10.0,
+                    exclude: Vec::new(),
+                },
+                Query::Ray {
+                    origin: Vec3::new(0.0, 1.5, -5.0),
+                    direction: Vec3::Z,
+                    max_distance: 10.0,
+                    exclude: Vec::new(),
+                },
+                Query::Cast {
+                    shape: Shape::Sphere { radius: 0.5 },
+                    from: Pose::at(Vec3::new(0.0, 1.5, -6.0)),
+                    motion: Vec3::new(0.0, 0.0, 6.0),
+                    contact_distance: 0.01,
+                    exclude: Vec::new(),
+                },
+            ],
+            expect: |_| Ok(()),
+        };
+        let mut state = SystemState::<AvianSeam>::new(app.world_mut());
+        let seam = state.get(app.world()).unwrap();
+        let avian = conformance::run(&seam, &case).unwrap();
+        let parry = parry_answers(&case);
+        if let Err(e) = conformance::agree(&avian, &parry) {
+            panic!("{way}: {e}");
+        }
+        // Parry's own answers, so the agreement isn't two wrong sizes.
+        match &parry[..] {
+            [
+                Answer::Ray(None),
+                Answer::Ray(Some(hit)),
+                Answer::Cast(Some(cast)),
+            ] => {
+                assert!((hit.distance - 4.0).abs() < 0.01, "{hit:?}");
+                assert!((cast.distance - 4.5).abs() < 0.05, "{cast:?}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     /// AG.25: a prop's solid off each `CollisionInfo` shape AG.7 settled,
