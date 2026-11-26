@@ -237,9 +237,9 @@ pub struct CardStreams {
     /// A quit asked of a played game ([`CardStreams::ask_quit`]), answered
     /// by the next step's [`quit`].
     quit_asked: bool,
-    /// Whether the board's controller (`CardGame_Setup.ai`) is in play, read
-    /// each step of a played run and again as a quit removes it (openspec
-    /// AS.876): the board stands while it does.
+    /// Whether the board stands, its controller (`CardGame_Setup.ai`) and
+    /// its manager in play, read each step of a played run and again after
+    /// it and as a quit removes the controller (openspec AS.876).
     board: bool,
     /// Whether the TV's hand select answers the hand select's page
     /// ([`CardStreams::answer_hands_on_screen`]); headless it's answered by
@@ -374,8 +374,8 @@ impl CardStreams {
         self.restore = Restore::Replaced;
     }
 
-    /// Whether the board's controller is in play ([`CardStreams::board`]):
-    /// the board stands, its place drawn with it.
+    /// Whether the board stands ([`CardStreams::board`]): its place drawn
+    /// with it.
     pub fn board_up(&self) -> bool {
         self.board
     }
@@ -1291,9 +1291,12 @@ pub fn quit(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<bool, Halt> {
     Ok(true)
 }
 
-/// Whether the board's controller is in play (openspec AS.876).
+/// Whether the board stands (openspec AS.876): its controller in play
+/// (a quit removes it first) and its manager too (a won or lost game's end
+/// takes the manager, the stones with it, a step before the controller).
 fn board_standing(vm: &Vm, world: &ScriptWorld) -> bool {
     running(vm, world, BOARD_CONTROLLER).is_some_and(|c| !vm.removed(c))
+        && manager(vm, world).is_some()
 }
 
 /// The board read again once the step's requests are taken (openspec

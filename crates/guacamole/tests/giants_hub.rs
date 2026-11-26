@@ -2095,6 +2095,17 @@ fn dreadbeards_games_with(
                 );
             }
         }
+        // openspec AS.876: read again after the step as the TV reads it, the
+        // board stands only while its manager does (a game's end takes the
+        // manager, the stones with it, a step before the controller).
+        guacamole::card_game::note_board(&run.vm, &mut run.world);
+        if guacamole::card_game::manager(&run.vm, &run.world).is_none() {
+            assert!(
+                !run.world.card_streams.board_up(),
+                "no manager, the board reads down, step {}",
+                run.steps
+            );
+        }
         if now.is_some() {
             last_board.clone_from(&now);
         }
