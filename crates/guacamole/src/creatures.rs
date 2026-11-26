@@ -1344,6 +1344,53 @@ mod tests {
         until(&mut app, "his body back", |a| bodied(a));
     }
 
+    /// openspec AS.901: a creature drawn at 250 % on its own entity (as a
+    /// script clone is, its entity's `Transform` at its scale) stands in
+    /// Avian's world at its solid's size at that scale, once: its box as
+    /// wide as the seam's own body for it, not 2.5 times that.
+    #[test]
+    fn a_scaled_creatures_body_is_its_solid_at_its_scale_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut app, _) = fight_app(tmp.path(), Some(start()));
+        let c = creature(&app);
+        let e = Entity::try_from_bits(c).unwrap();
+        until(&mut app, "its body", |a| {
+            a.world().get::<SeamBody>(e).is_some()
+        });
+        assert!(
+            app.world_mut()
+                .resource_mut::<ScriptWorld>()
+                .set_scale(c, [250.0; 3])
+        );
+        app.world_mut()
+            .entity_mut(e)
+            .insert(Transform::from_scale(Vec3::splat(2.5)));
+        let own = app
+            .world()
+            .resource::<ScriptWorld>()
+            .actor(c)
+            .and_then(|a| a.havok())
+            .expect("its solid");
+        let wide = |app: &App| {
+            app.world()
+                .get::<avian3d::prelude::ColliderAabb>(e)
+                .map(|b| b.size().x)
+        };
+        let want = match own.in_world() {
+            guac_motion::seam::Shape::Capsule { radius, .. }
+            | guac_motion::seam::Shape::Sphere { radius } => 2.0 * radius,
+            other => panic!("{other:?}"),
+        };
+        until(&mut app, "its body at 250 %", |a| {
+            wide(a).is_some_and(|w| w > 1.5 * want / 2.5)
+        });
+        for _ in 0..4 {
+            app.update();
+        }
+        let w = wide(&app).unwrap();
+        assert!((w - want).abs() < 0.05, "{w} against its solid's {want}");
+    }
+
     /// AH.25: with the entry asked, the synthetic encounter's creature (a
     /// first fight's placement) runs from its script on the TV, `idle`
     /// until its 30th tick and `battle` after, its health its script's; the

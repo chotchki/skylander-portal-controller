@@ -70,14 +70,30 @@ impl Plugin for SeamPlugin {
         )
         // A seam body is sized by its own numbers (an actor's solid at its
         // scale, as parry's side holds it), never by its entity: a script
-        // clone's entity carries its drawing's scale, and with this on
-        // Avian scaled the scaled solid again, so 201's 250 % wave mage
-        // stood 2.5 times as wide on the TV as on the bench (openspec
-        // AS.901). The collider backend's own `init_resource` keeps this.
+        // clone's entity carries its drawing's scale, and Avian scaled the
+        // scaled solid again, so 201's 250 % wave mage stood 2.5 times as
+        // wide on the TV as on the bench (openspec AS.901). Off here for
+        // a `Transform` that changes (the collider backend's own
+        // `init_resource` keeps this), and [`own_size`] for a collider
+        // going in, which the backend's insert hook scales whatever this
+        // says.
         .insert_resource(PhysicsTransformConfig {
             transform_to_collider_scale: false,
             ..default()
-        });
+        })
+        .add_observer(own_size);
+    }
+}
+
+/// A seam body's collider back at its own size as it goes in: Avian's
+/// insert hook has just scaled it by its entity's `GlobalTransform`
+/// ([`SeamPlugin`], openspec AS.901). Observers run after a component's
+/// hooks, so this has the last word.
+fn own_size(insert: On<Insert<Collider>>, mut colliders: Query<&mut Collider, With<SeamBody>>) {
+    if let Ok(mut c) = colliders.get_mut(insert.event().entity)
+        && c.scale() != Vec3::ONE
+    {
+        c.set_scale(Vec3::ONE, 10);
     }
 }
 
@@ -539,7 +555,6 @@ mod tests {
     /// the entity's scale, 201's 250 % wave mage stood 2.5 times as wide.
     #[test]
     fn a_body_on_a_scaled_entity_keeps_its_own_size() {
-        use guac_motion::conformance::Query;
         let capsule = Shape::Capsule {
             radius: 1.0,
             half_segment: 0.5,
@@ -550,15 +565,29 @@ mod tests {
             pose: Pose::at(Vec3::new(0.0, 1.5, 0.0)),
             collider: SeamCollider::Convex(capsule),
         };
-        let mut app = headless();
-        let mut commands = app.world_mut().commands();
+        let scaled = Transform::from_scale(Vec3::splat(2.5));
+        // Its entity scaled once it's in, and (as a clone's, drawn before its
+        // body's made again) scaled before it goes in.
+        let mut after = headless();
+        let mut commands = after.world_mut().commands();
         let e = spawn_body(&mut commands, &body).unwrap();
-        commands
-            .entity(e)
-            .insert(Transform::from_scale(Vec3::splat(2.5)));
-        app.world_mut().flush();
-        app.update();
-        app.update();
+        commands.entity(e).insert(scaled);
+        after.world_mut().flush();
+        let mut before = headless();
+        let mut commands = before.world_mut().commands();
+        let mut e = commands.spawn((scaled, GlobalTransform::from(scaled)));
+        PreparedBody::new(&body).unwrap().insert_on(&mut e);
+        before.world_mut().flush();
+        for (way, mut app) in [("scaled after", after), ("scaled before", before)] {
+            app.update();
+            app.update();
+            answers_at_own_size(way, &mut app, &body);
+        }
+    }
+
+    /// [`a_body_on_a_scaled_entity_keeps_its_own_size`]'s queries in `app`.
+    fn answers_at_own_size(way: &str, app: &mut App, body: &Body) {
+        use guac_motion::conformance::Query;
         let case = Case {
             name: "scaled entity",
             bodies: vec![body.clone()],
@@ -591,7 +620,9 @@ mod tests {
         let seam = state.get(app.world()).unwrap();
         let avian = conformance::run(&seam, &case).unwrap();
         let parry = parry_answers(&case);
-        conformance::agree(&avian, &parry).unwrap();
+        if let Err(e) = conformance::agree(&avian, &parry) {
+            panic!("{way}: {e}");
+        }
         // Parry's own answers, so the agreement isn't two wrong sizes.
         match &parry[..] {
             [
