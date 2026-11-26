@@ -41,8 +41,8 @@
 
 use bevy::camera::{PerspectiveProjection, Projection};
 use bevy::prelude::*;
-use bevy_transform_interpolation::TranslationEasingState;
 use bevy_transform_interpolation::prelude::{TransformInterpolation, TransformInterpolationPlugin};
+use bevy_transform_interpolation::{RotationEasingState, TranslationEasingState};
 use guac_motion::camera::{GameCamera, NEAR, TransitionPlane, View};
 use guac_motion::hero::{Hero, Input};
 use guac_motion::locomotion::{Frame, Locomotion};
@@ -472,6 +472,8 @@ pub(crate) struct CardViews {
     up: bool,
     /// The board went down at this step's note.
     fell: bool,
+    /// The view from before the game was drawn the step before.
+    drew: bool,
 }
 
 impl CardViews {
@@ -536,7 +538,12 @@ pub(crate) fn step_cameras(
     world: Option<Res<ScriptWorld>>,
     runtime: Option<Res<guacamole::scripts::ScriptRuntime>>,
     mut cameras: Query<
-        (&mut FollowCamera, &mut Transform, Option<&mut Projection>),
+        (
+            &mut FollowCamera,
+            &mut Transform,
+            Option<&mut Projection>,
+            Option<(&mut TranslationEasingState, &mut RotationEasingState)>,
+        ),
         Without<HeroBody>,
     >,
     mut card_views: Local<CardViews>,
@@ -571,8 +578,13 @@ pub(crate) fn step_cameras(
             (Some(crate::hero_scripts::Join::Joined(m)), Some(rt)) => !rt.vm.removed(*m),
             _ => false,
         };
-    for (mut follow, mut transform, drawn) in &mut cameras {
+    for (mut follow, mut transform, drawn, easing) in &mut cameras {
         let follow = &mut *follow;
+        // A cut between the scripts' view and the view from before a card
+        // game (openspec AS.876) is drawn as one: eased across a step, the
+        // frames between pass through the sky between the board under the
+        // level and the room.
+        let mut cut = false;
         let place = match (&state, world.as_deref()) {
             (CameraScripts::On, Some(_)) if !in_run => continue,
             (CameraScripts::On, Some(world)) => {
@@ -584,7 +596,10 @@ pub(crate) fn step_cameras(
                 let restore = world.card_streams.restore();
                 let board_up = world.card_streams.board_up();
                 card_views.note(restore, board_up, &follow.drawn, (v.eye, v.angles));
-                match card_views.instead(restore, board_up, (v.eye, v.angles)) {
+                let instead = card_views.instead(restore, board_up, (v.eye, v.angles));
+                cut = instead.is_some() != card_views.drew;
+                card_views.drew = instead.is_some();
+                match instead {
                     Some(before) => {
                         follow.drawn = before;
                         viewed(&follow.drawn)
@@ -626,6 +641,10 @@ pub(crate) fn step_cameras(
             }
         };
         *transform = place;
+        if cut && let Some((mut moved, mut turned)) = easing {
+            moved.start = Some(transform.translation);
+            turned.start = Some(transform.rotation);
+        }
         // The far clip moves through a plane's blend and a switch.
         if let Some(mut drawn) = drawn {
             let want = projection(&follow.drawn);

@@ -1353,9 +1353,10 @@ fn the_boards_empty_place_is_never_drawn_after_its_teardown() {
     app.init_resource::<Wander>()
         .init_resource::<Steps>()
         .init_resource::<GamePhase>()
+        .init_resource::<EasesSeen>()
         .add_systems(FixedUpdate, wander.in_set(Frame::Hands))
         .add_systems(FixedUpdate, game_phase.in_set(Frame::Hands))
-        .add_systems(FixedUpdate, steps_seen.in_set(Frame::Record));
+        .add_systems(FixedUpdate, (steps_seen, eases_seen).in_set(Frame::Record));
     run_until(&mut app, "the scripts' view", 30, |s| {
         s.hold == ViewHold::Scripts
     });
@@ -1389,10 +1390,24 @@ fn the_boards_empty_place_is_never_drawn_after_its_teardown() {
     }
     // Torn down (the controller gone, the slot not read free yet; then his
     // return asked), the viewport left where the board aimed it: the view
-    // from before the game.
+    // from before the game, cut to, not eased across the sky between.
     for phase in [3, 2] {
+        app.world_mut().resource_mut::<EasesSeen>().0.clear();
         app.world_mut().resource_mut::<GamePhase>().0 = phase;
         frames(&mut app, 20);
+        if phase == 3 {
+            let eases = app.world().resource::<EasesSeen>().0.clone();
+            assert!(
+                eases
+                    .first()
+                    .copied()
+                    .flatten()
+                    .is_some_and(|e| e.distance(before.eye) < 1e-3),
+                "the cut's step eases from where it's drawn: {:?}, the view before the game at {:?}",
+                eases.first(),
+                before.eye
+            );
+        }
         let seen = std::mem::take(&mut app.world_mut().resource_mut::<Steps>().0);
         assert!(seen.len() >= 5, "{} steps", seen.len());
         for (k, (_, t)) in seen.iter().enumerate() {
@@ -1439,6 +1454,25 @@ fn the_boards_empty_place_is_never_drawn_after_its_teardown() {
             t.translation.distance(scene) < 1e-3,
             "step {k} in his scene: {t:?}, the scene's view at {scene}"
         );
+    }
+}
+
+/// Each step's camera easing start as the step left it (openspec AS.876: a
+/// cut eases from where it's drawn), while [`Wander`] is set.
+#[cfg(feature = "card-game-seams")]
+#[derive(Resource, Default)]
+struct EasesSeen(Vec<Option<Vec3>>);
+
+#[cfg(feature = "card-game-seams")]
+fn eases_seen(
+    to: Res<Wander>,
+    cameras: Query<&bevy_transform_interpolation::TranslationEasingState, With<FollowCamera>>,
+    mut out: ResMut<EasesSeen>,
+) {
+    if to.0.is_some()
+        && let Ok(e) = cameras.single()
+    {
+        out.0.push(e.start);
     }
 }
 
