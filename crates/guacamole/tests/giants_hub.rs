@@ -1637,6 +1637,11 @@ fn the_card_streams_name_no_member_the_tv_lacks_but_the_wii_pair() {
 #[derive(Debug)]
 struct Played {
     games: Vec<Game>,
+    /// The VM's sliders running as each game ended (openspec AS.920).
+    sliders: Vec<usize>,
+    /// The live clones of the card game's misc streams' templates (a stone's
+    /// asset, the hand select) as each game ended (openspec AS.880).
+    misc_clones: Vec<usize>,
     picks: cards::Picks,
     stays: cards::Stays,
     stops: Vec<guac_script::Halt>,
@@ -1808,6 +1813,8 @@ fn dreadbeards_games_with(
     let before = cards::leftovers(&run);
     let (mut picks, mut stays) = (cards::Picks::default(), cards::Stays::default());
     let mut games: Vec<Game> = Vec::new();
+    let mut sliders = Vec::new();
+    let mut misc_clones = Vec::new();
     let mut player = cards::Player::new(cards::Policy::Naive);
     let (mut read, mut asked, mut quit_sent) = (0, false, false);
     let mut was_board: Option<String> = None;
@@ -2014,6 +2021,8 @@ fn dreadbeards_games_with(
                 }
             };
             if over {
+                sliders.push(run.vm.sliders_running());
+                misc_clones.push(misc_clones_live(&run));
                 let g = &mut games[i];
                 g.ended = run.steps;
                 last_end = run.steps;
@@ -2174,6 +2183,8 @@ fn dreadbeards_games_with(
     );
     Played {
         games,
+        sliders,
+        misc_clones,
         picks,
         stays,
         stops,
@@ -2234,8 +2245,12 @@ const STALL: u32 = 20_000;
 /// The seeds of [`dreadbeards_game_quit_lost_and_won_each_end_in_his_own_next_behaviour`]'s
 /// three games: the quit's, the naive player's loss and the strong
 /// player's win (each found by playing; a seed's game is the same to the
-/// step from the same start).
-const DREADBEARDS_SEEDS: [u32; 3] = [1, 2, 4];
+/// step from the same start). The win's seed was 4 until the runs held the
+/// board's strings as the TV does (openspec AS.913): a UI animation timed by
+/// its text then starts the board 10 steps later, the level's own draws (the
+/// music controller's rolls) land elsewhere in the game off the one
+/// generator, and seed 4's strong game is lost; seed 3's is won.
+const DREADBEARDS_SEEDS: [u32; 3] = [1, 2, 3];
 
 /// openspec AS.366: Dreadbeard's card game played on the VM, headless, on
 /// hub stage 2 (3 by 3, his call's chances), three games in one run: quit
@@ -2965,4 +2980,93 @@ fn the_card_games_sounds_look_up_on_the_tvs_book_by_their_stems() {
         started.elapsed().as_secs_f64(),
         load()
     );
+}
+
+/// openspec AS.913: the run's model holds the board's strings by default,
+/// as the TV's does, and they reach the hub's course: a UI animation just
+/// before the board is timed by its text, so the board of the seed-1 quit
+/// game starts 10 steps later with them than without (the as-cards-long
+/// lane's draw log: 1,398 against 1,388). Fails if the harness's default
+/// ever loses them.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn the_boards_strings_are_the_runs_by_default_and_time_its_start() {
+    println!("load at start: {}", load());
+    let with = dreadbeards_games(&[(Plan::Quit, 1)], 20_000);
+    common::CARD_STRINGS.set(false);
+    let without = dreadbeards_games(&[(Plan::Quit, 1)], 20_000);
+    common::CARD_STRINGS.set(true);
+    let (a, b) = (with.games[0].started, without.games[0].started);
+    println!("the board started at {a} by default, {b} without the strings");
+    assert_eq!(a, b + 10, "by default {a}, without the strings {b}");
+    println!("load at end: {}", load());
+}
+
+/// The live clones of a template of the card game's misc streams (openspec
+/// AS.880: a stone's asset, the hand select), the misc slot's.
+fn misc_clones_live(run: &Run) -> usize {
+    let misc: Vec<u16> = run
+        .world
+        .card_streams
+        .units
+        .iter()
+        .filter(|(a, _)| a.starts_with("misc/"))
+        .map(|(_, u)| *u)
+        .collect();
+    run.world
+        .clones()
+        .into_iter()
+        .filter(|&h| !run.world.removed(h))
+        .filter(|&h| {
+            run.world
+                .actor(h)
+                .and_then(|a| a.template)
+                .is_some_and(|t| misc.contains(&t.unit))
+        })
+        .count()
+}
+
+/// The quit games of [`a_long_sitting_ends_every_game`] by default; its count
+/// by `AS920_GAMES`.
+const SITTING_GAMES: u32 = 30;
+
+/// openspec AS.920: a kid's long sitting at Dreadbeard, every game asked
+/// again after the last: [`SITTING_GAMES`] games in one run on hub stage 2,
+/// each quit at the first pick (its board set up and taken down, as a
+/// played game's is), the board's strings in as the TV's model holds them
+/// (the harness's default, AS.913).
+/// Each ends, and the VM's sliders running as each ends stay far under the
+/// pool's 400 ([`guac_script::SLIDERS`]): the card game's looping glow
+/// pulses on its sprites outlived the board, about 19 sliders a game held
+/// for good, and with the pool full a slide the board waits on landed at
+/// once and skipped its block, so the 21st game here (the twelfth played one
+/// on the TV) stood at the opponent's first stone for good.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_long_sitting_ends_every_game() {
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    let n: u32 = std::env::var("AS920_GAMES").map_or(SITTING_GAMES, |v| v.parse().unwrap());
+    let plans: Vec<(Plan, u32)> = (0..n).map(|i| (Plan::Quit, 1000 + i)).collect();
+    let p = dreadbeards_games(&plans, GAME_STEPS.saturating_mul(n));
+    let ended = p.games.iter().filter(|g| g.ended > 0).count() as u32;
+    println!(
+        "{ended} of {n} games ended; sliders as each ended {:?}; {} steps, {:.0} s",
+        p.sliders,
+        p.steps,
+        started.elapsed().as_secs_f64()
+    );
+    assert_eq!(ended, n, "{:?}", p.games.last());
+    let most = p.sliders.iter().copied().max().unwrap_or(0);
+    assert!(
+        most < guac_script::SLIDERS / 4,
+        "sliders held: {:?}",
+        p.sliders
+    );
+    // Nothing of a misc stream's outlives it (openspec AS.880): each quit's
+    // hand select's clones go with it.
+    println!("misc streams' clones as each ended {:?}", p.misc_clones);
+    assert!(p.misc_clones.iter().all(|&n| n == 0), "{:?}", p.misc_clones);
+    assert!(p.stops.is_empty(), "{:#?}", p.stops);
+    println!("load at end: {}", load());
 }

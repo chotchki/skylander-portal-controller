@@ -1155,15 +1155,41 @@ fn replace_misc(vm: &mut Vm, host: &mut WorldHost<'_, '_>) -> Result<usize, Halt
     for &h in &off {
         vm.remove(h);
     }
-    if !off.is_empty() {
+    let clones = take_off_clones_of(vm, host.world, unit);
+    if !off.is_empty() || clones > 0 {
         info!(
             stream = last,
             taken_off = off.len(),
+            clones,
             "a misc load replaced the last card game stream"
         );
         vm.shut_down(host)?;
     }
-    Ok(off.len())
+    Ok(off.len() + clones)
+}
+
+/// Takes off every live clone of a template of `unit`, a card stream leaving
+/// (openspec AS.880): a stone's asset holds the creature it presents and its
+/// weapon (`Card_Model_Attach_NNN`, `CardMdlAttach_NN`), whose clones the board
+/// hangs on the presented creature and never removes, and with the archive gone
+/// nothing of them can stay. A clone with a script is taken off as a remove of it
+/// does. How many.
+fn take_off_clones_of(vm: &mut Vm, world: &mut ScriptWorld, unit: u16) -> usize {
+    let mut gone: Vec<Handle> = world
+        .actors
+        .iter()
+        .filter(|(_, a)| a.obj.is_none() && !a.removed)
+        .filter(|(_, a)| a.template.is_some_and(|t| t.unit == unit))
+        .map(|(h, _)| *h)
+        .collect();
+    gone.sort_unstable();
+    for &h in &gone {
+        if let Some(a) = world.actors.get_mut(&h) {
+            a.removed = true;
+        }
+        vm.remove(h);
+    }
+    gone.len()
 }
 
 /// One step's answers for a played card game (openspec AS.366), after the

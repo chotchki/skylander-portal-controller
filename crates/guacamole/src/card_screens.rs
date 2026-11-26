@@ -17,7 +17,9 @@
 //! - **The score header**, while a board is up: both scores as the board's
 //!   script holds them ([`card_game::score`]) on the board record's
 //!   `ScoreBox` pieces, the player's left, at the top of the picture.
-//! - **The quit**, Start while a board is up: the level waits under Start as
+//! - **The quit**, the board player's Start while a board is up (the walking
+//!   pad's, AS.930: another pad's Start pauses the level as anywhere, its
+//!   overlay up and no quit asked): the level waits under Start as
 //!   it does anywhere, and in place of its overlay a confirm asks whether to
 //!   quit the game, the focus on No; Yes runs the board's own `Quit - Yes`
 //!   ([`card_game::quit`]), which tells the pirate and takes the board
@@ -440,8 +442,7 @@ fn open(
     }
     let started = pads
         .seat()
-        .and_then(|s| s.pause())
-        .is_some_and(|p| matches!(p, crate::pad::Pause::Start { .. }));
+        .is_some_and(|s| asks_quit(s.pause(), s.walking()));
     let was = screens.quit;
     screens.quit = quit_shown(was, read.board, started);
     if was.is_none() && screens.quit.is_some() {
@@ -462,6 +463,17 @@ fn open(
 /// [`IDLE_PLAY`] on a kid who pressed nothing by `now`.
 pub(crate) fn idle_due(since: Duration, now: Duration) -> bool {
     now.saturating_sub(since) >= IDLE_PLAY
+}
+
+/// Whether the level's pause is the board player's own Start (openspec
+/// AS.930): the board takes the walking pad's presses alone, so its quit is
+/// his too. A second kid's Start over the board pauses the level as it does
+/// anywhere and asks no quit of the first kid's game.
+pub(crate) fn asks_quit<Id: PartialEq>(
+    pause: Option<crate::pad::Pause<Id>>,
+    walking: Option<Id>,
+) -> bool {
+    matches!((pause, walking), (Some(crate::pad::Pause::Start { by }), Some(w)) if by == w)
 }
 
 /// The quit confirm as it stands next: up (focus on No) once Start waits

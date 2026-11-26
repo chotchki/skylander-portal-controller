@@ -970,3 +970,186 @@ fn places_sharing_a_fingerprint_end_only_the_slide_on_the_place_written() {
     assert_eq!(host.at(1.0), 80.0, "it holds");
     assert!(host.at(2.0) > before, "the other eases on");
 }
+
+/// [`PerReceiver`], telling the VM the receivers in `gone` have left play.
+#[derive(Default)]
+struct Leaving {
+    members: PerReceiver,
+    gone: Vec<f32>,
+}
+
+impl Host for Leaving {
+    fn get(&mut self, at: &Access) -> Result<Value, HostFault> {
+        self.members.get(at)
+    }
+    fn set(&mut self, at: &Access, v: Value) -> Result<(), HostFault> {
+        self.members.set(at, v)
+    }
+    fn reset(&mut self, at: &Access) -> Result<(), HostFault> {
+        self.members.reset(at)
+    }
+    fn draw(&mut self) -> u32 {
+        0
+    }
+    fn left_play(&mut self, receiver: Value) -> bool {
+        matches!(receiver, Value::Float(f) if self.gone.contains(&f))
+    }
+}
+
+/// openspec AS.920: a slide easing a member of a receiver the host says
+/// has left play (a sprite removed, an actor taken off) ends there and
+/// writes it no more, its slider back in the pool; a slide on a receiver
+/// still in play eases on. The card game's glow pulses loop on its sprites,
+/// so without this each game held about twenty sliders for good and the
+/// pool's 400 ran out in a long sitting.
+#[test]
+fn a_slide_on_a_receiver_that_left_play_ends() {
+    let p = program(|w| {
+        let (a, b) = (fvar(w, "a"), fvar(w, "b"));
+        idle(
+            w,
+            |w| {
+                let (one, two) = (w.float(1.0), w.float(2.0));
+                w.set(&[El::Local(a)], one);
+                w.set(&[El::Local(b)], two);
+                for r in [a, b] {
+                    let (to, secs) = (w.int(600), w.float(100.0));
+                    let (out, in_) = (w.int(0), w.int(0));
+                    let (at, _) = slide(
+                        w,
+                        &[El::Local(r), El::Member("test", "h")],
+                        to,
+                        secs,
+                        out,
+                        in_,
+                    );
+                    w.end_block(at);
+                }
+            },
+            |_| {},
+        );
+    });
+    let mut c = Config::new(Mode::Strict);
+    c.members
+        .host("test", "h", MemberSpec::new(Kind::Float, 0.0, 0.0));
+    let mut vm = Vm::new(p, c);
+    vm.add(HANDLE, "Slider", 0);
+    let mut host = Leaving::default();
+    for _ in 0..3 {
+        vm.step(&mut host).unwrap();
+    }
+    assert_eq!(vm.sliders_running(), 2);
+    host.gone.push(1.0);
+    let at_end = host.members.at(1.0);
+    vm.step(&mut host).unwrap();
+    assert_eq!(vm.sliders_running(), 1, "the one that left play ends");
+    let (held, before) = (host.members.at(1.0), host.members.at(2.0));
+    assert_eq!(held, at_end, "where it stood, its target unwritten");
+    assert!(held < 600.0);
+    for _ in 0..5 {
+        vm.step(&mut host).unwrap();
+    }
+    assert_eq!(host.members.at(1.0), held, "and writes no more");
+    assert!(host.members.at(2.0) > before, "the other eases on");
+    assert_eq!(vm.sliders_running(), 1);
+}
+
+/// openspec AS.920: a placement taken off takes its slides on its own
+/// locals and on its own actor's members with it, the host saying nothing
+/// of it; another placement's slide on its own local runs on.
+#[test]
+fn a_placement_taken_off_ends_its_slides_on_itself() {
+    let p = program(|w| {
+        let v = fvar(w, "v");
+        idle(
+            w,
+            |w| {
+                for lhs in [vec![El::Local(v)], vec![my(), El::Member("test", "h")]] {
+                    let (to, secs) = (w.int(600), w.float(100.0));
+                    let (out, in_) = (w.int(0), w.int(0));
+                    let (at, _) = slide(w, &lhs, to, secs, out, in_);
+                    w.end_block(at);
+                }
+            },
+            |_| {},
+        );
+    });
+    let mut c = Config::new(Mode::Strict);
+    c.members
+        .host("test", "h", MemberSpec::new(Kind::Float, 0.0, 0.0));
+    let mut vm = Vm::new(p, c);
+    let (_, stays) = (vm.add(HANDLE, "Gone", 0), vm.add(HANDLE + 1, "Stays", 0));
+    let mut host = World::default();
+    for _ in 0..3 {
+        vm.step(&mut host).unwrap();
+    }
+    assert_eq!(vm.sliders_running(), 4);
+    assert!(vm.remove(HANDLE));
+    vm.step(&mut host).unwrap();
+    assert_eq!(vm.sliders_running(), 2, "the taken-off placement's two end");
+    let before = float(&vm, stays, "v");
+    vm.step(&mut host).unwrap();
+    assert!(float(&vm, stays, "v") > before, "the other's eases on");
+}
+
+/// openspec AS.920: a slide on a part of a packed colour (a sprite's alpha,
+/// as a fade does) ends with its receiver leaving play as a whole member's
+/// does, the colour left where it stood; another receiver's eases on.
+#[test]
+fn a_packed_part_on_a_receiver_that_left_play_ends() {
+    let p = program(|w| {
+        let (a, b) = (fvar(w, "a"), fvar(w, "b"));
+        idle(
+            w,
+            |w| {
+                let (one, two) = (w.float(1.0), w.float(2.0));
+                w.set(&[El::Local(a)], one);
+                w.set(&[El::Local(b)], two);
+                for r in [a, b] {
+                    let (to, secs) = (w.int(200), w.float(2.0));
+                    let (out, in_) = (w.int(0), w.int(0));
+                    let (at, _) = slide(
+                        w,
+                        &[
+                            El::Local(r),
+                            El::Member("test", "c"),
+                            El::Member("colormeasurement", "alpha"),
+                        ],
+                        to,
+                        secs,
+                        out,
+                        in_,
+                    );
+                    w.end_block(at);
+                }
+            },
+            |_| {},
+        );
+    });
+    let mut c = Config::new(Mode::Strict);
+    c.members
+        .host("test", "c", MemberSpec::new(Kind::Color, 0.0, 0.0));
+    let mut vm = Vm::new(p, c);
+    vm.add(HANDLE, "Slider", 0);
+    let mut host = Leaving::default();
+    for r in [1.0f32, 2.0] {
+        host.members
+            .0
+            .insert(u64::from(r.to_bits()), Value::Color(0));
+    }
+    for _ in 0..3 {
+        vm.step(&mut host).unwrap();
+    }
+    assert_eq!(vm.sliders_running(), 2);
+    let colour = |h: &Leaving, r: f32| h.members.0[&u64::from(r.to_bits())];
+    host.gone.push(1.0);
+    let at_end = colour(&host, 1.0);
+    vm.step(&mut host).unwrap();
+    assert_eq!(vm.sliders_running(), 1, "the packed part's ends");
+    let before = colour(&host, 2.0);
+    for _ in 0..5 {
+        vm.step(&mut host).unwrap();
+    }
+    assert_eq!(colour(&host, 1.0), at_end, "and writes no more");
+    assert_ne!(colour(&host, 2.0), before, "the other eases on");
+}

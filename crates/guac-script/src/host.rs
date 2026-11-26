@@ -448,6 +448,15 @@ pub trait Host {
         let _ = handle;
     }
 
+    /// Whether `receiver` has left play: an actor taken off, an interface
+    /// sprite removed (crate docs, Slides). A slide easing one of its
+    /// members ends there, as a sound's copy stops with its actor. The
+    /// default: nothing ever leaves.
+    fn left_play(&mut self, receiver: Value) -> bool {
+        let _ = receiver;
+        false
+    }
+
     /// A call of a macro the embedder answers ([`crate::Config::answered`],
     /// crate docs, Left to the host): its display name and its parameters as
     /// the call bound them, by the names its INTERFACE declares, each read as

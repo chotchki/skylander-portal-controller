@@ -1368,9 +1368,10 @@ pub fn interface_records_of(archives: &[String]) -> Vec<guac_ir::interface::Inte
 
 thread_local! {
     /// The run's interface model holds the card archives' strings the TV's
-    /// holds (openspec AS.877): what a tutorial stop's line reads. Off by
-    /// default (AS.913); a test sets it before its run is made.
-    pub static CARD_STRINGS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// holds (openspec AS.877): what a tutorial stop's line reads. On by
+    /// default, as the TV has them (AS.913); a test turns it off before its
+    /// run is made.
+    pub static CARD_STRINGS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
 }
 
 /// The interface's model over the script part's files (`igzs`, by unit) and

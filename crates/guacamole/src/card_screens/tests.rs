@@ -105,6 +105,23 @@ fn the_quit_confirm_comes_with_start_over_a_board_on_no() {
     assert_eq!(quit_shown(None, false, true), None);
 }
 
+/// openspec AS.930: the quit is asked by the board player's own Start (the
+/// walking pad's) alone: a second pad's Start over the board pauses the
+/// level and asks no quit of the first kid's game; no pause, or the walking
+/// pad gone (the controller message), asks none.
+#[test]
+fn only_the_walking_pads_start_asks_the_quit() {
+    use crate::pad::Pause;
+    assert!(asks_quit(Some(Pause::Start { by: 1 }), Some(1)));
+    assert!(
+        !asks_quit(Some(Pause::Start { by: 2 }), Some(1)),
+        "another pad's"
+    );
+    assert!(!asks_quit(Some(Pause::Start { by: 1 }), None), "no walker");
+    assert!(!asks_quit(Some(Pause::<u8>::NoPad), Some(1)));
+    assert!(!asks_quit(None, Some(1u8)));
+}
+
 /// openspec AS.581: a stone's picture, in the hand select's slots and on the
 /// loot panel, draws its interface image the right way up (the interface's
 /// images run bottom row first), at its template's size times the scale.
