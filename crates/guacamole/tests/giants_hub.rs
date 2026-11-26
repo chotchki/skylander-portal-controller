@@ -2982,6 +2982,26 @@ fn the_card_games_sounds_look_up_on_the_tvs_book_by_their_stems() {
     );
 }
 
+/// openspec AS.913: the run's model holds the board's strings by default,
+/// as the TV's does, and they reach the hub's course: a UI animation just
+/// before the board is timed by its text, so the board of the seed-1 quit
+/// game starts 10 steps later with them than without (the as-cards-long
+/// lane's draw log: 1,398 against 1,388). Fails if the harness's default
+/// ever loses them.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn the_boards_strings_are_the_runs_by_default_and_time_its_start() {
+    println!("load at start: {}", load());
+    let with = dreadbeards_games(&[(Plan::Quit, 1)], 20_000);
+    common::CARD_STRINGS.set(false);
+    let without = dreadbeards_games(&[(Plan::Quit, 1)], 20_000);
+    common::CARD_STRINGS.set(true);
+    let (a, b) = (with.games[0].started, without.games[0].started);
+    println!("the board started at {a} by default, {b} without the strings");
+    assert_eq!(a, b + 10, "by default {a}, without the strings {b}");
+    println!("load at end: {}", load());
+}
+
 /// The live clones of a template of the card game's misc streams (openspec
 /// AS.880: a stone's asset, the hand select), the misc slot's.
 fn misc_clones_live(run: &Run) -> usize {

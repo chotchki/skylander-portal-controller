@@ -4701,10 +4701,16 @@ impl ScriptWorld {
         if a.physics.ground_max_speed >= MOVER_TOP_SPEED || self.walk_written.contains(&hero) {
             return None;
         }
-        let pad = self
-            .controllers
-            .iter()
-            .any(|c| a.controller == Value::Entity(*c));
+        // While a played card game's board holds his slot (openspec AS.933,
+        // `card_game::Restore::Replaced`) the stick is its cursor's: his
+        // minion is off, and the board's 2 s of held stick walked his hidden
+        // body 7.8 units. Ours, as the walk off the movers is.
+        let board = self.card_streams.restore() == crate::card_game::Restore::Replaced;
+        let pad = !board
+            && self
+                .controllers
+                .iter()
+                .any(|c| a.controller == Value::Entity(*c));
         let aim = match pad && push.held() {
             true => Aim::Along {
                 heading: push.heading,
@@ -12097,6 +12103,18 @@ mod animation_tests {
             Some(Aim::Still),
             "the stick let go"
         );
+        // AS.933: a card board holding his slot takes the stick for its
+        // cursor; given back (asked, then answered), the stick is his again.
+        w.card_streams.restore_replaced();
+        assert_eq!(
+            w.engine_walk(HERO, push).map(|x| x.1),
+            Some(Aim::Still),
+            "under the board"
+        );
+        w.card_streams.restore_asked();
+        assert_eq!(w.engine_walk(HERO, push).map(|x| x.1), Some(along));
+        w.card_streams.hero_returned();
+        assert_eq!(w.engine_walk(HERO, push).map(|x| x.1), Some(along));
         // A 50 ft/s dash left on him: the model slows it; a mover's stays.
         let solid = guac_motion::tuning::eruptor_solid();
         let mut body = Hero::actor(solid, Vec3::ZERO, 0.0);
