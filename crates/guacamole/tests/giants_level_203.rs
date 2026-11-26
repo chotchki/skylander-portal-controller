@@ -783,15 +783,16 @@ const THROUGH_THE_GATE: [(f32, f32); 5] = [
 /// he lands the start's sets are taken off, the lower crushers are back on
 /// their timer and the Molekin by the first crusher talks; Setup_002's
 /// controller sends its nine Fire Chompies out of its pipe (two flames a
-/// launch) and they're fought down; its lobber, woken, bombs him once he's
-/// down the side ramp in its sight (bombs thrown at him); its gate waits on
-/// it. Set on the
-/// lobber's ledge (the stand-in, AS.990) he beats it, the controller ends
-/// and the gate lowers its spikes, and he walks back up and through it.
-/// Nothing stops.
+/// launch) and they're fought down; its lobber, woken, throws its bombs at
+/// him once he's down the side ramp in its sight (thrown, not hurting him:
+/// headless none lands, where the TV's run lost 56-60 a bomb, AS.1001); its
+/// gate waits on it. Then the stand-in the name says: PUT on the lobber's
+/// ledge (`ON_THE_LEDGE`, AS.990; no kid walks there), he beats it, the
+/// controller ends and the gate lowers its spikes, and he walks back up and
+/// through it. Nothing stops.
 #[test]
 #[ignore = "reads the Giants dump"]
-fn level_203s_lower_walkways_fight_opens_its_gate() {
+fn level_203s_lower_walkways_fight_then_its_gate_with_him_put_on_the_ledge() {
     println!("load at start: {}", load());
     let mut stops = Vec::new();
     let (mut run, out) = fought_open(&mut stops);
@@ -841,7 +842,7 @@ fn level_203s_lower_walkways_fight_opens_its_gate() {
         "wait to be opened",
         "it waits on the lobber"
     );
-    // Down the side ramp into the lobber's sight: it bombs him.
+    // Down the side ramp into the lobber's sight: it throws its bombs at him.
     let seen_lobber: std::cell::RefCell<Vec<String>> = Default::default();
     let (talked, dropped) = (std::cell::Cell::new(false), std::cell::Cell::new(false));
     let mut each = |run: &Run| {
