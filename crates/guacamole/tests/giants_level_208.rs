@@ -1710,7 +1710,9 @@ fn level_208s_setup_003_walked_from_the_fourth_ice_block() {
 #[test]
 #[ignore = "reads the Giants dump"]
 fn level_208s_setup_004_by_its_own_triggers() {
-    setup_004_to_the_pads(None, TOP_UPS_004);
+    let (_, stops) = setup_004_to_the_pads(None, TOP_UPS_004);
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
 }
 
 /// openspec AS.1010: Setup_004 as [`level_208s_setup_004_by_its_own_triggers`]
@@ -1719,7 +1721,9 @@ fn level_208s_setup_004_by_its_own_triggers() {
 #[test]
 #[ignore = "reads the Giants dump"]
 fn level_208s_setup_004_with_a_melee_hero() {
-    setup_004_to_the_pads(Some(NINJINI), TOP_UPS_004_MELEE);
+    let (_, stops) = setup_004_to_the_pads(Some(NINJINI), TOP_UPS_004_MELEE);
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
 }
 
 /// Ninjini, the magic Giant: swords and a bottle she throws at her feet.
@@ -1750,7 +1754,7 @@ fn joined_208_as(character: Option<Character>, stops: &mut Vec<String>) -> Run {
 }
 
 /// Setup_004 fought as a kid fights it to the jump pads ([`level_208s_setup_004_by_its_own_triggers`]).
-fn setup_004_to_the_pads(character: Option<Character>, most_top_ups: u32) {
+fn setup_004_to_the_pads(character: Option<Character>, most_top_ups: u32) -> (Run, Vec<String>) {
     println!("load at start: {}", load());
     let mut stops = Vec::new();
     let mut run = joined_208_as(character, &mut stops);
@@ -1906,9 +1910,127 @@ fn setup_004_to_the_pads(character: Option<Character>, most_top_ups: u32) {
     for pad in [PAD_4, PAD_5] {
         assert!(!run.vm.asleep(run.placement(pad)), "{pad} on");
     }
+    (run, stops)
+}
+
+/// openspec AS.1014: the way on from Setup_004's yard to the big battle's
+/// place, by the stick and the attack. Setup_004 fought to its pads as
+/// [`level_208s_setup_004_by_its_own_triggers`]; the stick onto pad (4),
+/// which lands him on bomber (2)'s ledge, and onto pad (5), which lands him
+/// on the upper level; west round the ice bowl to the brick wall across
+/// its north end (`Wall_Spawner_Template(4)`), hit until it bursts; onto
+/// the plateau past it and off its south edge, 9 m down into the arena, to
+/// `Setup_005_Controller`'s place. A stall (300 steps with no move) on a
+/// pad fails it.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_208s_way_on_from_setup_004s_yard_to_the_big_battle() {
+    let (mut run, mut stops) = setup_004_to_the_pads(None, TOP_UPS_004);
+    let up = ride(&mut run, &mut stops, PAD_4, LEDGE_2);
+    println!("pad (4): landed at {up:?}");
+    let up = up.expect("pad (4) carried him");
+    assert!(up.y > -7.5, "onto the ledge: {up}");
+    let upper = ride(&mut run, &mut stops, PAD_5, UPPER);
+    println!("pad (5): landed at {upper:?}");
+    let upper = upper.expect("pad (5) carried him");
+    assert!(upper.y > -5.0, "onto the upper level: {upper}");
+    let wall = run.at(WALL_4);
+    let broke = fight_to(
+        &mut run,
+        &mut stops,
+        &[WALL_4],
+        &[WALL_4],
+        wall,
+        3000,
+        &|run: &Run| removed(run, WALL_4),
+    );
+    println!(
+        "the wall: {} at step {}, him at {}",
+        broke.ended,
+        run.steps,
+        run.hero().pivot
+    );
+    assert!(broke.ended, "the wall stood: {}", run.hero().pivot);
+    let place = run.at(SETUP_005_CONTROLLER);
+    for goal in [PLATEAU, ARENA_EDGE, place] {
+        let to = fight_to(&mut run, &mut stops, &[], &[], goal, 3000, &|run: &Run| {
+            flat(run.hero().pivot, goal) < 2.0
+        });
+        println!(
+            "to {goal}: {} at step {}, him at {}",
+            to.ended,
+            run.steps,
+            run.hero().pivot
+        );
+        assert!(to.ended, "held short of {goal} at {}", run.hero().pivot);
+    }
+    let me = run.hero().pivot;
+    assert!((me.y - place.y).abs() < 1.5, "on the arena's floor: {me}");
+    assert!(run.health().is_some_and(|h| h > 0.0), "alive");
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
 }
+
+/// The stick onto `pad` heading for `toward`, as a kid rides one: to a spot
+/// 2.5 m short of it on the far side from `toward`, then over it (a pad
+/// throws a hero along his own facing, `PR_PvP_jumpPad.ai`'s, unless it
+/// holds a forced heading), the stick held at `toward` while he's in the
+/// air (it steers him, as the river pad's test does), until he lands.
+/// Where he landed; none if no pad threw him or he stalled 300 steps.
+fn ride(run: &mut Run, stops: &mut Vec<String>, pad: &str, toward: Vec3) -> Option<Vec3> {
+    let at = run.at(pad);
+    let back = Vec3::new(at.x - toward.x, 0.0, at.z - toward.z).normalize_or_zero() * 2.5;
+    let short = Vec3::new(at.x + back.x, at.y, at.z + back.z);
+    let (mut thrown, mut over, mut last, mut since) = (None, false, run.hero().pivot, 0u32);
+    for _ in 0..2400 {
+        let me = run.hero().pivot;
+        if thrown.is_none() && me.y > at.y + 1.0 && !run.hero().footing.supported {
+            thrown = Some(run.steps);
+        }
+        if let Some(t) = thrown
+            && run.steps > t + 10
+            && run.hero().footing.supported
+        {
+            return Some(me);
+        }
+        if thrown.is_none() && cutscene_name(run).is_some() {
+            still(run, stops, [false; 4]);
+            continue;
+        }
+        over |= flat(me, short) < 0.6;
+        let aim = if thrown.is_some() || over {
+            toward
+        } else {
+            short
+        };
+        run.bench.view = (aim.x - me.x).atan2(aim.z - me.z).to_degrees();
+        run.bench.hold_view = true;
+        let push = if flat(me, aim) > 0.5 { 1.0 } else { 0.0 };
+        step(run, stops, Stick::new(0.0, push), [false; 4]);
+        if run.hero().pivot.distance(last) < 0.01 {
+            since += 1;
+            if since > 300 {
+                return None;
+            }
+        } else {
+            (last, since) = (run.hero().pivot, 0);
+        }
+    }
+    None
+}
+
+/// The brick wall on the way on (openspec AS.1014), a spot on the plateau
+/// past it, and one on the plateau's south edge over the arena.
+const WALL_4: &str = "Wall_Spawner_Template(4)";
+/// Where pad (4) and pad (5) are ridden for: bomber (2)'s ledge north-east
+/// of pad (4), the upper level north of pad (5).
+const LEDGE_2: Vec3 = Vec3::new(-121.0, -6.7, 80.0);
+const UPPER: Vec3 = Vec3::new(-119.6, 0.3, 86.0);
+const PLATEAU: Vec3 = Vec3::new(-180.0, 0.0, 96.0);
+const ARENA_EDGE: Vec3 = Vec3::new(-185.0, -9.2, 80.0);
+
+/// The big battle's controller (openspec AS.404).
+const SETUP_005_CONTROLLER: &str = "Setup_005_Controller";
 
 /// What beating the ledge bombers took ([`beat_the_bombers`]).
 #[derive(Debug, Default)]
