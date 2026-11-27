@@ -390,6 +390,36 @@ pub fn stretch_3(level: &str) -> &'static [&'static str] {
     }
 }
 
+/// What a broken gate or metal wall on level 205 throws (openspec
+/// AS.1122), by template name (a clone runs under its template's): the
+/// metal walls' pieces (`MetalWall_Piece.ai`: each flung at a random speed
+/// under gravity, then faded and taken off) and the padlock gate's padlock,
+/// its parts and its chain link, as level 214's padlock gate lists them.
+/// Unlisted, the blown gate's pieces stood where they spawned, in the
+/// gate's own shape.
+pub const BROKEN_PIECES: [&str; 11] = [
+    "Metal Wall Piece 1",
+    "Metal Wall Piece 2",
+    "Metal Wall Piece 3",
+    "Metal Wall Piece 4",
+    "MetalWall_Brick",
+    "Padlock",
+    "Padlock_Part_02",
+    "Padlock_Part_03",
+    "Padlock_Part_04",
+    "Padlock_Part_05",
+    "Chain_Link",
+];
+
+/// The placements [`BROKEN_PIECES`] lists for the level whose archive is
+/// `level`: none on another level.
+pub fn broken_pieces(level: &str) -> &'static [&'static str] {
+    match level {
+        LEVEL => &BROKEN_PIECES,
+        _ => &[],
+    }
+}
+
 /// The Giants' walls in level 205's houses (openspec AS.1120): a metal
 /// wall (`MetalWall.ai`) a house's controller wakes with its room, which a
 /// Giant's own attacks break (its hurt check takes a Giant's titan hurt or a

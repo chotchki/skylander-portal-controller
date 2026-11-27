@@ -3973,6 +3973,29 @@ fn on_to_setup_003s_end(setup: Setup) -> AtCali {
     assert_eq!(gone.len(), THE_GATE.len(), "the gate stands: {gone:?}");
     assert_eq!(gone[0].1, "Breakable_Metal_Wall(12)", "the blocker first");
     assert!(broke.is_some() && pieces > 0, "the gate's pieces: {pieces}");
+    // openspec AS.1122: its pieces fly and go, not left standing in the
+    // gate's shape where it stood.
+    let gate = run.at("Breakable_Metal_Wall(3)");
+    let standing = |run: &Run| {
+        clones_near(run, gate, 12.0)
+            .iter()
+            .filter(|n| n.starts_with("Metal Wall Piece") || n.starts_with("Padlock_Part"))
+            .count()
+    };
+    let mut cleared = None;
+    for _ in 0..900 {
+        if standing(&run) == 0 {
+            cleared = Some(run.steps);
+            break;
+        }
+        still(&mut run, &mut stops, [false; 4]);
+    }
+    println!("the gate's pieces gone by step {cleared:?}");
+    assert!(
+        cleared.is_some(),
+        "the gate's pieces still stand: {}",
+        standing(&run)
+    );
     assert_ne!(
         behaviour(&run, "Setup_003_Controller"),
         "check if gate has been blown up"
