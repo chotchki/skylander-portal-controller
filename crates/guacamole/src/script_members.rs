@@ -1187,6 +1187,28 @@ impl ScriptWorld {
         false
     }
 
+    /// Whether the ray caster's start lies inside the solid of `a`'s body in
+    /// the seam, at its outer size (the world holds a convex solid
+    /// [`CONVEX_RADIUS`](guac_motion::solid::CONVEX_RADIUS) smaller than the
+    /// original's, AG.70): what a script stepping a ray onto its contact
+    /// with `a` and on into it asks of `a` (openspec AS.1060). False for an
+    /// actor with no body there.
+    fn ray_starts_in(&self, a: Handle, engine: &mut dyn Engine) -> bool {
+        let Some(body) = engine.body(a) else {
+            return false;
+        };
+        engine
+            .seam()
+            .overlaps(
+                &Shape::Sphere {
+                    radius: guac_motion::solid::CONVEX_RADIUS,
+                },
+                Pose::at(self.ray.start),
+                &[],
+            )
+            .contains(&body)
+    }
+
     /// The ray caster's contact between its two points, through the seam.
     fn ray_contact(&self, engine: &mut dyn Engine) -> Option<(Vec3, Vec3)> {
         self.ray_contact_full(engine).map(|(p, n, _)| (p, n))
@@ -2109,6 +2131,24 @@ impl ScriptWorld {
                     // autoaim's rays aren't straight down and keep the "no"
                     // above (AS.902).
                     if self.stands_on_the_ray(a, engine) {
+                        return Ok(Value::Int(1));
+                    }
+                    // A ray that starts inside its target's own solid
+                    // touches it (openspec AS.1060): Cynder's breath, its
+                    // hurt ray from her lightning to the target's centre
+                    // meeting a target that acts as an actor surface (a
+                    // breakable wall), steps the ray's start onto that
+                    // contact and 0.1 ft on and asks whether the target
+                    // is on the ray, so "no" let her breath hurt a wall
+                    // only through her head poking into it (Gill Grunt's
+                    // hose makes the same step and ask). It reaches the
+                    // autoaim's outline rays too (`Calc - Autoaim At
+                    // Actors` with `check for collision shapes`, six
+                    // heroes' calls, AS.1080): one starting from a corner
+                    // of the aim's area that lies inside a target touches
+                    // it; one crossing a target from outside keeps the
+                    // "no" below.
+                    if self.ray_starts_in(a, engine) {
                         return Ok(Value::Int(1));
                     }
                     if self.ray_picks {
@@ -6900,8 +6940,9 @@ mod tests {
         w.actors.get_mut(&FAR).unwrap().solid.interacts_with_actors = 1;
         assert_eq!(touch(&mut w, &mut e, FAR, 1.0), Value::Int(1), "it again");
         // The autoaim's ray (AS.902): through the block's top at a slant, or
-        // across it level, is no touch; the walkable check's is straight
-        // down.
+        // across it level, or up through it, is no touch; the walkable
+        // check's is straight down. Each starts outside the block (one
+        // starting inside it touches it, AS.1060).
         for (start, end, what) in [
             (
                 Vec3::new(0.2, 1.0, 0.0),
@@ -6909,11 +6950,11 @@ mod tests {
                 "a slant",
             ),
             (
-                Vec3::new(0.2, -0.5, 0.0),
+                Vec3::new(0.0, -0.5, 0.0),
                 Vec3::new(4.0, -0.5, 0.0),
                 "level",
             ),
-            (Vec3::new(1.0, -1.5, 0.0), Vec3::new(1.0, 1.5, 0.0), "up"),
+            (Vec3::new(1.0, -4.0, 0.0), Vec3::new(1.0, 1.5, 0.0), "up"),
         ] {
             w.ray.start = start;
             w.ray.end = end;
@@ -6929,6 +6970,168 @@ mod tests {
                 "{what}"
             );
         }
+    }
+
+    /// openspec AS.1060: a breakable wall (a box that acts as an actor
+    /// surface) and a ray from in front of it to its centre, as Cynder's
+    /// breath casts its hurt ray. Asked from in front, the wall's collision
+    /// against the ray caster is no touch (`ray-touch`: the autoaim's rays
+    /// keep it); stepped onto the contact and 0.1 ft on, as her script
+    /// steps it, the ray starts inside the wall and touches it, out to its
+    /// convex radius past the face the world holds. A start inside another
+    /// body touches only that one, and an actor with no body keeps no touch.
+    #[test]
+    fn a_ray_stepped_into_its_target_touches_it() {
+        const WALL: Handle = 0x6000_0051;
+        const OTHER: Handle = 0x6000_0052;
+        const NONE: Handle = 0x6000_0053;
+        struct Walls(ParryWorld);
+        impl Engine for Walls {
+            fn hero(&mut self, _: Handle) -> Option<&mut Hero> {
+                None
+            }
+            fn heroes(&self) -> Vec<Handle> {
+                Vec::new()
+            }
+            fn seam(&self) -> &dyn PhysicsSeam {
+                &self.0
+            }
+            fn view_heading(&self) -> f32 {
+                0.0
+            }
+            fn pad(&self, _: usize) -> Pad {
+                Pad::default()
+            }
+            fn body(&self, actor: Handle) -> Option<BodyId> {
+                match actor {
+                    WALL => Some(BodyId(1)),
+                    OTHER => Some(BodyId(2)),
+                    _ => None,
+                }
+            }
+            fn actor_of(&self, body: BodyId) -> Option<Handle> {
+                match body {
+                    BodyId(1) => Some(WALL),
+                    BodyId(2) => Some(OTHER),
+                    _ => None,
+                }
+            }
+        }
+        // The wall 9 m wide, 3 m high, 1.5 m thick, its front face at
+        // z = -1 as the world holds it, its centre at (0, 1.5, -1.75); the
+        // other a box 5 m off.
+        let wall = Body {
+            id: BodyId(1),
+            kind: BodyKind::Kinematic,
+            pose: Pose::at(Vec3::new(0.0, 1.5, -1.75)),
+            collider: Collider::Convex(Shape::Box {
+                half_extents: Vec3::new(4.5, 1.5, 0.75),
+                margin: 0.0,
+            }),
+        };
+        let other = Body {
+            id: BodyId(2),
+            kind: BodyKind::Kinematic,
+            pose: Pose::at(Vec3::new(10.0, 1.5, -1.75)),
+            collider: Collider::Convex(Shape::Box {
+                half_extents: Vec3::splat(0.5),
+                margin: 0.0,
+            }),
+        };
+        let mut e = Walls(ParryWorld::new(&[wall, other]).unwrap());
+        let mut w = world();
+        let solid = Solid {
+            width: 29.5,
+            length: 4.9,
+            height: 9.8,
+            interacts_with_level_mesh: 1,
+            interacts_with_actors: 1,
+            acts_as_actor_surface: 1,
+            shape: 1,
+            ..Solid::default()
+        };
+        for h in [WALL, OTHER, NONE] {
+            let mut a = Actor::blank();
+            a.solid = solid;
+            w.actors.insert(h, a);
+        }
+        let ray = w.objs.value(Object::RayCast);
+        let centre = Vec3::new(0.0, 1.5, -1.75);
+        let touch = |w: &mut ScriptWorld, e: &mut Walls, h: Handle, start: Vec3| {
+            w.ray.start = start;
+            w.ray.end = centre;
+            let a = at(
+                "positionmeasurement",
+                "collision",
+                Some(Value::Entity(h)),
+                Some(ray),
+            );
+            w.get_member(&a, Member::Collision, e).unwrap()
+        };
+        // Her lightning 2 m in front of the wall, up and to its side.
+        let mouth = Vec3::new(1.5, 2.2, 1.0);
+        assert_eq!(
+            touch(&mut w, &mut e, WALL, mouth),
+            Value::Int(0),
+            "from in front"
+        );
+        w.ray.start = mouth;
+        w.ray.end = centre;
+        let (hit, _) = w.ray_contact(&mut e).expect("the wall's face");
+        assert!((hit.z + 1.0).abs() < 1e-3, "{hit}");
+        let on = hit + (centre - mouth).normalize() * (0.1 * METRES_PER_FOOT);
+        assert_eq!(touch(&mut w, &mut e, WALL, on), Value::Int(1), "stepped in");
+        // 0.04 m off the face the world holds: inside the original's.
+        assert_eq!(
+            touch(&mut w, &mut e, WALL, Vec3::new(1.5, 2.2, -0.96)),
+            Value::Int(1),
+            "its convex radius"
+        );
+        assert_eq!(
+            touch(&mut w, &mut e, WALL, Vec3::new(1.5, 2.2, -0.9)),
+            Value::Int(0),
+            "past it"
+        );
+        assert_eq!(
+            touch(&mut w, &mut e, OTHER, on),
+            Value::Int(0),
+            "inside another"
+        );
+        assert_eq!(touch(&mut w, &mut e, NONE, on), Value::Int(0), "no body");
+        // The autoaim's outline (AS.1080): an edge from a corner outside the
+        // wall that crosses it is no touch (the original's edge test isn't
+        // built); one from a corner inside the wall touches it.
+        let edge = |w: &mut ScriptWorld, e: &mut Walls, start: Vec3, end: Vec3| {
+            w.ray.start = start;
+            w.ray.end = end;
+            let a = at(
+                "positionmeasurement",
+                "collision",
+                Some(Value::Entity(WALL)),
+                Some(ray),
+            );
+            w.get_member(&a, Member::Collision, e).unwrap()
+        };
+        assert_eq!(
+            edge(
+                &mut w,
+                &mut e,
+                Vec3::new(-6.0, 1.0, 0.0),
+                Vec3::new(6.0, 1.0, -3.5)
+            ),
+            Value::Int(0),
+            "an edge across it"
+        );
+        assert_eq!(
+            edge(
+                &mut w,
+                &mut e,
+                Vec3::new(4.0, 1.0, -1.5),
+                Vec3::new(8.0, 1.0, 2.0)
+            ),
+            Value::Int(1),
+            "an edge from a corner in it"
+        );
     }
 
     /// openspec AS.76: a point put at a place on the screen lands there, on
