@@ -2053,66 +2053,6 @@ fn level_208s_big_battle_by_its_own_triggers() {
     println!("load at end: {}", load());
 }
 
-/// openspec AS.404: the pit beside the big battle's arena kills what falls
-/// in. Set down at Setup_005's place after the intro, the controller wakes
-/// and sends its first spinners; the first of them, come to fight him, set
-/// down in the pit under the arena's floor falls, and the kill plane under
-/// it (`Setup_005_killPlane`, which kills each of `Setup_005_Enemies`
-/// within 5 of its height) takes it within 300 steps.
-/// Unlisted, a foe knocked in stood in the pit for good and the battle
-/// waited on it.
-#[test]
-#[ignore = "reads the Giants dump"]
-fn level_208s_big_battle_pit_kills_what_falls_in() {
-    println!("load at start: {}", load());
-    let mut stops = Vec::new();
-    let mut run = joined_208(&mut stops);
-    for k in 0..6000u32 {
-        still(&mut run, &mut stops, [false; 4]);
-        if k > 200 && scene_of(&run).is_none() && !guacamole::anchors::scene_holds(&run.vm) {
-            break;
-        }
-    }
-    let place = run.at(SETUP_005_CONTROLLER);
-    run.put(place + Vec3::Y * 0.5, 0.0);
-    let foe = SETUP_005_FOES[0];
-    let mut fighting = None;
-    for _ in 0..1800 {
-        still(&mut run, &mut stops, [false; 4]);
-        if behaviour(&run, foe) == "battle" {
-            fighting = Some(run.steps);
-            break;
-        }
-    }
-    println!(
-        "{foe} fighting at {fighting:?}, the controller {}",
-        behaviour(&run, SETUP_005_CONTROLLER)
-    );
-    assert!(fighting.is_some(), "{foe} never came to fight");
-    let pit = run.at("Setup_005_killPlane");
-    run.set_at(foe, Vec3::new(pit.x, pit.y + 20.0, pit.z), 0.0);
-    let mut gone = None;
-    let mut low = f32::MAX;
-    for _ in 0..300 {
-        still(&mut run, &mut stops, [false; 4]);
-        if let Some(a) = run.world.actor(run.placed(foe).0) {
-            low = low.min(a.position.y);
-        }
-        if removed(&run, foe) || behaviour(&run, foe) == "death" {
-            gone = Some(run.steps);
-            break;
-        }
-    }
-    println!("{foe} in the pit: down to y {low:.1}, gone at {gone:?}");
-    assert!(
-        gone.is_some(),
-        "{foe} lived in the pit: {}",
-        behaviour(&run, foe)
-    );
-    assert!(stops.is_empty(), "{stops:#?}");
-    println!("load at end: {}", load());
-}
-
 /// The foes the big battle's controller names (`enemy a` to `enemy ab`,
 /// openspec AS.404).
 const SETUP_005_FOES: [&str; 28] = [

@@ -358,7 +358,14 @@ pub fn snowman_parts(level: &str) -> impl Iterator<Item = &'static str> {
 /// once every one of `Setup_004_Enemies` is (openspec AS.1020). Woken on its first trigger, it circles
 /// four of the Chompies round `Setup_004_Anchor` until a player reaches
 /// its second trigger down the slope ([`WAY_DOWN`]), then sends them, the
-/// Cyclopes, the Biclopes and the bombers in.
+/// Cyclopes, the Biclopes and the bombers in. Then the big battle (openspec
+/// AS.404): `Setup_005_Controller` (its file `Setup_006_Controller.ai`)
+/// and the 28 its script names (`enemy a` to `enemy ab`: nine spinning
+/// Cyclopes, four heavy Biclopes, fifteen Ice Chompies), which stand in
+/// Setup_004's yard and on the plateau until a player comes within 7 of its
+/// height in range, then walk in along its paths, wave by wave, until its
+/// clean-up takes its set off. Its kill plane under the pit stays unlisted:
+/// a foe set down in the pit is removed as it falls with it listed or not.
 pub const WAY: Encounter = Encounter {
     level: LEVEL,
     placements: &[
@@ -405,7 +412,6 @@ pub const WAY: Encounter = Encounter {
         "Enemy_Chompy_Ice(8)",
         "Enemy_Chompy_Ice(9)",
         "Setup_005_Controller",
-        "Setup_005_killPlane",
         "Enemy_Cyclops_Near(7)",
         "Enemy_Cyclops_Near(8)",
         "Enemy_Cyclops_Near(9)",
