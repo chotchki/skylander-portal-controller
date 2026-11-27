@@ -304,6 +304,23 @@ pub fn way_on(level: &str) -> impl Iterator<Item = &'static str> {
     WAY_ON.iter().copied().filter(move |_| on)
 }
 
+/// The big battle's way out, by name (openspec AS.404): the arena's walls
+/// stand 9 m under the plateau, and `_JumpPad_Activator(2)_Door_Key`
+/// (`Jump_Pad_Activator_Door_key.ai`) waits on the battle's set
+/// (`Setup_005_Enemies`), then pans to pad (15) by the arena's north wall
+/// and turns it on; the pad (`PR_PvP_jumpPad.ai`) throws him back up onto
+/// the plateau. After that it waits on the level's three key spawners
+/// (one in the arena, two far off) and, all taken, wakes the robot's
+/// reveal by the door (openspec AS.1015). Unlisted, a kid who beat the
+/// battle stood in the arena for good.
+pub const ARENA_EXIT: [&str; 2] = ["_JumpPad_Activator(2)_Door_Key", "PvP_JumpPad_NORMAL(15)"];
+
+/// [`ARENA_EXIT`] on 208 alone.
+pub fn arena_exit(level: &str) -> impl Iterator<Item = &'static str> {
+    let on = level == LEVEL;
+    ARENA_EXIT.iter().copied().filter(move |_| on)
+}
+
 /// Level 208's snowmen, by name (openspec AS.1021): the nine placed
 /// `Snowman_Whole.ai`s, each a capsule 8 ft wide and 12 ft high solid to
 /// actors. Its script waits until a player's minion runs into it or hurts
@@ -489,6 +506,26 @@ mod tests {
             "Enemy_Chompy_Ice(9)",
         ] {
             assert!(WAY.placements.contains(&n), "{n}");
+        }
+    }
+
+    /// openspec AS.404: the arena's jump pad and its activator are on
+    /// 208's listing and on no other level's.
+    #[test]
+    fn level_208s_arena_exit_is_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        assert_eq!(arena_exit(LEVEL).collect::<Vec<_>>(), ARENA_EXIT);
+        for other in ["level_202", "level_205_piratecards"] {
+            let off = level_config(Mode::Play, &files, 5, other);
+            for name in ARENA_EXIT {
+                assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+                assert!(
+                    !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
+                    "{name} on {other}"
+                );
+            }
+            assert_eq!(arena_exit(other).count(), 0);
         }
     }
 

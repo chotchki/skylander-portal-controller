@@ -4899,6 +4899,8 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
         placements.extend(crate::level_208::yard_pads(name).map(str::to_owned));
         // The wall on the way on to the big battle (openspec AS.1014).
         placements.extend(crate::level_208::way_on(name).map(str::to_owned));
+        // The big battle's way out (openspec AS.404).
+        placements.extend(crate::level_208::arena_exit(name).map(str::to_owned));
         // Level 203's start area (openspec AS.704).
         placements.extend(crate::level_203::start(name).map(str::to_owned));
     }

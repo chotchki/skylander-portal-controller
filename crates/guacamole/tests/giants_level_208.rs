@@ -2049,9 +2049,63 @@ fn level_208s_big_battle_by_its_own_triggers() {
     }
     assert!(top_ups <= TOP_UPS_005, "{top_ups} top-ups");
     assert!(lowest < full, "never hurt: {lowest}");
+    // Its way out: the pan to pad (15), the pad on; the arena's key taken
+    // (it floats over him); the pad ridden north onto the plateau.
+    let mut pans = Vec::new();
+    for _ in 0..900 {
+        if let Some(cs) = cutscene_name(&run)
+            && pans.last() != Some(&cs)
+        {
+            pans.push(cs);
+        }
+        still(&mut run, &mut stops, [false; 4]);
+        if !pans.is_empty()
+            && cutscene_name(&run).is_none()
+            && !run.vm.asleep(run.placement(PAD_15))
+        {
+            break;
+        }
+    }
+    println!(
+        "after the battle: step {}, pans {pans:?}, pad (15) {}",
+        run.steps,
+        behaviour(&run, PAD_15)
+    );
+    assert!(!pans.is_empty(), "the pan to the arena's pad");
+    let key = run.at("Key Spawner(1)");
+    let took = fight_to(&mut run, &mut stops, &[], &[], key, 2000, &key_held);
+    println!("the arena's key: {} at step {}", took.ended, run.steps);
+    assert!(
+        took.ended,
+        "the arena's key not taken: {}",
+        run.hero().pivot
+    );
+    let out = ride(&mut run, &mut stops, PAD_15, PLATEAU_NORTH);
+    println!("pad (15): landed at {out:?}");
+    let out = out.expect("pad (15) carried him");
+    assert!(out.y > -2.0, "onto the plateau: {out}");
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
 }
+
+/// Whether the hero carries a key (its pickup grabbed by the player: it
+/// floats over him until a door takes it, and only then does its spawner
+/// come off).
+fn key_held(run: &Run) -> bool {
+    run.world.clones().into_iter().any(|h| {
+        run.world.name(h) == "Key Pickup"
+            && run.world.actor(h).is_some_and(|a| !a.removed)
+            && run
+                .vm
+                .placement_of(h)
+                .and_then(|i| run.vm.behaviour(i))
+                .is_some_and(|b| b == "grabbed by player")
+    })
+}
+
+/// The arena's jump pad and the plateau north of it (openspec AS.404).
+const PAD_15: &str = "PvP_JumpPad_NORMAL(15)";
+const PLATEAU_NORTH: Vec3 = Vec3::new(-192.0, 0.0, 95.0);
 
 /// The foes the big battle's controller names (`enemy a` to `enemy ab`,
 /// openspec AS.404).
