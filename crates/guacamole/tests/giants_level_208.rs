@@ -427,6 +427,98 @@ fn level_208s_exit_opens_by_its_reveal_and_its_wall() {
     println!("load at end: {}", load());
 }
 
+/// Cynder, the undead dragon whose breath is a lightning strike.
+const CYNDER: Character = Character {
+    archive: "character/032_cynder.bld",
+    load_file: "032_Cynder",
+    toy: 32,
+};
+
+/// Where Cynder stands to breathe at the plaza's wall (openspec AS.1060):
+/// 2.1 m in front of its face once she settles, facing its middle, her
+/// head clear of it, so her hurt ray meets the wall's own face.
+const BEFORE_THE_WALL: (Vec3, f32) = (Vec3::new(13.0, 9.4, -30.0), 154.8);
+
+/// openspec AS.1060: Cynder breaks the plaza's wall from in front of it.
+/// Her breath's hurt ray from her lightning to the wall's centre meets
+/// the wall's face; her script steps the ray onto that contact and asks
+/// whether the wall is on it. Answered no, she hurt it only on the
+/// presses her head poked through its face (1 hurt of 40 presses here):
+/// on the TV a Cynder never left the plaza. The intro played out, walked
+/// to the wall as the exit test walks, then put there, the stick let go
+/// and the bottom button every 20 steps: beaten within 12 presses.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn cynders_breath_breaks_the_plaza_wall_from_in_front_of_it() {
+    println!("load at start: {}", load());
+    let mut stops = Vec::new();
+    let (mut run, _) = run_on_level(
+        Mode::Play,
+        LEVEL_208,
+        Setup {
+            character: Some(CYNDER),
+            ..setup()
+        },
+    );
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    let mut ended = false;
+    for k in 0..6000u32 {
+        still(&mut run, &mut stops, [false; 4]);
+        if k > 200 && scene_of(&run).is_none() && !guacamole::anchors::scene_holds(&run.vm) {
+            ended = true;
+            break;
+        }
+    }
+    assert!(ended && intro_off(&run), "the intro played out");
+    let flat = |a: Vec3, b: Vec3| Vec3::new(a.x - b.x, 0.0, a.z - b.z).length();
+    let wall = run.at(WALL);
+    let mut there = false;
+    for _ in 0..4000 {
+        if cutscene_name(&run).is_some() || guacamole::anchors::scene_holds(&run.vm) {
+            still(&mut run, &mut stops, [false; 4]);
+            continue;
+        }
+        let me = run.hero().pivot;
+        if behaviour(&run, TRIGGER) == "removed" && flat(me, wall) < 7.0 {
+            there = true;
+            break;
+        }
+        run.bench.view = (SETUP_002.x - me.x).atan2(SETUP_002.z - me.z).to_degrees();
+        run.bench.hold_view = true;
+        step(&mut run, &mut stops, Stick::new(0.0, 1.0), [false; 4]);
+    }
+    run.bench.hold_view = false;
+    assert!(there, "at the wall, its reveal over");
+    assert_eq!(behaviour(&run, WALL), "main loop", "the wall standing");
+    let (at, facing) = BEFORE_THE_WALL;
+    run.put(at, facing);
+    let mut beaten = None;
+    for press in 1..=12u32 {
+        for k in 0..20 {
+            still(&mut run, &mut stops, [k == 0, false, false, false]);
+        }
+        if behaviour(&run, WALL) != "main loop" {
+            beaten = Some(press);
+            break;
+        }
+    }
+    let me = run.hero().pivot;
+    println!(
+        "beaten at press {beaten:?}, her at {me}, {:.2} m off the wall's centre, load at end: {}",
+        flat(me, wall),
+        load()
+    );
+    assert!(
+        beaten.is_some(),
+        "the wall stood 12 presses: {}",
+        behaviour(&run, WALL)
+    );
+    assert!(stops.is_empty(), "{stops:?}");
+}
+
 /// How far from a wall at knee height a cell of [`way_to`]'s lies, metres.
 const CLEAR: f32 = 0.6;
 
