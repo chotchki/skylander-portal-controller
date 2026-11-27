@@ -1343,7 +1343,7 @@ impl ScriptWorld {
         // turret's body on its base, whose facing `New Turret - Find Target`
         // holds its targets' headings against), but for a facing a script
         // wrote there, which reads back as written, as on a node (openspec
-        // AS.1090: Flameslinger's `pivot null actor`, hung on him and turned
+        // AS.1081: Flameslinger's `pivot null actor`, hung on him and turned
         // toward his pick each step, read twice his facing and let his
         // arrow go the other way).
         if depth > 0
@@ -6697,7 +6697,7 @@ mod tests {
         assert_eq!(w.angles(BALL, &mut e).map(|g| g.facing), Some(9.0));
     }
 
-    /// openspec AS.1090: a facing a script writes on an actor hung from
+    /// openspec AS.1081: a facing a script writes on an actor hung from
     /// another reads back as written, as on a node: Flameslinger's `pivot
     /// null actor`, hung on him, turned to his pick's heading and read back
     /// against his facing each step (`011_FireElf.ai`), not twice his turn.
