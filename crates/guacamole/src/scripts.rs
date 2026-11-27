@@ -397,6 +397,7 @@ fn actor_of(p: &Placed) -> Actor {
         facing: p.rotation[1],
         roll: p.rotation[2],
     };
+    a.origin_angles = a.angles;
     a.scale = p.scale;
     a.tint = p.tint;
     if let Some(ph) = p.physics {
@@ -3057,6 +3058,7 @@ impl ScriptWorld {
             a.angles.facing = f;
         }
         a.origin = a.position;
+        a.origin_angles = a.angles;
         // A clone of a template the level's encounter walks walks too
         // (openspec AS.54): a spawner's Chompy steered as a placed one is.
         if hero.is_none()

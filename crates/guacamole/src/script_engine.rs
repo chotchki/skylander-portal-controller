@@ -180,6 +180,11 @@ pub struct Actor {
     pub position: Vec3,
     /// Where it was placed or spawned (`abstractplacement.origin`).
     pub origin: Vec3,
+    /// How it was turned there: what its origin's orientation reads
+    /// (openspec AS.1123: level 205's card house door turned itself from
+    /// its origin's facing, which read 0 for its placed 44°, so it snapped
+    /// 44° and swung open past its frame).
+    pub origin_angles: Angles,
     /// A reference's own point (`placementreference.remembered`), kept on
     /// the actor it names; its place until a script moves it.
     pub remembered: Option<Vec3>,
@@ -349,6 +354,7 @@ impl Actor {
             removed: false,
             position: Vec3::ZERO,
             origin: Vec3::ZERO,
+            origin_angles: Angles::default(),
             remembered: None,
             angles: Angles::default(),
             scale: [100.0; 3],

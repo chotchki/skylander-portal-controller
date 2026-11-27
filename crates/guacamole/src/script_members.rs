@@ -1338,6 +1338,11 @@ impl ScriptWorld {
         }
         // An actor's remembered point is turned as the actor is (AH.60: the
         // autoaim's strip runs along its aimer's remembered point's facing).
+        // An actor's origin is turned as it was placed or spawned (openspec
+        // AS.1123), whatever it has turned since.
+        if let Some(Object::Origin(a)) = self.objs.get(h) {
+            return self.actors.get(&a).map(|k| k.origin_angles);
+        }
         if let Some(Object::Remembered(a) | Object::RememberedVia(a, _)) = self.objs.get(h) {
             return self.angles_within(a, engine, depth);
         }
@@ -5896,6 +5901,37 @@ mod tests {
             panic!("{gap:?}")
         };
         assert!((ft - 0.288 * FEET_PER_METRE).abs() < 1e-3, "{ft}");
+    }
+
+    /// openspec AS.1123: an actor's origin reads the turn it was placed at,
+    /// not its turn now nor none: level 205's card house door, placed at
+    /// 44°, turns itself from its origin's facing each tick, and read 0 it
+    /// snapped 44° and swung open past its frame.
+    #[test]
+    fn an_origin_is_turned_as_its_actor_was_placed() {
+        let mut e = bench();
+        let mut w = world();
+        let mut a = ball(Vec3::new(1.0, 2.0, 3.0), 0.0);
+        a.angles.facing = 44.0;
+        a.origin = a.position;
+        a.origin_angles = a.angles;
+        a.angles.facing = 124.0;
+        w.actors.insert(BALL, a);
+        let origin = w
+            .get_member(
+                &at(
+                    "abstractplacement",
+                    "origin",
+                    Some(Value::Entity(BALL)),
+                    None,
+                ),
+                Member::Origin,
+                &mut e,
+            )
+            .unwrap();
+        let h = w.handle(origin).expect("the origin's handle");
+        assert_eq!(w.angles(h, &mut e).map(|g| g.facing), Some(44.0));
+        assert_eq!(w.angles(BALL, &mut e).map(|g| g.facing), Some(124.0));
     }
 
     #[test]

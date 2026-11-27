@@ -1080,3 +1080,65 @@ fn a_giant_breaks_interior_2s_wall_on_205_and_no_one_else_does() {
     assert!(out, "back out of the room");
     println!("load at end: {}", load());
 }
+
+/// openspec AS.1123: chotchki's 2026-11-27 playtest saw level 205's card
+/// house door "flip inside oddly" as he came to it. The door turns itself
+/// from its origin's facing by a slide to 80° as a hero comes near; its
+/// origin read 0 for its placed 44°, so it snapped 44° and swung to 80°,
+/// 36° past where it stood. Walked to from 10 m, it holds its placed facing
+/// until it opens and swings 80° from it, never outside that arc.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_205s_card_house_door_swings_from_where_it_stands() {
+    println!("load at start: {}", load());
+    let (mut run, _) = run_on_level(Mode::Play, guacamole::level_205::LEVEL, setup());
+    let mut stops = Vec::new();
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    for k in 0..3000u32 {
+        if k > 300 && cutscene_name(&run).is_none() && !guacamole::anchors::scene_holds(&run.vm) {
+            break;
+        }
+        step(
+            &mut run,
+            &mut stops,
+            None,
+            [false, false, false, k > 120 && k % 20 == 10],
+        );
+    }
+    let (door, at) = run.placed("Interior_Door(3)");
+    let placed = run
+        .files
+        .placed
+        .iter()
+        .find(|p| p.name == "Interior_Door(3)")
+        .map(|p| p.rotation[1])
+        .unwrap();
+    run.put(Vec3::new(48.0, 26.2, 58.0), 0.0);
+    let facing = |run: &Run| run.world.actor(door).map(|a| a.angles.facing).unwrap();
+    // Each facing as an offset from the placed one, in (-180, 180].
+    let off = |f: f32| (f - placed + 540.0).rem_euclid(360.0) - 180.0;
+    let (mut least, mut most) = (f32::MAX, f32::MIN);
+    for _ in 0..120 {
+        let o = off(facing(&run));
+        least = least.min(o);
+        most = most.max(o);
+        step(
+            &mut run,
+            &mut stops,
+            Some([at.x + 0.7, at.z + 0.45]),
+            [false; 4],
+        );
+    }
+    println!("placed {placed}: swung from {least} to {most} off it");
+    assert!(
+        least > -0.5,
+        "never turned back past where it stands: {least}"
+    );
+    assert!(
+        (most - 80.0).abs() < 0.5,
+        "open 80° from where it stands: {most}"
+    );
+}
