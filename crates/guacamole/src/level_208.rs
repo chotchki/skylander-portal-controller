@@ -260,6 +260,67 @@ pub fn way_down(level: &str) -> impl Iterator<Item = &'static str> {
     WAY_DOWN.iter().copied().filter(move |_| on)
 }
 
+/// Setup_004's jump pads and their activator, by name (openspec AS.1010,
+/// AS.1014). The yard's two bomb throwers walk their paths onto ledges 3.8 m
+/// and 5.4 m over its floor, out of a walk's reach; a kid beats them with
+/// their own bombs (each grenade lands as a `Bomb_Rocket_Template.ai` bomb
+/// he walks into and throws with △). `_JumpPad_Activator(1)`
+/// (`JumpPad_Activator.ai`) puts both bombers in `Bomb_Targets` at its
+/// start, the set a thrown bomb flies to, and waits on the yard's whole set
+/// (`Setup_004_Enemies`); then it pans to pad (4) on the floor and pad (5)
+/// on bomber (2)'s ledge, turns each on with its appear effect, wakes the
+/// post-fight push block and takes itself off. Pad (4) lands a hero on the
+/// ledge, pad (5) on the upper level west of it, the way on. The pads are
+/// `PR_PvP_jumpPad.ai`'s, as [`UNDER_RIVER`]'s. Unlisted, the pads never
+/// came on and a bomb had to be aimed (headless 1,122 steps to beat both
+/// against 390 with it, as-208-battle).
+pub const YARD_PADS: [&str; 3] = [
+    "_JumpPad_Activator(1)",
+    "PvP_JumpPad_NORMAL(4)",
+    "PvP_JumpPad_NORMAL(5)",
+];
+
+/// [`YARD_PADS`] on 208 alone (201 and chapter 1 name pads of the same
+/// name of their own).
+pub fn yard_pads(level: &str) -> impl Iterator<Item = &'static str> {
+    let on = level == LEVEL;
+    YARD_PADS.iter().copied().filter(move |_| on)
+}
+
+/// The way on from the upper level to the big battle, by name (openspec
+/// AS.1014): pad (5) lands a hero on the upper level north of Setup_004's
+/// yard, which runs west round an ice bowl to the plateau over the big
+/// battle's arena only at its north end, where the brick wall
+/// `Wall_Spawner_Template(4)` (`Brick_Wall_Spawner`, as [`EXIT`]'s) stands
+/// across it; broken, the plateau, and a drop of 9 m into the arena. The
+/// arena's other sides are a pit (its kill plane 24 m down) and the shelf
+/// over Setup_004's yard, whose edge holds him. Unlisted the wall's box
+/// stood solid, never drawn, and held him at (-168.6, 0.2, 102.7).
+pub const WAY_ON: [&str; 1] = ["Wall_Spawner_Template(4)"];
+
+/// [`WAY_ON`] on 208 alone.
+pub fn way_on(level: &str) -> impl Iterator<Item = &'static str> {
+    let on = level == LEVEL;
+    WAY_ON.iter().copied().filter(move |_| on)
+}
+
+/// The big battle's way out, by name (openspec AS.404): the arena's walls
+/// stand 9 m under the plateau, and `_JumpPad_Activator(2)_Door_Key`
+/// (`Jump_Pad_Activator_Door_key.ai`) waits on the battle's set
+/// (`Setup_005_Enemies`), then pans to pad (15) by the arena's north wall
+/// and turns it on; the pad (`PR_PvP_jumpPad.ai`) throws him back up onto
+/// the plateau. After that it waits on the level's three key spawners
+/// (one in the arena, two far off) and, all taken, wakes the robot's
+/// reveal by the door (openspec AS.1015). Unlisted, a kid who beat the
+/// battle stood in the arena for good.
+pub const ARENA_EXIT: [&str; 2] = ["_JumpPad_Activator(2)_Door_Key", "PvP_JumpPad_NORMAL(15)"];
+
+/// [`ARENA_EXIT`] on 208 alone.
+pub fn arena_exit(level: &str) -> impl Iterator<Item = &'static str> {
+    let on = level == LEVEL;
+    ARENA_EXIT.iter().copied().filter(move |_| on)
+}
+
 /// Level 208's snowmen, by name (openspec AS.1021): the nine placed
 /// `Snowman_Whole.ai`s, each a capsule 8 ft wide and 12 ft high solid to
 /// actors. Its script waits until a player's minion runs into it or hurts
@@ -314,7 +375,14 @@ pub fn snowman_parts(level: &str) -> impl Iterator<Item = &'static str> {
 /// once every one of `Setup_004_Enemies` is (openspec AS.1020). Woken on its first trigger, it circles
 /// four of the Chompies round `Setup_004_Anchor` until a player reaches
 /// its second trigger down the slope ([`WAY_DOWN`]), then sends them, the
-/// Cyclopes, the Biclopes and the bombers in.
+/// Cyclopes, the Biclopes and the bombers in. Then the big battle (openspec
+/// AS.404): `Setup_005_Controller` (its file `Setup_006_Controller.ai`)
+/// and the 28 its script names (`enemy a` to `enemy ab`: nine spinning
+/// Cyclopes, four heavy Biclopes, fifteen Ice Chompies), which stand in
+/// Setup_004's yard and on the plateau until a player comes within 7 of its
+/// height in range, then walk in along its paths, wave by wave, until its
+/// clean-up takes its set off. Its kill plane under the pit stays unlisted:
+/// a foe set down in the pit is removed as it falls with it listed or not.
 pub const WAY: Encounter = Encounter {
     level: LEVEL,
     placements: &[
@@ -360,6 +428,35 @@ pub const WAY: Encounter = Encounter {
         "Enemy_Cyclops_Near(6)",
         "Enemy_Chompy_Ice(8)",
         "Enemy_Chompy_Ice(9)",
+        "Setup_005_Controller",
+        "Enemy_Cyclops_Near(7)",
+        "Enemy_Cyclops_Near(8)",
+        "Enemy_Cyclops_Near(9)",
+        "Enemy_Cyclops_Near(10)",
+        "Enemy_Cyclops_Near(11)",
+        "Enemy_Cyclops_Near(12)",
+        "Enemy_Cyclops_Near(13)",
+        "Enemy_Cyclops_Near(14)",
+        "Enemy_Cyclops_Near(15)",
+        "Enemy_Biclops_Heavy_S2(2)",
+        "Enemy_Biclops_Heavy_S2(5)",
+        "Enemy_Biclops_Heavy_S2(6)",
+        "Enemy_Biclops_Heavy_S2(7)",
+        "Enemy_Chompy_Ice(10)",
+        "Enemy_Chompy_Ice(25)",
+        "Enemy_Chompy_Ice(26)",
+        "Enemy_Chompy_Ice(27)",
+        "Enemy_Chompy_Ice(28)",
+        "Enemy_Chompy_Ice(29)",
+        "Enemy_Chompy_Ice(30)",
+        "Enemy_Chompy_Ice(31)",
+        "Enemy_Chompy_Ice(32)",
+        "Enemy_Chompy_Ice(33)",
+        "Enemy_Chompy_Ice(34)",
+        "Enemy_Chompy_Ice(35)",
+        "Enemy_Chompy_Ice(36)",
+        "Enemy_Chompy_Ice(37)",
+        "Enemy_Chompy_Ice(38)",
     ],
     clones: &[],
     steered: &[],
@@ -397,17 +494,79 @@ mod tests {
             assert!(WAY.placements.contains(&name), "{name}");
             assert!(!crate::scripts::is_level_person(LEVEL, name), "{name}");
         }
-        // The Ice Chompies' own script stays off for the level's others
-        // (AS.345's): the big battle's, still unlisted, on its ledge;
-        // Setup_004's (AS.403, AS.1020) are walked by name.
+        // The Ice Chompies are walked by name, never listed by their
+        // script's path (AS.345's): Setup_004's (AS.403, AS.1020) and the
+        // big battle's (AS.404) among them.
         let ice = "C:/tfb/Content/Levels/_Enemies/Chompy_Ice/scripts/S2_Enemy_IceChompy.ai";
-        assert!(!on.whitelist.lists("Enemy_Chompy_Ice(25)", ice));
+        assert!(!on.whitelist.lists("Enemy_Chompy_Ice(99)", ice));
         for n in [
+            "Enemy_Chompy_Ice(25)",
             "Enemy_Chompy_Ice(1)",
             "Enemy_Chompy_Ice(8)",
             "Enemy_Chompy_Ice(9)",
         ] {
             assert!(WAY.placements.contains(&n), "{n}");
+        }
+    }
+
+    /// openspec AS.404: the arena's jump pad and its activator are on
+    /// 208's listing and on no other level's.
+    #[test]
+    fn level_208s_arena_exit_is_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        assert_eq!(arena_exit(LEVEL).collect::<Vec<_>>(), ARENA_EXIT);
+        for other in ["level_202", "level_205_piratecards"] {
+            let off = level_config(Mode::Play, &files, 5, other);
+            for name in ARENA_EXIT {
+                assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+                assert!(
+                    !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
+                    "{name} on {other}"
+                );
+            }
+            assert_eq!(arena_exit(other).count(), 0);
+        }
+    }
+
+    /// openspec AS.1014: the wall on the way to the big battle is on
+    /// 208's listing and on no other level's.
+    #[test]
+    fn level_208s_way_on_is_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        assert_eq!(way_on(LEVEL).collect::<Vec<_>>(), WAY_ON);
+        for other in ["level_202", "level_205_piratecards"] {
+            let off = level_config(Mode::Play, &files, 5, other);
+            for name in WAY_ON {
+                assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+                assert!(
+                    !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
+                    "{name} on {other}"
+                );
+            }
+            assert_eq!(way_on(other).count(), 0);
+        }
+    }
+
+    /// openspec AS.1010: the yard's jump pads and their activator are on
+    /// 208's listing and on no other level's that doesn't name pads of its
+    /// own (202 and 205 have no `PvP_JumpPad_NORMAL`).
+    #[test]
+    fn level_208s_yard_pads_are_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        assert_eq!(yard_pads(LEVEL).collect::<Vec<_>>(), YARD_PADS);
+        for other in ["level_202", "level_205_piratecards"] {
+            let off = level_config(Mode::Play, &files, 5, other);
+            for name in YARD_PADS {
+                assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+                assert!(
+                    !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
+                    "{name} on {other}"
+                );
+            }
+            assert_eq!(yard_pads(other).count(), 0);
         }
     }
 
