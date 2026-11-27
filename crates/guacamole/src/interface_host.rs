@@ -292,14 +292,40 @@ pub fn log(part: Option<&InterfacePart>) {
                 took_ms = p.took.as_millis() as u64,
                 "the interface's model loaded: its members are the model's"
             );
-            for (archive, why) in p.missing.iter().chain(&p.refused) {
+            let (faults, card_game) = faults(p.missing.iter().chain(&p.refused));
+            for (archive, why) in faults {
                 tracing::warn!(%archive, reason = %why, "an interface record didn't load whole");
+            }
+            if card_game > 0 {
+                tracing::debug!(
+                    archives = card_game,
+                    "the card game's archives keep their records in its own part, none here"
+                );
             }
         }
         None => tracing::warn!(
             "no interface part in the extract yet: the run keeps the interface's members as cells"
         ),
     }
+}
+
+/// An archive's absence from a part split by whether it's a fault: the card
+/// game's archives ([`crate::card_game::owns`]) have no record in the
+/// interface part nor a sounds file by design (openspec AS.1126: 164 of a
+/// 20-minute session's 524 WARNs), so they're counted, the rest returned.
+pub fn faults<'a>(
+    missing: impl IntoIterator<Item = &'a (String, String)>,
+) -> (Vec<&'a (String, String)>, usize) {
+    let mut card_game = 0;
+    let faults = missing
+        .into_iter()
+        .filter(|(archive, _)| {
+            let ours = crate::card_game::owns(archive);
+            card_game += usize::from(ours);
+            !ours
+        })
+        .collect();
+    (faults, card_game)
 }
 
 impl ScriptWorld {
@@ -565,6 +591,34 @@ impl ScriptWorld {
 
 #[cfg(test)]
 mod tests {
+    /// openspec AS.1126: the card game's archives missing from the level's
+    /// interface part are counted, not warned; anything else still is.
+    #[test]
+    fn the_card_games_missing_records_are_by_design() {
+        let missing: Vec<(String, String)> = [
+            "scripts/cardgame_card_000.igz",
+            "scripts/cardgame_2dsprites_streamed.igz",
+            "cardgame_deck_006",
+            "levels/ship_part_000/script.igz",
+            "scripts/a_level_thing.igz",
+        ]
+        .into_iter()
+        .map(|a| (a.to_owned(), "not in the extract".to_owned()))
+        .collect();
+        let (faults, card_game) = super::faults(&missing);
+        assert_eq!(card_game, 3);
+        let named: Vec<&str> = faults.iter().map(|(a, _)| a.as_str()).collect();
+        assert_eq!(
+            named,
+            [
+                "levels/ship_part_000/script.igz",
+                "scripts/a_level_thing.igz"
+            ]
+        );
+        assert!(!crate::card_game::owns("cardgame_streamingx"));
+        assert!(crate::card_game::owns("character/CARDGAME_STREAMING.bld"));
+    }
+
     /// AS.99: a glyph takes its letter's colour over its sprite's, 0x80 a
     /// letter's channel at full, and its sprite's alpha.
     #[test]

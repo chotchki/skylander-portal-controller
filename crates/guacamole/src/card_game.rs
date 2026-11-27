@@ -70,6 +70,20 @@ pub fn stones() -> &'static [&'static str] {
     })
 }
 
+/// Whether `name` (an archive, a linked unit's path or a stem) is one of the
+/// card game's own archives, [`STREAMS`] or a stone's (openspec AS.1126):
+/// their records sit in the card game's own part and they carry no sounds
+/// file, so the level's interface and sounds parts lacking them is by
+/// design, not a fault.
+pub fn owns(name: &str) -> bool {
+    let file = name.rsplit('/').next().unwrap_or(name);
+    let stem = file.split('.').next().unwrap_or(file);
+    STREAMS
+        .iter()
+        .chain(stones())
+        .any(|a| guac_extract::scripts::stem(a).eq_ignore_ascii_case(stem))
+}
+
 /// Whether `archive` loads as a misc stream (its folder): one at a time.
 fn is_misc(archive: &str) -> bool {
     archive.starts_with("misc/")

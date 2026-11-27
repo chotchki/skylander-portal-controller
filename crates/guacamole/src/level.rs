@@ -104,7 +104,7 @@ use guacamole::props::{self, LeftOut, LevelProps, Prop};
 use guacamole::script_engine::Actor;
 use guacamole::scripts::ScriptWorld;
 use serde::Serialize;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::extraction::Extraction;
 use crate::hero::HeroBody;
@@ -2603,8 +2603,17 @@ fn log_sounds(s: &guacamole::sounds::SoundPart, again: bool) {
         );
         return;
     }
-    for (stem, why) in missing {
+    // The card game's archives have no sounds file by design (openspec
+    // AS.1126): counted, not warned an archive a read.
+    let (faults, card_game) = guacamole::interface_host::faults(missing);
+    for (stem, why) in faults {
         warn!(%stem, reason = %why, "an archive's sounds didn't read: its scripts' sounds play nothing");
+    }
+    if card_game > 0 {
+        debug!(
+            archives = card_game,
+            "the card game's archives carry no sounds file, as on the disc"
+        );
     }
 }
 
@@ -3997,6 +4006,28 @@ impl OverLevel<'_, '_> {
 
 #[cfg(test)]
 mod tests {
+    /// openspec AS.1126: the card game's archives' absent sounds files are
+    /// one DEBUG count, not a WARN an archive; anything else still warns.
+    #[test]
+    fn the_card_games_absent_sounds_are_counted_not_warned() {
+        let part = guacamole::sounds::SoundPart {
+            book: Default::default(),
+            stems: [(0, "level_205".to_owned())].into_iter().collect(),
+            missing: ["cardgame_deck_006", "cardgame_card_001", "ship_part_000"]
+                .into_iter()
+                .map(|s| (s.to_owned(), "no file".to_owned()))
+                .collect(),
+            read: std::time::Duration::ZERO,
+        };
+        let lines = crate::test_support::logs::logged_at(tracing::Level::DEBUG, || {
+            super::log_sounds(&part, false)
+        });
+        let warned: Vec<&String> = lines.iter().filter(|l| l.contains(" WARN ")).collect();
+        assert_eq!(warned.len(), 1, "{lines:?}");
+        assert!(warned[0].contains("ship_part_000"), "{lines:?}");
+        assert!(lines.iter().any(|l| l.contains("archives=2")), "{lines:?}");
+    }
+
     use super::*;
 
     /// openspec AS.451: a level material's tint track reaches its uniform

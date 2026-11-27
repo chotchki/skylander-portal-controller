@@ -530,15 +530,7 @@ pub(crate) fn step_systems(
                     && s.spawn_rate > 0.0
                     && s.spawn_rate < particles::BURST_RATE
                 {
-                    debug!(
-                        emitter = %system.name,
-                        generator = k,
-                        made = state.made,
-                        most,
-                        rate = s.spawn_rate,
-                        owed_secs = f64::from(most - state.made) / f64::from(s.spawn_rate),
-                        "a stopped stream's last life is out: it makes no more"
-                    );
+                    note_spent(&system.name, k, state.made, most, s.spawn_rate);
                 }
             }
         }
@@ -649,8 +641,39 @@ pub(crate) fn step_systems(
     *report = now;
 }
 
+/// Where the one-life bound stops a stream that would have gone on making
+/// (openspec AS.627): a census line, one per generator of every stream that
+/// stops, at TRACE (openspec AS.1126: 220 of a 20-minute session's 2,098
+/// lines at DEBUG, nothing a reader acts on).
+fn note_spent(emitter: &str, generator: usize, made: u32, most: u32, rate: f32) {
+    trace!(
+        emitter,
+        generator,
+        made,
+        most,
+        rate,
+        owed_secs = f64::from(most.saturating_sub(made)) / f64::from(rate),
+        "a stopped stream's last life is out: it makes no more"
+    );
+}
+
 #[cfg(test)]
 mod tests {
+    /// openspec AS.1126: a stopped stream's census line goes out at TRACE,
+    /// not DEBUG (220 of a 20-minute session's lines, one a generator).
+    #[test]
+    fn a_spent_streams_line_is_traced_not_debugged() {
+        let at = |level| {
+            crate::test_support::logs::logged_at(level, || {
+                super::note_spent("waterRing", 2, 5, 50, 3.0)
+            })
+        };
+        assert!(at(tracing::Level::DEBUG).is_empty());
+        let traced = at(tracing::Level::TRACE);
+        assert_eq!(traced.len(), 1, "{traced:?}");
+        assert!(traced[0].contains("last life is out") && traced[0].contains("owed_secs=15"));
+    }
+
     use std::time::Duration;
 
     use bevy::time::TimeUpdateStrategy;

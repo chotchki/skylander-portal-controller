@@ -72,7 +72,7 @@ use guacamole::character::{
     CharacterMaterial, Pass, spawn_character, spawn_glow_masks, static_mesh,
 };
 use serde::Serialize;
-use tracing::{debug, info, warn};
+use tracing::{info, trace, warn};
 
 use crate::turntable::{Shelf, WARM_SLOT, glow_layer, model_layer, read_model, spawn_camera};
 
@@ -251,16 +251,17 @@ fn watch_pipelines(
             compiled[i] = true;
             if let PipelineDescriptor::RenderPipelineDescriptor(d) = &p.descriptor {
                 let fragment = d.fragment.as_ref();
-                debug!(
-                    id = i,
-                    label = d.label.as_deref().unwrap_or(""),
-                    shader = %fragment
+                note_compiled(
+                    i,
+                    d.label.as_deref().unwrap_or(""),
+                    &fragment
                         .and_then(|f| f.shader.path())
                         .map(|p| p.to_string())
                         .unwrap_or_default(),
-                    entry = fragment.and_then(|f| f.entry_point.as_deref()).unwrap_or(""),
-                    defs = fragment.map_or(0, |f| f.shader_defs.len()),
-                    "pipeline compiled"
+                    fragment
+                        .and_then(|f| f.entry_point.as_deref())
+                        .unwrap_or(""),
+                    fragment.map_or(0, |f| f.shader_defs.len()),
                 );
             }
         }
@@ -1039,8 +1040,30 @@ fn draw_static(
     });
 }
 
+/// One pipeline the renderer finished, at TRACE (openspec AS.1126: 784 of a
+/// 20-minute session's 2,098 lines at DEBUG, one a pipeline; the warm's own
+/// INFO line says when every key it asked for is in).
+pub(crate) fn note_compiled(id: usize, label: &str, shader: &str, entry: &str, defs: usize) {
+    trace!(id, label, shader, entry, defs, "pipeline compiled");
+}
+
 #[cfg(test)]
 mod tests {
+    /// openspec AS.1126: a pipeline's compile goes out at TRACE, not DEBUG
+    /// (784 of a 20-minute session's lines).
+    #[test]
+    fn a_compiled_pipeline_is_traced_not_debugged() {
+        let at = |level| {
+            crate::test_support::logs::logged_at(level, || {
+                super::note_compiled(20, "a_pipeline", "embedded://a.wesl", "", 3)
+            })
+        };
+        assert!(at(tracing::Level::DEBUG).is_empty());
+        let traced = at(tracing::Level::TRACE);
+        assert_eq!(traced.len(), 1, "{traced:?}");
+        assert!(traced[0].contains("pipeline compiled") && traced[0].contains("a_pipeline"));
+    }
+
     use super::*;
     use crate::test_support::turntable::{app, extract, placed, set, settle, states};
     use crate::turntable::{CardState, Turntables};

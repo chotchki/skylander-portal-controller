@@ -8,6 +8,7 @@ pub(crate) mod cli;
 pub(crate) mod heard;
 pub(crate) mod hero_scripts;
 pub(crate) mod level;
+pub(crate) mod logs;
 pub(crate) mod physics;
 pub(crate) mod play;
 pub(crate) mod starfield;
