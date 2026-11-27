@@ -390,6 +390,23 @@ pub fn stretch_3(level: &str) -> &'static [&'static str] {
     }
 }
 
+/// The Giants' walls in level 205's houses (openspec AS.1120): a metal
+/// wall (`MetalWall.ai`) a house's controller wakes with its room, which a
+/// Giant's own attacks break (its hurt check takes a Giant's titan hurt or a
+/// thrown boulder's) and nothing else does. Interior 2's
+/// (`Breakable_Metal_Wall(6)`) bars the room's far side, before its chest;
+/// unlisted, it stood inert, so not even a Giant got through.
+pub const GIANT_WALLS: [&str; 1] = ["Breakable_Metal_Wall(6)"];
+
+/// The placements [`GIANT_WALLS`] lists for the level whose archive is
+/// `level`: none on another level.
+pub fn giant_walls(level: &str) -> &'static [&'static str] {
+    match level {
+        LEVEL => &GIANT_WALLS,
+        _ => &[],
+    }
+}
+
 /// The cannon's ball (openspec AS.372), whose clones fly without falling
 /// until their script sets their gravity (stand-in ledger: `cannon-shot`):
 /// the ball's STARTUP takes its fall off under a check of a variable the VM

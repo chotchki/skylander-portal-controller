@@ -954,3 +954,129 @@ fn level_214s_workshop_wall_takes_a_runs_first_burst_from_20_ft_and_a_later_from
     assert_eq!(run.vm.global(range), Some(Value::Int(35)));
     assert!(stops.is_empty(), "{stops:#?}");
 }
+
+/// What a hero in level 205's interior 2 does to its Giants' wall
+/// (`level_205::GIANT_WALLS`): taken in at its door's box, the wall's
+/// behaviour each time it changes while he walks at it and holds his
+/// attacks there (his first two buttons, alternating, as a kid mashes
+/// them), within `cap` steps; then, if it broke, walked to the chest behind
+/// it and back out by the room's exit. Returns the wall's behaviours with
+/// the step each began, whether it broke, the chest reached and the room
+/// left.
+fn at_interior_2s_wall(who: Option<Character>, cap: u32) -> (Vec<(u32, String)>, bool, bool, bool) {
+    let setup = Setup {
+        character: who,
+        ..setup()
+    };
+    let (mut run, _) = run_on_level(Mode::Play, guacamole::level_205::LEVEL, setup);
+    let mut stops = Vec::new();
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    for _ in 0..30 {
+        stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+    }
+    let (controller, door) = run.placed("Interior_Controller_2");
+    let exit = run
+        .files
+        .placed
+        .iter()
+        .find(|p| p.name == "Interior_Controller_2")
+        .map(|p| run.files.points[&p.waypoints[2]])
+        .expect("the room's exit waypoint");
+    // The level's intro skipped as a kid would (no room takes him while a
+    // scene holds the game), then set down at its door's box, as the 214
+    // rooms are.
+    for k in 0..3000u32 {
+        if k > 300 && cutscene_name(&run).is_none() && !guacamole::anchors::scene_holds(&run.vm) {
+            break;
+        }
+        step(
+            &mut run,
+            &mut stops,
+            None,
+            [false, false, false, k > 120 && k % 20 == 10],
+        );
+    }
+    run.put(door, 0.0);
+    let into = pass(
+        &mut run,
+        &mut stops,
+        controller,
+        [door.x, door.z],
+        INSIDE,
+        600,
+    );
+    assert!(into.done_at.is_some(), "into the room: {into:?}");
+    let (wall, at) = run.placed(guacamole::level_205::GIANT_WALLS[0]);
+    let chest = run.at("Chest(1)");
+    let mut seen: Vec<(u32, String)> = Vec::new();
+    let mut broke = false;
+    for k in 0..cap {
+        let b = behaviour(&run, wall).unwrap_or_else(|| "-".into());
+        if seen.last().is_none_or(|(_, l)| *l != b) {
+            seen.push((run.steps, b.clone()));
+        }
+        let gone = run.vm.placement_of(wall).is_some_and(|i| run.vm.removed(i));
+        if gone || !matches!(b.as_str(), "-" | "waiting") {
+            broke = true;
+            break;
+        }
+        // The wall's own solid stops him 6.7 m from its pivot: from 9 m
+        // he swings, still pushing at it.
+        let me = run.hero().pivot;
+        let near = Vec3::new(me.x - at.x, 0.0, me.z - at.z).length() < 9.0;
+        let mash = [near && k % 10 < 5, near && k % 10 >= 5, false, false];
+        step(&mut run, &mut stops, Some([at.x, at.z]), mash);
+    }
+    let mut reached = false;
+    if broke {
+        for _ in 0..1200 {
+            let me = run.hero().pivot;
+            if Vec3::new(me.x - chest.x, 0.0, me.z - chest.z).length() < 2.5 {
+                reached = true;
+                break;
+            }
+            step(&mut run, &mut stops, Some([chest.x, chest.z]), [false; 4]);
+        }
+    }
+    let out = pass(
+        &mut run,
+        &mut stops,
+        controller,
+        [exit.x, exit.z],
+        CHECKING,
+        1200,
+    );
+    assert!(stops.is_empty(), "{stops:?}");
+    (seen, broke, reached, out.done_at.is_some())
+}
+
+/// openspec AS.1120: chotchki's 2026-11-27 playtest found no way through
+/// the barred gate in a level 205 house (interior 2) as Chill. It's a
+/// Giants' wall: a Giant (Ninjini) walked in by its door breaks it with his
+/// own attack buttons, reaches the chest behind it and walks back out; a
+/// hero who isn't one (Eruptor) mashes at it as long and it stands, as on
+/// the original, whose wall takes only a Giant's hurt or a thrown boulder's.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_giant_breaks_interior_2s_wall_on_205_and_no_one_else_does() {
+    println!("load at start: {}", load());
+    let ninjini = Character {
+        archive: "character/109_djini.bld",
+        load_file: "109_Djini",
+        toy: 109,
+    };
+    let (seen, broke, reached, out) = at_interior_2s_wall(Some(ninjini), 1800);
+    println!("Ninjini: {seen:?}, broke {broke}, chest {reached}, out {out}");
+    assert!(broke, "Ninjini breaks the wall: {seen:?}");
+    assert!(reached, "the chest behind it reached");
+    assert!(out, "back out of the room");
+    let (seen, broke, _, out) = at_interior_2s_wall(None, 1800);
+    println!("Eruptor: {seen:?}, broke {broke}, out {out}");
+    assert!(!broke, "only a Giant breaks it: {seen:?}");
+    assert_eq!(seen.last().map(|s| s.1.as_str()), Some("waiting"));
+    assert!(out, "back out of the room");
+    println!("load at end: {}", load());
+}
