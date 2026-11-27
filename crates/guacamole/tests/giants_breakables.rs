@@ -1899,6 +1899,17 @@ fn a_heros_autoaim_pitches_from_his_feet_as_the_oracles() {
             run.bench.pads[0] = idle;
             let _ = run.step_play();
         }
+        // Put where the oracle's stood before its press, facing as it
+        // faced, with the target still standing: the shot breaks it, not
+        // the put.
+        let me = run.hero();
+        assert!(me.pivot.distance(spot) < 0.05, "put at {:?}", me.pivot);
+        let off = (me.facing - facing + 540.0).rem_euclid(360.0) - 180.0;
+        assert!(off.abs() < 0.5, "facing {} against {facing}", me.facing);
+        assert!(
+            run.world.actor(foe).is_some_and(|a| !a.removed),
+            "{target} stands after the put"
+        );
         for k in 0..60 {
             run.bench.pads[0] = press(0, 0, k);
             let _ = run.step_play();
@@ -1926,6 +1937,113 @@ fn a_heros_autoaim_pitches_from_his_feet_as_the_oracles() {
         assert_eq!(aim.target.as_ref().map(|t| t.name.as_str()), Some(target));
         assert_eq!(aim.pitch, Some(p), "the record's pitch is the one he kept");
         assert!(aim.candidates.is_some_and(|n| n >= 1), "{aim:?}");
+    }
+    println!("{:.2?}; load after: {}", started.elapsed(), load());
+}
+
+/// Cynder, whose breath aims again every step it runs.
+const CYNDER: Character = Character {
+    archive: "character/032_cynder.bld",
+    load_file: "032_Cynder",
+    toy: 32,
+};
+
+/// as-aim-ref-review: Cynder's breath held 40 steps from beside anchor A, as
+/// the oracle's was (2026-11-26, the as-aim-ref review's session `s5`,
+/// Cynder swapped in, the first button held 40 frames at each spot): facing
+/// `barrel_b_intact(1)` it breaks both barrels and leaves `pottery_2(5)`;
+/// turned toward where `barrel_b_intact(4)` stood, it turns her onto the
+/// pottery (the oracle's 211.2 degrees) and breaks it. Each breath's last
+/// pick is kept for a capture's `aim_pick` (openspec AS.1042) after the
+/// calls that found nothing push it out of the VM's ring: the breath skips
+/// the foes it has already hurt.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn cynders_breath_breaks_what_the_oracles_did_and_a_capture_keeps_its_pick() {
+    let started = Instant::now();
+    println!("load at start: {}", load());
+    let (mut run, _) = run_on_level(
+        Mode::Play,
+        "level_213_tutotial",
+        Setup {
+            character: Some(CYNDER),
+            lightning: true,
+            props: true,
+            interface: true,
+            posed_rigs: true,
+            ..Setup::default()
+        },
+    );
+    run.world.skip_cutscenes = true;
+    for _ in 0..2 {
+        let _ = run.step_play();
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    let idle = pad([false; 4], Stick::CENTRED);
+    for _ in 0..120 {
+        run.bench.pads[0] = idle;
+        let _ = run.step_play();
+    }
+    for m in guacamole::aim::AIM_MACROS {
+        assert!(run.vm.watch_call(m), "{m}");
+    }
+    let names = ["pottery_2(5)", "barrel_b_intact(1)", "barrel_b_intact(4)"];
+    let standing = |run: &Run| -> Vec<&str> {
+        names
+            .iter()
+            .copied()
+            .filter(|n| run.world.actor(run.placed(n).0).is_some_and(|a| !a.removed))
+            .collect()
+    };
+    // (where she stood, her facing, what stands after, her facing after
+    // within 2 degrees, what the kept pick may name)
+    let shots: [([f32; 3], f32, &[&str], Option<f32>, &[&str]); 2] = [
+        (
+            [31.137, 51.454, -73.002],
+            253.3,
+            &["pottery_2(5)"],
+            None,
+            &["barrel_b_intact(1)", "barrel_b_intact(4)"],
+        ),
+        (
+            [31.157, 51.45, -73.012],
+            260.5,
+            &[],
+            Some(211.2),
+            &["pottery_2(5)"],
+        ),
+    ];
+    let mut picks = guacamole::aim::AimPicks::default();
+    for (at, facing, after, turned, pick) in shots {
+        let spot = Vec3::from_array(at);
+        for _ in 0..10 {
+            run.put(spot, facing);
+            run.bench.pads[0] = idle;
+            let _ = run.step_play();
+        }
+        for k in 0..70 {
+            run.bench.pads[0] = pad([k < 40, false, false, false], Stick::CENTRED);
+            let _ = run.step_play();
+            picks.update(run.vm.steps(), run.vm.watched_calls());
+        }
+        let now = standing(&run);
+        let aim = guacamole::aim::aim_of(&run.vm, &run.world, run.hero, Some(run.hero().pivot));
+        let kept = picks.shot(&run.vm, &run.world, run.hero, Some(run.hero().pivot));
+        println!(
+            "at {at:?} facing {facing}: standing {now:?}, she faces {:.1}\n  newest: {aim:?}\n  kept pick: {kept:?}",
+            run.hero().facing
+        );
+        assert_eq!(now, after, "what her breath broke");
+        if let Some(t) = turned {
+            let off = (run.hero().facing - t + 540.0).rem_euclid(360.0) - 180.0;
+            assert!(off.abs() < 2.0, "she turns to {} against {t}", run.hero().facing);
+        }
+        let kept = kept.expect("her breath's pick kept");
+        let name = kept.target.as_ref().map(|t| t.name.clone());
+        assert!(
+            name.as_deref().is_some_and(|n| pick.contains(&n)),
+            "kept pick {name:?}"
+        );
     }
     println!("{:.2?}; load after: {}", started.elapsed(), load());
 }

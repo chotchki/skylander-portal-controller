@@ -89,7 +89,7 @@ pub struct Config {
 }
 
 /// How many watched calls [`Vm::watched_calls`] keeps.
-pub const CALLS_KEPT: usize = 32;
+pub const CALLS_KEPT: usize = 128;
 
 /// A watched macro's frame as one call's use block closed
 /// ([`Vm::watch_call`]).

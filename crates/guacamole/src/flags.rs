@@ -31,7 +31,7 @@ use bevy::camera::{Projection, RenderTarget};
 use bevy::input::gamepad::GamepadButton;
 use bevy::prelude::*;
 use bevy::render::view::window::screenshot::{Screenshot, ScreenshotCaptured};
-use guacamole::aim::{AIM_MACROS, aim_of, state_of};
+use guacamole::aim::{AIM_MACROS, AimPicks, aim_of, state_of};
 use guacamole::scripts::{ScriptRuntime, ScriptWorld};
 use serde::{Deserialize, Serialize};
 use tokio::sync::oneshot;
@@ -423,7 +423,8 @@ impl Plugin for Flags {
             PreUpdate,
             feed_posted_keys.before(bevy::input::InputSystems),
         )
-        .add_systems(Last, take_flags.in_set(TakeFlags))
+        .init_resource::<HeroPicks>()
+        .add_systems(Last, (keep_picks, take_flags.in_set(TakeFlags)).chain())
         .add_systems(First, watch_aim);
         #[cfg(any(feature = "test-hooks", test))]
         app.insert_resource(self.asks.note.clone())
@@ -564,6 +565,20 @@ fn nearest_live_first(out: &mut Vec<ActorShot>, cap: usize) {
     out.truncate(cap);
 }
 
+/// Each placement's newest autoaim that picked a target (openspec AS.1042):
+/// a capture's `aim_pick`.
+#[derive(Resource, Default)]
+struct HeroPicks(AimPicks);
+
+/// Hands [`HeroPicks`] the VM's watched calls each frame, before a capture
+/// reads them: the VM keeps only its last few, and a breath aiming twice a
+/// step pushes its pick out of them within a fraction of a second.
+fn keep_picks(runtime: Option<Res<ScriptRuntime>>, mut picks: ResMut<HeroPicks>) {
+    if let Some(rt) = runtime {
+        picks.0.update(rt.vm.steps(), rt.vm.watched_calls());
+    }
+}
+
 /// Has each new VM read its hero's autoaims as they close (openspec
 /// AS.1042): what a capture's `aim` shows.
 fn watch_aim(runtime: Option<ResMut<ScriptRuntime>>) {
@@ -649,6 +664,7 @@ struct CaptureReads<'w, 's> {
     tv_target: Query<'w, 's, &'static RenderTarget, With<TvCamera>>,
     level: Option<Res<'w, crate::level::Level>>,
     creatures: Query<'w, 's, (Entity, &'static crate::creatures::DrawnCreature)>,
+    picks: Option<Res<'w, HeroPicks>>,
 }
 
 impl CaptureReads<'_, '_> {
@@ -779,9 +795,8 @@ impl CaptureReads<'_, '_> {
                 |h| self.drawn(h, &draws),
             )
         });
-        let aim = match (self.runtime.as_deref(), self.world.as_deref()) {
-            (Some(rt), Some(w)) => self
-                .play
+        let hero_handle = self.runtime.as_deref().and_then(|rt| {
+            self.play
                 .as_deref()
                 .and_then(Play::hero)
                 .and_then(|e| self.heroes.get(e).ok())
@@ -789,8 +804,15 @@ impl CaptureReads<'_, '_> {
                     Join::Joined(id) => rt.vm.handle_of(id),
                     _ => None,
                 })
-                .and_then(|h| aim_of(&rt.vm, w, h, hero)),
-            _ => None,
+        });
+        let (aim, aim_pick) = match (self.runtime.as_deref(), self.world.as_deref(), hero_handle) {
+            (Some(rt), Some(w), Some(h)) => (
+                aim_of(&rt.vm, w, h, hero),
+                self.picks
+                    .as_deref()
+                    .and_then(|p| p.0.shot(&rt.vm, w, h, hero)),
+            ),
+            _ => (None, None),
         };
         let scene = match (self.runtime.as_deref(), self.world.as_deref()) {
             (Some(rt), Some(w)) => {
@@ -869,6 +891,7 @@ impl CaptureReads<'_, '_> {
             "scene": scene,
             "actors": actors,
             "aim": aim,
+            "aim_pick": aim_pick,
             "tv": tv,
             "scripts_recent": steps,
             "drawn_recent": drawn,

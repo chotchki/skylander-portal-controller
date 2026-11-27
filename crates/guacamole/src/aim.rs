@@ -1,10 +1,14 @@
 //! A hero's last autoaim as his scripts left it (openspec AS.1042), for a
-//! playtest's capture (`capture.json`'s `aim`) and the disc tests: the VM
-//! reads each of [`AIM_MACROS`]' calls off its frame as the use block
-//! closes ([`guac_script::Vm::watch_call`]), so nothing the scripts do
-//! changes, and [`aim_of`] puts the hero's newest beside the world now.
+//! playtest's capture (`capture.json`'s `aim` and `aim_pick`) and the disc
+//! tests: the VM reads each of [`AIM_MACROS`]' calls off its frame as the
+//! use block closes ([`guac_script::Vm::watch_call`]), so nothing the
+//! scripts do changes; [`aim_of`] puts the hero's newest beside the world
+//! now and [`AimPicks`] keeps his newest that picked something.
+
+use std::collections::HashMap;
 
 use bevy::math::Vec3;
+use guac_script::{CallRecord, Handle, Recorded, Value};
 use serde::Serialize;
 
 use crate::script_engine::Actor;
@@ -60,29 +64,95 @@ pub struct AimTarget {
 }
 
 /// The hero's (`hero`, his host handle) last autoaim among `vm`'s watched
-/// calls, read against `world` now; none when he has made none.
+/// calls, read against `world` now; none when he has made none. For a hero
+/// whose attack aims again every step it runs (Cynder's breath, which skips
+/// the foes it has already hurt), this is mostly one that found nothing:
+/// [`AimPicks`] keeps the last that picked.
 pub fn aim_of(
     vm: &guac_script::Vm,
     world: &ScriptWorld,
-    hero: guac_script::Handle,
+    hero: Handle,
     at: Option<Vec3>,
 ) -> Option<AimShot> {
-    use guac_script::{Recorded, Value};
     let call = vm
         .watched_calls()
         .filter(|c| c.placement == hero && AIM_MACROS.contains(&c.def.as_str()))
         .last()?;
-    let info = match call.var("autoaim info") {
-        Some(Recorded::Fields(f)) => f.as_slice(),
-        _ => &[],
-    };
-    let field = |name: &str| {
-        info.iter()
+    Some(shot_of(vm, world, call, at))
+}
+
+/// `call`'s `autoaim info` field `name`, as the call left it.
+fn info_field(call: &CallRecord, name: &str) -> Option<Value> {
+    match call.var("autoaim info") {
+        Some(Recorded::Fields(f)) => f
+            .iter()
             .find(|(n, _)| n.eq_ignore_ascii_case(name))
-            .map(|(_, v)| *v)
-    };
-    let number = |name: &str| field(name).and_then(|v| v.as_f32());
-    let target = match field("target") {
+            .map(|(_, v)| *v),
+        _ => None,
+    }
+}
+
+/// What `call` picked, if anything.
+fn picked(call: &CallRecord) -> Option<Handle> {
+    match info_field(call, "target") {
+        Some(Value::Entity(h)) => Some(h),
+        _ => None,
+    }
+}
+
+/// Each placement's newest autoaim that picked a target (openspec AS.1042):
+/// the VM keeps its last [`guac_script::CALLS_KEPT`] watched calls of every
+/// placement, which a breath aiming twice a step fills with calls that
+/// found nothing within a fraction of a second, so the TV hands these the
+/// new calls every frame and a capture's `aim_pick` reads the hero's.
+#[derive(Debug, Default, Clone)]
+pub struct AimPicks {
+    by: HashMap<Handle, CallRecord>,
+    steps: u64,
+}
+
+impl AimPicks {
+    /// Takes the picks among `calls`, `steps` being the VM's now: fewer
+    /// than last time is a new VM, whose handles and steps start over, so
+    /// what was kept goes.
+    pub fn update<'a>(&mut self, steps: u64, calls: impl IntoIterator<Item = &'a CallRecord>) {
+        if steps < self.steps {
+            self.by.clear();
+        }
+        self.steps = steps;
+        for c in calls {
+            if !AIM_MACROS.contains(&c.def.as_str()) || picked(c).is_none() {
+                continue;
+            }
+            if self.by.get(&c.placement).is_none_or(|old| old.step <= c.step) {
+                self.by.insert(c.placement, c.clone());
+            }
+        }
+    }
+
+    /// `placement`'s newest autoaim that picked, read against `world` now.
+    pub fn shot(
+        &self,
+        vm: &guac_script::Vm,
+        world: &ScriptWorld,
+        placement: Handle,
+        at: Option<Vec3>,
+    ) -> Option<AimShot> {
+        self.by
+            .get(&placement)
+            .map(|c| shot_of(vm, world, c, at))
+    }
+}
+
+/// `call` as a capture shows it, its pick read against `world` now.
+fn shot_of(
+    vm: &guac_script::Vm,
+    world: &ScriptWorld,
+    call: &CallRecord,
+    at: Option<Vec3>,
+) -> AimShot {
+    let number = |name: &str| info_field(call, name).and_then(|v| v.as_f32());
+    let target = match info_field(call, "target") {
         Some(Value::Entity(h)) => {
             let a = world.actor(h);
             Some(AimTarget {
@@ -99,7 +169,7 @@ pub fn aim_of(
         }
         _ => None,
     };
-    Some(AimShot {
+    AimShot {
         call: call.def.clone(),
         step: call.step,
         steps_ago: vm.steps().saturating_sub(call.step),
@@ -111,5 +181,51 @@ pub fn aim_of(
             Some(Recorded::Members(m)) => Some(m.len()),
             _ => None,
         },
-    })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn call(def: &str, placement: Handle, step: u64, target: Value) -> CallRecord {
+        CallRecord {
+            def: def.to_owned(),
+            placement,
+            step,
+            vars: vec![(
+                "autoaim info".to_owned(),
+                Recorded::Fields(vec![("target".to_owned(), target)]),
+            )],
+        }
+    }
+
+    /// openspec AS.1042: a placement's newest pick outlives the calls that
+    /// found nothing after it (a breath aiming again every step), another
+    /// placement's picks stay its own, and a new VM drops them all.
+    #[test]
+    fn a_heros_last_pick_outlives_his_empty_aims() {
+        let mut picks = AimPicks::default();
+        let first = [
+            call("Combat - Autoaim At Targets", 7, 10, Value::Entity(40)),
+            call("Calc - Autoaim At Actors", 7, 11, Value::Entity(41)),
+            call("Combat - Autoaim At Targets", 7, 11, Value::Entity(41)),
+            call("Combat - Autoaim At Targets", 9, 11, Value::Entity(50)),
+            call("Some Other Macro", 7, 12, Value::Entity(60)),
+        ];
+        picks.update(12, &first);
+        let empty: Vec<_> = (13..60)
+            .map(|s| call("Combat - Autoaim At Targets", 7, s, Value::Null))
+            .collect();
+        picks.update(60, &empty);
+        assert_eq!(picks.by[&7].step, 11);
+        assert_eq!(picked(&picks.by[&7]), Some(41));
+        assert_eq!(picks.by[&7].def, "Combat - Autoaim At Targets");
+        assert_eq!(picked(&picks.by[&9]), Some(50));
+        // Seen again (the VM's ring read every frame), nothing moves.
+        picks.update(60, &first);
+        assert_eq!(picks.by[&7].step, 11);
+        picks.update(5, std::iter::empty());
+        assert!(picks.by.is_empty(), "a new VM");
+    }
 }
