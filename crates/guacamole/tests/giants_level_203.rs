@@ -765,9 +765,8 @@ const GATE_2: &str = "enemy_gate_lower_conveyor_01";
 /// ledge, where its sight clears the ledge's lip.
 const DOWN_THE_RAMP: [(f32, f32); 3] = [(-15.0, -256.0), (-15.0, -266.0), (-15.0, -272.0)];
 
-/// The lobber's ledge: where a stand-in sets him (the way onto it before the
-/// gate opens is unread, AS.990).
-const ON_THE_LEDGE: Vec3 = Vec3::new(-12.0, -1.9, -289.0);
+/// The trench's south end under the lobber's ledge, 8.5 m from its spot.
+const TRENCH_END: (f32, f32) = (-15.0, -284.3);
 
 /// Back from the trench up the ramp and through the opened gate onto the
 /// conveyor under the lower crushers.
@@ -779,20 +778,22 @@ const THROUGH_THE_GATE: [(f32, f32); 5] = [
     (-4.3, -261.5),
 ];
 
-/// openspec AS.765: the lower walkway past the introduction teleporter. As
-/// he lands the start's sets are taken off, the lower crushers are back on
-/// their timer and the Molekin by the first crusher talks; Setup_002's
-/// controller sends its nine Fire Chompies out of its pipe (two flames a
-/// launch) and they're fought down; its lobber, woken, throws its bombs at
-/// him once he's down the side ramp in its sight (thrown, not hurting him:
-/// headless none lands, where the TV's run lost 56-60 a bomb, AS.1001); its
-/// gate waits on it. Then the stand-in the name says: PUT on the lobber's
-/// ledge (`ON_THE_LEDGE`, AS.990; no kid walks there), he beats it, the
-/// controller ends and the gate lowers its spikes, and he walks back up and
-/// through it. Nothing stops.
+/// openspec AS.765, AS.990, AS.1001: the lower walkway past the
+/// introduction teleporter, by his own play from its end. As he lands the
+/// start's sets are taken off, the lower crushers are back on their timer
+/// and the Molekin by the first crusher talks; Setup_002's controller sends
+/// its nine Fire Chompies out of its pipe (two flames a launch) and they're
+/// fought down; its lobber, woken, throws its bombs at him once he's down
+/// the side ramp in its sight; its gate waits on it. At the trench's end
+/// under its ledge a bomb that meets him sticks (`PandoranLobber_BombSticky`)
+/// and blows up on its timer for the lobber's own damage, 55-62 (the TV's
+/// run lost 56-60 a bomb); the next he shakes off by mashing the top face
+/// button (the gesture its manager asks), it's thrown back and kills the
+/// lobber, the controller ends and the gate lowers its spikes, and he walks
+/// back up and through it. No put on the ledge, nothing stops.
 #[test]
 #[ignore = "reads the Giants dump"]
-fn level_203s_lower_walkways_fight_then_its_gate_with_him_put_on_the_ledge() {
+fn level_203s_lower_walkways_fight_then_its_gate_by_his_own_play() {
     println!("load at start: {}", load());
     let mut stops = Vec::new();
     let (mut run, out) = fought_open(&mut stops);
@@ -875,28 +876,68 @@ fn level_203s_lower_walkways_fight_then_its_gate_with_him_put_on_the_ledge() {
         "it throws its bombs at him"
     );
     assert_eq!(behaviour(&run, GATE_2), "wait to be opened");
-    // The stand-in (AS.990): on its ledge, he beats it and the gate opens.
-    run.put(ON_THE_LEDGE, 180.0);
-    let opened = |run: &Run| behaviour(run, GATE_2) != "wait to be opened";
-    let fight = fight_to(
-        &mut run,
-        &mut stops,
-        &[LOBBER],
-        &watched,
-        ON_THE_LEDGE,
-        6000,
-        &opened,
-    );
-    for e in &fight.log {
-        println!("  {e:?}");
+    // To the trench's end under its ledge (AS.990).
+    walk(&mut run, &mut stops, &[TRENCH_END], &mut each);
+    let stuck = |run: &Run| {
+        run.world.clones().into_iter().any(|h| {
+            run.world.name(h) == "PandoranLobber_BombSticky"
+                && run.world.actor(h).is_some_and(|a| !a.removed)
+        })
+    };
+    // The first bomb that sticks, let blow (AS.1001), on his full health.
+    if let Some(m) = run.minion {
+        guacamole::scripts::set_health(&mut run.vm, m, 270);
     }
-    assert!(fight.ended, "the gate opened");
+    let mut blasts = Vec::new();
+    let mut was_stuck = false;
+    for k in 0..1200u32 {
+        let before = run.health();
+        still(&mut run, &mut stops, [false; 4]);
+        let now = stuck(&run);
+        if was_stuck && !now {
+            blasts.push((k, before, run.health()));
+            break;
+        }
+        was_stuck = now;
+    }
+    println!("first sticky bomb: {blasts:?}");
+    let &(_, Some(before), Some(after)) = blasts.first().expect("a bomb stuck and blew") else {
+        panic!("his health read: {blasts:?}")
+    };
     assert!(
-        first_in(&fight.log, LOBBER, &["removed"]).is_some(),
-        "the lobber beaten"
+        (55.0..=62.0).contains(&(before - after)),
+        "the blast hurts him as on the TV: {before} -> {after}"
     );
-    assert!(
-        first_in(&fight.log, "Setup_002_Controller", &["removed"]).is_some(),
+    top_up(&mut run);
+    // The next, shaken off: the top face button mashed while it's on him.
+    let mut thrown_at = None;
+    let mut gone_at = None;
+    for k in 0..2400u32 {
+        let on = stuck(&run);
+        let mash = on && k % 8 < 2;
+        if on && thrown_at.is_none() {
+            thrown_at = Some(k);
+        }
+        still(&mut run, &mut stops, [false, false, false, mash]);
+        each(&run);
+        top_up(&mut run);
+        if behaviour(&run, LOBBER) == "removed" && gone_at.is_none() {
+            gone_at = Some(k);
+        }
+        if behaviour(&run, GATE_2) != "wait to be opened" {
+            break;
+        }
+    }
+    println!(
+        "a bomb stuck at {thrown_at:?}, the lobber gone at {gone_at:?}, the gate {} at step {}",
+        behaviour(&run, GATE_2),
+        run.steps
+    );
+    assert!(thrown_at.is_some(), "another bomb stuck");
+    assert!(gone_at.is_some(), "the lobber beaten by its own bomb");
+    assert_eq!(
+        behaviour(&run, "Setup_002_Controller"),
+        "removed",
         "the controller off"
     );
     assert_eq!(behaviour(&run, GATE_2), "lower spikes");

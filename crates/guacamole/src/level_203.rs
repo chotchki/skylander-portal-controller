@@ -55,13 +55,15 @@ pub const START: [&str; 16] = [
     "TeleporterHelper",
 ];
 
-/// [`START`] on 203 alone, with [`FIRST_FIGHT_PARTS`] and [`WALKWAY`].
+/// [`START`] on 203 alone, with [`FIRST_FIGHT_PARTS`], [`WALKWAY`] and
+/// [`SECOND_FIGHT_PARTS`].
 pub fn start(level: &str) -> impl Iterator<Item = &'static str> {
     let on = level == LEVEL;
     START
         .iter()
         .chain(&FIRST_FIGHT_PARTS)
         .chain(&WALKWAY)
+        .chain(&SECOND_FIGHT_PARTS)
         .copied()
         .filter(move |_| on)
 }
@@ -99,6 +101,16 @@ pub const WALKWAY: [&str; 9] = [
     "new_conveyor(4)",
     "reset_point_OFF_3",
 ];
+
+/// What [`WAY_2`]'s lobber makes that runs a script (openspec AS.1001): its
+/// sticky bomb, a clone that runs under its template's name. A bomb that
+/// meets a hero spawns one stuck to him (the projectile manager's
+/// `PandoranLobber - Proj - Stick to something`), which blows up on its
+/// timer, hurting him and whoever stands within 10 ft by the lobber's own
+/// damage, unless he shakes it off by the gesture its manager prompts, when
+/// it's thrown back at a foe in front of him. Off the listing it stayed
+/// inert: every bomb that met him stuck, and none ever hurt him.
+pub const SECOND_FIGHT_PARTS: [&str; 1] = ["PandoranLobber_BombSticky"];
 
 /// Setup_002's fight at the lower walkway's gate (openspec AS.765): its
 /// controller wakes by its own range as he lands, sends three Fire
@@ -174,6 +186,7 @@ mod tests {
             .iter()
             .chain(&FIRST_FIGHT_PARTS)
             .chain(&WALKWAY)
+            .chain(&SECOND_FIGHT_PARTS)
             .copied()
             .collect();
         assert_eq!(start(LEVEL).collect::<Vec<_>>(), all);
@@ -191,6 +204,23 @@ mod tests {
                     "{name} on {other}"
                 );
             }
+        }
+    }
+
+    /// openspec AS.1001: the lobber's sticky bomb runs its own script on
+    /// 203, by its template's name, and on no other level of these.
+    #[test]
+    fn level_203s_sticky_bomb_runs_its_script_there_alone() {
+        let files = Files::default();
+        const STICKY: &str = "C:/l/Enemy_PandoranLobber_Sticky.ai";
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        assert!(on.whitelist.lists("PandoranLobber_BombSticky", STICKY));
+        for other in ["level_201", "level_205_piratecards", "level_208_ice"] {
+            let off = level_config(Mode::Play, &files, 5, other);
+            assert!(
+                !off.whitelist.lists("PandoranLobber_BombSticky", STICKY),
+                "{other}"
+            );
         }
     }
 

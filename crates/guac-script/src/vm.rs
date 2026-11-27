@@ -88,6 +88,43 @@ pub struct Config {
     pub anew_on_wake: AnewOnWake,
 }
 
+/// How many watched calls [`Vm::watched_calls`] keeps.
+pub const CALLS_KEPT: usize = 128;
+
+/// A watched macro's frame as one call's use block closed
+/// ([`Vm::watch_call`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CallRecord {
+    /// The definition, as displayed.
+    pub def: String,
+    /// The placement whose script made the call (its host handle).
+    pub placement: Handle,
+    /// [`Vm::steps`] when it closed.
+    pub step: u64,
+    /// Each frame variable by name, sorted.
+    pub vars: Vec<(String, Recorded)>,
+}
+
+impl CallRecord {
+    /// The variable named `name`, any case.
+    pub fn var(&self, name: &str) -> Option<&Recorded> {
+        self.vars
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, r)| r)
+    }
+}
+
+/// A variable as a watched call left it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Recorded {
+    Value(Value),
+    /// A structure's fields by name, each as read.
+    Fields(Vec<(String, Value)>),
+    /// A set's members.
+    Members(Vec<Value>),
+}
+
 /// Which sleepers wake with the locals their scripts declare made anew
 /// (crate docs, The tick; openspec AS.233).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -791,6 +828,12 @@ pub struct Vm {
     busy: IdSet<DefId>,
     /// [`Config::answered`]'s definitions, as the program resolves them.
     answered: IdSet<DefId>,
+    /// Definitions whose frames are read as their use blocks close
+    /// ([`Vm::watch_call`]), and those reads, newest last.
+    watched: IdSet<DefId>,
+    watched_calls: std::collections::VecDeque<CallRecord>,
+    /// Steps begun ([`Vm::step_with`]).
+    steps: u64,
     op_state: IdMap<OpId, OpState>,
     value_cells: IdMap<(Recv, MemberId), u32>,
     value_cell_values: Vec<Value>,
@@ -921,6 +964,9 @@ impl Vm {
             frames: IdMap::default(),
             busy: IdSet::default(),
             answered,
+            watched: IdSet::default(),
+            watched_calls: std::collections::VecDeque::new(),
+            steps: 0,
             op_state: IdMap::default(),
             value_cells: IdMap::default(),
             value_cell_values: Vec::new(),
@@ -1968,6 +2014,7 @@ impl Vm {
         native: &mut Native<'_>,
     ) -> Result<StepReport, Halt> {
         let mut report = StepReport::default();
+        self.steps += 1;
         if !self.slid {
             match self.slide(host) {
                 Ok(slid) => report.stopped = slid.stopped,
@@ -2799,10 +2846,88 @@ impl Vm {
         Ok(())
     }
 
+    /// Has every call of each macro named `name` (as its definition is
+    /// displayed, spaces at the ends aside; a name two files define, both)
+    /// read as its use block closes,
+    /// before its frame goes back to its defaults: each variable as the
+    /// call left it, a structure's fields and a set's members with it
+    /// ([`Vm::watched_calls`]). Nothing the scripts see changes. False for a name
+    /// no definition has.
+    pub fn watch_call(&mut self, name: &str) -> bool {
+        let want = name.trim();
+        let defs: Vec<DefId> = self
+            .program
+            .defs
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| d.kind == crate::DefKind::Macro && d.display.trim() == want)
+            .map(|(i, _)| i as DefId)
+            .collect();
+        for &d in &defs {
+            self.watched.insert(d);
+        }
+        !defs.is_empty()
+    }
+
+    /// The watched calls' reads ([`Vm::watch_call`]), oldest first, the
+    /// last [`CALLS_KEPT`] at most.
+    pub fn watched_calls(&self) -> impl Iterator<Item = &CallRecord> {
+        self.watched_calls.iter()
+    }
+
+    /// How many definitions [`Vm::watch_call`] has watched.
+    pub fn watching(&self) -> usize {
+        self.watched.len()
+    }
+
+    /// Steps begun since the VM was made.
+    pub fn steps(&self) -> u64 {
+        self.steps
+    }
+
+    fn record_call(&mut self, def: DefId) {
+        let mut vars: Vec<(String, Recorded)> = self
+            .frames
+            .get(&def)
+            .map(|f| f.iter().map(|(&n, &c)| (n, c)).collect::<Vec<_>>())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(n, c)| {
+                let v = self.cells[c as usize].value;
+                let r = match self.peek(v) {
+                    Value::Struct(_) => Recorded::Fields(
+                        self.fields(v)
+                            .into_iter()
+                            .map(|(k, x)| (k.to_owned(), self.peek(x)))
+                            .collect(),
+                    ),
+                    Value::Set(_) => {
+                        Recorded::Members(self.set(v).map(<[Value]>::to_vec).unwrap_or_default())
+                    }
+                    other => Recorded::Value(other),
+                };
+                (self.program.sym(n).to_owned(), r)
+            })
+            .collect();
+        vars.sort_by(|a, b| a.0.cmp(&b.0));
+        if self.watched_calls.len() == CALLS_KEPT {
+            self.watched_calls.pop_front();
+        }
+        self.watched_calls.push_back(CallRecord {
+            def: self.program.defs[def as usize].display.trim().to_owned(),
+            placement: self.my_handle(),
+            step: self.steps,
+            vars,
+        });
+    }
+
     /// The use block closed: the callee's frame back to defaults, no longer
     /// busy.
     fn close_call(&mut self, def: DefId) {
         self.busy.remove(&def);
+        if self.watched.contains(&def) {
+            self.record_call(def);
+        }
         let cells: Vec<u32> = self
             .frames
             .get(&def)

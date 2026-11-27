@@ -236,6 +236,46 @@ fn a_measurement_reads_from_its_paths_other_point() {
     assert_eq!(vm.local(id, "got"), Some(Value::Float(7.0)));
 }
 
+/// A placement reference as a measurement's other point is the actor it
+/// names (as-aim-ref, the oracle's read: `Calc - Autoaim At Actors` puts
+/// its `from` at distance 0 from the centre macro's `actor` and pitches
+/// from the aimer's feet), so the host is told the referent, never the
+/// reference's own point.
+#[test]
+fn a_reference_as_the_other_point_is_the_actor_it_names() {
+    let p = program(|w| {
+        let got = w.variable("got", "ValueInfo", Some(FLOAT));
+        let r = w.variable("r", "PlacementReference", None);
+        idle(
+            w,
+            |_| {},
+            |w| {
+                let l = w.value(&[El::Local(r)]);
+                let rhs = w.reference(&[El::Member("optoplevelbehavior", "my")], None);
+                let o = w.op(Class::SetReference, "set reference");
+                w.refer(o, 0x1C, l);
+                w.refer(o, 0x20, rhs);
+                w.push(o);
+                let v = w.rhs(
+                    FLOAT,
+                    &[
+                        El::Member("optoplevelbehavior", "my"),
+                        El::Member("test", "distance"),
+                    ],
+                );
+                let from = w.reference(&[El::Local(r)], None);
+                w.refer(v, 0x18, from);
+                w.set(&[El::Local(got)], v);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, config());
+    let id = vm.add(HANDLE, "Hero", 0);
+    let mut host = Members::default();
+    vm.tick(id, &mut host).unwrap_or_else(|h| panic!("{h}"));
+    assert_eq!(vm.local(id, "got"), Some(Value::Float(7.0)));
+}
+
 /// A native call binds each argument to the parameter the macro's own
 /// INTERFACE names (any case) and reads what it asks back from the callee's
 /// frame as the body returns; a parameter the macro doesn't declare stops.
@@ -285,6 +325,73 @@ fn a_native_call_passes_arguments_and_reads_returns() {
     assert!(
         matches!(&halt.reason, Reason::Unsupported(s) if s.contains("no parameter")),
         "{halt}"
+    );
+}
+
+/// A watched macro's frame is read as its use block closes, before it goes
+/// back to its defaults (as-aim-ref: a capture's record of a hero's last
+/// autoaim), and the read changes nothing the scripts see: each call's
+/// return as unwatched, the next call's frame fresh, an unwatched macro and
+/// an unknown name not recorded.
+#[test]
+fn a_watched_calls_frame_is_read_as_it_closes() {
+    let p = program(|w| {
+        let def = w.op(Class::DefineMacro, "Add One");
+        let zero = w.int(0);
+        let a = parameter_of(w, def, "a", zero);
+        let zero = w.int(0);
+        let out = parameter_of(w, def, "out", zero);
+        frame(
+            w,
+            |_| {},
+            |_| {},
+            |w| {
+                let at = w.push(def);
+                interface_of(w, &[a, out]);
+                let x = w.rhs(INT, &[El::Local(a)]);
+                let one = w.int(1);
+                let sum = w.expr(x, Some((0, one)));
+                w.set(&[El::Local(out)], sum);
+                w.end_block(at);
+            },
+            |_| {},
+            |w| {
+                let b = w.behaviour("idle");
+                w.end_block(b);
+            },
+        );
+    });
+    let mut vm = Vm::new(p, config());
+    let mut host = Members::default();
+    let call = |vm: &mut Vm, host: &mut Members, a: i32| {
+        vm.call_with(None, "Add One", &[("a", Value::Int(a))], &["out"], host)
+            .unwrap_or_else(|h| panic!("{h}"))
+            .1
+    };
+    assert_eq!(call(&mut vm, &mut host, 1), [Some(Value::Int(2))]);
+    assert_eq!(vm.watched_calls().count(), 0, "unwatched");
+    assert!(!vm.watch_call("No Such Macro"));
+    assert!(vm.watch_call(" Add One "));
+    assert_eq!(call(&mut vm, &mut host, 4), [Some(Value::Int(5))]);
+    assert_eq!(call(&mut vm, &mut host, 9), [Some(Value::Int(10))]);
+    let got: Vec<_> = vm
+        .watched_calls()
+        .map(|c| (c.def.clone(), c.var("A").cloned(), c.var("out").cloned()))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (
+                "Add One".to_owned(),
+                Some(Recorded::Value(Value::Int(4))),
+                Some(Recorded::Value(Value::Int(5)))
+            ),
+            (
+                "Add One".to_owned(),
+                Some(Recorded::Value(Value::Int(9))),
+                Some(Recorded::Value(Value::Int(10)))
+            ),
+        ]
     );
 }
 

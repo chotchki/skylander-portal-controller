@@ -166,6 +166,15 @@ async fn a_flag_from_the_phone_lands_in_its_folder_and_joins_a_pads() {
     assert_eq!(json["source"], "phone");
     assert_eq!(json["note"], "the ship is invisible here");
     assert_eq!(json["build"], "e2e-test");
+    // The hero's last autoaim and his last that picked something (openspec
+    // AS.1042): keys of their own, null on the menu, where no hero has aimed.
+    for key in ["aim", "aim_pick"] {
+        assert!(
+            json.as_object().is_some_and(|o| o.contains_key(key)) && json[key].is_null(),
+            "{key}: {}",
+            json[key]
+        );
+    }
     assert!(
         json["tv"]["screen"].as_str().is_some_and(|s| !s.is_empty()),
         "{}",

@@ -390,7 +390,13 @@
 //!   own, every lob's speed came out wrong; read so, AH.10's 20 lobs are the
 //!   oracle's within 1 %).
 //! - When the use block itself closes, every variable in the callee's frame
-//!   goes back to its default and the definition is no longer busy.
+//!   goes back to its default and the definition is no longer busy. (The
+//!   oracle's do too: at every flip pause, the frame after a hero's autoaim
+//!   ran included, its macros' variables read their defaults, as-aim-ref.)
+//!   An embedder can have a macro's frame read just before that
+//!   ([`Vm::watch_call`], [`Vm::watched_calls`]): each variable as the call
+//!   left it, a structure's fields and a set's members with it, the scripts
+//!   none the wiser.
 //! - A specialization is a definition with an INTERFACE and body of its own;
 //!   calling it runs it. A parameter that names its base's definition reads
 //!   the specialization's frame while the specialization runs. A reading:
@@ -602,7 +608,13 @@
 //!   the chest sets `chest reference` to itself again once it has risen and
 //!   then shakes about that point, `Calc - Get Center Point` sets one to
 //!   the same actor twice running. A copied structure's references carry
-//!   none.
+//!   none. As a measurement's other point (`@[r]`) a reference is the actor
+//!   it names, where he stands; its own point is reached only through
+//!   `r/remembered` (read on the oracle, as-aim-ref 2026-11-26: `Calc -
+//!   Autoaim At Actors` lifts the centre macro's `actor` to the aimer's
+//!   centre, then puts its `from` at distance 0 from `[actor]`, and the
+//!   pitch Spyro's fireball keeps is the one from his feet to the target's
+//!   centre on three shots, to 0.01 degree).
 //! - Every member the host answers comes with the op that reads or writes
 //!   it ([`Access::op`]), so the host can answer one asker apart from
 //!   another (openspec AH.150: a point against the gameplay camera, on
@@ -925,7 +937,7 @@ pub use value::{
     ArithFault, Value, arith, arith_in, compare, convert, random_colour, random_literal,
 };
 pub use vm::{
-    AnewOnWake, Config, DEFAULT_BUDGET, Halt, Handle, LogLine, Mode, Native, PlacementId,
-    Precision, Reason, SLIDERS, StepReport, TICK_SECONDS, Vm,
+    AnewOnWake, CALLS_KEPT, CallRecord, Config, DEFAULT_BUDGET, Halt, Handle, LogLine, Mode,
+    Native, PlacementId, Precision, Reason, Recorded, SLIDERS, StepReport, TICK_SECONDS, Vm,
 };
 pub use whitelist::{Listed, Whitelist};
