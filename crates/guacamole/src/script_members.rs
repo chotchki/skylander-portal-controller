@@ -1341,14 +1341,20 @@ impl ScriptWorld {
         }
         // Hung from another actor, it turns with it (openspec AS.76: a
         // turret's body on its base, whose facing `New Turret - Find Target`
-        // holds its targets' headings against).
+        // holds its targets' headings against), but for a facing a script
+        // wrote there, which reads back as written, as on a node (openspec
+        // AS.1090: Flameslinger's `pivot null actor`, hung on him and turned
+        // toward his pick each step, read twice his facing and let his
+        // arrow go the other way).
         if depth > 0
             && !a.removed
             && let Some(owner) = self.actor_of(Some(a.attach)).filter(|&o| o != h)
             && let Some(g) = self.angles_within(owner, engine, depth - 1)
         {
             let mut turned = a.angles;
-            turned.facing += g.facing;
+            if a.turned_axes & Actor::FACING == 0 {
+                turned.facing += g.facing;
+            }
             return Some(turned);
         }
         Some(a.angles)
@@ -6689,6 +6695,44 @@ mod tests {
         assert_eq!(w.angles(BALL, &mut e).map(|g| g.facing), Some(90.0));
         w.actors.get_mut(&BALL).unwrap().attach = Value::Null;
         assert_eq!(w.angles(BALL, &mut e).map(|g| g.facing), Some(9.0));
+    }
+
+    /// openspec AS.1090: a facing a script writes on an actor hung from
+    /// another reads back as written, as on a node: Flameslinger's `pivot
+    /// null actor`, hung on him, turned to his pick's heading and read back
+    /// against his facing each step (`011_FireElf.ai`), not twice his turn.
+    /// Unwritten it turns with what it hangs from (AS.76, above), and hung
+    /// anew it does again.
+    #[test]
+    fn a_facing_written_on_an_actor_hung_from_another_reads_back_as_written() {
+        let mut e = bench();
+        e.hero = Some(Hero::actor(eruptor_solid(), Vec3::ZERO, 225.0));
+        let mut w = world();
+        w.actors.insert(HERO, Actor::blank());
+        let mut pivot = Actor::blank();
+        pivot.attach = Value::Entity(HERO);
+        w.actors.insert(BALL, pivot);
+        let turn = w.objs.value(Object::Facet(BALL, Facet::Orientation));
+        let facing = at("orientationmeasurement", "facing", Some(turn), None);
+        let read = |w: &mut ScriptWorld, e: &mut Bench| w.get_member(&facing, Member::Facing, e);
+        assert_eq!(read(&mut w, &mut e), Ok(Value::Float(225.0)), "unwritten: his");
+        w.set_member(&facing, Member::Facing, Value::Float(-135.0), &mut e)
+            .unwrap();
+        assert_eq!(read(&mut w, &mut e), Ok(Value::Float(-135.0)), "as written");
+        e.hero.as_mut().unwrap().facing = 300.0;
+        assert_eq!(read(&mut w, &mut e), Ok(Value::Float(-135.0)), "kept as he turns");
+        // Hung anew, a turn written before is its own under him again.
+        let node = at(
+            "abstractplacement",
+            "attach node",
+            Some(Value::Entity(BALL)),
+            None,
+        );
+        w.set_member(&node, Member::AttachNode, Value::Null, &mut e)
+            .unwrap();
+        w.set_member(&node, Member::AttachNode, Value::Entity(HERO), &mut e)
+            .unwrap();
+        assert_eq!(read(&mut w, &mut e), Ok(Value::Float(165.0)), "his 300 and its -135");
     }
 
     /// openspec AS.189: a hero hung on a turret hung at a place is carried
