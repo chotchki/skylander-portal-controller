@@ -1695,22 +1695,65 @@ fn level_208s_setup_003_walked_from_the_fourth_ice_block() {
     println!("load at end: {}", load());
 }
 
-/// openspec AS.403 and AS.798: Setup_004 on its own triggers, set down on
-/// its first (past Setup_003's gate). The controller wakes into its set-up
-/// scene, circling four Ice Chompies round its anchor; the stick down the
-/// slope past the `Blocker`, which turns its box off as he comes in front
-/// of it, to the second trigger, where the scene goes on; then the stick
-/// and the attack at the fifteen of its foes a walked hero reaches, in
-/// 600-step rounds with his health set back each round, until each is
-/// beaten and the controller is in its last behaviour. Its two bomb
-/// throwers stand on ledges above the yard no walk reaches (AS.1010), so
-/// the controller's end isn't asserted. Four rounds with no change end it.
+/// openspec AS.403, AS.798 and AS.1010: Setup_004 on its own triggers,
+/// set down on its first (past Setup_003's gate), by Eruptor, whose lob
+/// reaches. The controller wakes into its set-up scene, circling four Ice
+/// Chompies round its anchor; the stick down the slope past the `Blocker`,
+/// which turns its box off as he comes in front of it, to the second
+/// trigger, where the scene goes on; then the stick and the attack at the
+/// fifteen of its foes on the yard's floor, in 600-step rounds with his
+/// health set back each round, until each is beaten. Its two bomb throwers
+/// stand on ledges above the yard no walk reaches: each is beaten with its
+/// own bombs ([`beat_the_bombers`]), the controller's set comes off, and
+/// the jump pads' activator pans to pads (4) and (5) and turns them on.
+/// Four rounds with no change end it.
 #[test]
 #[ignore = "reads the Giants dump"]
 fn level_208s_setup_004_by_its_own_triggers() {
+    setup_004_to_the_pads(None, TOP_UPS_004);
+}
+
+/// openspec AS.1010: Setup_004 as [`level_208s_setup_004_by_its_own_triggers`]
+/// with Ninjini, whose swords reach nothing on the ledges: the bombers
+/// beaten with their own bombs all the same.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_208s_setup_004_with_a_melee_hero() {
+    setup_004_to_the_pads(Some(NINJINI), TOP_UPS_004_MELEE);
+}
+
+/// Ninjini, the magic Giant: swords and a bottle she throws at her feet.
+const NINJINI: Character = Character {
+    archive: "character/109_djini.bld",
+    load_file: "109_Djini",
+    toy: 109,
+};
+
+/// The run joined at its start as `character` (Eruptor if none).
+fn joined_208_as(character: Option<Character>, stops: &mut Vec<String>) -> Run {
+    let Some(character) = character else {
+        return joined_208(stops);
+    };
+    let (mut run, _) = run_on_level(
+        Mode::Play,
+        LEVEL_208,
+        Setup {
+            character: Some(character),
+            ..setup()
+        },
+    );
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    run
+}
+
+/// Setup_004 fought as a kid fights it to the jump pads ([`level_208s_setup_004_by_its_own_triggers`]).
+fn setup_004_to_the_pads(character: Option<Character>, most_top_ups: u32) {
     println!("load at start: {}", load());
     let mut stops = Vec::new();
-    let mut run = joined_208(&mut stops);
+    let mut run = joined_208_as(character, &mut stops);
     for k in 0..6000u32 {
         still(&mut run, &mut stops, [false; 4]);
         if k > 200 && scene_of(&run).is_none() && !guacamole::anchors::scene_holds(&run.vm) {
@@ -1817,27 +1860,192 @@ fn level_208s_setup_004_by_its_own_triggers() {
     for (step, n, b) in &log {
         println!("  {step} {n} {b}");
     }
-    for _ in 0..120 {
-        still(&mut run, &mut stops, [false; 4]);
-    }
-    let end = behaviour(&run, SETUP_004_CONTROLLER);
-    let ledge: Vec<_> = SETUP_004_LEDGE
-        .iter()
-        .map(|n| (*n, behaviour(&run, n), run.at(n)))
-        .collect();
     println!(
-        "setup_004: step {}, health {full} lowest {lowest}, {top_ups} top-ups, controller {end}, the ledge's {ledge:?}",
+        "setup_004's floor: step {}, health {full} lowest {lowest}, {top_ups} top-ups",
         run.steps
     );
-    assert!(top_ups <= TOP_UPS_004, "{top_ups} top-ups");
+    assert!(top_ups <= most_top_ups, "{top_ups} top-ups");
     for n in &walked {
         assert!(first_in(&log, n, &["removed"]).is_some(), "{n} beaten");
     }
     assert!(lowest < full, "never hurt: {lowest}");
-    assert_eq!(end, "in which you triumph and the script ends");
+    // The ledges: each bomber beaten by a bomb of its own thrown back.
+    let bombers = beat_the_bombers(&mut run, &mut stops, full);
+    println!("the bombers: {bombers:?}");
+    for (i, n) in SETUP_004_LEDGE.iter().enumerate() {
+        assert!(removed(&run, n), "{n} beaten");
+        assert!(bombers.hurt[i] > 0, "{n} hurt by no bomb");
+    }
+    // Its set gone, the controller comes off, and the activator shows the
+    // pads with its pan, turns them on and goes.
+    let mut scenes = Vec::new();
+    for _ in 0..900 {
+        if let Some(cs) = cutscene_name(&run)
+            && scenes.last() != Some(&cs)
+        {
+            scenes.push(cs);
+        }
+        still(&mut run, &mut stops, [false; 4]);
+        if removed(&run, PADS_ACTIVATOR) && scenes.len() > 0 {
+            break;
+        }
+    }
+    println!(
+        "after the bombers: step {}, controller {}, scenes {scenes:?}, pads {} {}",
+        run.steps,
+        behaviour(&run, SETUP_004_CONTROLLER),
+        behaviour(&run, PAD_4),
+        behaviour(&run, PAD_5)
+    );
+    assert!(
+        removed(&run, SETUP_004_CONTROLLER),
+        "the controller's set off"
+    );
+    assert!(removed(&run, PADS_ACTIVATOR), "the activator done");
+    assert!(!scenes.is_empty(), "the pan to the pads");
+    for pad in [PAD_4, PAD_5] {
+        assert!(!run.vm.asleep(run.placement(pad)), "{pad} on");
+    }
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
 }
+
+/// What beating the ledge bombers took ([`beat_the_bombers`]).
+#[derive(Debug, Default)]
+struct Bombers {
+    /// Bombs he picked up, and threw.
+    taken: u32,
+    thrown: u32,
+    /// Hurts each bomber took, in [`SETUP_004_LEDGE`]'s order.
+    hurt: [u32; 2],
+    /// Steps it took.
+    steps: u32,
+}
+
+/// The ledge bombers beaten as a kid beats them (openspec AS.1010): a
+/// bomber's grenade lands as a bomb that waits to be grabbed
+/// (`Bomb_Rocket_Template.ai`'s); he walks into the nearest one on his
+/// floor, it follows him, he turns toward the nearest bomber standing and
+/// taps △ every 20 steps until it's thrown, and the bomb flies to the
+/// bombers, which the jump pads' activator made its targets
+/// (`Bomb_Targets`). His health set back every 600 steps. Fails on no hurt
+/// and no bomb taken in 1,800 steps.
+fn beat_the_bombers(run: &mut Run, stops: &mut Vec<String>, full: f32) -> Bombers {
+    let mut out = Bombers::default();
+    let start = run.steps;
+    let stand = Vec3::new(-124.0, -11.7, 70.0);
+    let (mut carried, mut held_last, mut hp, mut since) = (0u32, false, [None; 2], 0u32);
+    loop {
+        if (run.steps - start).is_multiple_of(600) {
+            set_health(run, full);
+        }
+        if SETUP_004_LEDGE.iter().all(|n| removed(run, n)) {
+            out.steps = run.steps - start;
+            return out;
+        }
+        let now = SETUP_004_LEDGE.map(|n| foe_hp(run, n));
+        since += 1;
+        for i in 0..2 {
+            if hp[i].is_some() && now[i] != hp[i] {
+                out.hurt[i] += 1;
+                since = 0;
+            }
+            hp[i] = now[i];
+        }
+        assert!(
+            since < 1800,
+            "the bombers held {since} steps at {}: {out:?}",
+            run.hero().pivot
+        );
+        if cutscene_name(run).is_some() || guacamole::anchors::scene_holds(&run.vm) {
+            still(run, stops, [false; 4]);
+            continue;
+        }
+        let me = run.hero().pivot;
+        let bombs = chucker_bombs(run);
+        let held = bombs.iter().any(|(_, b)| b == "following player");
+        if held && !held_last {
+            out.taken += 1;
+            since = 0;
+            carried = 0;
+        }
+        held_last = held;
+        if held {
+            carried += 1;
+            let at = SETUP_004_LEDGE
+                .iter()
+                .filter(|n| !removed(run, n))
+                .map(|n| run.at(n))
+                .min_by(|a, b| flat(*a, me).total_cmp(&flat(*b, me)))
+                .unwrap_or(stand);
+            run.bench.view = (at.x - me.x).atan2(at.z - me.z).to_degrees();
+            run.bench.hold_view = true;
+            let tap = carried > 20 && carried.is_multiple_of(20);
+            out.thrown += u32::from(tap);
+            let push = if carried < 12 { 0.5 } else { 0.0 };
+            step(
+                run,
+                stops,
+                Stick::new(0.0, push),
+                [false, false, false, tap],
+            );
+            continue;
+        }
+        let goal = bombs
+            .iter()
+            .filter(|(p, b)| {
+                b.starts_with("wait") && (p.y - me.y).abs() < 2.5 && flat(*p, me) < 20.0
+            })
+            .map(|(p, _)| *p)
+            .min_by(|a, b| flat(*a, me).total_cmp(&flat(*b, me)))
+            .unwrap_or(stand);
+        run.bench.view = (goal.x - me.x).atan2(goal.z - me.z).to_degrees();
+        run.bench.hold_view = true;
+        let push = if flat(goal, me) > 0.6 { 1.0 } else { 0.0 };
+        step(run, stops, Stick::new(0.0, push), [false; 4]);
+    }
+}
+
+/// The bombers' bombs standing: each one's place and behaviour.
+fn chucker_bombs(run: &Run) -> Vec<(Vec3, String)> {
+    run.world
+        .clones()
+        .into_iter()
+        .filter(|h| run.world.name(*h) == "Bomb_Chucker_Spawned_Bomb")
+        .filter_map(|h| {
+            let a = run.world.actor(h).filter(|a| !a.removed)?;
+            let b = run
+                .vm
+                .placement_of(h)
+                .and_then(|i| run.vm.behaviour(i))
+                .unwrap_or("-")
+                .to_owned();
+            Some((a.position, b))
+        })
+        .collect()
+}
+
+/// A creature's health as its scripts hold it, while it's run.
+fn foe_hp(run: &Run, name: &str) -> Option<f32> {
+    let id = run.vm.placement_of(run.placed(name).0)?;
+    if run.vm.removed(id) {
+        return None;
+    }
+    let vm = &run.vm;
+    let d = vm.local(id, "description").map(|v| vm.value(v))?;
+    let c = vm.field(d, "creature info").map(|v| vm.value(v))?;
+    match vm.field(c, "hp").map(|v| vm.value(v))? {
+        guac_script::Value::Float(f) => Some(f),
+        guac_script::Value::Int(i) => Some(i as f32),
+        _ => None,
+    }
+}
+
+/// The jump pads up from Setup_004's yard and their activator (openspec
+/// AS.1010, AS.1014).
+const PADS_ACTIVATOR: &str = "_JumpPad_Activator(1)";
+const PAD_4: &str = "PvP_JumpPad_NORMAL(4)";
+const PAD_5: &str = "PvP_JumpPad_NORMAL(5)";
 
 /// openspec AS.1021: the snowman by Setup_004's second trigger bursts as a
 /// kid runs into it: set down 5 m west of it, the stick held at it until
@@ -1952,6 +2160,9 @@ fn top_up(run: &mut Run, full: f32) -> bool {
 /// headless with Eruptor, 2026-11-26.
 const TOP_UPS_003: u32 = 8;
 const TOP_UPS_004: u32 = 7;
+/// Ninjini's (openspec AS.1010): as-208-battle measured 2 headless,
+/// 2026-11-26.
+const TOP_UPS_004_MELEE: u32 = 5;
 
 /// His health set as his scripts hold it.
 fn set_health(run: &mut Run, hp: f32) {

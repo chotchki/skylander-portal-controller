@@ -260,6 +260,33 @@ pub fn way_down(level: &str) -> impl Iterator<Item = &'static str> {
     WAY_DOWN.iter().copied().filter(move |_| on)
 }
 
+/// Setup_004's jump pads and their activator, by name (openspec AS.1010,
+/// AS.1014). The yard's two bomb throwers walk their paths onto ledges 3.8 m
+/// and 5.4 m over its floor, out of a walk's reach; a kid beats them with
+/// their own bombs (each grenade lands as a `Bomb_Rocket_Template.ai` bomb
+/// he walks into and throws with △). `_JumpPad_Activator(1)`
+/// (`JumpPad_Activator.ai`) puts both bombers in `Bomb_Targets` at its
+/// start, the set a thrown bomb flies to, and waits on the yard's whole set
+/// (`Setup_004_Enemies`); then it pans to pad (4) on the floor and pad (5)
+/// on bomber (2)'s ledge, turns each on with its appear effect, wakes the
+/// post-fight push block and takes itself off. Pad (4) lands a hero on the
+/// ledge, pad (5) on the upper level west of it, the way on. The pads are
+/// `PR_PvP_jumpPad.ai`'s, as [`UNDER_RIVER`]'s. Unlisted, the pads never
+/// came on and a bomb had to be aimed (headless 1,122 steps to beat both
+/// against 390 with it, as-208-battle).
+pub const YARD_PADS: [&str; 3] = [
+    "_JumpPad_Activator(1)",
+    "PvP_JumpPad_NORMAL(4)",
+    "PvP_JumpPad_NORMAL(5)",
+];
+
+/// [`YARD_PADS`] on 208 alone (201 and chapter 1 name pads of the same
+/// name of their own).
+pub fn yard_pads(level: &str) -> impl Iterator<Item = &'static str> {
+    let on = level == LEVEL;
+    YARD_PADS.iter().copied().filter(move |_| on)
+}
+
 /// Level 208's snowmen, by name (openspec AS.1021): the nine placed
 /// `Snowman_Whole.ai`s, each a capsule 8 ft wide and 12 ft high solid to
 /// actors. Its script waits until a player's minion runs into it or hurts
@@ -408,6 +435,27 @@ mod tests {
             "Enemy_Chompy_Ice(9)",
         ] {
             assert!(WAY.placements.contains(&n), "{n}");
+        }
+    }
+
+    /// openspec AS.1010: the yard's jump pads and their activator are on
+    /// 208's listing and on no other level's that doesn't name pads of its
+    /// own (202 and 205 have no `PvP_JumpPad_NORMAL`).
+    #[test]
+    fn level_208s_yard_pads_are_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        assert_eq!(yard_pads(LEVEL).collect::<Vec<_>>(), YARD_PADS);
+        for other in ["level_202", "level_205_piratecards"] {
+            let off = level_config(Mode::Play, &files, 5, other);
+            for name in YARD_PADS {
+                assert!(on.whitelist.lists(name, "C:/l/Unlisted.ai"), "{name}");
+                assert!(
+                    !off.whitelist.lists(name, "C:/l/Unlisted.ai"),
+                    "{name} on {other}"
+                );
+            }
+            assert_eq!(yard_pads(other).count(), 0);
         }
     }
 
