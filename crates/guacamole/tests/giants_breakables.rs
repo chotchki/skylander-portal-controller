@@ -1995,26 +1995,40 @@ fn cynders_breath_breaks_what_the_oracles_did_and_a_capture_keeps_its_pick() {
             .filter(|n| run.world.actor(run.placed(n).0).is_some_and(|a| !a.removed))
             .collect()
     };
-    // (where she stood, her facing, what stands after, her facing after
-    // within 2 degrees, what the kept pick may name)
-    let shots: [([f32; 3], f32, &[&str], Option<f32>, &[&str]); 2] = [
-        (
-            [31.137, 51.454, -73.002],
-            253.3,
-            &["pottery_2(5)"],
-            None,
-            &["barrel_b_intact(1)", "barrel_b_intact(4)"],
-        ),
-        (
-            [31.157, 51.45, -73.012],
-            260.5,
-            &[],
-            Some(211.2),
-            &["pottery_2(5)"],
-        ),
+    /// One held breath: where she stood and faced, what stands after it,
+    /// her facing after (within 2 degrees) and what its kept pick may name.
+    struct Breath {
+        at: [f32; 3],
+        facing: f32,
+        after: &'static [&'static str],
+        turned: Option<f32>,
+        pick: &'static [&'static str],
+    }
+    let shots = [
+        Breath {
+            at: [31.137, 51.454, -73.002],
+            facing: 253.3,
+            after: &["pottery_2(5)"],
+            turned: None,
+            pick: &["barrel_b_intact(1)", "barrel_b_intact(4)"],
+        },
+        Breath {
+            at: [31.157, 51.45, -73.012],
+            facing: 260.5,
+            after: &[],
+            turned: Some(211.2),
+            pick: &["pottery_2(5)"],
+        },
     ];
     let mut picks = guacamole::aim::AimPicks::default();
-    for (at, facing, after, turned, pick) in shots {
+    for Breath {
+        at,
+        facing,
+        after,
+        turned,
+        pick,
+    } in shots
+    {
         let spot = Vec3::from_array(at);
         for _ in 0..10 {
             run.put(spot, facing);
