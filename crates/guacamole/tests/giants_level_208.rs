@@ -1925,6 +1925,14 @@ fn setup_004_to_the_pads(character: Option<Character>, most_top_ups: u32) -> (Ru
 #[test]
 #[ignore = "reads the Giants dump"]
 fn level_208s_way_on_from_setup_004s_yard_to_the_big_battle() {
+    let (_, stops) = to_the_big_battle();
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
+}
+
+/// The way on of [`level_208s_way_on_from_setup_004s_yard_to_the_big_battle`],
+/// asserted as it goes: the run at Setup_005's place.
+fn to_the_big_battle() -> (Run, Vec<String>) {
     let (mut run, mut stops) = setup_004_to_the_pads(None, TOP_UPS_004);
     let up = ride(&mut run, &mut stops, PAD_4, LEDGE_2);
     println!("pad (4): landed at {up:?}");
@@ -1967,9 +1975,120 @@ fn level_208s_way_on_from_setup_004s_yard_to_the_big_battle() {
     let me = run.hero().pivot;
     assert!((me.y - place.y).abs() < 1.5, "on the arena's floor: {me}");
     assert!(run.health().is_some_and(|h| h > 0.0), "alive");
+    (run, stops)
+}
+
+/// openspec AS.404: the big battle on its own triggers, by a walked hero.
+/// Down into its arena by the way on
+/// ([`level_208s_way_on_from_setup_004s_yard_to_the_big_battle`]), its
+/// controller (`Setup_005_Controller`, file `Setup_006_Controller.ai`)
+/// sends its waves in along their paths: spinning Cyclopes, heavy
+/// Biclopes, Ice Chompies, a pause with food, more of each; the stick and
+/// the attack at the nearest standing in 600-step rounds, his health set
+/// back each round, until the controller's clean-up takes its set off.
+/// Each of the 28 its script names is beaten (by him, or by the kill plane
+/// under the pit beside the arena if he knocks it in). Four rounds with no
+/// change end it.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_208s_big_battle_by_its_own_triggers() {
+    let (mut run, mut stops) = to_the_big_battle();
+    let place = run.at(SETUP_005_CONTROLLER);
+    let full = run.health().expect("his health");
+    for n in SETUP_005_FOES {
+        let p = run.files.placed.iter().find(|p| p.name == n).expect(n);
+        let script = p.script.as_deref().expect(n);
+        assert!(run.vm.config().whitelist.lists(n, script), "{n} listed");
+    }
+    let (mut log, mut last, mut scenes) = (Vec::new(), HashMap::new(), Vec::new());
+    let (mut lowest, mut quiet, mut top_ups) = (full, 0, 0u32);
+    let done = |run: &Run| removed(run, SETUP_005_CONTROLLER);
+    for _ in 0..40 {
+        top_ups += u32::from(top_up(&mut run, full));
+        let f = fight_to(
+            &mut run,
+            &mut stops,
+            &SETUP_005_FOES,
+            &[SETUP_005_CONTROLLER],
+            place,
+            600,
+            &done,
+        );
+        lowest = lowest.min(f.health.1);
+        scenes.extend(f.scenes);
+        let mut changed = false;
+        for (step, n, b) in f.log {
+            if last.get(&n) != Some(&b) {
+                last.insert(n.clone(), b.clone());
+                log.push((step, n, b));
+                changed = true;
+            }
+        }
+        if f.ended {
+            break;
+        }
+        assert!(
+            run.health().is_some_and(|h| h > 0.0),
+            "he fell at {}",
+            run.steps
+        );
+        quiet = if changed { 0 } else { quiet + 1 };
+        assert!(quiet < 4, "the big battle stalled: {log:?}");
+    }
+    for (step, n, b) in &log {
+        println!("  {step} {n} {b}");
+    }
+    println!(
+        "big battle: step {}, health {full} lowest {lowest}, {top_ups} top-ups, scenes {scenes:?}, controller {}",
+        run.steps,
+        behaviour(&run, SETUP_005_CONTROLLER)
+    );
+    assert!(done(&run), "the controller's set off");
+    for n in SETUP_005_FOES {
+        assert!(removed(&run, n), "{n} beaten");
+    }
+    assert!(top_ups <= TOP_UPS_005, "{top_ups} top-ups");
+    assert!(lowest < full, "never hurt: {lowest}");
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
 }
+
+/// The foes the big battle's controller names (`enemy a` to `enemy ab`,
+/// openspec AS.404).
+const SETUP_005_FOES: [&str; 28] = [
+    "Enemy_Cyclops_Near(7)",
+    "Enemy_Cyclops_Near(8)",
+    "Enemy_Cyclops_Near(9)",
+    "Enemy_Cyclops_Near(10)",
+    "Enemy_Cyclops_Near(11)",
+    "Enemy_Cyclops_Near(12)",
+    "Enemy_Cyclops_Near(13)",
+    "Enemy_Cyclops_Near(14)",
+    "Enemy_Cyclops_Near(15)",
+    "Enemy_Biclops_Heavy_S2(2)",
+    "Enemy_Biclops_Heavy_S2(5)",
+    "Enemy_Biclops_Heavy_S2(6)",
+    "Enemy_Biclops_Heavy_S2(7)",
+    "Enemy_Chompy_Ice(10)",
+    "Enemy_Chompy_Ice(25)",
+    "Enemy_Chompy_Ice(26)",
+    "Enemy_Chompy_Ice(27)",
+    "Enemy_Chompy_Ice(28)",
+    "Enemy_Chompy_Ice(29)",
+    "Enemy_Chompy_Ice(30)",
+    "Enemy_Chompy_Ice(31)",
+    "Enemy_Chompy_Ice(32)",
+    "Enemy_Chompy_Ice(33)",
+    "Enemy_Chompy_Ice(34)",
+    "Enemy_Chompy_Ice(35)",
+    "Enemy_Chompy_Ice(36)",
+    "Enemy_Chompy_Ice(37)",
+    "Enemy_Chompy_Ice(38)",
+];
+
+/// The most top-ups the big battle takes (openspec AS.404): as-208-battle
+/// measured 9 headless with Eruptor, his lowest 12 of 290, 2026-11-26.
+const TOP_UPS_005: u32 = 14;
 
 /// The stick onto `pad` heading for `toward`, as a kid rides one: to a spot
 /// 2.5 m short of it on the far side from `toward`, then over it (a pad

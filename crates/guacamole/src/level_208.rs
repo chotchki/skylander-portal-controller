@@ -404,6 +404,36 @@ pub const WAY: Encounter = Encounter {
         "Enemy_Cyclops_Near(6)",
         "Enemy_Chompy_Ice(8)",
         "Enemy_Chompy_Ice(9)",
+        "Setup_005_Controller",
+        "Setup_005_killPlane",
+        "Enemy_Cyclops_Near(7)",
+        "Enemy_Cyclops_Near(8)",
+        "Enemy_Cyclops_Near(9)",
+        "Enemy_Cyclops_Near(10)",
+        "Enemy_Cyclops_Near(11)",
+        "Enemy_Cyclops_Near(12)",
+        "Enemy_Cyclops_Near(13)",
+        "Enemy_Cyclops_Near(14)",
+        "Enemy_Cyclops_Near(15)",
+        "Enemy_Biclops_Heavy_S2(2)",
+        "Enemy_Biclops_Heavy_S2(5)",
+        "Enemy_Biclops_Heavy_S2(6)",
+        "Enemy_Biclops_Heavy_S2(7)",
+        "Enemy_Chompy_Ice(10)",
+        "Enemy_Chompy_Ice(25)",
+        "Enemy_Chompy_Ice(26)",
+        "Enemy_Chompy_Ice(27)",
+        "Enemy_Chompy_Ice(28)",
+        "Enemy_Chompy_Ice(29)",
+        "Enemy_Chompy_Ice(30)",
+        "Enemy_Chompy_Ice(31)",
+        "Enemy_Chompy_Ice(32)",
+        "Enemy_Chompy_Ice(33)",
+        "Enemy_Chompy_Ice(34)",
+        "Enemy_Chompy_Ice(35)",
+        "Enemy_Chompy_Ice(36)",
+        "Enemy_Chompy_Ice(37)",
+        "Enemy_Chompy_Ice(38)",
     ],
     clones: &[],
     steered: &[],
@@ -441,12 +471,13 @@ mod tests {
             assert!(WAY.placements.contains(&name), "{name}");
             assert!(!crate::scripts::is_level_person(LEVEL, name), "{name}");
         }
-        // The Ice Chompies' own script stays off for the level's others
-        // (AS.345's): the big battle's, still unlisted, on its ledge;
-        // Setup_004's (AS.403, AS.1020) are walked by name.
+        // The Ice Chompies are walked by name, never listed by their
+        // script's path (AS.345's): Setup_004's (AS.403, AS.1020) and the
+        // big battle's (AS.404) among them.
         let ice = "C:/tfb/Content/Levels/_Enemies/Chompy_Ice/scripts/S2_Enemy_IceChompy.ai";
-        assert!(!on.whitelist.lists("Enemy_Chompy_Ice(25)", ice));
+        assert!(!on.whitelist.lists("Enemy_Chompy_Ice(99)", ice));
         for n in [
+            "Enemy_Chompy_Ice(25)",
             "Enemy_Chompy_Ice(1)",
             "Enemy_Chompy_Ice(8)",
             "Enemy_Chompy_Ice(9)",
