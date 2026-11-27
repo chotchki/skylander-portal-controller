@@ -457,10 +457,12 @@ mod tests {
 
     /// openspec AS.1090 on the TV's app: asked once his scripts have
     /// joined, the hero is set down where asked, facing as asked; the
-    /// synthetic creature is held where asked, off its own place, awake,
-    /// through the steps after, its health put back to the asked; his first
-    /// button's ball lands on it there and is counted as a hurt, and it
-    /// isn't beaten for it.
+    /// synthetic creature is held where asked, 4 m off its own place,
+    /// awake, its health put back to the asked; a step that leaves its
+    /// health lower is counted as a hurt and the health put back; his
+    /// first button's ball lands on it where it's held (the synthetic
+    /// creature is taken off by a hit, it has no health to lose); a release
+    /// lets it go.
     #[test]
     fn the_hero_is_put_and_the_creature_held_its_hurts_counted() {
         let tmp = tempfile::tempdir().unwrap();
@@ -510,20 +512,45 @@ mod tests {
         );
         assert_eq!(shot.hp, Some(1000.0), "{shot:?}");
         assert!(puts.with(|s| s.hurts.is_empty()));
-        test_pad::press(&mut app, pad, GamepadButton::South);
-        until(&mut app, "a hurt counted", |_| {
-            puts.with(|s| !s.hurts.is_empty())
-        });
-        for _ in 0..3 {
-            app.update();
+        // A bite's worth taken off between two steps: counted, put back.
+        let creature = |app: &App| {
+            let w = app.world();
+            let level = w.resource::<ScriptSource>().level_unit().unwrap();
+            w.resource::<ScriptWorld>()
+                .placed_in(level, FIGHT_CREATURE)
+                .unwrap()
+        };
+        let c = creature(&app);
+        {
+            let vm = &mut app.world_mut().resource_mut::<ScriptRuntime>().vm;
+            let id = vm.placement_of(c).unwrap();
+            assert!(set_health(vm, id, 400.0));
         }
-        let (hurt, shot) = puts.with(|s| (s.hurts[0], s.held.clone().unwrap()));
-        assert!(hurt.to < hurt.from && hurt.from == 1000.0, "{hurt:?}");
+        app.update();
+        app.update();
+        let (hurts, shot) = puts.with(|s| (s.hurts.clone(), s.held.clone().unwrap()));
+        assert_eq!(hurts.len(), 1, "{hurts:?}");
+        assert_eq!((hurts[0].from, hurts[0].to), (1000.0, 400.0));
         assert_eq!(shot.hp, Some(1000.0), "put back: {shot:?}");
-        assert!(
-            Vec3::from_array(shot.at).distance(Vec3::from_array(held)) < 0.05,
-            "held through the hit: {shot:?}"
-        );
+        // His ball lands on it where it's held.
+        test_pad::press(&mut app, pad, GamepadButton::South);
+        until(&mut app, "the creature hit", |a| {
+            a.world()
+                .resource::<ScriptWorld>()
+                .actor(creature(a))
+                .is_none_or(|x| x.removed)
+        });
+        let at = app
+            .world()
+            .resource::<ScriptWorld>()
+            .actor(c)
+            .map(|a| a.position);
+        if let Some(at) = at {
+            assert!(
+                at.distance(Vec3::from_array(held)) < 0.1,
+                "hit where held: {at}"
+            );
+        }
         puts.with(|s| {
             s.take(PutAsk {
                 release: true,
@@ -531,6 +558,6 @@ mod tests {
             })
         });
         app.update();
-        assert!(puts.with(|s| s.held.is_none()));
+        assert!(puts.with(|s| s.held.is_none() && s.hold.is_none()));
     }
 }

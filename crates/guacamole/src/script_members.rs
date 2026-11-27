@@ -6715,12 +6715,20 @@ mod tests {
         let turn = w.objs.value(Object::Facet(BALL, Facet::Orientation));
         let facing = at("orientationmeasurement", "facing", Some(turn), None);
         let read = |w: &mut ScriptWorld, e: &mut Bench| w.get_member(&facing, Member::Facing, e);
-        assert_eq!(read(&mut w, &mut e), Ok(Value::Float(225.0)), "unwritten: his");
+        assert_eq!(
+            read(&mut w, &mut e),
+            Ok(Value::Float(225.0)),
+            "unwritten: his"
+        );
         w.set_member(&facing, Member::Facing, Value::Float(-135.0), &mut e)
             .unwrap();
         assert_eq!(read(&mut w, &mut e), Ok(Value::Float(-135.0)), "as written");
         e.hero.as_mut().unwrap().facing = 300.0;
-        assert_eq!(read(&mut w, &mut e), Ok(Value::Float(-135.0)), "kept as he turns");
+        assert_eq!(
+            read(&mut w, &mut e),
+            Ok(Value::Float(-135.0)),
+            "kept as he turns"
+        );
         // Hung anew, a turn written before is its own under him again.
         let node = at(
             "abstractplacement",
@@ -6732,7 +6740,11 @@ mod tests {
             .unwrap();
         w.set_member(&node, Member::AttachNode, Value::Entity(HERO), &mut e)
             .unwrap();
-        assert_eq!(read(&mut w, &mut e), Ok(Value::Float(165.0)), "his 300 and its -135");
+        assert_eq!(
+            read(&mut w, &mut e),
+            Ok(Value::Float(165.0)),
+            "his 300 and its -135"
+        );
     }
 
     /// openspec AS.189: a hero hung on a turret hung at a place is carried
