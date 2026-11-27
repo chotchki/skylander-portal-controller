@@ -1000,7 +1000,8 @@ impl ScriptWorld {
         }
         let pivot = self.position_within(a, engine, depth)?;
         if let Some(posed) = self.nodes.get(&a).and_then(|n| n.get(i as usize)) {
-            return Some(pivot + self.posed_turn(a, engine) * posed.at);
+            let facing = self.angles(a, engine).map_or(0.0, |g| g.facing);
+            return Some(pivot + Quat::from_rotation_y(facing.to_radians()) * posed.at);
         }
         let Some(off) = self.origin_node(a, i) else {
             return Some(pivot);
@@ -1010,19 +1011,6 @@ impl ScriptWorld {
         // on the ship's deck nodes as it banks).
         let turn = self.drawn_turn(a, engine).unwrap_or(Quat::IDENTITY);
         Some(pivot + turn * off.at)
-    }
-
-    /// What turns actor `a`'s posed nodes into the level: a hero's whole
-    /// drawn turn, his lean on a slope or stairs with his facing (openspec
-    /// AS.1124: his helmet and shield, hung on his nodes, hung 0.8 m off
-    /// him on the hub's stairs, where he leaned 31°), anything else its
-    /// facing.
-    fn posed_turn(&self, a: Handle, engine: &mut dyn Engine) -> Quat {
-        if let Some(hero) = engine.hero(a) {
-            return hero.rotation();
-        }
-        let facing = self.angles(a, engine).map_or(0.0, |g| g.facing);
-        Quat::from_rotation_y(facing.to_radians())
     }
 
     /// How actor `h` is drawn turned: a hero by his facing, a skinned
@@ -1080,9 +1068,6 @@ impl ScriptWorld {
             return self.rig_held.get(i as usize).map(|(_, turn)| *turn);
         }
         if let Some(posed) = self.nodes.get(&a).and_then(|n| n.get(i as usize)) {
-            if let Some(hero) = engine.hero(a) {
-                return Some(hero.rotation() * posed.turn);
-            }
             let facing = self
                 .angles_within(a, engine, depth)
                 .map_or(0.0, |g| g.facing);
@@ -6661,60 +6646,6 @@ mod tests {
         const LATER: Handle = 0x6000_0035;
         w.actors.insert(LATER, clone(Vec3::ZERO, Some(RIG)));
         assert_eq!(w.node(LATER, 0, &mut e), Some(w.view.eye));
-    }
-
-    /// openspec AS.1124: what hangs on a hero's posed node rides it as his
-    /// body is drawn, leaned on a slope as well as turned by his facing
-    /// (Chill's helmet and shield hung 0.8 m off her on the hub's stairs,
-    /// where she leaned 31°); upright, it's where it was.
-    #[test]
-    fn what_hangs_on_a_leaned_hero_rides_his_lean() {
-        let mut e = bench();
-        let pivot = Vec3::new(1.0, 2.0, 3.0);
-        e.hero = Some(Hero::new(eruptor_solid(), Tuning::ERUPTOR, pivot, 90.0));
-        let mut w = world();
-        w.actors.insert(HERO, Actor::blank());
-        let head = Vec3::new(0.0, 1.5, 0.2);
-        let tipped = Quat::from_rotation_x(0.3);
-        w.set_nodes(
-            HERO,
-            vec![NodePose {
-                at: head,
-                turn: tipped,
-            }],
-        );
-        let mut helmet = Actor::blank();
-        helmet.attach = w.objs.value(Object::Node(HERO, 0));
-        const PART: Handle = 0x6000_00a7;
-        w.actors.insert(PART, helmet);
-        let facing = Quat::from_rotation_y(90f32.to_radians());
-        w.place_hung_actors(&mut e);
-        assert!(w.actors[&PART].position.distance(pivot + facing * head) < 1e-5);
-        // Leaned 31° off upright, as on the stairs.
-        let up = Quat::from_rotation_z(31f32.to_radians()) * Vec3::Y;
-        e.hero.as_mut().unwrap().up = up;
-        let drawn = e.hero.as_ref().unwrap().rotation();
-        assert!(
-            drawn.angle_between(facing) > 0.5,
-            "the body is drawn leaned"
-        );
-        w.place_hung_actors(&mut e);
-        let at = w.actors[&PART].position;
-        assert!(
-            at.distance(pivot + drawn * head) < 1e-5,
-            "{at} for {}",
-            pivot + drawn * head
-        );
-        assert!(
-            at.distance(pivot + facing * head) > 0.7,
-            "off the unleaned node"
-        );
-        let turn = w.node_turn(HERO, 0, &mut e, HUNG_DEPTH).unwrap();
-        assert!(
-            turn.angle_between(drawn * tipped) < 1e-3,
-            "{turn} for {}",
-            drawn * tipped
-        );
     }
 
     /// openspec AS.115: a hero hung on a node rides it, his controller's

@@ -404,16 +404,11 @@ impl Run {
             && self.hero().pivot.distance(at) < 0.01
             && let Some(nodes) = self.world.nodes(self.hero)
         {
-            // The world turns a hero's nodes by his whole drawn turn, his
-            // controller's lean in it (openspec AS.1124): that's taken back
-            // out, so the recorded lean is the one they stand in.
-            let hero = self.hero();
-            let undo = hero.rotation().inverse() * Quat::from_rotation_y(hero.facing.to_radians());
             let leaned = nodes
                 .iter()
                 .map(|n| NodePose {
-                    at: undo * lean * n.at,
-                    turn: undo * lean * n.turn,
+                    at: lean * n.at,
+                    turn: lean * n.turn,
                 })
                 .collect();
             self.world.set_nodes(self.hero, leaned);

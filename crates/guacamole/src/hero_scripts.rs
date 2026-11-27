@@ -2348,6 +2348,7 @@ pub(crate) fn draw_clones(
 pub(crate) fn place_hung_clones(
     world: Option<Res<ScriptWorld>>,
     mut clones: Query<(Entity, &CloneDrawn, &mut Transform), With<ScriptClone>>,
+    heroes: Query<&HeroBody>,
 ) {
     let Some(world) = world else {
         return;
@@ -2362,7 +2363,22 @@ pub(crate) fn place_hung_clones(
         if actor.attach == Value::Null {
             continue;
         }
-        let place = clone_transform(actor);
+        let mut place = clone_transform(actor);
+        // Hung on a hero's node, it's drawn leaned with his body (openspec
+        // AS.1124, `hands::leaned`).
+        if let Some((owner, _)) = world.node_of(actor.attach)
+            && let Some(body) = Entity::try_from_bits(owner).and_then(|e| heroes.get(e).ok())
+            && body.hero.up != guac_motion::seam::Vec3::Y
+        {
+            let (at, turn) = guacamole::hands::leaned(
+                place.translation,
+                place.rotation,
+                body.hero.pivot,
+                body.hero.up,
+            );
+            place.translation = at;
+            place.rotation = turn;
+        }
         if *t != place {
             *t = place;
         }
@@ -4009,6 +4025,69 @@ mod tests {
         ));
         app.world_mut().run_system_once(place_hung_clones).unwrap();
         assert_eq!(*app.world().get::<Transform>(hung).unwrap(), stale);
+    }
+
+    /// openspec AS.1124: a clone hung on a hero's node is drawn leaned with
+    /// him on a slope, about his pivot; upright, where the scripts hold it.
+    #[test]
+    fn a_clone_on_a_heros_node_is_drawn_leaned_with_him() {
+        use bevy::ecs::system::RunSystemOnce;
+        let tmp = tempfile::tempdir().unwrap();
+        write_attack(tmp.path());
+        let files = level_scripts::load(tmp.path(), LEVEL).unwrap().placements;
+        let mut app = App::new();
+        let hung = app.world_mut().spawn(ScriptClone(Value::Null)).id();
+        let pivot = Vec3::new(1.0, 2.0, 3.0);
+        let hero = Hero::new(
+            guac_motion::tuning::eruptor_solid(),
+            guac_motion::tuning::Tuning::ERUPTOR,
+            pivot,
+            0.0,
+        );
+        let body = app
+            .world_mut()
+            .spawn(crate::hero::HeroBody {
+                hero,
+                exclude: Vec::new(),
+                before: pivot,
+            })
+            .id();
+        let mut handles = headless_handles(&files);
+        handles.insert(files.placed[0].obj, hung.to_bits());
+        let mut world = ScriptWorld::new(&files, &handles, headless_objects(&handles));
+        world.set_nodes(
+            body.to_bits(),
+            vec![guacamole::script_engine::NodePose::at(Vec3::new(
+                0.0, 1.5, 0.0,
+            ))],
+        );
+        assert!(world.hang(hung.to_bits(), body.to_bits(), 0));
+        let drawn = CloneDrawn {
+            draws: true,
+            attack: false,
+        };
+        app.world_mut()
+            .entity_mut(hung)
+            .insert((drawn, Transform::default()));
+        let held = clone_transform(world.actor(hung.to_bits()).unwrap());
+        app.insert_resource(world);
+        app.world_mut().run_system_once(place_hung_clones).unwrap();
+        assert_eq!(
+            *app.world().get::<Transform>(hung).unwrap(),
+            held,
+            "upright"
+        );
+        let lean = Quat::from_rotation_x(31f32.to_radians());
+        app.world_mut()
+            .get_mut::<crate::hero::HeroBody>(body)
+            .unwrap()
+            .hero
+            .up = lean * Vec3::Y;
+        app.world_mut().run_system_once(place_hung_clones).unwrap();
+        let t = *app.world().get::<Transform>(hung).unwrap();
+        let want = pivot + lean * (held.translation - pivot);
+        assert!(t.translation.distance(want) < 1e-5, "{t:?} for {want}");
+        assert!(t.rotation.angle_between(lean * held.rotation) < 1e-3);
     }
 
     /// AG.60: a clone the scripts make before the level's loaded (the

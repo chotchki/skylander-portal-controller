@@ -607,7 +607,7 @@ fn sprockets_turret_fades_in_through_her_slide() {
 }
 
 /// Each live clone hung on one of `run`'s hero's posed nodes, by its
-/// template's model file: how far it stands from that node as his body is
+/// template's model file: how far it's drawn from that node as his body is
 /// drawn now (his pivot, turned by his facing and his lean).
 fn off_his_nodes(run: &Run) -> Vec<(String, f32)> {
     let hero = run.hero();
@@ -638,7 +638,9 @@ fn off_his_nodes(run: &Run) -> Vec<(String, f32)> {
             .and_then(|t| run.world.template(t))
             .and_then(|p| p.model.as_deref())
             .map_or_else(|| format!("clone {c:#x}"), file_name);
-        out.push((model, a.position.distance(pivot + drawn * node.at)));
+        // Where the TV draws it: leaned with his body (`hands::leaned`).
+        let (at, _) = guacamole::hands::leaned(a.position, Quat::IDENTITY, pivot, hero.up);
+        out.push((model, at.distance(pivot + drawn * node.at)));
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
     out

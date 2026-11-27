@@ -172,6 +172,18 @@ pub fn posed_slot(world: &ScriptWorld, actor: Handle) -> Option<u32> {
     world.clip_of(s).map(|(_, slot)| slot)
 }
 
+/// Where something hung on a hero's attach node is drawn, from where the
+/// scripts hold it (openspec AS.1124): his nodes stay upright in the script
+/// world (his lean is the engine's, never the script's, and what reads them
+/// there, his colliders and launch points, plays as it did), while his body
+/// is drawn leaned to his `up` on a slope; what hangs on him is drawn leaned
+/// with it about his `pivot`. On the hub's stairs Chill leaned 31° and her
+/// helmet and shield hung 0.8 m off her.
+pub fn leaned(at: Vec3, turn: Quat, pivot: Vec3, up: Vec3) -> (Vec3, Quat) {
+    let lean = Quat::from_rotation_arc(Vec3::Y, up);
+    (pivot + lean * (at - pivot), lean * turn)
+}
+
 /// What poses an actor's attach nodes where nothing picks his locomotion
 /// (the headless runs): his model (its skeleton and idle), the palette his
 /// scripts play from, his model's attach list and his scale.
@@ -197,6 +209,22 @@ impl Rig {
 
 #[cfg(test)]
 mod tests {
+    /// openspec AS.1124: what hangs on a hero is drawn leaned with him about
+    /// his pivot; upright it's where the scripts hold it.
+    #[test]
+    fn what_hangs_on_him_leans_with_him_about_his_pivot() {
+        let pivot = Vec3::new(1.0, 2.0, 3.0);
+        let head = pivot + Vec3::new(0.0, 1.5, 0.2);
+        let turn = Quat::from_rotation_y(0.4);
+        assert_eq!(super::leaned(head, turn, pivot, Vec3::Y), (head, turn));
+        let lean = Quat::from_rotation_x(31f32.to_radians());
+        let (at, t) = super::leaned(head, turn, pivot, lean * Vec3::Y);
+        assert!(at.distance(pivot + lean * (head - pivot)) < 1e-5, "{at}");
+        assert!((at.distance(pivot) - head.distance(pivot)).abs() < 1e-5);
+        assert!(at.distance(head) > 0.7, "off where the scripts hold it");
+        assert!(t.angle_between(lean * turn) < 1e-3);
+    }
+
     use guac_ir::model::{Joint, Transform};
     use guac_ir::nodes::AttachNode;
     use guac_ir::{DumpIdentity, Sha256};
