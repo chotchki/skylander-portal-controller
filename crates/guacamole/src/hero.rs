@@ -53,7 +53,7 @@ use guacamole::picks::Picked;
 
 use guacamole::frame;
 use guacamole::scripts::ScriptWorld;
-use guacamole::viewport::{chain_from, scripts_view};
+use guacamole::viewport::{chain_from, degenerate as viewport_degenerate, scripts_view};
 use tracing::{info, warn};
 
 use crate::physics::AvianSeam;
@@ -547,6 +547,7 @@ pub(crate) fn step_cameras(
         Without<HeroBody>,
     >,
     mut card_views: Local<CardViews>,
+    mut looked_at_nothing: Local<Option<&'static str>>,
 ) {
     let (hero, run) = match heroes.single() {
         Ok((h, r)) => (Some(h), r),
@@ -585,6 +586,7 @@ pub(crate) fn step_cameras(
         // frames between pass through the sky between the board under the
         // level and the room.
         let mut cut = false;
+        let mut rig = "chain";
         let place = match (&state, world.as_deref()) {
             (CameraScripts::On, Some(_)) if !in_run => continue,
             (CameraScripts::On, Some(world)) => {
@@ -601,10 +603,12 @@ pub(crate) fn step_cameras(
                 card_views.drew = instead.is_some();
                 match instead {
                     Some(before) => {
+                        rig = "card game's held view";
                         follow.drawn = before;
                         viewed(&follow.drawn)
                     }
                     None => {
+                        rig = "scripts";
                         follow.drawn = scripts_view(v, feet);
                         v.transform()
                     }
@@ -641,6 +645,20 @@ pub(crate) fn step_cameras(
             }
         };
         *transform = place;
+        // openspec AS.1135: a view looking at nothing is logged once as it
+        // turns so, naming its rig.
+        let bad = viewport_degenerate(place.translation, *place.forward(), follow.drawn.aim);
+        if bad.is_some() && bad != *looked_at_nothing {
+            warn!(
+                rig,
+                why = bad.unwrap_or_default(),
+                eye = ?place.translation,
+                forward = ?*place.forward(),
+                hero = ?feet,
+                "the camera looks at nothing"
+            );
+        }
+        *looked_at_nothing = bad;
         if cut && let Some((mut moved, mut turned)) = easing {
             moved.start = Some(transform.translation);
             turned.start = Some(transform.rotation);

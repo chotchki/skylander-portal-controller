@@ -212,6 +212,22 @@ pub fn scripts_view(v: &Viewport, feet: Option<Vec3>) -> View {
     }
 }
 
+/// What makes a drawn view look at nothing, if anything (openspec AS.1135):
+/// a forward within a degree of straight up or down, or an aim behind the
+/// eye. A guard for the log, not a fix: the next such view names its rig.
+pub fn degenerate(eye: Vec3, forward: Vec3, aim: Vec3) -> Option<&'static str> {
+    let vertical = 1.0f32.to_radians().cos();
+    if forward.y >= vertical {
+        Some("straight up")
+    } else if forward.y <= -vertical {
+        Some("straight down")
+    } else if (aim - eye).dot(forward) < 0.0 {
+        Some("its target behind it")
+    } else {
+        None
+    }
+}
+
 /// The chain at rest where `view` stands, his feet at `feet` (openspec
 /// AG.28: the view handed back from where it stood): its follow point at
 /// his feet's height under the point of the view's line nearest them across
@@ -383,5 +399,29 @@ mod tests {
         assert!(v.take() && v.scripted());
         v.source = Source::HandedBack;
         assert!(!v.take() && !v.scripted());
+    }
+
+    /// openspec AS.1135: straight up or down within a degree, or a target
+    /// behind the eye, is caught; a view looking down at him isn't.
+    #[test]
+    fn a_view_looking_at_nothing_is_caught() {
+        let eye = Vec3::new(23.3, 21.1, 131.1);
+        assert_eq!(degenerate(eye, Vec3::Y, eye + Vec3::Y), Some("straight up"));
+        assert_eq!(
+            degenerate(eye, -Vec3::Y, eye - Vec3::Y),
+            Some("straight down")
+        );
+        let tilt = |deg: f32| {
+            let r = deg.to_radians();
+            Vec3::new(0.0, r.sin(), -r.cos())
+        };
+        assert_eq!(degenerate(eye, tilt(89.5), eye), Some("straight up"));
+        assert_eq!(degenerate(eye, tilt(88.5), eye + tilt(88.5)), None);
+        let f = tilt(-30.0);
+        assert_eq!(degenerate(eye, f, eye + f * 10.0), None);
+        assert_eq!(
+            degenerate(eye, f, eye - f * 10.0),
+            Some("its target behind it")
+        );
     }
 }
