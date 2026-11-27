@@ -4322,6 +4322,15 @@ impl ScriptWorld {
         self.place_hung_actors(engine);
     }
 
+    /// The actor a node value stands on and which of its nodes, if it names
+    /// one (openspec AS.1124: the slope test holds what hangs there to it).
+    pub fn node_of(&self, v: Value) -> Option<(Handle, u32)> {
+        match self.object(Some(v)) {
+            Some(Object::Node(owner, i)) => Some((owner, i)),
+            _ => None,
+        }
+    }
+
     /// The actor a node value stands on, if it names one.
     pub fn node_owner(&self, v: Value) -> Option<Handle> {
         match self.object(Some(v)) {

@@ -24,6 +24,7 @@ use guac_formats::exports::Exports;
 use guac_formats::iga::Archive;
 use guac_formats::igz::Igz;
 use guac_formats::model;
+use guac_motion::seam::{Quat, Vec3};
 use guac_motion::stick::Stick;
 use guac_script::{Handle, Mode, Value};
 use guacamole::props::{actor_shows, hero_drawn, hero_drawn_scale};
@@ -602,5 +603,119 @@ fn sprockets_turret_fades_in_through_her_slide() {
             whole - spawned < 60,
             "{piece} whole within a second of its spawn: {seen:?}"
         );
+    }
+}
+
+/// Each live clone hung on one of `run`'s hero's posed nodes, by its
+/// template's model file: how far it stands from that node as his body is
+/// drawn now (his pivot, turned by his facing and his lean).
+fn off_his_nodes(run: &Run) -> Vec<(String, f32)> {
+    let hero = run.hero();
+    let drawn = hero.rotation();
+    let pivot = hero.pivot;
+    let Some(nodes) = run.world.nodes(run.hero) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for c in run.world.clones() {
+        if run.world.removed(c) {
+            continue;
+        }
+        let Some(a) = run.world.actor(c) else {
+            continue;
+        };
+        let Some((owner, i)) = run.world.node_of(a.attach) else {
+            continue;
+        };
+        if owner != run.hero {
+            continue;
+        }
+        let Some(node) = nodes.get(i as usize) else {
+            continue;
+        };
+        let model = a
+            .template
+            .and_then(|t| run.world.template(t))
+            .and_then(|p| p.model.as_deref())
+            .map_or_else(|| format!("clone {c:#x}"), file_name);
+        out.push((model, a.position.distance(pivot + drawn * node.at)));
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// openspec AS.1124: what a hero's scripts hang on his nodes (Chill's
+/// helmet, shield and javelin) stays on his body as it's drawn leaned on a
+/// slope as well as upright: chotchki's 2026-11-27 playtest saw her helmet
+/// and shield off her on the hub's stairs, where she leaned 31°, each
+/// 0.8 m off the node it hangs on. Each hero joined on 201 stands upright,
+/// then leaned that much (his controller's `up`, as a slope leaves it,
+/// set for one posing), and every clone on his nodes is held within 2 cm
+/// of where the node is drawn either way. `GUAC_HERO_PARTS_ALL=1` takes
+/// every numbered character archive in place of the few.
+#[test]
+#[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
+fn what_hangs_on_a_hero_stays_on_him_leaned() {
+    let usr = dump().join("PS3_GAME/USRDIR/character");
+    let all = std::env::var_os("GUAC_HERO_PARTS_ALL").is_some();
+    let mut loads: Vec<String> = std::fs::read_dir(&usr)
+        .unwrap()
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter_map(|n| n.strip_suffix(".bld").map(str::to_owned))
+        .filter(|n| n.as_bytes().first().is_some_and(u8::is_ascii_digit))
+        .collect();
+    loads.sort();
+    if !all {
+        loads.retain(|l| ["106_icesorc", "030_pandoranelite"].contains(&l.as_str()));
+    }
+    let start = std::time::Instant::now();
+    let (mut with_props, mut props) = (0, 0);
+    for archive in &loads {
+        let path: &'static str = Box::leak(format!("character/{archive}.bld").into_boxed_str());
+        let bytes = level_bld(&usr.join(format!("{archive}.bld")));
+        let igz = Igz::parse(&bytes).unwrap();
+        let Ok(portal) = model::portal_model(&igz) else {
+            continue;
+        };
+        let Ok(hero) = model::hero_actor(&igz, &portal, archive) else {
+            continue;
+        };
+        let load_file: &'static str =
+            Box::leak(hero.name().unwrap_or(archive).to_owned().into_boxed_str());
+        let toy: u16 = archive[..3].parse().unwrap();
+        let mut run = joined_on_201(Character {
+            archive: path,
+            load_file,
+            toy,
+        });
+        run.pose_hands();
+        let upright = off_his_nodes(&run);
+        let up = run.hero().up;
+        run.bench.heroes.get_mut(&run.hero).unwrap().up =
+            Quat::from_rotation_x(31f32.to_radians()) * Vec3::Y;
+        run.pose_hands();
+        let leaned = off_his_nodes(&run);
+        run.bench.heroes.get_mut(&run.hero).unwrap().up = up;
+        println!("{load_file}: upright {upright:?}, leaned {leaned:?}");
+        assert_eq!(
+            upright.iter().map(|p| &p.0).collect::<Vec<_>>(),
+            leaned.iter().map(|p| &p.0).collect::<Vec<_>>(),
+            "{load_file}: the same clones hang"
+        );
+        for (model, off) in upright.iter().chain(&leaned) {
+            assert!(*off < 0.02, "{load_file}: {model} {off} m off its node");
+        }
+        if !leaned.is_empty() {
+            with_props += 1;
+            props += leaned.len();
+        }
+    }
+    println!(
+        "{} heroes, {with_props} with clones on their nodes ({props}), {:.0} s",
+        loads.len(),
+        start.elapsed().as_secs_f64()
+    );
+    if !all {
+        assert!(with_props >= 1, "Chill hangs her props on her nodes");
     }
 }
