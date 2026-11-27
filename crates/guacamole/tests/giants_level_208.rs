@@ -1890,7 +1890,7 @@ fn setup_004_to_the_pads(character: Option<Character>, most_top_ups: u32) -> (Ru
             scenes.push(cs);
         }
         still(&mut run, &mut stops, [false; 4]);
-        if removed(&run, PADS_ACTIVATOR) && scenes.len() > 0 {
+        if removed(&run, PADS_ACTIVATOR) && !scenes.is_empty() {
             break;
         }
     }
