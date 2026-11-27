@@ -221,14 +221,17 @@ pub fn west(level: &str) -> impl Iterator<Item = &'static str> {
     WEST.iter().copied().filter(move |_| on)
 }
 
-/// The fourth beam set, by name (openspec AS.776): its ice block
+/// The fourth beam set, by name (openspec AS.776, AS.796): its ice block
 /// (`Melting_Ice_blocks_reflect_4`, `Ice_Cube.ai`) stands across the way
 /// to Setup_003's first trigger, unlisted an invisible wall. Listed it
 /// stands as an ice block, its start (`Reflect_Start(4)`) beams to the
 /// pivot (`Reflect_Pivot_Round(3)`), whose switch turns it 45° a press, and
-/// the post (`Reflect_Post(1)`) faces the block. What powers the post is
-/// unread (AS.796): no pivot facing points at it, so the block doesn't melt
-/// yet.
+/// the post (`Reflect_Post(1)`) faces the block. The post is fed by
+/// [`WEST`]'s push block taken back: its script snaps its track to 15 ft
+/// steps from its own placed spot and starts it two steps west, so after
+/// the third block melts it goes back north and east to that spot, where
+/// the pivot's first turn lights its crystal and the crystal beams south
+/// to the post.
 pub const SET_4: [&str; 4] = [
     "Reflect_Start(4)",
     "Reflect_Pivot_Round(3)",
@@ -242,12 +245,76 @@ pub fn set_4(level: &str) -> impl Iterator<Item = &'static str> {
     SET_4.iter().copied().filter(move |_| on)
 }
 
+/// The way down to Setup_004's second trigger, by name (openspec AS.798):
+/// the `Blocker` (`Blocker_minions.ai`, a box 35 by 35 ft on the slope
+/// below Setup_004's first trigger). Each step its script asks whether a
+/// player stands within its 70 ft on its facing side: none, its box is
+/// solid to actors; one, it's off. Unlisted its box stood solid always, an
+/// invisible wall that held him at (-170.7, 5.9, 39.3) and with him
+/// Setup_004's circling Chompies, which wait on that trigger.
+pub const WAY_DOWN: [&str; 1] = ["Blocker"];
+
+/// [`WAY_DOWN`] on 208 alone.
+pub fn way_down(level: &str) -> impl Iterator<Item = &'static str> {
+    let on = level == LEVEL;
+    WAY_DOWN.iter().copied().filter(move |_| on)
+}
+
+/// Level 208's snowmen, by name (openspec AS.1021): the nine placed
+/// `Snowman_Whole.ai`s, each a capsule 8 ft wide and 12 ft high solid to
+/// actors. Its script waits until a player's minion runs into it or hurts
+/// it by more than 5, then bursts into its parts and loot and takes itself
+/// off. Unlisted each stood for good: `Snowman(7)` beside Setup_004's
+/// second trigger walled the yard off from a Giant at the 14 ft his own
+/// scripts set his solid to, and `Snowman(9)` stands in Setup_002's fight.
+pub const SNOWMEN: [&str; 9] = [
+    "Snowman(1)",
+    "Snowman(2)",
+    "Snowman(3)",
+    "Snowman(4)",
+    "Snowman(5)",
+    "Snowman(6)",
+    "Snowman(7)",
+    "Snowman(8)",
+    "Snowman(9)",
+];
+
+/// [`SNOWMEN`] on 208 alone.
+pub fn snowmen(level: &str) -> impl Iterator<Item = &'static str> {
+    let on = level == LEVEL;
+    SNOWMEN.iter().copied().filter(move |_| on)
+}
+
+/// The scripts a burst snowman's parts run (openspec AS.1021): its carrot
+/// and pipe, its arms and its hat bounce off and go.
+pub const SNOWMAN_PARTS: [&str; 3] = [
+    "/Level_208/Scripts/Snowman_carrot_bounce.ai",
+    "/Level_208/Scripts/Snowman_arm_bounce.ai",
+    "/Level_208/Scripts/Snowman_hat.ai",
+];
+
+/// [`SNOWMAN_PARTS`] on 208 alone.
+pub fn snowman_parts(level: &str) -> impl Iterator<Item = &'static str> {
+    let on = level == LEVEL;
+    SNOWMAN_PARTS.iter().copied().filter(move |_| on)
+}
+
 /// What fights on level 208 (openspec AS.345), walked as creatures: the
 /// reveal's five Ice Chompies, then Setup_002's controller, its six foes
 /// (`Setup_002_Enemies`) and Noodles' scene at its first gate; then
 /// Setup_003's controller (openspec AS.402), the nine foes its script
 /// names (`enemy a` to `enemy i`: the bomb thrower and eight Cyclopes) and
-/// the bomber's reveal by the fourth ice block.
+/// the bomber's reveal by the fourth ice block; then Setup_004's
+/// controller (openspec AS.403, AS.798), the fifteen its script names
+/// (`enemy a` to `enemy o`: seven Ice Chompies, two heavy Biclopes, two
+/// bomb throwers, four Cyclopes) and the two Ice Chompies it doesn't name,
+/// (8) and (9): the level's `Setup_004_Enemies` holds all seventeen, its
+/// `First Chompies` holds (8) and (9) with (11) to (13) (the count its
+/// circling Chompies wait on), and the controller's group comes off only
+/// once every one of `Setup_004_Enemies` is (openspec AS.1020). Woken on its first trigger, it circles
+/// four of the Chompies round `Setup_004_Anchor` until a player reaches
+/// its second trigger down the slope ([`WAY_DOWN`]), then sends them, the
+/// Cyclopes, the Biclopes and the bombers in.
 pub const WAY: Encounter = Encounter {
     level: LEVEL,
     placements: &[
@@ -275,6 +342,24 @@ pub const WAY: Encounter = Encounter {
         "Enemy_Cyclops_Near(25)",
         "Enemy_Cyclops_Near(26)",
         "Cyclops_Bomber_IGC_Trigger",
+        "Setup_004_Controller",
+        "Enemy_Chompy_Ice(1)",
+        "Enemy_Chompy_Ice(11)",
+        "Enemy_Chompy_Ice(12)",
+        "Enemy_Chompy_Ice(13)",
+        "Enemy_Chompy_Ice(14)",
+        "Enemy_Chompy_Ice(15)",
+        "Enemy_Chompy_Ice(16)",
+        "Enemy_Biclops_Heavy_S2(3)",
+        "Enemy_Biclops_Heavy_S2(4)",
+        "Enemy_BombThrower(1)",
+        "Enemy_BombThrower(2)",
+        "Enemy_Cyclops_Near(1)",
+        "Enemy_Cyclops_Near(2)",
+        "Enemy_Cyclops_Near(3)",
+        "Enemy_Cyclops_Near(6)",
+        "Enemy_Chompy_Ice(8)",
+        "Enemy_Chompy_Ice(9)",
     ],
     clones: &[],
     steered: &[],
@@ -313,9 +398,17 @@ mod tests {
             assert!(!crate::scripts::is_level_person(LEVEL, name), "{name}");
         }
         // The Ice Chompies' own script stays off for the level's others
-        // (AS.345's).
+        // (AS.345's): the big battle's, still unlisted, on its ledge;
+        // Setup_004's (AS.403, AS.1020) are walked by name.
         let ice = "C:/tfb/Content/Levels/_Enemies/Chompy_Ice/scripts/S2_Enemy_IceChompy.ai";
-        assert!(!on.whitelist.lists("Enemy_Chompy_Ice(1)", ice));
+        assert!(!on.whitelist.lists("Enemy_Chompy_Ice(25)", ice));
+        for n in [
+            "Enemy_Chompy_Ice(1)",
+            "Enemy_Chompy_Ice(8)",
+            "Enemy_Chompy_Ice(9)",
+        ] {
+            assert!(WAY.placements.contains(&n), "{n}");
+        }
     }
 
     /// openspec AS.406: the AI's hint is on 208's listing and on no other
@@ -487,6 +580,46 @@ mod tests {
                 );
             }
             assert_eq!(set_4(other).count(), 0);
+        }
+    }
+
+    /// openspec AS.798: the way down to Setup_004's second trigger is on
+    /// 208's listing and on no other level's.
+    #[test]
+    fn level_208s_way_down_to_setup_004_is_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        assert_eq!(way_down(LEVEL).collect::<Vec<_>>(), WAY_DOWN);
+        assert!(on.whitelist.lists("Blocker", "C:/l/Unlisted.ai"));
+        for other in ["level_202", "level_205_piratecards"] {
+            let off = level_config(Mode::Play, &files, 5, other);
+            assert!(
+                !off.whitelist.lists("Blocker", "C:/l/Unlisted.ai"),
+                "{other}"
+            );
+            assert_eq!(way_down(other).count(), 0);
+        }
+    }
+
+    /// openspec AS.1021: 208's snowmen and their parts' scripts are on its
+    /// listing and on no other level's.
+    #[test]
+    fn level_208s_snowmen_are_on_its_listing_alone() {
+        let files = Files::default();
+        let on = level_config(Mode::Play, &files, 5, LEVEL);
+        let whole = "C:/tfb/Content/Levels/Level_208/Scripts/Snowman_Whole.ai";
+        for n in SNOWMEN {
+            assert!(on.whitelist.lists(n, whole), "{n}");
+        }
+        assert!(!on.whitelist.lists("Snowman", whole), "the template");
+        for part in ["Snowman_carrot_bounce", "Snowman_arm_bounce", "Snowman_hat"] {
+            let path = format!("C:/tfb/Content/Levels/Level_208/Scripts/{part}.ai");
+            assert!(on.whitelist.lists("Snowman_Carrot", &path), "{part}");
+        }
+        for other in ["level_202", "level_205_piratecards"] {
+            let off = level_config(Mode::Play, &files, 5, other);
+            assert!(!off.whitelist.lists("Snowman(7)", whole), "{other}");
+            assert_eq!(snowmen(other).count() + snowman_parts(other).count(), 0);
         }
     }
 
