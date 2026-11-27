@@ -236,7 +236,11 @@ fn set_health(vm: &mut Vm, id: PlacementId, hp: f32) -> bool {
     {
         return vm.set_field(c, "hp", v);
     }
-    match vm.local(id, "health").map(|v| vm.value(v)).and_then(as_kind) {
+    match vm
+        .local(id, "health")
+        .map(|v| vm.value(v))
+        .and_then(as_kind)
+    {
         Some(v) => vm.set_local(id, "health", v),
         None => false,
     }
@@ -405,7 +409,9 @@ mod tests {
             )
             .await
             .unwrap();
-        let body = axum::body::to_bytes(got.into_body(), 1 << 16).await.unwrap();
+        let body = axum::body::to_bytes(got.into_body(), 1 << 16)
+            .await
+            .unwrap();
         let read: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(read["asked"], true);
         assert_eq!(read["hero_asked"]["at"], serde_json::json!([1.0, 2.0, 3.0]));
@@ -480,13 +486,18 @@ mod tests {
                 release: false,
             })
         });
-        until(&mut app, "him set down", |_| puts.with(|s| s.hero_put.is_some()));
+        until(&mut app, "him set down", |_| {
+            puts.with(|s| s.hero_put.is_some())
+        });
         for _ in 0..10 {
             app.update();
         }
         let h = hero(&app);
         assert!(
-            h.pivot.with_y(0.0).distance(Vec3::from_array(me).with_y(0.0)) < 0.05,
+            h.pivot
+                .with_y(0.0)
+                .distance(Vec3::from_array(me).with_y(0.0))
+                < 0.05,
             "{:?}",
             h.pivot
         );
@@ -500,7 +511,9 @@ mod tests {
         assert_eq!(shot.hp, Some(1000.0), "{shot:?}");
         assert!(puts.with(|s| s.hurts.is_empty()));
         test_pad::press(&mut app, pad, GamepadButton::South);
-        until(&mut app, "a hurt counted", |_| puts.with(|s| !s.hurts.is_empty()));
+        until(&mut app, "a hurt counted", |_| {
+            puts.with(|s| !s.hurts.is_empty())
+        });
         for _ in 0..3 {
             app.update();
         }
@@ -511,10 +524,12 @@ mod tests {
             Vec3::from_array(shot.at).distance(Vec3::from_array(held)) < 0.05,
             "held through the hit: {shot:?}"
         );
-        puts.with(|s| s.take(PutAsk {
-            release: true,
-            ..PutAsk::default()
-        }));
+        puts.with(|s| {
+            s.take(PutAsk {
+                release: true,
+                ..PutAsk::default()
+            })
+        });
         app.update();
         assert!(puts.with(|s| s.held.is_none()));
     }
