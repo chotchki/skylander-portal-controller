@@ -345,6 +345,8 @@ pub struct Run {
     pub entering: Option<Handle>,
     /// His figure's toy id: Eruptor's 9, or [`Setup::character`]'s.
     pub toy: u16,
+    /// His model's file: `009_Eruptor`, or [`Setup::character`]'s.
+    pub load_file: &'static str,
     /// What poses whatever hangs on a skinned model ([`Setup::posed_rigs`]):
     /// each such model's skeleton and idle, palette and attach list.
     pub posed_rigs: Vec<guacamole::hands::Rig>,
@@ -368,9 +370,6 @@ pub fn lean_of(rotation: [f32; 3]) -> Quat {
     Quat::from_rotation_y(rotation[1].to_radians()).inverse() * Quat::from_array(whole.rotation)
 }
 
-/// Eruptor's toy id, the run's hero when [`Setup::character`] names none.
-pub const ERUPTOR_TOY: u16 = 9;
-
 /// Eruptor's toy, as his figure's tag names it: the toy id 9, the base
 /// subtype, a serial of our own.
 pub fn eruptor_tag(values: Values) -> Tag {
@@ -388,9 +387,10 @@ impl Run {
     pub fn pose_hands(&mut self) {
         // His nodes at the scale the TV poses them at (openspec AS.1061):
         // a hero on his own scripts at the uniform scale they hold on his
-        // actor (`walkers::rebuilt`, the TV's rig follows it), Eruptor at
-        // his measured 150 % (the TV's measured walker, toy 9).
-        if self.toy != ERUPTOR_TOY
+        // actor (`walkers::rebuilt`, the TV's rig follows it), a measured
+        // walker at his table's (`walkers::WALKERS`: Eruptor's 150 %, which
+        // his actor holds too).
+        if guacamole::walkers::walker(self.load_file).is_none()
             && let Some(scale) = self
                 .world
                 .actor(self.hero)
@@ -884,6 +884,7 @@ impl Run {
         self.rig = rig;
         self.unit = unit;
         self.toy = c.toy;
+        self.load_file = c.load_file;
         self.join()
     }
 
@@ -1186,13 +1187,9 @@ pub fn character_rig_in(part: &[Vec<u8>], unit: u16, load_file: &str) -> guacamo
         model: read.model,
         palette: read.palette.with_networks(&read.networks),
         nodes: read.nodes,
-        // A hero on his own scripts starts at 100 % (`Walk::scripted`) and
-        // takes his scripts' scale once they set it ([`Run::pose_hands`]).
-        scale: if load_file == "009_Eruptor" {
-            guac_motion::tuning::ERUPTOR_SCALE
-        } else {
-            1.0
-        },
+        // A measured walker at his table's scale, a hero on his own scripts
+        // at 100 % (`Walk::scripted`) until they set his ([`Run::pose_hands`]).
+        scale: guacamole::walkers::walker(load_file).map_or(1.0, |w| w.scale),
     }
 }
 
@@ -1856,7 +1853,8 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
             surfaces: Default::default(),
             hangs: Default::default(),
             entering: None,
-            toy: setup.character.map_or(ERUPTOR_TOY, |c| c.toy),
+            toy: setup.character.map_or(9, |c| c.toy),
+            load_file: setup.character.map_or("009_Eruptor", |c| c.load_file),
             posed_rigs,
             unit: ERUPTOR,
             spare,
