@@ -1873,7 +1873,14 @@ fn setup_004_to_the_pads(character: Option<Character>, most_top_ups: u32) -> (Ru
         assert!(first_in(&log, n, &["removed"]).is_some(), "{n} beaten");
     }
     assert!(lowest < full, "never hurt: {lowest}");
-    // The ledges: each bomber beaten by a bomb of its own thrown back.
+    // The ledges: each bomber beaten by a bomb of its own thrown back. The
+    // jump pads' activator made both the bombs' targets at its start: the
+    // set a thrown bomb flies to, which is why it's listed (a hand-aimed
+    // throw beats them without it, so the fight alone can't tell).
+    let targets = group_of(&mut run, "Bomb_Targets");
+    for n in SETUP_004_LEDGE {
+        assert!(targets.iter().any(|t| t == n), "{n} in Bomb_Targets: {targets:?}");
+    }
     let bombers = beat_the_bombers(&mut run, &mut stops, full);
     println!("the bombers: {bombers:?}");
     for (i, n) in SETUP_004_LEDGE.iter().enumerate() {

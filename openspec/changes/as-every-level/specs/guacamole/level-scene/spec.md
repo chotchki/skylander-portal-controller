@@ -341,6 +341,13 @@ Level 208's fourth ice block SHALL melt by set 3's push block taken back to its 
 - **WHEN** a hero pushes the third push block back north twice and east twice, presses △ at the fourth pivot's switch and walks on to Setup_003 and Setup_004
 - **THEN** the fourth block melts, both fights' foes fall to his attacks and a Giant walks into Setup_004's yard, with nothing stopped
 
+### Requirement: Level 208's ledge bombers and big battle
+Level 208's ledge bombers SHALL fall to their own bombs and its big battle SHALL run on its own controller: a bomber's grenade lands as a bomb a hero walks into and throws with △ at the bombers; with the yard's set gone two jump pads come on, each throwing him along his facing; brick wall (4) breaks to his attacks; the arena's controller sends its 28 foes in waves, at most 12 awake at once, and then a pad lifts him back up (headless Eruptor: off at step 16,094, 9 top-ups).
+
+#### Scenario: From the yard's ledges to the plateau
+- **WHEN** a hero beats Setup_004's floor, throws the bombers' bombs back, rides pads (4) and (5) facing north, breaks the wall, drops into the arena and fights there
+- **THEN** both bombers fall, the big battle's controller comes off with all 28 beaten, and pad (15) lands him on the plateau, with nothing stopped
+
 ### Requirement: Level 208's river edge
 Level 208 SHALL bring a hero who goes over the frozen river's north edge back up: the level's mesh leaves a 4 m gap where the river's floor runs to a 20 m drop, and the jump pad at the drop's foot carries him back onto the river (headless 25 s from the edge; on the Mac he was back up 5 s after reaching the pad).
 
