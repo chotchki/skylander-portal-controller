@@ -183,6 +183,7 @@ impl Puts {
 
 /// The process's one put state, shared by the route, the TV's app and the
 /// story save's host filter.
+#[cfg(feature = "test-hooks")]
 pub(crate) fn shared() -> &'static Puts {
     static PUTS: std::sync::LazyLock<Puts> = std::sync::LazyLock::new(Puts::default);
     &PUTS
