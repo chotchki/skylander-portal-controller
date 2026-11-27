@@ -1447,6 +1447,9 @@ mod tests {
             shot(5, "asleep", 9.0),
             shot(6, "gone", 3.0),
         ];
+        // A placement beaten and taken off, not a clone, goes after the
+        // live ones too.
+        out[0].clone = false;
         nearest_live_first(&mut out, 4);
         let got: Vec<(u64, &str)> = out.iter().map(|s| (s.handle, s.state)).collect();
         assert_eq!(got, [(5, "asleep"), (3, "awake"), (4, "gone"), (1, "gone")]);

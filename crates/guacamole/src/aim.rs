@@ -124,7 +124,11 @@ impl AimPicks {
             if !AIM_MACROS.contains(&c.def.as_str()) || picked(c).is_none() {
                 continue;
             }
-            if self.by.get(&c.placement).is_none_or(|old| old.step <= c.step) {
+            if self
+                .by
+                .get(&c.placement)
+                .is_none_or(|old| old.step <= c.step)
+            {
                 self.by.insert(c.placement, c.clone());
             }
         }
@@ -138,9 +142,7 @@ impl AimPicks {
         placement: Handle,
         at: Option<Vec3>,
     ) -> Option<AimShot> {
-        self.by
-            .get(&placement)
-            .map(|c| shot_of(vm, world, c, at))
+        self.by.get(&placement).map(|c| shot_of(vm, world, c, at))
     }
 }
 

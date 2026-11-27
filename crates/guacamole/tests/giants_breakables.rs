@@ -2036,7 +2036,11 @@ fn cynders_breath_breaks_what_the_oracles_did_and_a_capture_keeps_its_pick() {
         assert_eq!(now, after, "what her breath broke");
         if let Some(t) = turned {
             let off = (run.hero().facing - t + 540.0).rem_euclid(360.0) - 180.0;
-            assert!(off.abs() < 2.0, "she turns to {} against {t}", run.hero().facing);
+            assert!(
+                off.abs() < 2.0,
+                "she turns to {} against {t}",
+                run.hero().facing
+            );
         }
         let kept = kept.expect("her breath's pick kept");
         let name = kept.target.as_ref().map(|t| t.name.clone());
