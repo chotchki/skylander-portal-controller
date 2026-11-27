@@ -2140,8 +2140,14 @@ impl ScriptWorld {
                     // breakable wall), steps the ray's start onto that
                     // contact and 0.1 ft on and asks whether the target
                     // is on the ray, so "no" let her breath hurt a wall
-                    // only through her head poking into it. The autoaim's
-                    // rays start at the aimer and keep the "no" below.
+                    // only through her head poking into it (Gill Grunt's
+                    // hose makes the same step and ask). It reaches the
+                    // autoaim's outline rays too (`Calc - Autoaim At
+                    // Actors` with `check for collision shapes`, six
+                    // heroes' calls, AS.1080): one starting from a corner
+                    // of the aim's area that lies inside a target touches
+                    // it; one crossing a target from outside keeps the
+                    // "no" below.
                     if self.ray_starts_in(a, engine) {
                         return Ok(Value::Int(1));
                     }
@@ -6880,9 +6886,8 @@ mod tests {
         assert_eq!(touch(&mut w, &mut e, FAR, 1.0), Value::Int(1), "it again");
         // The autoaim's ray (AS.902): through the block's top at a slant, or
         // across it level, or up through it, is no touch; the walkable
-        // check's is straight down. Each starts outside the block, as the
-        // autoaim's start at the aimer (one starting inside it touches it,
-        // AS.1060).
+        // check's is straight down. Each starts outside the block (one
+        // starting inside it touches it, AS.1060).
         for (start, end, what) in [
             (
                 Vec3::new(0.2, 1.0, 0.0),
@@ -7038,6 +7043,40 @@ mod tests {
             "inside another"
         );
         assert_eq!(touch(&mut w, &mut e, NONE, on), Value::Int(0), "no body");
+        // The autoaim's outline (AS.1080): an edge from a corner outside the
+        // wall that crosses it is no touch (the original's edge test isn't
+        // built); one from a corner inside the wall touches it.
+        let edge = |w: &mut ScriptWorld, e: &mut Walls, start: Vec3, end: Vec3| {
+            w.ray.start = start;
+            w.ray.end = end;
+            let a = at(
+                "positionmeasurement",
+                "collision",
+                Some(Value::Entity(WALL)),
+                Some(ray),
+            );
+            w.get_member(&a, Member::Collision, e).unwrap()
+        };
+        assert_eq!(
+            edge(
+                &mut w,
+                &mut e,
+                Vec3::new(-6.0, 1.0, 0.0),
+                Vec3::new(6.0, 1.0, -3.5)
+            ),
+            Value::Int(0),
+            "an edge across it"
+        );
+        assert_eq!(
+            edge(
+                &mut w,
+                &mut e,
+                Vec3::new(4.0, 1.0, -1.5),
+                Vec3::new(8.0, 1.0, 2.0)
+            ),
+            Value::Int(1),
+            "an edge from a corner in it"
+        );
     }
 
     /// openspec AS.76: a point put at a place on the screen lands there, on
