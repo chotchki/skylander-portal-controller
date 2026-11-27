@@ -3989,13 +3989,17 @@ pub const BOMB_SCRIPTS: [&str; 7] = [
 /// lock's pieces `Door_Lock.ai`), and once every lock turns the door opens.
 /// Level 214's second island holds three: the first, at the way out of the
 /// gangplank's yard, opens to the key in the lobe below it. Chapter 1
-/// places none.
-pub const DOOR_SCRIPTS: [&str; 6] = [
+/// places none. Level 205's doors are metal: their lock
+/// (`Door_Lock_Intact_Metal.ai`) shatters into its pieces as the door opens,
+/// as the wooden one does (openspec AS.1121: unlisted, it hung on in the
+/// air by the open door).
+pub const DOOR_SCRIPTS: [&str; 7] = [
     "Key_Pickup_Spawner.ai",
     "Key_pickup.ai",
     "Door_Skylanders_2.ai",
     "Door_Key.ai",
     "Door_Lock_Intact_Wood.ai",
+    "Door_Lock_Intact_Metal.ai",
     "Door_Lock.ai",
 ];
 

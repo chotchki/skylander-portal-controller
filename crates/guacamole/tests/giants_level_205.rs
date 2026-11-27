@@ -924,6 +924,29 @@ fn clones_near(run: &Run, at: Vec3, r: f32) -> Vec<String> {
         .collect()
 }
 
+/// Within `r` of `at`: how many of the metal door lock's clones still show
+/// (`Door_Lock_Intact_Metal`, live and not see-through), and how many of
+/// its broken pieces (`Door_lock_PT*_Metal`) were spawned, live or already
+/// fallen and taken off (openspec AS.1121).
+fn metal_lock_near(run: &Run, at: Vec3, r: f32) -> (usize, usize) {
+    let (mut showing, mut pieces) = (0, 0);
+    for h in run.world.clones() {
+        let Some(a) = run.world.actor(h) else {
+            continue;
+        };
+        if a.position.distance(at) >= r {
+            continue;
+        }
+        let name = run.world.name(h);
+        if name == "Door_Lock_Intact_Metal" && !a.removed && guacamole::props::actor_shows(a) {
+            showing += 1;
+        } else if name.starts_with("Door_lock_PT") && name.ends_with("_Metal") {
+            pieces += 1;
+        }
+    }
+    (showing, pieces)
+}
+
 /// The talk prompt the level's dialogue hangs over a person a hero is near
 /// (the exclamation the talk button's prompt goes with).
 const TALK_PROMPT: &str = "Dialog_ExPoint_NoScript";
@@ -2847,6 +2870,24 @@ fn on_to_setup_002s_end_with(setup: Setup) -> AtSetup002sEnd {
     );
     assert!(!key_held(&run), "the key in its lock");
     println!("the key door open at step {}", run.steps);
+    // openspec AS.1121: its metal lock shatters as it opens, its pieces
+    // thrown, rather than hanging on in the air by the open door.
+    let door = run.at("Door_Template(3)");
+    let mut shattered = None;
+    for k in 0..240u32 {
+        let (showing, pieces) = metal_lock_near(&run, door, 8.0);
+        if showing == 0 && pieces > 0 {
+            shattered = Some(k);
+            break;
+        }
+        step(&mut run, &mut stops, Stick::new(0.0, 0.0), [false; 4]);
+    }
+    println!("its metal lock shattered {shattered:?} steps after it opened");
+    assert!(
+        shattered.is_some(),
+        "the metal lock gone and its pieces out: {:?}",
+        metal_lock_near(&run, door, 8.0)
+    );
 
     trail.mark(&run, "door-open");
     // The market: the armored Chompy's intro, then its Chompies fought on
