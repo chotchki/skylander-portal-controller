@@ -651,7 +651,8 @@ fn off_his_nodes(run: &Run) -> Vec<(String, f32)> {
 /// 0.8 m off the node it hangs on. Each hero joined on 201 stands upright,
 /// then leaned that much (his controller's `up`, as a slope leaves it,
 /// set for one posing), and every clone on his nodes is held within 2 cm
-/// of where the node is drawn either way. `GUAC_HERO_PARTS_ALL=1` takes
+/// of its upright distance from where its node is drawn (on it, or at the
+/// offset his scripts hang it at). `GUAC_HERO_PARTS_ALL=1` takes
 /// every numbered character archive in place of the few.
 #[test]
 #[ignore = "reads GUAC_GIANTS_DUMP; run on the Mac"]
@@ -702,8 +703,13 @@ fn what_hangs_on_a_hero_stays_on_him_leaned() {
             leaned.iter().map(|p| &p.0).collect::<Vec<_>>(),
             "{load_file}: the same clones hang"
         );
-        for (model, off) in upright.iter().chain(&leaned) {
-            assert!(*off < 0.02, "{load_file}: {model} {off} m off its node");
+        // Each stands as far from its node leaned as upright: on it, or at
+        // the offset his scripts hang it at (Camo's `inviso.mdl` 1 ft off).
+        for ((model, up), (_, lean)) in upright.iter().zip(&leaned) {
+            assert!(
+                (lean - up).abs() < 0.02,
+                "{load_file}: {model} {lean} m off its node leaned, {up} upright"
+            );
         }
         if !leaned.is_empty() {
             with_props += 1;
