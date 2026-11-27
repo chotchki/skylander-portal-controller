@@ -368,6 +368,9 @@ pub fn lean_of(rotation: [f32; 3]) -> Quat {
     Quat::from_rotation_y(rotation[1].to_radians()).inverse() * Quat::from_array(whole.rotation)
 }
 
+/// Eruptor's toy id, the run's hero when [`Setup::character`] names none.
+pub const ERUPTOR_TOY: u16 = 9;
+
 /// Eruptor's toy, as his figure's tag names it: the toy id 9, the base
 /// subtype, a serial of our own.
 pub fn eruptor_tag(values: Values) -> Tag {
@@ -383,6 +386,18 @@ impl Run {
     /// His attach nodes posed as the frame left his clips (his idle at its
     /// time this step), and what hangs from them set there (AH.50).
     pub fn pose_hands(&mut self) {
+        // His nodes at the scale the TV poses them at (openspec AS.1061):
+        // a hero on his own scripts at the uniform scale they hold on his
+        // actor (`walkers::rebuilt`, the TV's rig follows it), Eruptor at
+        // his measured 150 % (the TV's measured walker, toy 9).
+        if self.toy != ERUPTOR_TOY
+            && let Some(scale) = self
+                .world
+                .actor(self.hero)
+                .and_then(|a| guacamole::walkers::uniform_scale(a.scale))
+        {
+            self.rig.scale = scale;
+        }
         let idle = self.idle0 + f64::from(self.steps) / 60.0;
         self.rig.pose(&mut self.world, self.hero, idle);
         if let Some((at, lean)) = self.lean
@@ -1171,7 +1186,13 @@ pub fn character_rig_in(part: &[Vec<u8>], unit: u16, load_file: &str) -> guacamo
         model: read.model,
         palette: read.palette.with_networks(&read.networks),
         nodes: read.nodes,
-        scale: guac_motion::tuning::ERUPTOR_SCALE,
+        // A hero on his own scripts starts at 100 % (`Walk::scripted`) and
+        // takes his scripts' scale once they set it ([`Run::pose_hands`]).
+        scale: if load_file == "009_Eruptor" {
+            guac_motion::tuning::ERUPTOR_SCALE
+        } else {
+            1.0
+        },
     }
 }
 
@@ -1835,7 +1856,7 @@ pub fn run_on_level(mode: Mode, level: &str, setup: Setup) -> (Run, HashMap<Memb
             surfaces: Default::default(),
             hangs: Default::default(),
             entering: None,
-            toy: setup.character.map_or(9, |c| c.toy),
+            toy: setup.character.map_or(ERUPTOR_TOY, |c| c.toy),
             posed_rigs,
             unit: ERUPTOR,
             spare,
