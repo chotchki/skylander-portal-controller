@@ -58,6 +58,8 @@ mod picker;
 mod play;
 mod prepare;
 mod progress;
+#[cfg(any(feature = "test-hooks", test))]
+mod put;
 mod screen;
 mod script_sprites;
 #[cfg(feature = "dev-tools")]
@@ -503,6 +505,9 @@ fn test_routes(
         // AS.805's capture note: the hand's press, the typing and the read.
         #[cfg(feature = "test-hooks")]
         let routes = routes.merge(capture_note::routes(flag_asks));
+        // AS.1090's put: the hero set down and a foe held, for a driver.
+        #[cfg(feature = "test-hooks")]
+        let routes = routes.merge(put::routes(put::shared()));
         // A build that plays the card game (openspec AS.367's first rung)
         // quits it over a route of its own; a build without the feature has
         // none.
@@ -696,6 +701,9 @@ fn run_tv(
         #[cfg(feature = "test-hooks")]
         app.insert_resource(stage::shared().clone())
             .add_plugins(stage::StagePlugin);
+        #[cfg(feature = "test-hooks")]
+        app.insert_resource(put::shared().clone())
+            .add_plugins(put::PutPlugin);
         if let Some(flags) = flags {
             app.add_plugins(flags);
         }

@@ -126,6 +126,7 @@ fn follow_host(
     link: Option<Res<StoryLink>>,
     mut story: ResMut<Story>,
     #[cfg(feature = "test-hooks")] stage: Option<Res<crate::stage::Stage>>,
+    #[cfg(feature = "test-hooks")] puts: Option<Res<crate::put::Puts>>,
 ) {
     let Some(link) = link else {
         return;
@@ -134,6 +135,9 @@ fn follow_host(
     // A staged creature's run writes no save (openspec AS.680).
     #[cfg(feature = "test-hooks")]
     let host = host.filter(|_| !crate::stage::withholds_saves(stage.as_deref()));
+    // Nor does a run a driver has put a hero or held a foe in (AS.1090).
+    #[cfg(feature = "test-hooks")]
+    let host = host.filter(|_| !crate::put::withholds_saves(puts.as_deref()));
     if story.began_for.as_ref() == Some(&host) {
         return;
     }
