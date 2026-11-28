@@ -2172,6 +2172,16 @@ impl ScriptWorld {
                 if self.turret_base == Some(a) && self.name(b).starts_with(crate::turret::SHOTS) {
                     return Ok(Value::Int(0));
                 }
+                // An asleep trigger box touches nothing (openspec AS.1136): a
+                // scriptless placement the activity rule hasn't woken, as a
+                // camera switch with no activation range is until a script
+                // wakes it (level 214's `Transition_3-9_Post_Chain_pull`,
+                // 205's `CameraSwitch_5.2-5.1`); answered yes, its plane
+                // took the camera off a ramp in one step and turned the view
+                // from a fight (stand-in ledger: `asleep-box`).
+                if self.asleep_box(a) || self.asleep_box(b) {
+                    return Ok(Value::Int(0));
+                }
                 Value::Int(i32::from(self.touching(a, b, engine)?))
             }
             // AH.16's are answered by `ScriptWorld::get` before this.
@@ -4100,6 +4110,15 @@ impl ScriptWorld {
     /// take a creature's shape off as it dies, so a lob in flight can't
     /// burst on the corpse; unmodelled, level 214's dying Elf Near against
     /// Eruptor's lava lob stopped the portal manager here).
+    /// Whether `h` is a placement with no script of its own that the
+    /// activity rule holds asleep: a trigger box nothing has woken.
+    fn asleep_box(&self, h: Handle) -> bool {
+        self.actors
+            .get(&h)
+            .is_some_and(|a| a.obj.is_some() && !a.active)
+            && self.scriptless(h)
+    }
+
     fn touching(&self, a: Handle, b: Handle, engine: &mut dyn Engine) -> Result<bool, HostFault> {
         let pair = [(a, b), (b, a)];
         let mut asked = false;
@@ -6860,6 +6879,62 @@ mod tests {
             touch(&mut w, &mut e),
             Ok(Value::Int(1)),
             "another's doesn't"
+        );
+    }
+
+    /// openspec AS.1136: a scriptless placement asleep by the activity rule
+    /// (a camera switch with no activation range) touches nothing, awake it
+    /// touches as ever, and a scripted placement asleep still does.
+    #[test]
+    fn an_asleep_trigger_box_touches_nothing() {
+        let mut e = bench();
+        let mut w = world();
+        let (hero, plane) = (0x6000_0041, 0x6000_0042);
+        let at_ = Vec3::new(1.0, 2.0, 3.0);
+        w.actors.insert(hero, ball(at_, 0.0));
+        let mut b = ball(at_, 0.0);
+        let o = Obj { unit: 9, index: 2 };
+        b.obj = Some(o);
+        b.active = false;
+        w.actors.insert(plane, b);
+        let script = |w: &mut ScriptWorld, s: Option<&str>| {
+            w.templates.insert(
+                o,
+                crate::scripts::Placed::named(o, "CameraSwitch_5.2-5.1", s, 4),
+            );
+        };
+        let touch = |w: &mut ScriptWorld, e: &mut Bench, x: Handle, y: Handle| {
+            let a = at(
+                "positionmeasurement",
+                "collision",
+                Some(Value::Entity(x)),
+                Some(Value::Entity(y)),
+            );
+            w.get_member(&a, Member::Collision, e)
+        };
+        script(&mut w, None);
+        assert_eq!(
+            touch(&mut w, &mut e, hero, plane),
+            Ok(Value::Int(0)),
+            "asleep"
+        );
+        assert_eq!(
+            touch(&mut w, &mut e, plane, hero),
+            Ok(Value::Int(0)),
+            "either way"
+        );
+        w.actors.get_mut(&plane).unwrap().active = true;
+        assert_eq!(
+            touch(&mut w, &mut e, hero, plane),
+            Ok(Value::Int(1)),
+            "awake"
+        );
+        w.actors.get_mut(&plane).unwrap().active = false;
+        script(&mut w, Some("C:/x/Trigger.ai"));
+        assert_eq!(
+            touch(&mut w, &mut e, hero, plane),
+            Ok(Value::Int(1)),
+            "scripted"
         );
     }
 
