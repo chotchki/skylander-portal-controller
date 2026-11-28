@@ -3425,6 +3425,116 @@ fn cynders_breath_lands_up_and_down_a_slope_as_on_the_level() {
     }
 }
 
+/// Flameslinger, the fire elf with the bow.
+const FLAMESLINGER: Character = Character {
+    archive: "character/011_fireelf.bld",
+    load_file: "011_FireElf",
+    toy: 11,
+};
+
+/// openspec AS.1081: Flameslinger's first button lands on a Chompy 3.5 m in
+/// front of him on level ground. His arrow's heading is a null actor hung
+/// on him that his script turns to his pick and reads back each step; read
+/// as its written facing plus his own, it turned past the Chompy, clamped
+/// to his facing's limit and let the arrow go about 205 degrees off, so
+/// none of six landed. The setup's Chompy staged, woken and set back each
+/// step at the near-level spot of Cynder's cases above (its own script
+/// left running, as the census bench has it), him put there facing it
+/// before each of six taps of his first button: each lands.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn flameslingers_arrow_lands_on_a_foe_in_front_of_him() {
+    use guac_motion::seam::Vec3;
+    let started = std::time::Instant::now();
+    println!("load at start: {}", load());
+    const FOE: &str = "Enemy_Chompy(1)";
+    let (mut run, _) = run_on_level(
+        Mode::Play,
+        LEVEL_201,
+        Setup {
+            character: Some(FLAMESLINGER),
+            props: true,
+            interface: true,
+            posed_rigs: true,
+            stage: Some(FOE),
+            ..Setup::default()
+        },
+    );
+    run.world.skip_cutscenes = true;
+    let mut stops: Vec<String> = Vec::new();
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    // His arrival played out first, as the census bench settles him.
+    for _ in 0..120 {
+        stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+    }
+    let (foe, foe_at) = run.placed(FOE);
+    let hp = |run: &Run| -> Option<f32> {
+        let id = run.vm.placement_of(foe)?;
+        let d = run.vm.local(id, "description").map(|v| run.vm.value(v))?;
+        let c = run.vm.field(d, "creature info").map(|v| run.vm.value(v))?;
+        run.vm.field(c, "hp").map(|v| run.vm.value(v))?.as_f32()
+    };
+    let fill = |run: &mut Run| {
+        if let Some(id) = run.vm.placement_of(foe)
+            && let Some(d) = run.vm.local(id, "description").map(|v| run.vm.value(v))
+            && let Some(c) = run.vm.field(d, "creature info").map(|v| run.vm.value(v))
+        {
+            run.vm.set_field(c, "hp", Value::Float(100_000.0));
+        }
+    };
+    let mut woke = false;
+    for _ in 0..200 {
+        run.put(foe_at + Vec3::new(0.0, 0.0, 6.0), 180.0);
+        stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+        if run.world.actor(foe).is_some_and(|a| a.active) && hp(&run).is_some() {
+            woke = true;
+            break;
+        }
+    }
+    assert!(woke, "{FOE} woke by him");
+    let (_, me, at) = BREATH_CASES[0];
+    let on_ground = |run: &Run, p: [f32; 3]| {
+        let p = Vec3::from_array(p);
+        let hit =
+            guac_motion::ground::ray(&run.bench.world, p + Vec3::Y * 3.0, Vec3::NEG_Y, 10.0, &[])
+                .expect("ground");
+        Vec3::new(p.x, hit.point.y, p.z)
+    };
+    let (me, at) = (on_ground(&run, me), on_ground(&run, at));
+    let facing = guacamole::script_engine::heading_of(at - me);
+    fill(&mut run);
+    let mut landed = 0;
+    for k in 0..6 * 40 {
+        if k % 40 == 0 {
+            run.put(me, facing);
+        }
+        run.world.place(foe, at, (facing + 180.0) % 360.0);
+        let before = hp(&run);
+        run.bench.pads[0] = Pad {
+            stick: Stick::new(0.0, 0.0),
+            actions: [k % 40 < 2, false, false, false],
+            connected: true,
+        };
+        stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+        if let (Some(a), Some(b)) = (before, hp(&run))
+            && b < a
+        {
+            landed += 1;
+            fill(&mut run);
+        }
+    }
+    println!(
+        "{landed} of 6 landed; took {:.1?}, load at end: {}",
+        started.elapsed(),
+        load()
+    );
+    assert!(stops.is_empty(), "{stops:#?}");
+    assert_eq!(landed, 6, "his arrows at a Chompy 3.5 m in front of him");
+}
+
 /// openspec AS.835: Cynder's breath at a foe in play on top of the bank by
 /// the fence, from below it, where the as-aim review's TV run pressed 83
 /// times for one kill, after breaths at the fight on the level as a kid

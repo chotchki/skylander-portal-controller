@@ -1346,14 +1346,20 @@ impl ScriptWorld {
         }
         // Hung from another actor, it turns with it (openspec AS.76: a
         // turret's body on its base, whose facing `New Turret - Find Target`
-        // holds its targets' headings against).
+        // holds its targets' headings against), but for a facing a script
+        // wrote there, which reads back as written, as on a node (openspec
+        // AS.1081: Flameslinger's `pivot null actor`, hung on him and turned
+        // toward his pick each step, read twice his facing and let his
+        // arrow go the other way).
         if depth > 0
             && !a.removed
             && let Some(owner) = self.actor_of(Some(a.attach)).filter(|&o| o != h)
             && let Some(g) = self.angles_within(owner, engine, depth - 1)
         {
             let mut turned = a.angles;
-            turned.facing += g.facing;
+            if a.turned_axes & Actor::FACING == 0 {
+                turned.facing += g.facing;
+            }
             return Some(turned);
         }
         Some(a.angles)
@@ -2169,6 +2175,16 @@ impl ScriptWorld {
                 // A turret's shot leaves from inside its base's sphere, its
                 // barrel's nodes unposed (stand-in ledger: `turret-pick`).
                 if self.turret_base == Some(a) && self.name(b).starts_with(crate::turret::SHOTS) {
+                    return Ok(Value::Int(0));
+                }
+                // An asleep trigger box touches nothing (openspec AS.1136): a
+                // scriptless placement the activity rule hasn't woken, as a
+                // camera switch with no activation range is until a script
+                // wakes it (level 214's `Transition_3-9_Post_Chain_pull`,
+                // 205's `CameraSwitch_5.2-5.1`); answered yes, its plane
+                // took the camera off a ramp in one step and turned the view
+                // from a fight (stand-in ledger: `asleep-box`).
+                if self.asleep_box(a) || self.asleep_box(b) {
                     return Ok(Value::Int(0));
                 }
                 Value::Int(i32::from(self.touching(a, b, engine)?))
@@ -4085,6 +4101,18 @@ impl ScriptWorld {
         let at = self.position(point, engine)?;
         let dot = Shape::Sphere { radius: 1e-4 };
         Some(guac_motion::parry::gap(&s, p, &dot, Pose::at(at)))
+    }
+
+    /// Whether `h` is a placement with no script of its own that the
+    /// activity rule holds asleep: held off (no range, a buffer) as a camera
+    /// switch is until a script gives it a range, or out of its range, as
+    /// 201's encounter triggers and 205's ranged planes are while the hero
+    /// stands in their boxes beyond it (the as-pt27-cams review's census).
+    fn asleep_box(&self, h: Handle) -> bool {
+        self.actors
+            .get(&h)
+            .is_some_and(|a| a.obj.is_some() && !a.active)
+            && self.scriptless(h)
     }
 
     /// `positionmeasurement.collision`: whether two actors' solids touch,
@@ -6736,6 +6764,56 @@ mod tests {
         assert_eq!(w.angles(BALL, &mut e).map(|g| g.facing), Some(9.0));
     }
 
+    /// openspec AS.1081: a facing a script writes on an actor hung from
+    /// another reads back as written, as on a node: Flameslinger's `pivot
+    /// null actor`, hung on him, turned to his pick's heading and read back
+    /// against his facing each step (`011_FireElf.ai`), not twice his turn.
+    /// Unwritten it turns with what it hangs from (AS.76, above), and hung
+    /// anew it does again.
+    #[test]
+    fn a_facing_written_on_an_actor_hung_from_another_reads_back_as_written() {
+        let mut e = bench();
+        e.hero = Some(Hero::actor(eruptor_solid(), Vec3::ZERO, 225.0));
+        let mut w = world();
+        w.actors.insert(HERO, Actor::blank());
+        let mut pivot = Actor::blank();
+        pivot.attach = Value::Entity(HERO);
+        w.actors.insert(BALL, pivot);
+        let turn = w.objs.value(Object::Facet(BALL, Facet::Orientation));
+        let facing = at("orientationmeasurement", "facing", Some(turn), None);
+        let read = |w: &mut ScriptWorld, e: &mut Bench| w.get_member(&facing, Member::Facing, e);
+        assert_eq!(
+            read(&mut w, &mut e),
+            Ok(Value::Float(225.0)),
+            "unwritten: his"
+        );
+        w.set_member(&facing, Member::Facing, Value::Float(-135.0), &mut e)
+            .unwrap();
+        assert_eq!(read(&mut w, &mut e), Ok(Value::Float(-135.0)), "as written");
+        e.hero.as_mut().unwrap().facing = 300.0;
+        assert_eq!(
+            read(&mut w, &mut e),
+            Ok(Value::Float(-135.0)),
+            "kept as he turns"
+        );
+        // Hung anew, a turn written before is its own under him again.
+        let node = at(
+            "abstractplacement",
+            "attach node",
+            Some(Value::Entity(BALL)),
+            None,
+        );
+        w.set_member(&node, Member::AttachNode, Value::Null, &mut e)
+            .unwrap();
+        w.set_member(&node, Member::AttachNode, Value::Entity(HERO), &mut e)
+            .unwrap();
+        assert_eq!(
+            read(&mut w, &mut e),
+            Ok(Value::Float(165.0)),
+            "his 300 and its -135"
+        );
+    }
+
     /// openspec AS.189: a hero hung on a turret hung at a place is carried
     /// there, the turret turned or not, and goes on there as it turns;
     /// hung from nothing, nothing is kept.
@@ -6849,6 +6927,62 @@ mod tests {
             touch(&mut w, &mut e),
             Ok(Value::Int(1)),
             "another's doesn't"
+        );
+    }
+
+    /// openspec AS.1136: a scriptless placement asleep by the activity rule
+    /// (a camera switch with no activation range) touches nothing, awake it
+    /// touches as ever, and a scripted placement asleep still does.
+    #[test]
+    fn an_asleep_trigger_box_touches_nothing() {
+        let mut e = bench();
+        let mut w = world();
+        let (hero, plane) = (0x6000_0041, 0x6000_0042);
+        let at_ = Vec3::new(1.0, 2.0, 3.0);
+        w.actors.insert(hero, ball(at_, 0.0));
+        let mut b = ball(at_, 0.0);
+        let o = Obj { unit: 9, index: 2 };
+        b.obj = Some(o);
+        b.active = false;
+        w.actors.insert(plane, b);
+        let script = |w: &mut ScriptWorld, s: Option<&str>| {
+            w.templates.insert(
+                o,
+                crate::scripts::Placed::named(o, "CameraSwitch_5.2-5.1", s, 4),
+            );
+        };
+        let touch = |w: &mut ScriptWorld, e: &mut Bench, x: Handle, y: Handle| {
+            let a = at(
+                "positionmeasurement",
+                "collision",
+                Some(Value::Entity(x)),
+                Some(Value::Entity(y)),
+            );
+            w.get_member(&a, Member::Collision, e)
+        };
+        script(&mut w, None);
+        assert_eq!(
+            touch(&mut w, &mut e, hero, plane),
+            Ok(Value::Int(0)),
+            "asleep"
+        );
+        assert_eq!(
+            touch(&mut w, &mut e, plane, hero),
+            Ok(Value::Int(0)),
+            "either way"
+        );
+        w.actors.get_mut(&plane).unwrap().active = true;
+        assert_eq!(
+            touch(&mut w, &mut e, hero, plane),
+            Ok(Value::Int(1)),
+            "awake"
+        );
+        w.actors.get_mut(&plane).unwrap().active = false;
+        script(&mut w, Some("C:/x/Trigger.ai"));
+        assert_eq!(
+            touch(&mut w, &mut e, hero, plane),
+            Ok(Value::Int(1)),
+            "scripted"
         );
     }
 

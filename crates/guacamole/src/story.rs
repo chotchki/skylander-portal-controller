@@ -126,6 +126,7 @@ fn follow_host(
     link: Option<Res<StoryLink>>,
     mut story: ResMut<Story>,
     #[cfg(feature = "test-hooks")] stage: Option<Res<crate::stage::Stage>>,
+    #[cfg(feature = "test-hooks")] puts: Option<Res<crate::put::Puts>>,
 ) {
     let Some(link) = link else {
         return;
@@ -134,6 +135,9 @@ fn follow_host(
     // A staged creature's run writes no save (openspec AS.680).
     #[cfg(feature = "test-hooks")]
     let host = host.filter(|_| !crate::stage::withholds_saves(stage.as_deref()));
+    // Nor does a run a driver has put a hero or held a foe in (AS.1090).
+    #[cfg(feature = "test-hooks")]
+    let host = host.filter(|_| !crate::put::withholds_saves(puts.as_deref()));
     if story.began_for.as_ref() == Some(&host) {
         return;
     }
@@ -627,5 +631,48 @@ mod tests {
         let story = app.world().resource::<Story>();
         assert_eq!(story.began_for, Some(None));
         assert_eq!(story.session.host, None);
+    }
+
+    /// openspec AS.1090: once a driver's put is asked, the session begins
+    /// again for nobody, so the host's story save is withheld from then on,
+    /// a host set after it included.
+    #[cfg(feature = "test-hooks")]
+    #[test]
+    fn a_put_asked_withholds_the_hosts_story_save() {
+        let mut app = App::new();
+        let link = StoryLink {
+            host: GameHost::default(),
+            sink: StorySink::new(),
+        };
+        let puts = crate::put::Puts::default();
+        app.insert_resource(link.clone())
+            .insert_resource(puts.clone())
+            .init_resource::<Story>()
+            .add_systems(Update, follow_host);
+        let alice = |link: &StoryLink| {
+            link.host.set(Some(guac_server::saves::Host {
+                profile_id: "alice".into(),
+                game: story_save::GAME.into(),
+            }))
+        };
+        alice(&link);
+        app.update();
+        assert_eq!(
+            app.world().resource::<Story>().session.host.as_deref(),
+            Some("alice")
+        );
+        puts.0.lock().unwrap().take(crate::put::PutAsk {
+            release: true,
+            ..Default::default()
+        });
+        app.update();
+        let story = app.world().resource::<Story>();
+        assert_eq!(story.began_for, Some(None));
+        assert_eq!(story.session.host, None, "the save withheld");
+        link.host.set(None);
+        app.update();
+        alice(&link);
+        app.update();
+        assert_eq!(app.world().resource::<Story>().session.host, None);
     }
 }

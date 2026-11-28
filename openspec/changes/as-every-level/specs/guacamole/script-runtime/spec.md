@@ -115,3 +115,10 @@ From the step a card game's board goes until the pirate's scene aims the view, t
 #### Scenario: A game quit, lost and won
 - **WHEN** a game is quit, one lost and one won, and their ends filmed at 60 frames a second
 - **THEN** no frame between the board and the pirate's scene or loot shows the board's empty place
+
+### Requirement: An asleep camera switch takes no camera
+A placement with no script of its own that the activity rule holds asleep SHALL touch nothing when a script asks whether something meets its box: a camera switch with no activation range until a script wakes it, so its plane never takes the camera, and a box with a range, a trigger or a plane, while the hero stands beyond that range.
+
+#### Scenario: Level 205's ramp east of the dock
+- **WHEN** the hero walks up the ramp past `CameraSwitch_5.2-5.1`, asleep, and back down, twice
+- **THEN** no step moves the eye more than 1 m or turns the look more than 5 degrees, and that switch's plane is never current

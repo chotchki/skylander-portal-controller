@@ -2084,3 +2084,97 @@ fn level_205s_camera_switches_name_its_cameras() {
     assert!(stops.is_empty(), "{stops:#?}");
     println!("load at end: {}", load());
 }
+
+/// openspec AS.1137: level 205's ramp east of the dock (the hero walked up
+/// from (59.4, 77.5) to (57.3, 70.8) and back, twice) eases its camera every
+/// step: no step moves the scripts' eye more than 1 m or turns its look more
+/// than 5 degrees, and no plane whose switch is asleep is ever current. With
+/// an asleep switch's box answered as awake, `CameraSwitch_5.2-5.1` (no
+/// activation range) took the camera 22.7 m and 66 degrees in one step at
+/// the crest. Nothing stops.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn level_205s_ramp_camera_eases_past_an_asleep_switch() {
+    println!("load at start: {}", load());
+    let mut stops: Vec<String> = Vec::new();
+    let (mut run, _) = run_on_level(
+        Mode::Play,
+        "level_205_piratecards",
+        Setup {
+            interface: true,
+            props: true,
+            sounds: true,
+            ..Setup::default()
+        },
+    );
+    let step = |run: &mut Run, push: f32, skip: bool, stops: &mut Vec<String>| {
+        run.bench.pads[0] = guacamole::script_engine::Pad {
+            stick: guac_motion::stick::Stick::new(0.0, push),
+            actions: [false, false, false, skip],
+            connected: true,
+        };
+        stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+    };
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    // Its intro skipped by △, as a player skips it.
+    for k in 0..3000u32 {
+        step(&mut run, 0.0, k > 120 && k % 20 == 10, &mut stops);
+        if k > 400 && !guacamole::anchors::scene_holds(&run.vm) && cutscene_name(&run).is_none() {
+            break;
+        }
+    }
+    let (foot, top) = ((59.4f32, 77.5f32), (57.3f32, 70.8f32));
+    run.put(Vec3::new(foot.0, 24.6, foot.1), 180.0);
+    for _ in 0..240 {
+        step(&mut run, 0.0, false, &mut stops);
+    }
+    let asleep = |run: &Run, name: &str| {
+        let (h, _) = run.placed(name);
+        !run.world.actor(h).unwrap().active
+    };
+    assert!(asleep(&run, "CameraSwitch_5.2-5.1"), "the switch woke");
+    let (mut most_jump, mut most_turn, mut walked) = (0.0f32, 0.0f32, 0u32);
+    let mut prev: Option<(Vec3, Vec3)> = None;
+    let mut planes = std::collections::BTreeSet::new();
+    for (tx, tz) in [top, foot, top, foot] {
+        for _ in 0..900u32 {
+            let h = run.hero().pivot;
+            if (tx - h.x).hypot(tz - h.z) < 0.8 {
+                break;
+            }
+            run.bench.view = (tx - h.x).atan2(tz - h.z).to_degrees();
+            step(&mut run, 1.0, false, &mut stops);
+            walked += 1;
+            let vp = *run.world.viewport();
+            let (eye, fwd) = (vp.eye, vp.forward());
+            if let Some((e, f)) = prev {
+                most_jump = most_jump.max(e.distance(eye));
+                most_turn = most_turn.max(f.dot(fwd).clamp(-1.0, 1.0).acos().to_degrees());
+            }
+            prev = Some((eye, fwd));
+            if let Some(p) = current_plane(&run) {
+                assert!(
+                    !asleep(&run, &p),
+                    "{p} is asleep and current at step {}",
+                    run.steps
+                );
+                planes.insert(p);
+            }
+        }
+        let h = run.hero().pivot;
+        assert!(
+            (tx - h.x).hypot(tz - h.z) < 0.8,
+            "short of ({tx}, {tz}) at {h}"
+        );
+    }
+    println!(
+        "{walked} steps up and down the ramp: the eye moved at most {most_jump:.3} m and turned {most_turn:.2} deg a step; planes {planes:?}"
+    );
+    assert!(most_jump < 1.0, "the eye jumped {most_jump} m");
+    assert!(most_turn < 5.0, "the look turned {most_turn} deg");
+    assert!(stops.is_empty(), "{stops:#?}");
+    println!("load at end: {}", load());
+}
