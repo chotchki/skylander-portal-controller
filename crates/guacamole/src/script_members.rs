@@ -4098,21 +4098,6 @@ impl ScriptWorld {
         Some(guac_motion::parry::gap(&s, p, &dot, Pose::at(at)))
     }
 
-    /// Whether `h` is a placement with no script of its own held off by its
-    /// data or a script: no activation range and a deactivation buffer, so
-    /// the activity rule never wakes it, as a camera switch is until a
-    /// script gives it a range (205's `Gate_Killer`, `SignalFace` and Cali
-    /// write 0 and 1 to turn one off, 50 and 0 to turn it on). One asleep
-    /// only by distance, out of its range, still touches: nothing read says
-    /// the original skips it (201's encounter triggers and 205's ranged
-    /// planes are boxes wider than their ranges; the as-pt27-cams review).
-    fn asleep_box(&self, h: Handle) -> bool {
-        self.actors
-            .get(&h)
-            .is_some_and(|a| a.obj.is_some() && !a.active && a.range <= 0.0 && a.buffer > 0.0)
-            && self.scriptless(h)
-    }
-
     /// `positionmeasurement.collision`: whether two actors' solids touch,
     /// one of them a body in the seam (a hero, a creature, a prop): the
     /// other's last move stopped on it, or its solid is within [`TOUCH`] of
@@ -4125,6 +4110,15 @@ impl ScriptWorld {
     /// take a creature's shape off as it dies, so a lob in flight can't
     /// burst on the corpse; unmodelled, level 214's dying Elf Near against
     /// Eruptor's lava lob stopped the portal manager here).
+    /// Whether `h` is a placement with no script of its own that the
+    /// activity rule holds asleep: a trigger box nothing has woken.
+    fn asleep_box(&self, h: Handle) -> bool {
+        self.actors
+            .get(&h)
+            .is_some_and(|a| a.obj.is_some() && !a.active)
+            && self.scriptless(h)
+    }
+
     fn touching(&self, a: Handle, b: Handle, engine: &mut dyn Engine) -> Result<bool, HostFault> {
         let pair = [(a, b), (b, a)];
         let mut asked = false;
@@ -6888,10 +6882,9 @@ mod tests {
         );
     }
 
-    /// openspec AS.1136: a scriptless placement held off (a camera switch
-    /// with no activation range and a buffer) touches nothing, awake it
-    /// touches as ever, and so do one asleep only out of its range and a
-    /// scripted placement held off.
+    /// openspec AS.1136: a scriptless placement asleep by the activity rule
+    /// (a camera switch with no activation range) touches nothing, awake it
+    /// touches as ever, and a scripted placement asleep still does.
     #[test]
     fn an_asleep_trigger_box_touches_nothing() {
         let mut e = bench();
@@ -6903,7 +6896,6 @@ mod tests {
         let o = Obj { unit: 9, index: 2 };
         b.obj = Some(o);
         b.active = false;
-        (b.range, b.buffer) = (0.0, 1.0);
         w.actors.insert(plane, b);
         let script = |w: &mut ScriptWorld, s: Option<&str>| {
             w.templates.insert(
@@ -6937,16 +6929,7 @@ mod tests {
             Ok(Value::Int(1)),
             "awake"
         );
-        // Asleep only by distance: out of its 30 ft, inside its box.
-        let p = w.actors.get_mut(&plane).unwrap();
-        (p.active, p.range, p.buffer) = (false, 30.0, 0.0);
-        assert_eq!(
-            touch(&mut w, &mut e, hero, plane),
-            Ok(Value::Int(1)),
-            "out of range"
-        );
-        let p = w.actors.get_mut(&plane).unwrap();
-        (p.range, p.buffer) = (0.0, 1.0);
+        w.actors.get_mut(&plane).unwrap().active = false;
         script(&mut w, Some("C:/x/Trigger.ai"));
         assert_eq!(
             touch(&mut w, &mut e, hero, plane),
