@@ -548,12 +548,7 @@ fn fight_to(
             if fought.scenes.last().is_none_or(|(_, n)| *n != cs) {
                 fought.scenes.push((run.steps, cs));
             }
-            // A talk scene a fight's walk stumbles into (Blobbers' intro, by
-            // the market, AS.1121's walk) waits on the talk button: held
-            // 300 steps, it's pressed every 20, as a kid would.
-            let since = fought.scenes.last().map_or(run.steps, |(at, _)| *at);
-            let press = run.steps >= since + 300 && run.steps % 20 == 10;
-            still(run, stops, [false, false, false, press]);
+            still(run, stops, [false; 4]);
             continue;
         }
         if guacamole::anchors::scene_holds(&run.vm) {
