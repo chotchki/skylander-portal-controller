@@ -4098,6 +4098,18 @@ impl ScriptWorld {
         Some(guac_motion::parry::gap(&s, p, &dot, Pose::at(at)))
     }
 
+    /// Whether `h` is a placement with no script of its own that the
+    /// activity rule holds asleep: held off (no range, a buffer) as a camera
+    /// switch is until a script gives it a range, or out of its range, as
+    /// 201's encounter triggers and 205's ranged planes are while the hero
+    /// stands in their boxes beyond it (the as-pt27-cams review's census).
+    fn asleep_box(&self, h: Handle) -> bool {
+        self.actors
+            .get(&h)
+            .is_some_and(|a| a.obj.is_some() && !a.active)
+            && self.scriptless(h)
+    }
+
     /// `positionmeasurement.collision`: whether two actors' solids touch,
     /// one of them a body in the seam (a hero, a creature, a prop): the
     /// other's last move stopped on it, or its solid is within [`TOUCH`] of
@@ -4110,15 +4122,6 @@ impl ScriptWorld {
     /// take a creature's shape off as it dies, so a lob in flight can't
     /// burst on the corpse; unmodelled, level 214's dying Elf Near against
     /// Eruptor's lava lob stopped the portal manager here).
-    /// Whether `h` is a placement with no script of its own that the
-    /// activity rule holds asleep: a trigger box nothing has woken.
-    fn asleep_box(&self, h: Handle) -> bool {
-        self.actors
-            .get(&h)
-            .is_some_and(|a| a.obj.is_some() && !a.active)
-            && self.scriptless(h)
-    }
-
     fn touching(&self, a: Handle, b: Handle, engine: &mut dyn Engine) -> Result<bool, HostFault> {
         let pair = [(a, b), (b, a)];
         let mut asked = false;

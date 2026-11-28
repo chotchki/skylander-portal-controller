@@ -117,7 +117,7 @@ From the step a card game's board goes until the pirate's scene aims the view, t
 - **THEN** no frame between the board and the pirate's scene or loot shows the board's empty place
 
 ### Requirement: An asleep camera switch takes no camera
-A placement with no script of its own that the activity rule holds asleep, as a camera switch with no activation range is until a script wakes it, SHALL touch nothing when a script asks whether something meets its box, so its transition plane never takes the camera.
+A placement with no script of its own that the activity rule holds asleep SHALL touch nothing when a script asks whether something meets its box: a camera switch with no activation range until a script wakes it, so its plane never takes the camera, and a box with a range, a trigger or a plane, while the hero stands beyond that range.
 
 #### Scenario: Level 205's ramp east of the dock
 - **WHEN** the hero walks up the ramp past `CameraSwitch_5.2-5.1`, asleep, and back down, twice
