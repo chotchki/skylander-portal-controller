@@ -4881,7 +4881,7 @@ pub fn level_config(mode: Mode, files: &Files, level: u16, name: &str) -> Config
                 .iter()
                 .map(|s| (*s).to_owned()),
         );
-        // Level 205's Giants' walls in its houses (openspec AS.1120).
+        // Level 205's Giants' walls (openspec AS.1120, AS.1160).
         placements.extend(
             crate::level_205::giant_walls(name)
                 .iter()

@@ -370,8 +370,7 @@ pub fn galleon(level: &str) -> &'static [&'static str] {
 /// woken by Cali's script already), the cannon's blocker
 /// (`Cannon_Blocker`, which only joins the set a push checks ahead of it,
 /// 4.1 m off the cannon's one straight track, so never inside a push's
-/// 29 ft, 20° cone; the walk the same to the step with it listed), the
-/// third metal wall (`Breakable_Metal_Wall(2)`, off the way) and
+/// 29 ft, 20° cone; the walk the same to the step with it listed) and
 /// Setup_004's two doors (`Interior_Door(8)`, `(6)`; its controller sets
 /// its foes at their places itself), each walked the same without.
 pub const STRETCH_3: [&str; 4] = [
@@ -420,13 +419,23 @@ pub fn broken_pieces(level: &str) -> &'static [&'static str] {
     }
 }
 
-/// The Giants' walls in level 205's houses (openspec AS.1120): a metal
-/// wall (`MetalWall.ai`) a house's controller wakes with its room, which a
-/// Giant's own attacks break (its hurt check takes a Giant's titan hurt or a
-/// thrown boulder's) and nothing else does. Interior 2's
-/// (`Breakable_Metal_Wall(6)`) bars the room's far side, before its chest;
-/// unlisted, it stood inert, so not even a Giant got through.
-pub const GIANT_WALLS: [&str; 1] = ["Breakable_Metal_Wall(6)"];
+/// Level 205's Giants' walls (openspec AS.1120, AS.1160): every metal wall
+/// (`MetalWall.ai`) placed on the level but the two the push cannon breaks
+/// ([`STRETCH_3`]). A Giant's own attacks break one (its hurt check takes a
+/// Giant's titan hurt or a thrown boulder's) and nothing else does, and at
+/// its STARTUP it raises its icons at its waypoints (`Elemental_Icon_Hint`,
+/// which `Elemental_Symbol_Hints.ai` makes a `Giant_icon`, beside a
+/// `Bomb_icon` or `Canon_Icon` by its waypoints' count): what tells a kid
+/// without a Giant why it won't open. Interior 2's (`(6)`, which its
+/// house's controller wakes with the room) bars the room's far side before
+/// `Chest(1)`; `(4)` stands before `Chest(4)`, `(2)` before a loot bag and
+/// coin piles. Unlisted, each stood inert with no icon and not even a
+/// Giant got through.
+pub const GIANT_WALLS: [&str; 3] = [
+    "Breakable_Metal_Wall(6)",
+    "Breakable_Metal_Wall(4)",
+    "Breakable_Metal_Wall(2)",
+];
 
 /// The placements [`GIANT_WALLS`] lists for the level whose archive is
 /// `level`: none on another level.

@@ -1017,6 +1017,23 @@ fn at_interior_2s_wall(who: Option<Character>, cap: u32) -> (Vec<(u32, String)>,
         let b = behaviour(&run, wall).unwrap_or_else(|| "-".into());
         if seen.last().is_none_or(|(_, l)| *l != b) {
             seen.push((run.steps, b.clone()));
+            // openspec AS.1160: waiting, it has raised its Giant's icon,
+            // what tells a kid without a Giant why it won't open.
+            if b == "waiting" {
+                let icon = run.world.clones().into_iter().any(|h| {
+                    run.world.name(h) == "Giant_icon"
+                        && run.world.actor(h).is_some_and(|a| {
+                            !a.removed
+                                && guacamole::props::actor_shows(a)
+                                && a.position.distance(at) < 6.0
+                        })
+                });
+                assert!(
+                    icon,
+                    "the wall's Giant's icon beside it at step {}",
+                    run.steps
+                );
+            }
         }
         let gone = run.vm.placement_of(wall).is_some_and(|i| run.vm.removed(i));
         if gone || !matches!(b.as_str(), "-" | "waiting") {
@@ -1141,4 +1158,152 @@ fn level_205s_card_house_door_swings_from_where_it_stands() {
         (most - 80.0).abs() < 0.5,
         "open 80° from where it stands: {most}"
     );
+}
+
+/// openspec AS.1160: level 205's Giants' walls (`MetalWall.ai`), every one
+/// placed on the level: each on the TV's listing, so a Giant breaks any of
+/// them and each raises its icons (the wall's STARTUP puts a Giant's icon,
+/// and a cannon's or a bomb's, at its waypoints). Two stood off it after
+/// AS.1120 listed interior 2's: `(2)`, before a loot bag and coins, and
+/// `(4)`, before `Chest(4)`.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn every_giants_wall_on_205_is_listed() {
+    let (run, _) = run_on_level(Mode::Play, guacamole::level_205::LEVEL, setup());
+    let listing = run.vm.config().whitelist.clone();
+    let walls: Vec<(&str, bool)> = run
+        .files
+        .placed
+        .iter()
+        .filter(|p| p.activity_state != 5)
+        .filter_map(|p| {
+            let s = p.script.as_deref()?;
+            s.ends_with("/MetalWall.ai")
+                .then(|| (p.name.as_str(), listing.lists(&p.name, s)))
+        })
+        .collect();
+    println!("{walls:?}");
+    assert_eq!(walls.len(), 5, "{walls:?}");
+    assert!(walls.iter().all(|w| w.1), "{walls:?}");
+}
+
+/// `who` (Ninjini for `None`) set down at `wall`'s last waypoint (where it raises its Giant's
+/// icon) and standing there until it waits with its icons up (within 300
+/// steps), then mashing his first two buttons at it: the icons it raised
+/// (each showing clone within 4 m of one of its waypoints, by name) and the
+/// steps of mashing it stood, if it broke within `cap`.
+fn at_a_wall(who: Option<Character>, wall_name: &str, cap: u32) -> (Vec<String>, Option<u32>) {
+    let ninjini = Character {
+        archive: "character/109_djini.bld",
+        load_file: "109_Djini",
+        toy: 109,
+    };
+    let setup = Setup {
+        character: Some(who.unwrap_or(ninjini)),
+        ..setup()
+    };
+    let (mut run, _) = run_on_level(Mode::Play, guacamole::level_205::LEVEL, setup);
+    let mut stops = Vec::new();
+    for _ in 0..2 {
+        stops.extend(run.step_play().unwrap().iter().map(ToString::to_string));
+    }
+    run.join().unwrap_or_else(|h| panic!("{h}"));
+    for k in 0..3000u32 {
+        if k > 300 && cutscene_name(&run).is_none() && !guacamole::anchors::scene_holds(&run.vm) {
+            break;
+        }
+        step(
+            &mut run,
+            &mut stops,
+            None,
+            [false, false, false, k > 120 && k % 20 == 10],
+        );
+    }
+    let (wall, at) = run.placed(wall_name);
+    let points: Vec<Vec3> = run
+        .files
+        .placed
+        .iter()
+        .find(|p| p.name == wall_name)
+        .map(|p| p.waypoints.iter().map(|w| run.files.points[w]).collect())
+        .expect("the wall's waypoints");
+    let icon = *points.last().unwrap();
+    run.put(icon, (at.x - icon.x).atan2(at.z - icon.z).to_degrees());
+    let icons = |run: &Run| {
+        let mut near: Vec<String> = run
+            .world
+            .clones()
+            .into_iter()
+            .filter_map(|h| {
+                let a = run.world.actor(h)?;
+                let name = run.world.name(h);
+                (name.to_ascii_lowercase().contains("icon")
+                    && !a.removed
+                    && guacamole::props::actor_shows(a)
+                    && points.iter().any(|p| p.distance(a.position) < 4.0))
+                .then_some(name)
+            })
+            .collect();
+        near.sort();
+        near
+    };
+    let mut raised = Vec::new();
+    for _ in 0..300 {
+        raised = icons(&run);
+        if behaviour(&run, wall).as_deref() == Some("waiting")
+            && raised.iter().any(|i| i == "Giant_icon")
+        {
+            break;
+        }
+        step(&mut run, &mut stops, None, [false; 4]);
+    }
+    println!(
+        "{wall_name}: {:?} at step {}, icons {raised:?}",
+        behaviour(&run, wall),
+        run.steps
+    );
+    for k in 0..cap {
+        let b = behaviour(&run, wall).unwrap_or_else(|| "-".into());
+        let gone = run.vm.placement_of(wall).is_some_and(|i| run.vm.removed(i));
+        if gone || !matches!(b.as_str(), "-" | "waiting") {
+            println!(
+                "{wall_name}: {b} at step {} after {k} steps of mashing",
+                run.steps
+            );
+            return (raised, Some(k));
+        }
+        let mash = [k % 10 < 5, k % 10 >= 5, false, false];
+        step(&mut run, &mut stops, Some([at.x, at.z]), mash);
+    }
+    println!(
+        "{wall_name}: {:?} after {cap} steps, hero at {}",
+        behaviour(&run, wall),
+        run.hero().pivot
+    );
+    (raised, None)
+}
+
+/// openspec AS.1160: the two Giants' walls outside the houses each raise
+/// their Giant's icon and break to a Giant's own buttons; Chill mashing as
+/// long at the same spot leaves each standing.
+#[test]
+#[ignore = "reads the Giants dump"]
+fn a_giant_breaks_205s_walls_by_its_loot() {
+    println!("load at start: {}", load());
+    let chill = Character {
+        archive: "character/106_icesorc.bld",
+        load_file: "106_IceSorc",
+        toy: 106,
+    };
+    for wall in ["Breakable_Metal_Wall(2)", "Breakable_Metal_Wall(4)"] {
+        let (icons, broke) = at_a_wall(None, wall, 1800);
+        println!("{wall}, Ninjini: icons {icons:?}, broke after {broke:?} steps");
+        assert!(icons.iter().any(|i| i == "Giant_icon"), "{wall}: {icons:?}");
+        assert!(broke.is_some(), "{wall} stands to a Giant");
+        let (icons, broke) = at_a_wall(Some(chill), wall, 900);
+        println!("{wall}, Chill: icons {icons:?}, broke after {broke:?} steps");
+        assert!(icons.iter().any(|i| i == "Giant_icon"), "{wall}: {icons:?}");
+        assert_eq!(broke, None, "{wall} breaks to a hero who isn't a Giant");
+    }
+    println!("load at end: {}", load());
 }
