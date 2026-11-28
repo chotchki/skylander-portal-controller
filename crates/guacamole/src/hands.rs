@@ -109,29 +109,16 @@ pub fn held<'p>(
     palette.clip_at(u16::try_from(slot).ok()?, f64::from(s.time).min(end))
 }
 
-/// Whether `palette` is a camera's rig's ([`camera_rig_model`]).
+/// Whether `palette` is a camera's rig's: its model under `Models/Cameras`,
+/// where every level's animator rig lives (`214_Recovered.mdl`,
+/// `201_Intro.mdl`).
 fn camera_rig(palette: &Palette) -> bool {
     camera_rig_model(&palette.owner)
 }
 
-/// Whether `model` is a camera's rig's, by the path a placement names it:
-/// under `Models/Cameras`, where every level's cinematic rig lives
-/// (`214_Recovered.mdl`, `201_Intro.mdl`), or a model of its own named a
-/// camera, as the Giants' chain pull keeps its rig beside the chain
-/// (`TitanChain_ChainPullCinematicCamera.mdl`, the same `J_camera` rig).
-/// Read as anything else it was never posed as a rig, so the pull's shot
-/// hung the view on an unposed node (openspec AS.1135).
+/// Whether `model` is a camera's rig's, by the path a placement names it.
 pub fn camera_rig_model(model: &str) -> bool {
-    if model.contains("/Models/Cameras/") {
-        return true;
-    }
-    let file = model
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or(model)
-        .to_ascii_lowercase();
-    file.strip_suffix(".mdl")
-        .is_some_and(|stem| stem.len() > "camera".len() && stem.ends_with("camera"))
+    model.contains("/Models/Cameras/")
 }
 
 /// What a drawn actor's clips pose as the TV draws it (openspec AS.141):
@@ -618,25 +605,5 @@ mod tests {
         assert_eq!(end.len(), 1);
         assert_eq!(end[0].0.name, "clip5.ma");
         assert!((end[0].1 - 0.999).abs() < 1e-6, "{}", end[0].1);
-    }
-
-    /// openspec AS.1135: the chain pull's camera is a rig though it isn't
-    /// under `Models/Cameras`; a model merely holding the word isn't.
-    #[test]
-    fn a_camera_named_model_outside_the_cameras_folder_is_a_rig() {
-        for rig in [
-            "C:/tfb/Content/Models/Cameras/SKY2_cinematics/205_Intro.mdl",
-            "C:/tfb/Content/Models/characters/Titans/TitanChain/TitanChain_ChainPullCinematicCamera.mdl",
-        ] {
-            assert!(camera_rig_model(rig), "{rig}");
-        }
-        for not in [
-            "C:/tfb/Content/Models/characters/Titans/TitanChain/TitanChain.mdl",
-            "C:/tfb/Content/Models/props/CameraStand.mdl",
-            "C:/tfb/Content/Models/props/Camera.igz",
-            "Camera.mdl",
-        ] {
-            assert!(!camera_rig_model(not), "{not}");
-        }
     }
 }
